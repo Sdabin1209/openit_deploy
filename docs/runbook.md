@@ -15,7 +15,7 @@ cp .env.example .env                      # DEPLOY_REGISTRY 등 확인
 bash scripts/up.sh deploy                 # 운영 구성. 주의: 아래 "알려진 한계"
 ```
 
-알려진 한계: 운영 구성(`compose.yaml`만)에서 survey-service는 I4/I6 팩토리가 없어 시작하지 않는다(종료 코드 2, `config/survey.env`). release-gate의 판정·수집은 꺼진 채로(`judging: disabled`) 뜬다. CR-D01이 풀려야 한다. 시험 구성(`COMPOSE_EXTRA=compose.test.yaml`)은 시험 대역을 꽂는다.
+운영 구성(`compose.yaml`만)의 상태: 모든 영역 사이 호출이 HTTP로 연결되어 5개 서비스가 뜬다. 다만 (1) release-gate는 통과 기준(O11)이 없어 `can_pass:false`(정상)이고, (2) survey-service는 활성 릴리스가 없는 동안 `/readyz` 503 `no_active_release`, (3) 모델 백엔드는 `fake`뿐이다(CR-D08), (4) 승인 평가 실행기가 없어(CR-D10) 설사 정책이 있어도 PASS가 나지 않는다. ops-feedback 잡은 설정 파일(`OPS_JOB_CONFIG`, 사용자 결정 값)이 있어야 돈다.
 
 ## 2. 적용과 롤백 (코드 축)
 
@@ -65,6 +65,8 @@ bash scripts/up.sh deploy
 - `gpu-external` 잡은 GPU 서버에서 돈다(D40). 서빙 서버의 Compose·스케줄러가 실행하지 않는다.
 
 ## 6. 시험
+
+시험용 정책으로 판정·릴리스를 지나가는 구성은 `compose.test.yaml`뿐이다(`TEST_POLICY_FILE`, `TEST_RUNNER_DIR`). 운영에는 연결하지 않는다.
 
 ```
 bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]

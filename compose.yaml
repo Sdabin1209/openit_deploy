@@ -31,6 +31,7 @@ volumes:          # 저장소마다 볼륨 하나, 쓰기는 소유 서비스만
   qa-data:        # 문항 저장소 questions.sqlite3
   ops-data:       # log.db(원본 Trace), failures.db(실패 사례)
   gate-data:      # 릴리스 레지스트리 registry.sqlite3 + releases/
+  models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
 
 configs:
   gateway-caddyfile:
@@ -54,7 +55,9 @@ services:
   survey-service:
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
-    env_file: ${CONFIG_DIR:-./config}/survey.env    # SURVEY_RELEASE_READER, SURVEY_TRACE_INGEST 등(비밀 아님). change-requests/CR-D01
+    env_file:
+      - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
+      - ${SECRETS_DIR:-./secrets}/survey-service.env            # SURVEY_RELEASE_READER_TOKEN, SURVEY_TRACE_INGEST_TOKEN (비밀)
     volumes: [survey-data:/data]
     networks: [edge, serving]
     healthcheck:
@@ -67,7 +70,7 @@ services:
   question-authoring:
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
-    env_file: ${SECRETS_DIR:-./secrets}/question-authoring.env   # QA_AUTHOR_TOKENS (비밀)
+    env_file: ${SECRETS_DIR:-./secrets}/question-authoring.env   # QA_AUTHOR_TOKENS, QA_READ_TOKENS (비밀)
     volumes: [qa-data:/data]
     networks: [authoring, release]
     healthcheck:
@@ -77,7 +80,9 @@ services:
   ops-feedback-ingest:
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
-    env_file: ${SECRETS_DIR:-./secrets}/ops-feedback-ingest.env   # OPS_INGEST_TOKEN (비밀)
+    env_file:
+      - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
+      - ${SECRETS_DIR:-./secrets}/ops-feedback-ingest.env       # OPS_INGEST_TOKEN, OPS_READ_TOKENS (비밀)
     volumes: [ops-data:/data]
     networks: [serving, logs]
     healthcheck:
@@ -88,10 +93,20 @@ services:
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     env_file:
-      - ${SECRETS_DIR:-./secrets}/release-gate.env              # GATE_READ_TOKEN, GATE_WRITE_TOKENS (비밀)
-      - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1_FACTORY 등(비밀 아님). CR-D01
+      - ${SECRETS_DIR:-./secrets}/release-gate.env              # GATE_READ_TOKENS, GATE_WRITE_TOKENS, GATE_I1_TOKEN, GATE_I3_TOKEN (비밀)
+      - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
     volumes: [gate-data:/data]
     networks: [serving, release]
+    healthcheck:
+      <<: *pyhealth
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+
+  model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
+    <<: *hardening
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-registry@${MODEL_REGISTRY_DIGEST:?locks/images.lock}
+    env_file: ${SECRETS_DIR:-./secrets}/model-registry.env      # MODEL_REGISTRY_READ_TOKENS, MODEL_REGISTRY_WRITE_TOKENS (비밀)
+    volumes: [models-data:/data]
+    networks: [release]
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -102,11 +117,25 @@ services:
     profiles: ["jobs"]
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     command: ["python", "-m", "ops_feedback.job", "--config", "/config/job.yaml"]
-    env_file: ${SECRETS_DIR:-./secrets}/ops-feedback-job.env     # OPS_DEID_SALT (비밀)
+    env_file: ${SECRETS_DIR:-./secrets}/ops-feedback-job.env     # OPS_DEID_SALT, OPS_GATE_READ_TOKEN, OPS_GATE_WRITE_TOKEN (비밀)
     volumes:
       - ops-data:/data
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
     networks: [logs, release]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+
+  job-release-gate-collect:     # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다
+    profiles: ["jobs"]
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
+    command: ["python", "-m", "release_gate", "collect"]
+    env_file:
+      - ${CONFIG_DIR:-./config}/release-gate.env
+      - ${SECRETS_DIR:-./secrets}/release-gate-job.env           # GATE_I1_TOKEN, GATE_I3_TOKEN (비밀)
+    volumes: [gate-data:/data]
+    networks: [release]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true

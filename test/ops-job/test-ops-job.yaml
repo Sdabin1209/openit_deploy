@@ -1,0 +1,38 @@
+# 시험 전용 ops-feedback 잡 설정(E2E). 비식별 기준·분류체계·보관은 사용자 결정이 아니다(예시를 본뜬 시험 값). 운영 config/ 에 쓰지 않는다.
+storage:
+  log_db: /data/log.db
+  failure_db: /data/failures.db
+deid:
+  policy_id: test-e2e-conservative-v0
+  salt_env: OPS_DEID_SALT
+  pseudonymize_keys: [session_id, turn_id]
+  keep_string_keys: [question_id, slot_id, repeat_key, guide_id, pending_id, code, category]
+  scrub_string_keys: []
+  scrub_patterns: {}
+  unlisted_string_action: mask
+  mask_defs: [Value]
+  drop_defs: [QuestionBank]
+  mask_number_keys: []
+  residual_patterns:
+    email: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    phone_kr: '0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}'
+    rrn_kr: '\d{6}[- ]?[1-4]\d{6}'
+detection:
+  detectors:
+    - type: rule
+      rules:
+        - {id: TURN_FAILURE_SIGNAL}
+        - {id: TURN_FAILED_STEPS}
+        - {id: COMMIT_ERROR}
+        - {id: GENERATOR_FALLBACK}
+        - {id: STAFF_ALERT_DELIVERY_FAILED}
+        - {id: INTERVENTION_FAILED}
+classification:
+  default_failure_type: UNCLASSIFIED
+  rule_to_type: {}
+  priority: [TURN_FAILURE_SIGNAL, COMMIT_ERROR, TURN_FAILED_STEPS]
+retention:
+  raw_days: null
+release_reader:
+  factory: "boundary_contracts.clients:HttpReleaseReader"
+  args: {base_url: "http://release-gate:8080", token: {env: OPS_GATE_READ_TOKEN}}

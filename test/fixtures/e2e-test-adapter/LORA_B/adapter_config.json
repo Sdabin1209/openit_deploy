@@ -1,1 +1,10 @@
-{"test": true, "note": "시험용 어댑터 자리. 실제 가중치가 아니다(E2E 단계 3 대역)", "role": "LORA_B"}
+{
+  "peft_type": "LORA",
+  "task_type": "CAUSAL_LM",
+  "r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+  "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+  "base_model_name_or_path": "Qwen/Qwen2.5-1.5B-Instruct",
+  "inference_mode": true
+}

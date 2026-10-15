@@ -15,39 +15,25 @@
 | boundary-contracts | E2E의 검증기로만(`boundary_contracts.validator`, v1.1.0 태그 wheel). 이미지 안의 버전은 영역이 정한다 |
 | 문진 스키마 | E2E의 QuestionBank 검증(`openit-survey-schema` wheel, 정수 버전 1) |
 
-## 3. 서비스 4개: 환경 변수, 포트, 볼륨, 헬스체크
+## 3. 서비스 5개: 환경 변수, 포트, 볼륨, 헬스체크
 
-출처는 각 영역 문서와 Dockerfile이고 "확인"은 실제로 띄워 본 것이다. 모두 컨테이너 포트 8080, 사용자 uid 10001, `/healthz`(살아 있음)·`/readyz`(의존 준비됨).
+출처는 각 영역 런북·Dockerfile이고 확인은 Compose에서 실제로 띄운 것이다. 모두 컨테이너 포트 8080, uid 10001, `/healthz`·`/readyz`, 라벨 `io.openit.*` 6개.
 
-| | survey-service | question-authoring | ops-feedback (ingest-api) | release-gate (gate-service) |
-| --- | --- | --- | --- | --- |
-| 이미지 digest 변수 | `SURVEY_SERVICE_DIGEST` | `QUESTION_AUTHORING_DIGEST` | `OPS_FEEDBACK_DIGEST` | `RELEASE_GATE_DIGEST` |
-| 포트 변수 | `SURVEY_PORT`(8080) | `QA_PORT`(8080), `QA_HOST` | `OPS_PORT`(8080) | `PORT`(8080) |
-| 필수 환경 변수 | `SURVEY_RELEASE_READER`, `SURVEY_TRACE_INGEST` (둘 다 I4/I6 구현의 `모듈:함수` 팩토리), `SURVEY_MODEL_BACKEND`(지금 `fake`만) | `QA_AUTHOR_TOKENS`(비밀; 없으면 모든 요청 403) | `OPS_INGEST_TOKEN`(비밀) | `GATE_READ_TOKEN`, `GATE_WRITE_TOKENS`(비밀, `역할=토큰,...`) |
-| 선택·설정 | `SURVEY_STAFF_CONSOLE`, `SURVEY_RESULT_DISPATCHER`, `SURVEY_SESSION_DB`, `SURVEY_OUTBOX_DB`, `SURVEY_WORK_DIR`, `SURVEY_RELEASE_POLL_SECONDS`(5), `SURVEY_KEEP_RELEASES`(2), `SURVEY_EXPORT_*`, `SURVEY_OUTBOX_KEEP_SENT_HOURS`, `SURVEY_LOG_LEVEL` | `QA_DB_PATH`(/data/questions.sqlite3), `QA_SURVEY_SCHEMA`(이미지 안 /opt/survey-schema) | `OPS_LOG_DB`(/data/log.db) | `GATE_DATA_DIR`(/data), `GATE_SURVEY_SCHEMA_DIR`, `GATE_SUPPORTED_RUNTIME_CONTRACT_VERSION`(이미지 고정), `GATE_TURN_ENGINE_VERSION`, `GATE_MODEL_RUNTIME_VERSION`, `GATE_POLICY_FILE`, `GATE_I1_FACTORY`, `GATE_I3_FACTORY`, `GATE_WATCH_*`, `GATE_POLL_SECONDS`(60) |
-| 볼륨 | `/data`: `sessions.db`, `outbox.db`, `releases/`(작업 폴더) | `/data`: `questions.sqlite3` | `/data`: `log.db` | `/data`: `registry.sqlite3` + `releases/` (쌍) |
-| Compose 볼륨 | `survey-data` | `qa-data` | `ops-data` | `gate-data` |
-| 이미지 HEALTHCHECK | 있음(/healthz) | **없음**(Compose가 지정) | 있음 | 있음 |
-| 네트워크 | edge, serving | authoring, release | serving, logs | serving, release |
-| 쓰기 토큰 소유 | — | 저자 토큰 | 수집 토큰(survey가 쓴다) | 역할별 5개 |
-| 이미지 라벨 키 | `io.openit.*` | `openit.contract.*`, `openit.lib.*` | `io.openit.*` | `org.openit.*` |
-| 경계 계약 태그 | v1.1.0 | v1.0.0 | v1.1.0 | v1.0.0 |
-| 확인(Compose에서 이미지로 기동) | healthy, `/readyz` 200 (시험 대역 I4/I6로) | healthy, 등록→확인 흐름 | healthy, ACCEPTED/DUPLICATE | healthy, `can_pass:false`(정책 비어 있음) |
+| | survey-service | question-authoring | ops-feedback (ingest-api) | release-gate (gate-service) | model-registry (model-lab 소스) |
+| --- | --- | --- | --- | --- | --- |
+| digest 변수 | `SURVEY_SERVICE_DIGEST` | `QUESTION_AUTHORING_DIGEST` | `OPS_FEEDBACK_DIGEST` | `RELEASE_GATE_DIGEST` | `MODEL_REGISTRY_DIGEST` |
+| 필수 환경 | `SURVEY_RELEASE_READER=http`, `SURVEY_TRACE_INGEST=http`, `SURVEY_MODEL_BACKEND=fake`; URL `*_URL`, 토큰 변수 이름 `*_TOKEN_ENV` | `QA_AUTHOR_TOKENS`, `QA_READ_TOKENS` | `OPS_INGEST_TOKEN`; I7 읽기: `OPS_FAILURE_DB`+`OPS_READ_TOKENS` | `GATE_READ_TOKENS`, `GATE_WRITE_TOKENS`; 판정: `GATE_I1_FACTORY`/`GATE_I3_FACTORY`+`GATE_I1_URL/TOKEN`, `GATE_I3_URL/TOKEN`; 정책 `GATE_POLICY_FILE`(운영 없음) | `MODEL_REGISTRY_READ_TOKENS`, `MODEL_REGISTRY_WRITE_TOKENS`(역할 model-lab만) |
+| 볼륨(`/data`) | `survey-data`: sessions.db, outbox.db, releases/ | `qa-data`: questions.sqlite3 | `ops-data`: log.db, failures.db (잡과 공유) | `gate-data`: registry.sqlite3 + releases/ (수집 잡·워커와 공유) | `models-data`: 파일 레지스트리 |
+| 네트워크 | edge, serving | authoring, release | serving, logs | serving, release | release |
+| 이미지 HEALTHCHECK | 있음 | 있음 | 있음 | 있음(서비스용; 워커는 끈다) | 있음 |
+| 쓰기 토큰 소유 | — | 저자 | 수집(survey) | 역할 5개 | model-lab |
+| 확인 | healthy, 활성 릴리스 전 `/readyz` 503 `no_active_release`, 적재 후 200 | healthy, I1 읽기 면 | healthy, 수집·I7 읽기 | healthy, `can_pass:false`(운영), 시험용 정책으로 true | healthy, 게시·조회 |
 
-주기 잡·보조 프로세스: `ops-feedback`의 `python -m ops_feedback.job --config <파일>`(환경 `OPS_DEID_SALT`), release-gate의 `gate-worker`(환경 `GATE_RUNNER_FACTORY`, `GATE_WORKER_ID`, `GATE_POLL_SECONDS`; GPU 서버 몫이라 Compose에 없음).
+주기 잡: `job-ops-feedback`(`python -m ops_feedback.job --config`, `OPS_DEID_SALT`), `job-release-gate-collect`(`python -m release_gate collect`). GPU 서버 몫(Compose에 없음): model-lab `run-once`, release-gate `gate-worker`(승인 평가), synthetic-data의 LLM 생성. synthetic-data의 규칙 기반 run-once는 CPU만 쓰므로 어디서든 돌 수 있다(E2E는 호스트).
 
-### 어긋나는 곳 (모두 `docs/change-requests/`에 있다)
+### 어긋나는 곳
 
-| 어긋남 | CR |
-| --- | --- |
-| survey-service의 필수 팩토리(I4, I6)와 gate의 `GATE_I1_FACTORY`·`I3_FACTORY`를 담은 패키지가 소비 이미지에 없다. 실제 서비스끼리 연결할 수 없다 | CR-D01 |
-| 게이트 읽기 토큰이 하나뿐(영역마다 다른 읽기 토큰을 줄 수 없다), 수집기 run-once 부재, 게이트 버전 변수 | CR-D02 |
-| question-authoring: 이미지 HEALTHCHECK 없음, `build/survey-schema`를 만드는 스크립트 없음, I1 원격(HTTP) 읽기 면 없음 | CR-D03 |
-| synthetic-data, model-lab의 주기 잡 정보를 deploy가 모른다 | CR-D04 |
-| ops-feedback 잡 설정 형식, 잡이 쓰는 볼륨·토큰 | CR-D05 |
-| 이미지 라벨 키 이름 불일치, boundary-contracts 태그 불일치(v1.0.0 vs v1.1.0) | CR-D06 |
-| 저장소가 모두 SQLite라 DB 계정 분리가 불가능, WAL과 읽기 전용 마운트 | CR-D07 |
-| 모델 추론 서비스(GPU)의 위치와 survey의 실제 백엔드 | CR-D08 |
+첫 구간의 CR-D01..D08은 `docs/change-requests/CR-D14-status-of-previous.md`에 현재 상태를 정리했다. 이번 구간의 새 어긋남: CR-D10(승인 평가 실행기 구현 없음, 정책·실행기 형식 문서 없음), CR-D11(검토 게시 HTTP 면 없음), CR-D12(model-lab 파일 저장소 팩토리·GPU 접근 경로), CR-D13(수집기가 패키지 role을 구분하는지).
 
 ## 4. 이 영역이 이웃에게 지키는 것
 

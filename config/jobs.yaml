@@ -10,8 +10,9 @@ jobs:
     where: serving
     command: ["scripts/backup.sh"]
     interval_seconds: null
-  - name: release-gate-collector      # 후보 수집기는 gate-service 안에서 GATE_POLL_SECONDS 주기로 돈다(별도 잡 없음, CR-D01)
-    where: in-service
+  - name: release-gate-collector      # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다(멱등)
+    where: serving
+    command: ["scripts/run-job.sh", "job-release-gate-collect"]
     interval_seconds: null
   - name: release-gate-worker         # 승인 평가 워커(GPU 필요)
     where: gpu-external

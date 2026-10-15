@@ -5,24 +5,39 @@
 ## 1. 구성 한눈에
 
 ```
- (외부)                      edge                 serving                   release (internal)        logs (internal)
- 클라이언트 ──▶ gateway ─────────────┐
- (공개 API는 O06 대기)               └▶ survey-service ──────▶ ops-feedback-ingest ◀───────────────────────┐
-                                        │  (edge, serving)   (serving, logs)  ▲                            │
-                                        └──────────────────▶ release-gate ───┼──▶ question-authoring     job-ops-feedback
-                                                              (serving, release)   (authoring, release)   (logs, release)
- authoring: question-authoring 의 저작 API 면 (관리자 콘솔은 gateway 뒤에 둘 자리, 미정)
+ (외부)                    edge                  serving                          release (internal)                  logs (internal)
+ 클라이언트 ──▶ gateway ──┐
+ (공개 API는 O06 대기)    └▶ survey-service ──I4──▶ release-gate ──I1──▶ question-authoring
+                              │  (edge, serving)      │ (serving, release)        (authoring, release)
+                              └─────────I6──▶ ops-feedback-ingest            ──I3──▶ model-registry (release)
+                                              (serving, logs)  ▲ job-ops-feedback (logs, release): I4 읽기
+ 서빙 서버 밖(GPU, D40): model-lab 파이프라인(I3 게시), 승인 평가 워커, synthetic-data의 LLM 생성. 호스트/GPU 서버의 run-once 잡은 I1·I7을 HTTP로 읽는다
 ```
 
 | 네트워크 | 성격 | 붙는 서비스 | 용도 |
 | --- | --- | --- | --- |
 | edge | 일반(호스트 포트 가능) | gateway, survey-service | 외부 입구. 호스트 포트를 여는 것은 gateway뿐이다(D11) |
-| serving | internal | survey-service, ops-feedback-ingest, release-gate | 서비스 런타임 경로: I4 읽기, I6 수집 |
-| authoring | internal | question-authoring | 저작 |
-| release | internal | release-gate, question-authoring, job-ops-feedback | 게이트 입력(I1)·요청(I5 롤백) |
-| logs | internal | ops-feedback-ingest, job-ops-feedback | 원본 Trace 저장소 접근 |
+| serving | internal | survey-service, release-gate, ops-feedback-ingest | I4 읽기(survey→gate), I6 수집(survey→ops) |
+| authoring | internal | question-authoring | 저작 면(관리자 콘솔 자리) |
+| release | internal | release-gate, question-authoring, model-registry, job-ops-feedback, job-release-gate-collect | 게이트가 I1(qa)·I3(model-registry)를 읽는 길, ops 잡이 I4를 읽는 길 |
+| logs | internal | ops-feedback-ingest, job-ops-feedback | 원본 Trace 저장소(`ops-data`)를 만지는 프로세스끼리 |
 
-확인: E2E가 매번 도달 가능(survey→ops, survey→gate, gate→qa)과 차단(survey→qa, qa→ops, ops→qa, release-gate→인터넷)을 검사한다. internal 네트워크의 서비스는 바깥 인터넷으로 나가지 못한다. 한계: 같은 네트워크에 있는 서비스끼리는 서로 닿는다(예: gate→ops-ingest). 인증(토큰)이 막는다.
+**서비스 사이 연결(D49, 모두 HTTP, base URL의 호스트는 Compose 서비스 이름이다)**
+
+| 호출자 -> 서버 | 인터페이스 | 네트워크 | 토큰(호출자의 환경 변수 이름 <- 서버가 묶은 역할) |
+| --- | --- | --- | --- |
+| survey-service -> release-gate | I4 `/v1/active-pointer`, 릴리스, 번들 | serving | `SURVEY_RELEASE_READER_TOKEN` <- `GATE_READ_TOKENS` 역할 survey-service |
+| survey-service -> ops-feedback-ingest | I6 `/v1/traces` | serving | `SURVEY_TRACE_INGEST_TOKEN` <- `OPS_INGEST_TOKEN` |
+| release-gate -> question-authoring | I1 읽기 | release | `GATE_I1_TOKEN` <- `QA_READ_TOKENS` 역할 release-gate |
+| release-gate -> model-registry | I3 읽기 | release | `GATE_I3_TOKEN` <- `MODEL_REGISTRY_READ_TOKENS` 역할 release-gate |
+| job-ops-feedback -> release-gate | I4 읽기(사례의 문항 세트 채움) | release | `OPS_GATE_READ_TOKEN` <- `GATE_READ_TOKENS` 역할 ops-feedback (롤백 자동 요청을 켜면 `OPS_GATE_WRITE_TOKEN`) |
+| (밖) synthetic-data -> question-authoring / ops-feedback | I1 / I7 읽기 | 호스트(시험) 또는 GPU 서버 | 역할 synthetic-data |
+| (밖) model-lab -> model-registry | I3 게시 | GPU 서버에서 접근 경로 미정(CR-D12) | `MODEL_REGISTRY_WRITE_TOKENS` 역할 model-lab |
+
+네트워크 분리와 충돌이 있었던 곳: **없다.** 이 연결은 위 5개 네트워크 배치로 전부 설명된다(survey는 serving으로 gate·ops만 닿고 qa·model-registry에는 닿지 못한다). 근거와 유지 규칙: (1) 서빙 런타임 경로는 survey가 부르는 두 서비스(gate의 읽기 면, ops의 수집)만 `serving`에 둔다. (2) 게이트의 입력(I1, I3)은 `release`에 두어 survey가 문항 저장소·모델 저장소에 직접 닿지 못하게 한다(survey는 게이트가 묶은 사본만 쓴다). (3) 원본 Trace는 `logs`로 한정한다. (4) 이웃의 저장소 볼륨은 공유하지 않는다(D50). 같은 영역이 소유한 프로세스끼리만 볼륨을 공유한다(release-gate와 그 수집 잡의 `gate-data`, ops-feedback ingest와 그 잡의 `ops-data`).
+미정: GPU 서버(밖)에서 model-registry, question-authoring 읽기 면, ops 읽기 면에 닿는 길(공개 포트인지 터널인지). 지금 Compose는 이들을 호스트에 열지 않는다(시험 구성만 `127.0.0.1` 동적 포트).
+
+확인: E2E가 매번 도달 가능(survey→ops, survey→gate, gate→qa, gate→model-registry)과 차단(survey→qa, survey→model-registry, qa→ops, ops→qa, ops→model-registry, release-gate→인터넷)을 검사한다. 한계: 같은 네트워크의 서비스끼리는 서로 닿는다. 인증(토큰, 역할)이 막는다.
 
 ## 2. 두 개의 축 (D07)
 
@@ -64,13 +79,15 @@
   - 이웃은 HTTP+토큰으로 읽는다. 읽기 전용 마운트는 쓰지 않는다: WAL 모드 SQLite는 읽기 전용 마운트에서 `-shm`을 만들지 못해 열리지 않을 수 있음을 시험에서 만났다. 백업 도구만 볼륨을 붙이고 읽기만 한다(만든 `-wal/-shm`은 지운다).
 - 토큰(CONVENTIONS 9절): `scripts/gen-secrets.sh`가 `secrets/`(gitignore)에 서비스·역할마다 다른 토큰을 만든다.
 
-| 토큰 | 소유 서비스 환경 | 클라이언트 |
-| --- | --- | --- |
-| 게이트 쓰기: operator, ops-feedback, release-gate-collector, question-authoring, model-lab | release-gate `GATE_WRITE_TOKENS=역할=토큰,...` | 각 역할의 클라이언트만 자기 토큰을 받는다 |
-| 게이트 읽기 | `GATE_READ_TOKEN` (**하나뿐**) | survey-service가 쓴다. 영역마다 다른 읽기 토큰은 게이트가 지원하지 않는다 → CR-D02 |
-| 수집 토큰 | ops-feedback-ingest `OPS_INGEST_TOKEN` | survey-service만 |
-| 저작 토큰 | question-authoring `QA_AUTHOR_TOKENS` (토큰:actor:역할) | 저자·콘솔 |
-| 비식별 salt | job `OPS_DEID_SALT` | 운영 중 바꾸지 않는다 |
+| 서버 | 환경 변수(서버) | 읽기 역할 | 쓰기 역할 |
+| --- | --- | --- | --- |
+| release-gate | `GATE_READ_TOKENS`, `GATE_WRITE_TOKENS` | survey-service, ops-feedback, question-authoring, model-lab, synthetic-data | operator, ops-feedback, question-authoring, model-lab, release-gate-collector |
+| question-authoring | `QA_READ_TOKENS`, `QA_AUTHOR_TOKENS` | release-gate, synthetic-data, model-lab | 저자(actor:역할) |
+| ops-feedback | `OPS_READ_TOKENS`, `OPS_INGEST_TOKEN` | synthetic-data, model-lab, question-authoring | 수집: survey-service |
+| model-registry | `MODEL_REGISTRY_READ_TOKENS`, `MODEL_REGISTRY_WRITE_TOKENS` | release-gate, model-lab | model-lab |
+| job-ops-feedback | `OPS_DEID_SALT` | | 운영 중 바꾸지 않는다 |
+
+`scripts/gen-secrets.sh`가 `secrets/tokens/<서버>-<read|write>-<역할>`로 역할마다 다른 토큰을 만들고, 서비스는 `secrets/<서비스>.env`에서 **자기 것만** 받는다(서버용 목록과 자기가 호출할 이웃용 토큰). 클라이언트가 이웃 토큰을 받는 환경 변수의 이름은 각 영역 런북이 정한 것을 쓴다(survey: `SURVEY_*_TOKEN_ENV`로 이름 지정, gate: `GATE_I1_TOKEN`·`GATE_I3_TOKEN`, ops 잡: 설정의 `{env: 이름}`).
 
 비밀 값은 이미지·리포지토리에 없다. 서비스는 자기 `env_file`(`secrets/<서비스>.env`)만 받는다. 클라이언트가 어떤 환경 변수 이름으로 토큰을 받는지는 클라이언트 SDK가 아직 없어 정할 수 없다(CR-D01).
 
@@ -85,8 +102,8 @@
 - (a)는 잡이 서로 다른 이미지에서 돌아야 해서 cron 컨테이너가 잡마다 이미지를 갖거나 docker를 불러야 한다. (b)는 컨테이너에 docker 소켓을 줘야 하므로 서버 권한을 넘긴다. 선택은 (c): 잡은 그 영역 이미지·볼륨·네트워크로 `docker compose run --rm`(프로필 `jobs`)에서 한 번 돌고 끝난다. 스케줄러는 소켓을 컨테이너에 주지 않는다.
 - `tick`(한 번 보고 끝)은 cron이나 systemd timer가 부르고, `loop`는 직접 돌릴 때 쓴다. 상태는 `state/scheduler.json`. 같은 잡이 실행 중이면 건너뛰고(flock), 기한 전에는 아무것도 하지 않는다(멱등).
 - 주기는 `config/jobs.yaml`의 `interval_seconds`. **지금은 모두 `null`(미정)이고, null이면 실행하지 않는다.** 이 주기는 사용자 결정이다. 코드에 기본값이 없다.
-- `where: gpu-external`(release-gate 승인 평가 워커, synthetic-data, model-lab 파이프라인)은 서빙 서버 밖 GPU 서버의 일이다(D40). Compose에 넣지 않았고 스케줄러도 실행하지 않는다. 후보 수집기는 gate-service 안에서 `GATE_POLL_SECONDS` 주기로 돈다(별도 잡 아님).
-- 구성된 잡: `job-ops-feedback`(`python -m ops_feedback.job --config /config/job.yaml`; 설정 파일 형식은 ops-feedback이 알려 줘야 한다 → CR-D05), `backup`.
+- `where: gpu-external`(release-gate 승인 평가 워커, synthetic-data, model-lab 파이프라인)은 서빙 서버 밖 GPU 서버의 일이다(D40). Compose에 넣지 않았고 스케줄러도 실행하지 않는다. 승인 평가 워커의 **실행기 구현이 release-gate에 없다**(CR-D10).
+- 구성된 잡: `job-ops-feedback`(`python -m ops_feedback.job --config /config/job.yaml`), `job-release-gate-collect`(`python -m release_gate collect`, 후보 수집기 run-once), `backup`. 둘 다 서비스와 같은 이미지·네트워크로 `docker compose run --rm`. 설정 파일 값(비식별 기준 등)은 사용자 결정이라 운영 설정은 없고, 시험용 설정은 `test/ops-job/`.
 
 ## 8. 백업·복구 (O16 미정)
 
@@ -111,12 +128,13 @@
 | 로그 표준 출력 | 확인(`docker logs`), json-file 회전만 설정 |
 | 비root | 확인(E2E: uid≠0). gateway도 10001 |
 | `/healthz` `/readyz` | 4개 서비스 확인. gateway도 둔다 |
-| 이미지 라벨(커밋, 계약, 라이브러리 버전) | 라벨은 있으나 **키 이름이 영역마다 다르다** → CR-D06 |
+| 이미지 라벨(커밋, 계약, 라이브러리 버전) | 확인: 5개 이미지 모두 `io.openit.*` 6개(E2E가 검사) |
 | 스모크 고정 포트 금지 | 확인. 컨테이너 포트는 Docker 배정을 읽는다. 레지스트리만 사정이 있다(3절) |
 | 이름에 deploy 접두어 | 프로젝트 이름 `deploy`/`deploy-e2e-<pid>`로 컨테이너·네트워크·볼륨에 붙는다 |
-| 이웃 대신 메모리 구현(가짜 SDK)으로 혼자 시험 | survey-service는 영역이 준 시험용 대역(tests/smoke_fakes)으로 대신(E2E 표시). 그 밖의 이웃 가짜 SDK는 이 구성에서 쓸 곳이 없었다 |
+| 이웃 대신 메모리 구현으로 혼자 시험 | 영역 단독 시험은 각 영역 몫. deploy의 E2E는 이제 실제 이웃 서비스와 만난다 |
 
 ## 11. 시험 자료와 운영 설정의 분리
 
-- `compose.test.yaml`, `test/`, `build/`, `state/`만 시험용이다. `compose.yaml`과 `config/`는 시험 대역을 참조하지 않는다(E2E가 `compose.yaml`에 GPU 잡·시험 대역이 없음을 확인).
-- 시험용 어댑터는 `test/fixtures/e2e-test-adapter/`(이름에 test). 시험용 ID에도 `test`를 넣는다(`qs-e2e-test`, `pkg-test-*`, `rel-e2e-test`).
+- `compose.test.yaml`, `test/`, `build/`, `state/`만 시험용이다. `compose.yaml`과 `config/`는 시험 자료를 참조하지 않는다(E2E가 `compose.yaml`·`config/`에 시험용 정책·실행기·시험 워커가 없음을 확인한다).
+- 시험 자료: `test/policy/test-gate-policy.json`(시험용 게이트 정책, 임계치 무의미, `compose.test.yaml`에서만 `GATE_POLICY_FILE`로 연결), `test/gate-runner/test_gate_runner.py`(시험용 승인 평가 실행기, 고정 지표), `test/ops-job/test-ops-job.yaml`(시험용 잡 설정), `test/fixtures/e2e-test-adapter/`(시험용 PEFT 형식 어댑터). 시험용 ID에도 `test`를 넣는다(`qs-e2e-test`, `pkg-e2e-test-*`).
+- 운영 게이트에는 정책이 없다: `can_pass:false`가 정상이다(D38, O11). 시험 구성에서만 `can_pass:true`가 된다.
