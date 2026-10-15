@@ -37,12 +37,9 @@
 - `locks/images.lock`의 digest는 이 환경의 임시 레지스트리에서 게시한 값이다. 다른 서버에서는 `publish-images.sh`로 다시 만든다.
 - 이웃 리포지토리는 수정하지 않았다(빌드는 `git archive`/clone 사본 `build/ctx`).
 
-## 체크포인트 (네트워크 차단 전, 작업 중)
+## 마무리 (체크포인트 이후)
 
-- 마지막으로 성공한 전체 실행: `bash scripts/e2e.sh --reuse-build --keep` -> 73 PASS / 0 FAIL (1~8단계 REAL/TEST-SUB 표는 위). 그 뒤 `e2e.sh`에 `images.env` 복원(-test2 빌드가 남지 않게)을 넣었고, 이 수정으로 한 번 더 돌리던 실행은 헤드 지시로 중단했다(중단된 상태를 내렸다). `locks/images.lock`은 첫 구간 값 그대로(둘째 구간 digest로 갱신하지 못함: 위 마지막 실행의 잠금을 복사하려던 참이었다). 이 수정은 아직 전체 실행으로 검증하지 못했다.
-- 이어서 할 일(네트워크 복구 뒤, 순서대로):
-  1. `bash scripts/e2e.sh --reuse-build --keep` (로컬 이미지가 남아 있어 빌드 생략. 통과하면)
-  2. `cp state/e2e-<pid>/images.lock locks/images.lock; cp state/e2e-<pid>/history/*.lock locks/history/` 후 아래 정리 명령으로 내리기, 커밋
-  3. E2E 합격 보고(표는 위), E2E_GPU 경로는 별도 신호가 있을 때.
-- 남아 있는 Docker 자원(deploy 접두어): 컨테이너·네트워크·볼륨·임시 레지스트리 없음(내렸다). 로컬 이미지만 남음: `deploy-build/{survey-service:6719307, survey-service:6719307-test2, question-authoring:2d4238a, ops-feedback:548f429, release-gate:9a10552, model-registry:84c05b3}`, 이름 없는 `127.0.0.1:25859/openit/survey-service`. `state/`에는 남은 것이 없다.
-- 정리 명령: `for i in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^deploy-build/'); do docker rmi -f $i; done`. 중단된 E2E가 남기면 `scripts/e2e.sh --keep`의 안내대로 `dc deploy-e2e-<pid> --profile jobs down -v`와 `REGISTRY_PROJECT=deploy-e2e-reg-<pid> scripts/registry.sh down -v` 후 `rm -rf state/e2e-<pid>`.
+- images.env 복원 수정 후 `bash scripts/e2e.sh --reuse-build --keep` -> 73 PASS / 0 FAIL. `locks/images.lock`을 이 실행의 값(5개 서비스 digest, survey 롤백 복귀 상태)으로 갱신하고 `locks/history/`를 보관했다. 시험 자원은 모두 내렸다.
+- 7단계: synthetic-data가 I7(HTTP)로 읽는 것은 REAL, 검토 확인만 TEST-SUB(CR-D11). 8단계: REAL(요청 주체는 e2e의 ops-feedback 역할 토큰; ops 잡의 자동 롤백 평가는 설정하지 않았다). 남은 막힘은 위 표와 CR-D10..D12.
+- E2E_GPU=1 경로는 신호 전이라 돌리지 않았다.
+- 정리 명령: 시험이 끝나면 e2e.sh가 자동 정리한다(`--keep`일 때만 수동). 로컬 이미지 정리: `for i in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^deploy-build/'); do docker rmi -f $i; done`.
