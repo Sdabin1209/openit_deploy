@@ -114,3 +114,5 @@
 ## 열째 구간: 게이트웨이 사람 계정 역할(D71), 실패 사례 검토 화면
 
 admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-approver / reviewer) 매핑, 승인 경로와 검토 경로를 역할로 분리(다른 역할은 403, 인증 없음은 401), 검토 경로는 ops-feedback 읽기/reviewer 쓰기 토큰. E2E 7g 추가. `--fast` 59 PASS / 0 FAIL, 전체 모드 87 PASS / 0 FAIL. 미확인: 응답 reviewed_by(ops-feedback 작업 대기), 화면 렌더링. CR-D20.
+
+열째 구간 보충: ops-feedback bf210fe 재빌드·잠금 갱신, E2E 7h를 REAL로(검토 응답·I7 조회의 reviewed_by가 인증 계정, 위조 X-Openit-User 무시; 승인 쪽 approver_id도 4g에서 REAL). `--fast` 59 PASS / 0 FAIL, 전체 모드 87 PASS / 0 FAIL.

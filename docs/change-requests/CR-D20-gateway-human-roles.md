@@ -9,5 +9,6 @@
 - E2E 7g가 위 동작을 확인한다(인증 없음 401, 승인자 계정의 검토 경로 403, 검토자 계정의 승인 경로 403, 검토자 계정으로 PENDING 목록 -> 사례 -> 비식별 trace -> reviewed_input 포함 CONFIRMED 201·재전송 200).
 
 ## 남은 것 (BLOCKED)
-- 응답 FailureCase의 `ext` reviewed_by가 인증 계정으로 찍히는지(ops-feedback이 `X-Openit-User`를 처리하는 작업이 끝나야 확인 가능). 검토 화면 렌더링은 E2E에서 볼 수 없다.
+- (해소) 응답 FailureCase와 I7 조회의 `ext["ops-feedback"].reviewed_by`가 인증 계정(reviewer-e2e)으로 찍히고 위조 `X-Openit-User`는 기록되지 않음을 ops-feedback bf210fe로 확인했다(E2E 7h REAL). 승인 쪽 approver_id도 같다(4g).
+- 검토 화면 렌더링은 E2E에서 볼 수 없다(BLOCKED).
 - 한 사람이 두 역할을 겸하는 계정 정책은 정하지 않았다(지금은 계정당 역할 하나).

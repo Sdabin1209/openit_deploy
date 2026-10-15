@@ -563,7 +563,11 @@ def step7():
     c, r1, _ = gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=REVIEWER(), headers={"X-Openit-User": "spoofed-user"}); assert c == 201, (c, r1); validate("FailureCase", r1)
     c, r2, _ = gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=REVIEWER(), headers={"X-Openit-User": "spoofed-user"}); assert c == 200 and r2 == r1, (c, "같은 검토 재전송이 같은 결과가 아니다")
     rec("7g", "REAL", "검토 화면 경로를 게이트웨이 경유로 한 번: 인증 없이 401, 승인자 계정으로 검토 경로 403·검토자 계정으로 승인 경로 403, POST /v1/traces 404, 검토자 계정으로 PENDING 목록 -> 사례 조회(FailureCase 스키마) -> 비식별 trace 조회(no-store 유지, 원문 없음) -> reviewed_input 포함 CONFIRMED 201(재전송 200, 위조 X-Openit-User 무시 요청)")
-    rec("7h", "BLOCKED", "응답 FailureCase의 ext reviewed_by 가 인증 계정(reviewer-e2e)으로 찍히는지는 ops-feedback의 X-Openit-User 처리 작업이 끝나야 확인할 수 있다(병렬 진행 중). 화면 렌더링도 BLOCKED")
+    rb = (r1.get("ext") or {}).get("ops-feedback", {}).get("reviewed_by")
+    assert rb == REVIEWER()[0], f"검토 응답의 reviewed_by 가 인증 계정이 아니다(위조 X-Openit-User={'spoofed-user'}): {rb!r}"
+    via_i7 = fs.get_case(cid)   # I7 HTTP 읽기(다른 경로)에서도 같은 기록이어야 한다
+    assert (via_i7.get("ext") or {}).get("ops-feedback", {}).get("reviewed_by") == REVIEWER()[0], dict(via_i7).get("ext")
+    rec("7h", "REAL", f"검토자 기록: 게이트웨이 경유 검토 응답과 I7 조회 결과의 ext[ops-feedback].reviewed_by 가 인증 계정 {REVIEWER()[0]}이고, 요청에 실은 위조 X-Openit-User(spoofed-user)는 기록되지 않았다(게이트웨이가 덮어씀). 승인 쪽도 같은 위조 시험이 REAL이다(4g: approver_id가 인증 계정 {ADMIN()[0]}). 화면 렌더링은 BLOCKED")
 
     confirmed = [x for x in fs.list_cases(review_status="CONFIRMED")[0] if x["case_id"] in mine]; assert confirmed
     assert confirmed[0].get("reviewed_input") == pi, "reviewed_input이 I7 읽기에 그대로 보이지 않는다"
