@@ -2,16 +2,13 @@
 	admin off
 	auto_https off
 }
+# 직원 콘솔 인증 조각. 비밀 파일(secrets/gateway-staff-auth.caddy)에 있다: 기본 인증(개발/E2E용). 운영 인증 방식(SSO, 사내망 제한 등)은 미정이다.
+import /etc/caddy/staff-auth.caddy
 :8080 {
-	# 공개 API(I10, PUBLIC_API.md): 세션 시작·발화·종료만 survey-service로 넘긴다. 직원 개입(/intervention)은 외부 입구로 열지 않는다.
-	# 인증(Bearer 토큰)은 survey-service가 한다. TLS·도메인은 미정이라 지금은 HTTP.
-	@intervention path /v1/sessions/*/intervention
-	handle @intervention {
-		respond "not found" 404
-	}
-	@kiosk path /v1/sessions /v1/sessions/*
-	handle @kiosk {
-		reverse_proxy survey-service:8080
+	# 접근 로그: 요청 본문은 남기지 않는다(Caddy는 본문을 기록하지 않는다). Authorization 헤더는 Caddy가 REDACTED로 바꾼다.
+	log {
+		output stdout
+		format json
 	}
 	handle /healthz {
 		respond "ok" 200
@@ -19,7 +16,34 @@
 	handle /readyz {
 		respond "ok" 200
 	}
-	handle {
+	# 직원 API와 개입: 사람 인증 뒤에만 staff 역할 토큰을 붙인다. SSE는 버퍼링을 끄고 읽기 제한 시간을 길게, Last-Event-ID와 id는 그대로 전달한다.
+	@staffapi path /v1/staff/* /v1/sessions/*/intervention
+	handle @staffapi {
+		import staff_auth
+		reverse_proxy survey-service:8080 {
+			header_up Authorization "Bearer {$SURVEY_STAFF_TOKEN}"
+			flush_interval -1
+			transport http {
+				read_timeout 1h
+			}
+		}
+	}
+	# 키오스크 공개 API(PUBLIC_API.md): 같은 출처의 /v1/sessions…에 kiosk 역할 토큰을 붙인다. /v1/staff 는 위에서만 staff 토큰을 받는다.
+	@kioskapi path /v1/sessions /v1/sessions/*
+	handle @kioskapi {
+		reverse_proxy survey-service:8080 {
+			header_up Authorization "Bearer {$SURVEY_KIOSK_TOKEN}"
+		}
+	}
+	handle /v1/* {
 		respond "not found" 404
+	}
+	# 직원 콘솔 정적 화면: 사람 인증 뒤에만. HTTPS 종단은 운영 도메인이 정해지면 여기에 더한다(STT·웹 푸시는 보안 출처 필요, 미정).
+	handle /staff/* {
+		import staff_auth
+		reverse_proxy kiosk-frontend:8080
+	}
+	handle {
+		reverse_proxy kiosk-frontend:8080
 	}
 }

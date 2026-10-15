@@ -31,4 +31,13 @@ put ops-feedback-job.env "OPS_DEID_SALT=$(tok deid-salt)" "OPS_GATE_READ_TOKEN=$
 put question-authoring.env "QA_AUTHOR_TOKENS=$QA_AUTHOR:author-e2e:question-author" "QA_READ_TOKENS=$QA_R" "QA_FAILURES_TOKEN=$(tok ops-read-question-authoring)"
 put model-serving.env "MODEL_RUNTIME_TOKENS=survey-service=$(tok inference-survey-service)" "MODEL_RUNTIME_RELEASE_TOKEN=$(tok gate-read-model-serving)"
 put model-registry.env "MODEL_REGISTRY_READ_TOKENS=$MR_R" "MODEL_REGISTRY_WRITE_TOKENS=$MR_W"
+
+# 게이트웨이: 브라우저 대신 survey-service 토큰을 붙인다(토큰은 게이트웨이의 비밀). 직원 콘솔은 기본 인증(개발/E2E용, 운영 방식은 미정)
+put gateway.env "SURVEY_KIOSK_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_TOKEN=$(tok survey-api-staff)"
+if [ ! -s "$D/gateway-staff-auth.caddy" ]; then
+  GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
+  HASH=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok staff-console-password)" | tr -d '\r')
+  [ -n "$HASH" ] || die "caddy hash-password 실패"
+  printf '(staff_auth) {\n\tbasic_auth {\n\t\tstaff %s\n\t}\n}\n' "$HASH" > "$D/gateway-staff-auth.caddy"; chmod 644 "$D/gateway-staff-auth.caddy"   # 게이트웨이(uid 10001)가 읽는다. bcrypt 해시만 있다
+fi
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

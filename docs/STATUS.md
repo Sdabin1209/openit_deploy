@@ -65,3 +65,25 @@
 ## 여섯째 구간: model-runtime v0.5.1
 
 - `model-serving`을 v0.5.1 태그로 다시 빌드(라벨 0.5.1), chown 초기화 컨테이너 제거(번들 캐시는 `serving-data:/var/lib/model-runtime`), serving_config를 `/v1/info`의 기대값으로 생성, 위험 문구 스위치는 `compose.test.yaml`에만. 5단계에 위험 정지 -> 직원 RESUME/END를 REAL로 추가. `bash scripts/e2e.sh --reuse-build --keep`: 80 PASS / 0 FAIL. CR-D18.
+
+## 일곱째 구간: kiosk-frontend, 게이트웨이 인증 프록시, 직원 알림 (진행 중, E2E 미통과) -- 오프라인 체크포인트
+
+### 한 일 (커밋됨)
+- `kiosk-frontend`(키오스크+직원 콘솔 정적 이미지)를 빌드·compose에 추가(`build-images.sh`가 `../kiosk-frontend` main을 `git archive`, 잠금 변수 `KIOSK_FRONTEND_DIGEST`). 계약 기본 태그를 v1.3.2로 올렸다(`BOUNDARY_TAG_ALL`).
+- survey 이미지의 `io.openit.langgraph` 라벨: 빌드 때 `requirements.lock`의 `langgraph==` 값을 `LANGGRAPH_VERSION`으로 넘긴다. E2E가 unknown이 아닌지 검사한다(통과).
+- 게이트웨이(`config/Caddyfile`): `/v1/sessions…`에 kiosk 토큰, `/v1/staff/*`와 `/v1/sessions/*/intervention`에는 **기본 인증 뒤에만** staff 토큰을 붙인다. SSE는 `flush_interval -1`·읽기 제한 1시간, `/staff/*`도 기본 인증, 나머지는 kiosk-frontend 정적. 접근 로그는 본문을 남기지 않는다. 비밀: `secrets/gateway.env`(두 토큰), `secrets/gateway-staff-auth.caddy`(기본 인증 해시, 0644), `tokens/staff-console-password`. 운영 인증 방식(SSO 등)·HTTPS 종단은 미정이다(STT·웹 푸시는 보안 출처가 필요).
+- 인증 없는 `/v1/staff` 호출은 게이트웨이가 **401**(브라우저 인증 창용)로 답한다. 요청서의 403은 survey-service가 키오스크 토큰을 받았을 때의 응답이며 E2E가 survey 직접 호출로 확인한다.
+- E2E 5f 추가: (a) `/`·`/staff/`(401/200)·`/staff/sw.js`·CSP, (b) 토큰 없이 같은 출처로 세션 시작·발화 2턴·state·종료, (c) 권한 분리, (d) 위험 정지(DELIVERY_FAILED이지만 알림은 OPEN) -> SSE alert/resolved -> 직원 RESUME(기본 인증) -> state ACTIVE+resume_text -> 알림 RESOLVED -> END 경로.
+
+### E2E 상태
+- 마지막 전체 실행: 83 PASS / 1 FAIL. 실패는 5f에서 `GET /v1/sessions/{id}/state`가 0.5초 간격 제한(429 UNAVAILABLE)에 걸린 것. `state_of()`(0.7초 간격 재시도)로 고쳤으나 **고친 뒤 다시 돌리지 못했다** (5f의 (c),(d)와 6~8단계, 9단계 검증이 그 뒤 실행에서 확인되지 않음).
+- 위험 정지 관찰: SSE 구독자가 있으면 `staff_alert=DELIVERED`이고 응답의 `turn_failure_signal`이 null이다(전달 성공은 실패 신호가 아니다). 구독자가 없으면 `DELIVERY_FAILED` 신호이고 알림은 저장되어 OPEN으로 조회된다.
+
+### 이어서 할 일
+네트워크가 필요 없는 것(로컬 이미지가 남아 있다: deploy-build/{survey-service:f52a8e0, question-authoring:f631b7d, ops-feedback:3ed586a, release-gate:135fbf7, model-registry:e93e6b6, model-serving:0a87bb1, kiosk-frontend:13ee06b}):
+1. `bash scripts/e2e.sh --reuse-build --keep` (빌드 생략, pip는 이미 설치된 것만 쓰면 오프라인 가능). 5f의 (c),(d)를 확인하고 실패하면 고친다.
+2. 통과하면 `cp state/e2e-<pid>/images.lock locks/images.lock; cp state/e2e-<pid>/history/*.lock locks/history/`, 정리(`dc deploy-e2e-<pid> --profile jobs down -v`, `REGISTRY_PROJECT=deploy-e2e-reg-<pid> scripts/registry.sh down -v`, `rm -rf state/e2e-<pid>`), 문서(design/boundary/runbook/CHANGELOG)에 kiosk-frontend·게이트웨이 인증·CR 반영, 커밋.
+네트워크가 필요한 것: 이미지 재빌드(다른 영역 HEAD가 바뀌었을 때), `npm ci`(kiosk-frontend 재빌드), pip 신규 설치, 베이스 이미지 pull.
+
+### Docker 자원
+컨테이너·네트워크·볼륨·임시 레지스트리는 모두 내렸다. 로컬 이미지(`deploy-build/*`, 오래된 태그 포함)만 남아 있다: 정리는 `for i in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^deploy-build/'); do docker rmi -f $i; done`.

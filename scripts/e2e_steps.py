@@ -43,10 +43,11 @@ def validate_survey(name, obj):
     schema = survey_schema.load_schema(name)
     errs = list(jsonschema.validators.validator_for(schema)(schema, registry=reg).iter_errors(obj))
     assert not errs, f"문진 스키마 {name} 위반: {errs[0].message}"
-def http(method, k, path, token=None, body=None, raw=None, ctype="application/json"):
+def http(method, k, path, token=None, body=None, raw=None, ctype="application/json", basic=None):
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
     req = urllib.request.Request(URL(k) + path, data=data, method=method)
     if token: req.add_header("Authorization", f"Bearer {token}")
+    if basic: req.add_header("Authorization", "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode())
     if data is not None: req.add_header("Content-Type", ctype)
     try:
         with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
@@ -289,9 +290,28 @@ def step4():
 def survey_ready():
     c, r = http("GET", "survey", "/readyz"); return c, r
 
-def kiosk(path, body, token="kiosk"):
-    t = TOK("survey-api-kiosk") if token == "kiosk" else token
-    return http("POST", "gw", path, t, body)
+def kiosk(path, body):
+    # 브라우저처럼 토큰 없이 같은 출처로 부른다: 게이트웨이가 kiosk 역할 토큰을 붙인다
+    return http("POST", "gw", path, None, body)
+
+STAFF = lambda: ("staff", TOK("staff-console-password"))   # 직원 콘솔 기본 인증(개발/E2E용)
+def state_of(sid):
+    """GET /v1/sessions/{id}/state. 서버가 0.5초보다 잦은 조회를 429(UNAVAILABLE)로 막으므로 간격을 두고 재시도한다(키오스크는 2초 간격 폴링)."""
+    for _ in range(8):
+        time.sleep(0.7)
+        c, r = http("GET", "gw", f"/v1/sessions/{sid}/state")
+        if c != 429: return c, r
+    return c, r
+
+def gws(method, path, body=None):
+    return http(method, "gw", path, None, body, basic=STAFF())
+
+def gw_text(path, basic=None):
+    req = urllib.request.Request(URL("gw") + path)
+    if basic: req.add_header("Authorization", "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode())
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r: return r.status, r.read().decode(errors="replace"), dict(r.headers)
+    except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="replace"), dict(e.headers)
 
 def public_turn(sid, tid, text):
     c, r = kiosk(f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": text, "turn_id": tid}); return c, r
@@ -303,7 +323,7 @@ def step5():
     r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == new else None)(survey_ready()), 60, f"survey가 릴리스 {new} 적재")
     assert r["ready"] and not r["release_loader"]["rejections"], r
     sid = f"sess-{RID}-a"
-    assert http("POST", "gw", "/v1/sessions", None, {"session_id": sid, "kind": "SESSION_START"})[0] == 401, "토큰 없는 요청이 거부되지 않음"
+    assert http("POST", "survey", "/v1/sessions", None, {"session_id": sid, "kind": "SESSION_START"})[0] == 401, "survey-service가 토큰 없는 요청을 받아들임"
     c, st = kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, (c, st)
     validate_survey("FrontendInput", st); assert st["response_text"], st
     c, t1 = public_turn(sid, "turn-1", "체온은 삼십육점오 도예요"); assert c == 200, (c, t1); validate_survey("FrontendInput", t1)
@@ -333,26 +353,7 @@ def step5():
     cu, ru = public_turn(sidc, "turn-up", "체온은 삼십육점오 도예요")
     assert cu == 200 and not (isinstance(ru, dict) and ru.get("turn_failure_signal")) and "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
     kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
-    assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 404, "직원 개입 경로가 외부 입구로 열려 있다"
-    # 위험 정지 -> 직원 개입: 추론 서버의 fake 파서가 시험 문구(TEST-RISK)로 위험 신호를 낸다(MODEL_RUNTIME_FAKE_RISK_PHRASE, 시험 구성 전용)
-    c, info2 = http("GET", "ms", "/v1/info", ms_tok); assert info2.get("test_hooks", {}).get("fake_risk_phrase"), "시험용 위험 문구 스위치가 켜져 있지 않다"
-    def staff(sid_, decision, tid):
-        return http("POST", "survey", f"/v1/sessions/{sid_}/intervention", TOK("survey-api-staff"), {"session_id": sid_, "decision": decision, "turn_id": tid})
-    sr = f"sess-{RID}-risk"; assert kiosk("/v1/sessions", {"session_id": sr, "kind": "SESSION_START"})[0] == 200
-    c, rr = public_turn(sr, "r1", "TEST-RISK 가슴이 아파요"); assert c == 200 and rr["turn_failure_signal"], (c, rr)
-    validate_survey("FrontendInput", rr); alert = rr["turn_failure_signal"]["staff_alert"]
-    assert alert in ("DELIVERED", "DELIVERY_FAILED"), rr
-    c, paused = public_turn(sr, "r2", "체온은 삼십육 도예요"); assert c == 200 and paused["response_text"] is None, ("정지된 세션이 말을 이어 감", paused)
-    assert http("POST", "gw", f"/v1/sessions/{sr}/intervention", TOK("survey-api-staff"), {"session_id": sr, "decision": "RESUME", "turn_id": "i1"})[0] == 404, "직원 개입이 외부 입구로 열려 있다"
-    c, rs = staff(sr, "RESUME", "i1"); assert c == 200 and rs["response_text"], (c, rs); validate_survey("FrontendInput", rs)
-    c, rs2 = staff(sr, "RESUME", "i1"); assert c == 200 and rs2 == rs, "같은 turn_id 재전송이 같은 응답이 아니다"
-    c, after = public_turn(sr, "r3", "체온은 삼십육 도예요"); assert c == 200 and after["response_text"] and not after["turn_failure_signal"], (c, after)
-    se = f"sess-{RID}-risk-end"; assert kiosk("/v1/sessions", {"session_id": se, "kind": "SESSION_START"})[0] == 200
-    c, re_ = public_turn(se, "r1", "TEST-RISK"); assert c == 200 and re_["turn_failure_signal"], (c, re_)
-    c, en2 = staff(se, "END", "i1"); assert c == 200, (c, en2)
-    c, ce = public_turn(se, "r2", "체온"); assert c == 409, ("끝난 세션에 턴이 받아들여짐", c, ce)
-    STATE["risk_alert"] = alert; save()
-    rec("5r", "REAL", f"위험 정지 -> 직원 개입(내부 경로, staff 토큰): TEST-RISK 발화로 세션 정지(응답 turn_failure_signal staff_alert={alert}), 정지 중 발화는 response_text null, RESUME 200(같은 turn_id 재전송은 같은 응답) 뒤 발화가 이어지고, END 뒤 턴은 409. 게이트웨이의 intervention은 404. 위험 문구는 시험 구성의 model-serving에만 설정(운영 compose.yaml에 없음)")
+    assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
     # 직원 개입은 서비스에 직접(내부 경로)만: 키오스크 토큰은 403, 직원 토큰은 멈추지 않은 세션에 409(PUBLIC_API.md)
     ib = {"session_id": sid, "decision": "RESUME", "turn_id": "i1"}
     assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", TOK("survey-api-kiosk"), ib)[0] == 403, "키오스크 토큰으로 직원 개입이 열림"
@@ -362,7 +363,78 @@ def step5():
     # 서비스가 턴마다 Trace를 I6로 보냈는지(outbox 전송 수)
     sent = wait(lambda: (lambda cr: cr[1]["trace_outbox"]["sent"] if cr[1]["trace_outbox"]["sent"] >= 2 else None)(survey_ready()), 30, "Trace 전송")
     STATE["sess_a"] = sid; save()
-    rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 직원 개입 경로는 외부에 닫히고 내부에서 키오스크 토큰 403, 직원 토큰은 멈추지 않은 세션에 409(위험 신호로 멈춘 세션의 RESUME/END는 가짜 백엔드로 유도하지 못해 시험하지 않음). 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9: 서비스 -> PUT 적재 -> parse -> generate)를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
+    rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9: 서비스 -> PUT 적재 -> parse -> generate)를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
+
+def step5f():
+    title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 위험 정지 알림 (kiosk-frontend)")
+    if "pointers" not in STATE: rec("5f", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    # (a) 정적 화면
+    c, html, _ = gw_text("/"); assert c == 200 and "문진" in html, (c, html[:100])
+    assert gw_text("/staff/")[0] == 401, "직원 콘솔이 인증 없이 열려 있다"
+    assert gw_text("/staff/", ("staff", "wrong"))[0] == 401
+    c, stf, _ = gw_text("/staff/", STAFF()); assert c == 200 and "직원 콘솔" in stf, (c, stf[:100])
+    c, sw, h = gw_text("/staff/sw.js", STAFF()); assert c == 200, c
+    assert gw_text("/healthz")[0] == 200
+    c, _t, hd = gw_text("/"); assert "default-src 'self'" in " ".join(f"{v}" for k, v in hd.items() if k.lower() == "content-security-policy"), "CSP 헤더가 없다"
+    assert gw_text("/v1/turns")[0] == 404
+    rec("5a", "REAL", "게이트웨이 경유 kiosk-frontend: /(키오스크 화면) 200, /staff/ 는 인증 없이·틀린 암호로 401, 기본 인증으로 200, /staff/sw.js 200, CSP 헤더, /v1 기타 경로 404")
+    # (b) 브라우저가 부르는 순서를 HTTP로(토큰 없이 같은 출처): 세션 시작, 발화 2턴, state 조회, 종료
+    sf = f"sess-{RID}-fe"
+    c, st = kiosk("/v1/sessions", {"session_id": sf, "kind": "SESSION_START"}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
+    for i, text in enumerate(("체온은 삼십육점오 도예요", "기침은 없어요"), 1):
+        c, tr = public_turn(sf, f"fe-{i}", text); assert c == 200, (c, tr); validate_survey("FrontendInput", tr)
+    c, state = state_of(sf); assert c == 200, (c, state); validate("SessionState", state)
+    assert state["state"] == "ACTIVE", state
+    c, en = kiosk(f"/v1/sessions/{sf}/end", {"session_id": sf, "kind": "SESSION_END"}); assert c == 200, (c, en)
+    rec("5b", "REAL", "프론트의 공개 API 호출 순서가 게이트웨이(같은 출처, 토큰 없이)를 거쳐 실제 survey-service에 통과: 세션 시작 -> 발화 2턴 -> state(SessionState 스키마, ACTIVE) -> 종료")
+    # (c) 직원 경로 권한 분리
+    c1 = http("GET", "gw", "/v1/staff/alerts", None)[0]; assert c1 in (401, 403), c1
+    c2 = http("GET", "survey", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
+    c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 in (401, 403), c3   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
+    c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
+    rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
+    # (d) 위험 정지 -> 알림(OPEN) + SSE -> 직원 RESUME -> state ACTIVE+resume_text -> 알림 RESOLVED. 추론 서버의 fake 파서가 시험 문구(TEST-RISK)로 위험 신호를 낸다
+    c, info2 = http("GET", "ms", "/v1/info", TOK("inference-survey-service")); assert info2.get("test_hooks", {}).get("fake_risk_phrase"), "시험용 위험 문구 스위치가 꺼져 있다"
+    # 구독자가 없을 때의 위험 정지: 전달 경로가 없어 DELIVERY_FAILED 신호가 나오지만 알림은 저장되어 목록에 OPEN으로 보인다
+    s0 = f"sess-{RID}-risk0"; assert kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
+    c, r0 = public_turn(s0, "r1", "TEST-RISK 가슴이 아파요"); assert c == 200 and r0["turn_failure_signal"] and r0["turn_failure_signal"]["staff_alert"] == "DELIVERY_FAILED", (c, r0)
+    c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); assert any(x["session_id"] == s0 and x["status"] == "OPEN" for x in pg0["items"]), "DELIVERY_FAILED여도 저장된 알림이 목록에 있어야 한다"
+    c, e0 = gws("POST", f"/v1/sessions/{s0}/intervention", {"session_id": s0, "decision": "END", "turn_id": "i0"}); assert c == 200, (c, e0)
+    sse_out = WORK / "sse.txt"; fh = open(sse_out, "wb")
+    sse = subprocess.Popen(["curl", "-sN", "--max-time", "60", "-u", f"staff:{STAFF()[1]}", URL("gw") + "/v1/staff/alerts/stream"], stdout=fh, stderr=subprocess.DEVNULL)
+    time.sleep(2)
+    try:
+        sr = f"sess-{RID}-risk"; assert kiosk("/v1/sessions", {"session_id": sr, "kind": "SESSION_START"})[0] == 200
+        c, rr = public_turn(sr, "r1", "TEST-RISK 가슴이 아파요"); assert c == 200, (c, rr)
+        validate_survey("FrontendInput", rr)
+        assert rr["turn_failure_signal"] is None, f"SSE 구독자가 있는데 전달 실패 신호가 났다: {rr}"; alert = "DELIVERED(신호 없음)"
+        c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); mine = [x for x in pg["items"] if x["session_id"] == sr]; validate("StaffAlertPage", pg)
+        assert c == 200 and len(mine) == 1 and mine[0]["status"] == "OPEN", pg
+        c, paused = public_turn(sr, "r2", "체온은 삼십육 도예요"); assert c == 200 and paused["response_text"] is None, ("정지된 세션이 말을 이어 감", paused)
+        c, stp = state_of(sr); validate("SessionState", stp); assert stp["state"] != "ACTIVE", stp
+        c, rs = gws("POST", f"/v1/sessions/{sr}/intervention", {"session_id": sr, "decision": "RESUME", "turn_id": "i1"}); assert c == 200 and rs["response_text"], (c, rs)
+        validate_survey("FrontendInput", rs)
+        c, rs2 = gws("POST", f"/v1/sessions/{sr}/intervention", {"session_id": sr, "decision": "RESUME", "turn_id": "i1"}); assert c == 200 and rs2 == rs, "같은 turn_id 재전송이 같은 응답이 아니다"
+        c, st2 = state_of(sr); validate("SessionState", st2)
+        assert st2["state"] == "ACTIVE" and st2["resume_text"], st2
+        c, done = gws("GET", "/v1/staff/alerts?status=RESOLVED"); r_ = [x for x in done["items"] if x["session_id"] == sr]
+        assert r_ and r_[0]["status"] == "RESOLVED" and r_[0]["resolved_by_decision"] == "RESUME", done
+        c, after = public_turn(sr, "r3", "체온은 삼십육 도예요"); assert c == 200 and after["response_text"] and not after["turn_failure_signal"], (c, after)
+        # END 경로
+        se = f"sess-{RID}-risk-end"; assert kiosk("/v1/sessions", {"session_id": se, "kind": "SESSION_START"})[0] == 200
+        assert public_turn(se, "r1", "TEST-RISK")[0] == 200
+        c, en2 = gws("POST", f"/v1/sessions/{se}/intervention", {"session_id": se, "decision": "END", "turn_id": "i1"}); assert c == 200, (c, en2)
+        assert public_turn(se, "r2", "체온")[0] == 409, "끝난 세션에 턴이 받아들여짐"
+        time.sleep(2)
+    finally:
+        sse.terminate(); fh.close()
+    txt = sse_out.read_text(errors="replace")
+    assert "event: alert" in txt and sr in txt, f"SSE에 alert 이벤트가 없다: {txt[:300]}"
+    assert "event: resolved" in txt, f"SSE에 resolved 이벤트가 없다: {txt[:300]}"
+    assert "id:" in txt, "SSE id 줄이 전달되지 않았다"
+    STATE["risk_alert"] = alert; save()
+    rec("5d", "REAL", f"위험 정지(model-serving fake의 시험 문구 TEST-RISK, 시험 구성 전용): 구독자가 없을 때는 DELIVERY_FAILED 신호이지만 알림은 저장되어 OPEN으로 보이고, SSE 구독자가 있으면 {alert}로 전달 실패 신호 없이 /v1/staff/alerts OPEN에 알림, 게이트웨이 경유 SSE(/v1/staff/alerts/stream)로 alert·resolved 이벤트와 id 수신, 정지 중 발화는 무응답, 직원 RESUME(기본 인증, 같은 turn_id 멱등) -> state ACTIVE + resume_text, 알림 RESOLVED(RESUME), 이후 발화 재개, END 경로(이후 턴 409)")
+    rec("5x", "BLOCKED", "실제 브라우저에서의 화면 동작, STT(Web Speech API), 웹 푸시 수신은 E2E에서 볼 수 없다(보안 출처 HTTPS·VAPID 키 필요, 푸시는 VAPID 없이 비활성: SSE만 확인). 운영 TLS·직원 콘솔 인증 방식은 미정")
 
 def trace_env(release_id, n):
     keys = list(survey_schema.load_schema("TurnTrace")["$defs"]["TurnTrace"].get("required") or [])
@@ -475,7 +547,7 @@ def step8():
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
     rec(8, "REAL", f"ops-feedback 토큰의 RollbackRequest -> RollbackReceipt APPLIED(멱등), 활성 포인터 {new}->{old}, 실제 survey-service가 /readyz에서 이전 릴리스로 복귀, 롤백 권한 없는 역할은 PERMISSION_DENIED, 롤백 뒤 공개 API로 새 세션 한 턴 처리(이전 릴리스). 롤백을 요청한 주체는 e2e(ops-feedback 역할 토큰)이고 ops-feedback 잡의 자동 롤백 평가는 아님")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("6", step6), ("7", step7), ("8", step8)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8)]
 only = set(filter(None, a.only.split(",")))
 for n, fn in STEPS:
     if only and n not in only: continue

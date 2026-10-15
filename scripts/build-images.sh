@@ -17,11 +17,11 @@ if [ "$ONLY" = "  " ]; then rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"; fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
 # 경계 계약 태그(D53 이후 v1.3.1). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
-export BC="${BOUNDARY_TAG_ALL:-v1.3.1}" MR="${MODEL_RUNTIME_TAG_ALL:-v0.5.1}"
+export BC="${BOUNDARY_TAG_ALL:-v1.3.2}" MR="${MODEL_RUNTIME_TAG_ALL:-v0.5.1}"
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
-declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [model-serving]=model-runtime )
+declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend )
 # survey-service는 태그(survey-schema-v1.0.0)도 읽혀야 하므로 작업 트리가 있는 사본(clone, HEAD)으로 둔다
 rm -rf "$CTX/survey-service"; git clone -q --no-hardlinks "$WORKSPACE/survey-service" "$CTX/survey-service"; rm -rf "$CTX/survey-service/.git/hooks"
 for n in "${!SRC[@]}"; do
@@ -37,10 +37,12 @@ commit_of() { echo "$(git -C "$WORKSPACE/$1" rev-parse --short HEAD)$SUFFIX"; }
 if want survey-service; then
   ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   set -a; source "$CTX/survey-service/build/wheels/VERSIONS.env"; set +a
+  # io.openit.langgraph 라벨: 이미지에 설치되는 잠금 파일(requirements.lock)의 langgraph 버전
+  LG=$(sed -n 's/^langgraph==\(.*\)$/\1/p' "$CTX/survey-service/requirements.lock" | head -1); [ -n "$LG" ] || { echo "requirements.lock 에서 langgraph 버전을 못 읽었다" >&2; exit 1; }
   c=$(commit_of survey-service); img="deploy-build/survey-service:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$BOUNDARY_TAG" \
     --build-arg SCHEMA_CONTRACT_VERSION="$SCHEMA_CONTRACT_VERSION" --build-arg TURN_ENGINE_TAG="$TURN_ENGINE_TAG" \
-    --build-arg MODEL_RUNTIME_TAG="$MODEL_RUNTIME_TAG" "$(hostpath "$CTX/survey-service")" >/dev/null
+    --build-arg MODEL_RUNTIME_TAG="$MODEL_RUNTIME_TAG" --build-arg LANGGRAPH_VERSION="$LG" "$(hostpath "$CTX/survey-service")" >/dev/null
   record survey-service "$img" "$c"
 fi
 if want question-authoring; then
@@ -97,3 +99,11 @@ fi
 # 추론 서버가 읽는 문진 스키마(이미지에 없다): survey-service 사본의 schema/ 를 읽기 전용으로 마운트한다
 rm -rf "$DEPLOY_ROOT/build/survey-schema"; mkdir -p "$DEPLOY_ROOT/build/survey-schema"
 cp -r "$CTX/survey-service/schema/CONTRACT_VERSION" "$CTX/survey-service/schema/schemas" "$DEPLOY_ROOT/build/survey-schema/"
+
+if want kiosk-frontend; then
+  # 키오스크 앱+직원 콘솔 정적 이미지(태그 없음 = main). 빌드 컨텍스트는 git archive 사본
+  KF="$CTX/kiosk-frontend"; AV=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$KF/package.json" | head -1)
+  c=$(commit_of kiosk-frontend); img="deploy-build/kiosk-frontend:$c"
+  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA=1 --build-arg APP_VERSION="${AV:-unknown}" "$(hostpath "$KF")" >/dev/null
+  record kiosk-frontend "$img" "$c"
+fi

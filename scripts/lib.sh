@@ -12,7 +12,7 @@ fi
 hostpath() { if [ "$DOCKER" = docker.exe ] && command -v wslpath >/dev/null 2>&1; then wslpath -w "$1"; else echo "$1"; fi; }
 die() { echo "오류: $*" >&2; exit 1; }
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름
-SERVICES="survey-service question-authoring ops-feedback release-gate model-registry model-serving"
+SERVICES="survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend"
 # 이미지 이름은 영역 이름과 같다. 로컬 레지스트리 안의 저장소 이름은 openit/<영역>.
 # docker.exe(윈도 프로그램)는 WSL의 환경 변수를 받지 못한다. 그래서 compose가 읽는 변수는 --env-file 로 넘긴다.
 PASS_VARS="REGISTRY_PROJECT REGISTRY_HOST_BIND REGISTRY_HOST_PORT SECRETS_DIR CONFIG_DIR TEST_SURVEY_TESTS_DIR GATEWAY_BIND GATEWAY_PORT OPS_JOB_CONFIG SURVEY_SCHEMA_DIR"

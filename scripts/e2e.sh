@@ -35,11 +35,12 @@ trap cleanup EXIT
 
 cat <<BANNER
 =============================================================================
- E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v1.3.1 (출고는 사람 승인, D53)
+ E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v1.3.2 (출고는 사람 승인, D53)
  !! 시험 대역 사용 표시 !!
    - 승인자: 사람 대신 이 스크립트가 시험용 승인자 토큰(release-approver)으로 POST /v1/approvals 를 호출한다. 시험용 정책·실행기는 없다(게이트에서 삭제됨)
    - 단계 3 모델: GPU 없이 시험용 어댑터(test/fixtures/e2e-test-adapter)와 시험용 EvaluationReport(고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시한다(E2E_GPU=1이면 gpu-dev 경로, 기본 끔)
    - 단계 5 모델: model-serving 컨테이너(CPU)의 가짜 백엔드(출력 고정: 파서 {"items": []}, 생성기 "(가짜 응답)"). 시험용 번들의 serving_config.constraint도 fake에 맞춘다(TEST-SUB)
+   - 직원 콘솔 접근: 개발/E2E용 기본 인증(운영 방식은 미정). 실제 브라우저·STT·웹 푸시 수신은 E2E에서 볼 수 없다(BLOCKED, VAPID 키 없이 SSE만)
    - 단계 6 TraceEnvelope와 단계 7 reviewed_input·검토 확인은 이 스크립트가 만든 시험 자료/행위다
    - 시험 자료는 운영 설정(compose.yaml, config/)에 들어가지 않는다
 =============================================================================
@@ -48,12 +49,12 @@ BANNER
 echo "== 준비: 이미지 빌드, 임시 레지스트리, digest 잠금"
 [ -d "$DEPLOY_ROOT/.venv" ] || python3 -m venv "$DEPLOY_ROOT/.venv"
 "$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt" setuptools wheel 2>&1 | tail -1
-have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 6 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
+have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 7 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
 if [ $REUSE = 0 ] || ! have_images; then chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
 # 호스트에서 쓰는 검증기·클라이언트: 영역 빌드가 만든 태그 wheel(boundary-contracts, 문진 스키마)
-"$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/v1.3.1/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
+"$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/v1.3.2/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
 # synthetic-data run-once용 가상환경(호스트): 그 영역 런북대로 requirements.lock 의 서드파티 + 태그 wheel
 if [ ! -x "$DEPLOY_ROOT/build/venv-sd/bin/python" ]; then python3 -m venv "$DEPLOY_ROOT/build/venv-sd"; "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q attrs==26.1.0 jsonschema==4.10.3 packaging==26.3 pyrsistent==0.20.0 PyYAML==6.0.3 2>&1 | tail -1; fi
 "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/v1.2.0/boundary_contracts-*.whl 2>&1 | tail -1
@@ -84,7 +85,7 @@ chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" s
 chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
 no_auto_pass() { getj "$PGATE" /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
-chk "gateway: 공개 API는 /v1/sessions 만 survey-service로 넘기고(토큰 없으면 401), 그 밖의 경로와 직원 개입 경로는 404" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/sessions/x/intervention)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' http://127.0.0.1:$PGW/v1/sessions)\" = 401 ]"
+chk "gateway: /v1/turns -> 404, /staff/ 와 직원 API 는 인증 없이 401, 키오스크 경로는 토큰 없이도 통과(게이트웨이가 kiosk 토큰을 붙임)" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PGW/staff/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PGW/v1/staff/alerts)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/sessions/x/intervention)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' http://127.0.0.1:$PGW/v1/sessions)\" = 400 ]"
 reach() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import urllib.request;urllib.request.urlopen('http://$2:8080/healthz',timeout=3)" >/dev/null 2>&1; }
 blocked() { ! reach "$@"; }
 chk "도달: survey-service -> ops-feedback-ingest (serving, I6)" reach survey-service ops-feedback-ingest
@@ -103,7 +104,7 @@ chk "내부 네트워크 밖으로 나가지 못함(release-gate -> 외부 인�
 nonroot() { [ "$("$DOCKER" exec "${PROJECT}-$1-1" id -u | tr -d '\r')" != 0 ]; }
 bydigest() { "$DOCKER" inspect "${PROJECT}-$1-1" --format '{{.Config.Image}}' | tr -d '\r' | grep -E '@sha256:[0-9a-f]{64}$'; }
 labels6() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.turn-engine io.openit.model-runtime; do echo "$L" | grep -q "\"$k\"" || { echo "라벨 누락 $k"; return 1; }; done; echo "$L" | cut -c1-230; }
-for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry model-serving; do
+for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry model-serving kiosk-frontend; do
   chk "비root 실행 $s" nonroot "$s"
   chk "컨테이너가 digest로 만들어짐 $s" bydigest "$s"
 done
@@ -111,6 +112,10 @@ for pair in "survey-service:$SURVEY_SERVICE_DIGEST" "question-authoring:$QUESTIO
   chk "이미지 라벨 6개(io.openit.*) ${pair%%:*}" labels6 "$DEPLOY_REGISTRY/openit/${pair%%:*}@${pair#*:}"
 done
 
+labels_kiosk() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.app-version; do echo "$L" | grep -q "\"$k\":\"[^\"]\+\"" || { echo "라벨 누락/빈값 $k"; return 1; }; done; echo "$L" | grep -q '"unknown"' && { echo "unknown 라벨이 있다"; return 1; }; echo "$L" | cut -c1-230; }
+chk "이미지 라벨(io.openit.* + app-version, unknown 없음) kiosk-frontend" labels_kiosk "$DEPLOY_REGISTRY/openit/kiosk-frontend@$KIOSK_FRONTEND_DIGEST"
+langgraph_label() { local v; v=$("$DOCKER" image inspect "$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST" --format '{{index .Config.Labels "io.openit.langgraph"}}' | tr -d '\r'); [ -n "$v" ] && [ "$v" != unknown ] && echo "io.openit.langgraph=$v"; }
+chk "survey-service 이미지의 io.openit.langgraph 라벨이 unknown이 아니다" langgraph_label
 echo; echo "== 단계 1~8 (실제 서비스의 HTTP로 잇는다)"
 IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
 PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGW,\"ms\":$PMS}"
