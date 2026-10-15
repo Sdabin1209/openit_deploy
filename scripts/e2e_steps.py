@@ -222,7 +222,8 @@ def step3():
 def decisions_for(gate_read, subj):
     return gate_read.find_decisions(question_set=subj["question_set"], lora_a=subj["lora_a"], lora_b=subj["lora_b"])[0]
 
-ADMIN = lambda: ("trainer-e2e", TOK("admin-console-password"))   # 승인 화면 기본 인증 시험 계정(운영 인증 방식은 미정)
+ADMIN = lambda: ("trainer-e2e", TOK("admin-console-password"))
+REVIEWER = lambda: ("reviewer-e2e", TOK("reviewer-console-password"))   # 실패 사례 검토 화면 계정(역할 reviewer)   # 승인 화면 기본 인증 시험 계정(운영 인증 방식은 미정)
 
 def gw_raw(method, path, body=None, basic=None, headers=None):
     data = json.dumps(body).encode() if body is not None else None
@@ -545,11 +546,28 @@ def step7():
     badri = {**bad_ok(), "reviewed_input": {"utterance": 1}}
     c, eri = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, badri); assert c == 400, ("잘못된 reviewed_input이 받아들여짐", c, eri)
     good = {"review_status": "CONFIRMED", "expected_kind": "PARSER", "reviewed_input": pi, "expected": {"items": [{"item_no": 0, "target": {"question_id": "Q1", "repeat_key": "", "slot_id": "body_temp"}, "value": "36.5", "source_text": "삼십육점오", "intent": "ANSWERED_INTENT", "progress_op": None, "guide_id": None}]}}
-    c, r1 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, good); assert c == 201, (c, r1); validate("FailureCase", r1)
-    c, r2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, good); assert c == 200 and r2 == r1, (c, "같은 검토 재전송이 같은 결과가 아니다")
+    # ---- 게이트웨이 경유 검토(admin-console 검토 화면의 경로): 사람 계정(reviewer-e2e) 인증 뒤, ops-feedback 읽기/reviewer 쓰기 토큰은 게이트웨이가 붙인다
+    assert gw_raw("GET", "/v1/cases")[0] == 401, "인증 없이 /v1/cases 가 열려 있다"
+    assert gw_raw("POST", f"/v1/cases/{cid}/review", good)[0] == 401
+    assert gw_raw("GET", "/v1/cases", basic=ADMIN())[0] == 403, "승인자 계정이 검토 경로를 부를 수 있다"
+    assert gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=ADMIN())[0] == 403, "승인자 계정이 검토를 게시할 수 있다"
+    assert gw_raw("GET", "/v1/submissions", basic=REVIEWER())[0] == 403, "검토자 계정이 승인 경로를 부를 수 있다"
+    assert gw_raw("POST", "/v1/approvals", {}, basic=REVIEWER())[0] == 403
+    assert gw_raw("POST", "/v1/traces", {}, basic=REVIEWER())[0] == 404, "서비스 내부 면(POST /v1/traces)이 게이트웨이에 열려 있다"
+    c, lst, hd = gw_raw("GET", "/v1/cases?review_status=PENDING", basic=REVIEWER()); assert c == 200, (c, lst)
+    assert "no-store" in {k.lower(): v for k, v in hd.items()}.get("cache-control", ""), "Cache-Control: no-store 가 유지되지 않았다"
+    mine_pending = [x for x in lst["items"] if x["case_id"] == cid]; assert mine_pending and mine_pending[0]["review_status"] == "PENDING", lst
+    c, one, _ = gw_raw("GET", f"/v1/cases/{cid}", basic=REVIEWER()); assert c == 200 and one["case_id"] == cid, (c, one); validate("FailureCase", one)
+    c, trc, _ = gw_raw("GET", "/v1/deidentified-traces/" + one["deidentified_trace_ref"], basic=REVIEWER()); assert c == 200 and trc, (c, trc)
+    assert "삼십육" not in json.dumps(trc, ensure_ascii=False) and f's-{RID}' not in json.dumps(trc), "비식별 trace에 원문이 있다"
+    c, r1, _ = gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=REVIEWER(), headers={"X-Openit-User": "spoofed-user"}); assert c == 201, (c, r1); validate("FailureCase", r1)
+    c, r2, _ = gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=REVIEWER(), headers={"X-Openit-User": "spoofed-user"}); assert c == 200 and r2 == r1, (c, "같은 검토 재전송이 같은 결과가 아니다")
+    rec("7g", "REAL", "검토 화면 경로를 게이트웨이 경유로 한 번: 인증 없이 401, 승인자 계정으로 검토 경로 403·검토자 계정으로 승인 경로 403, POST /v1/traces 404, 검토자 계정으로 PENDING 목록 -> 사례 조회(FailureCase 스키마) -> 비식별 trace 조회(no-store 유지, 원문 없음) -> reviewed_input 포함 CONFIRMED 201(재전송 200, 위조 X-Openit-User 무시 요청)")
+    rec("7h", "BLOCKED", "응답 FailureCase의 ext reviewed_by 가 인증 계정(reviewer-e2e)으로 찍히는지는 ops-feedback의 X-Openit-User 처리 작업이 끝나야 확인할 수 있다(병렬 진행 중). 화면 렌더링도 BLOCKED")
+
     confirmed = [x for x in fs.list_cases(review_status="CONFIRMED")[0] if x["case_id"] in mine]; assert confirmed
     assert confirmed[0].get("reviewed_input") == pi, "reviewed_input이 I7 읽기에 그대로 보이지 않는다"
-    rec("7a", "REAL", f"검토 확인을 HTTP로: POST /v1/cases/{{id}}/review(검토 토큰) 잘못된 expected는 400({e.get('message','')[:80]}), expected_kind 없음 400, 읽기 토큰 403, 없는 사례 404, 올바른 확인(reviewed_input 포함)은 201(새 version, FailureCase 스키마 통과, I7 읽기에서 reviewed_input 그대로), 잘못된 reviewed_input 400, 재전송 200 같은 결과. 검토 UI는 아직 없다")
+    rec("7a", "REAL", f"검토 확인을 HTTP로(직접 호출 검증 + 게이트웨이 경유 확인은 7g): POST /v1/cases/{{id}}/review 잘못된 expected는 400({e.get('message','')[:80]}), expected_kind 없음 400, 읽기 토큰 403, 없는 사례 404, 올바른 확인(reviewed_input 포함)은 201(새 version, FailureCase 스키마 통과, I7 읽기에서 reviewed_input 그대로), 잘못된 reviewed_input 400, 재전송 200 같은 결과. 검토 UI는 아직 없다")
     out = run_sd("2", seeds=True, failure=True); m, _ = read_manifest(out)
     seeded = json.dumps(m.get("ext", {}), ensure_ascii=False) + (WORK / "sd-work-2" / "report.json").read_text()
     for f in (WORK / "datasets" / f"ds-{RID}" / m["version"] / "files").rglob("*.jsonl"):

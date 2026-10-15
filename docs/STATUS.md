@@ -110,3 +110,7 @@
 ## 아홉째 구간: 이미지 게시 인터페이스(D24)
 
 `scripts/publish-image.sh`(서비스 이름 검증, 필수 라벨 검사, push + digest 대조, flock·임시 파일로 잠금 기록, 멱등, 형식 불변), 계약 문서 `docs/ci.md`, GitHub Actions 템플릿 `docs/ci-example/publish-image.yml`, 시험 `scripts/test-publish.sh`(임시 레지스트리, 빈 포트, 전 항목 통과). E2E 전체 모드는 이번에 돌리지 않았다. 미정: CI가 서버 레지스트리에 닿는 방법, 레지스트리 TLS·push 인증·도메인, digest 제출 병합 방식.
+
+## 열째 구간: 게이트웨이 사람 계정 역할(D71), 실패 사례 검토 화면
+
+admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-approver / reviewer) 매핑, 승인 경로와 검토 경로를 역할로 분리(다른 역할은 403, 인증 없음은 401), 검토 경로는 ops-feedback 읽기/reviewer 쓰기 토큰. E2E 7g 추가. `--fast` 59 PASS / 0 FAIL, 전체 모드 87 PASS / 0 FAIL. 미확인: 응답 reviewed_by(ops-feedback 작업 대기), 화면 렌더링. CR-D20.

@@ -39,8 +39,8 @@ configs:
     file: ${CONFIG_DIR:-./config}/Caddyfile
   gateway-staff-auth:
     file: ${SECRETS_DIR:-./secrets}/gateway-staff-auth.caddy   # 직원 콘솔 기본 인증(비밀)
-  gateway-admin-auth:
-    file: ${SECRETS_DIR:-./secrets}/gateway-admin-auth.caddy   # 출고 승인 화면 기본 인증(비밀)
+  gateway-human-auth:
+    file: ${SECRETS_DIR:-./secrets}/gateway-human-auth.caddy   # 사람 계정 기본 인증과 계정 -> 역할(release-approver, reviewer) 매핑(비밀)
 
 services:
   gateway:
@@ -52,13 +52,14 @@ services:
     configs:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
       - {source: gateway-staff-auth, target: /etc/caddy/staff-auth.caddy}
-      - {source: gateway-admin-auth, target: /etc/caddy/admin-auth.caddy}
-    env_file: ${SECRETS_DIR:-./secrets}/gateway.env              # SURVEY_KIOSK_TOKEN, SURVEY_STAFF_TOKEN, GATE_APPROVER_TOKEN, GATE_APPROVER_READ_TOKEN (게이트웨이의 비밀)
+      - {source: gateway-human-auth, target: /etc/caddy/human-auth.caddy}
+    env_file: ${SECRETS_DIR:-./secrets}/gateway.env              # SURVEY_KIOSK_TOKEN, SURVEY_STAFF_TOKEN, GATE_APPROVER_TOKEN, GATE_APPROVER_READ_TOKEN, OPS_REVIEWER_READ_TOKEN, OPS_REVIEWER_WRITE_TOKEN (게이트웨이의 비밀)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
       survey-service: {condition: service_healthy}
       admin-console: {condition: service_healthy}
       release-gate: {condition: service_healthy}
+      ops-feedback-ingest: {condition: service_healthy}
     tmpfs: ["/tmp", "/data:uid=10001,gid=10001", "/config:uid=10001,gid=10001"]
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"

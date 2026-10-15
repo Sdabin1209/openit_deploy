@@ -15,7 +15,7 @@ put() { local f=$1; shift; [ -s "$D/$f" ] && return 0; printf '%s\n' "$@" > "$D/
 GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver)
 GATE_W=$(roles gate write operator ops-feedback question-authoring model-lab release-gate-collector release-approver)
 QA_R=$(roles qa read release-gate synthetic-data model-lab)
-OPS_R=$(roles ops read synthetic-data model-lab question-authoring)
+OPS_R=$(roles ops read synthetic-data model-lab question-authoring reviewer)
 MR_R=$(roles model-registry read release-gate model-lab)
 MR_W="model-lab=$(tok model-registry-write-model-lab)"
 OPS_INGEST=$(tok ops-ingest-survey-service)
@@ -33,18 +33,20 @@ put model-serving.env "MODEL_RUNTIME_TOKENS=survey-service=$(tok inference-surve
 put model-registry.env "MODEL_REGISTRY_READ_TOKENS=$MR_R" "MODEL_REGISTRY_WRITE_TOKENS=$MR_W"
 
 # 게이트웨이: 브라우저 대신 survey-service 토큰을 붙인다(토큰은 게이트웨이의 비밀). 직원 콘솔은 기본 인증(개발/E2E용, 운영 방식은 미정)
-put gateway.env "SURVEY_KIOSK_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_TOKEN=$(tok survey-api-staff)" "GATE_APPROVER_TOKEN=$(tok gate-write-release-approver)" "GATE_APPROVER_READ_TOKEN=$(tok gate-read-release-approver)"
+put gateway.env "SURVEY_KIOSK_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_TOKEN=$(tok survey-api-staff)" "GATE_APPROVER_TOKEN=$(tok gate-write-release-approver)" "GATE_APPROVER_READ_TOKEN=$(tok gate-read-release-approver)" "OPS_REVIEWER_READ_TOKEN=$(tok ops-read-reviewer)" "OPS_REVIEWER_WRITE_TOKEN=$(tok ops-review-reviewer)"
 if [ ! -s "$D/gateway-staff-auth.caddy" ]; then
   GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
   HASH=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok staff-console-password)" | tr -d '\r')
   [ -n "$HASH" ] || die "caddy hash-password 실패"
   printf '(staff_auth) {\n\tbasic_auth {\n\t\tstaff %s\n\t}\n}\n' "$HASH" > "$D/gateway-staff-auth.caddy"; chmod 644 "$D/gateway-staff-auth.caddy"   # 게이트웨이(uid 10001)가 읽는다. bcrypt 해시만 있다
 fi
-# 출고 승인 화면(/admin/) 기본 인증: 계정 trainer-e2e (개발/E2E용, 운영 인증 방식은 미정)
-if [ ! -s "$D/gateway-admin-auth.caddy" ]; then
+# 사람 계정(승인 화면 /admin/): 기본 인증(개발/E2E용 시험 계정 두 개, 운영 방식은 미정). 계정 -> 역할 매핑도 이 파일에 둔다.
+#   trainer-e2e = release-approver (승인 경로 4개), reviewer-e2e = reviewer (실패 사례 검토 경로). 다른 역할의 경로는 403
+if [ ! -s "$D/gateway-human-auth.caddy" ]; then
   GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
-  HASH=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok admin-console-password)" | tr -d '\r')
-  [ -n "$HASH" ] || die "caddy hash-password 실패"
-  printf '(admin_auth) {\n\tbasic_auth {\n\t\ttrainer-e2e %s\n\t}\n}\n' "$HASH" > "$D/gateway-admin-auth.caddy"; chmod 644 "$D/gateway-admin-auth.caddy"
+  H1=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok admin-console-password)" | tr -d '\r')
+  H2=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok reviewer-console-password)" | tr -d '\r')
+  [ -n "$H1" ] && [ -n "$H2" ] || die "caddy hash-password 실패"
+  printf '(human_auth) {\n\tbasic_auth {\n\t\ttrainer-e2e %s\n\t\treviewer-e2e %s\n\t}\n}\n(role_matchers) {\n\t@role_approver expression `{http.auth.user.id} in ["trainer-e2e"]`\n\t@role_reviewer expression `{http.auth.user.id} in ["reviewer-e2e"]`\n}\n' "$H1" "$H2" > "$D/gateway-human-auth.caddy"; chmod 644 "$D/gateway-human-auth.caddy"
 fi
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

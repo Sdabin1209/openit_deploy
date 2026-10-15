@@ -4,8 +4,9 @@
 }
 # 직원 콘솔 인증 조각. 비밀 파일(secrets/gateway-staff-auth.caddy)에 있다: 기본 인증(개발/E2E용). 운영 인증 방식(SSO, 사내망 제한 등)은 미정이다.
 import /etc/caddy/staff-auth.caddy
-# 출고 승인 화면 인증 조각(secrets/gateway-admin-auth.caddy): 기본 인증(개발/E2E용, 운영 방식 미정). 직원 콘솔 계정과 분리한다.
-import /etc/caddy/admin-auth.caddy
+# 사람 계정 인증 조각(secrets/gateway-human-auth.caddy): 기본 인증(개발/E2E용, 운영 방식 미정). 직원 콘솔 계정과 분리한다.
+# 이 파일이 (human_auth)(계정과 암호 해시)와 (role_matchers)(계정 -> 역할 release-approver / reviewer)를 정의한다. 계정·역할 값은 비밀 저장소에 있다(D71).
+import /etc/caddy/human-auth.caddy
 :8080 {
 	# 접근 로그: 요청 본문은 남기지 않는다(Caddy는 본문을 기록하지 않는다). Authorization 헤더는 Caddy가 REDACTED로 바꾼다.
 	log {
@@ -33,6 +34,7 @@ import /etc/caddy/admin-auth.caddy
 	# 출고 승인 화면(admin-console): 사람 인증 뒤에만, release-gate의 승인 경로 네 개만 프록시한다: 읽기(GET) 두 경로는 release-approver **읽기** 토큰, 결정(POST /v1/approvals)은 release-approver **쓰기** 토큰을 붙인다(게이트는 읽기 면에서 쓰기 토큰을 403으로 거부한다).
 	# 열지 않는 것: POST /v1/submissions, /v1/activate, /v1/rollback, /v1/releases*  (아래 handle /v1/* 가 404).
 	# 인증된 사용자 ID를 X-Openit-User 로 붙이고 클라이언트가 보낸 같은 이름 헤더는 덮어쓴다(D69). 응답의 X-Openit-Report-Hash 는 그대로 통과하고 Cache-Control 은 no-store를 유지한다.
+	import role_matchers
 	@adminread {
 		method GET
 		path /v1/submissions /v1/submissions/*
@@ -42,25 +44,71 @@ import /etc/caddy/admin-auth.caddy
 		path /v1/approvals
 	}
 	handle @adminread {
-		import admin_auth
-		reverse_proxy release-gate:8080 {
-			header_up Authorization "Bearer {$GATE_APPROVER_READ_TOKEN}"
-			header_up X-Openit-User "{http.auth.user.id}"
-			header_down Cache-Control "no-store"
+		import human_auth
+		handle @role_approver {
+			reverse_proxy release-gate:8080 {
+				header_up Authorization "Bearer {$GATE_APPROVER_READ_TOKEN}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: release-approver 역할이 아니다" 403
 		}
 	}
 	handle @adminwrite {
-		import admin_auth
-		reverse_proxy release-gate:8080 {
-			header_up Authorization "Bearer {$GATE_APPROVER_TOKEN}"
-			header_up X-Openit-User "{http.auth.user.id}"
-			header_down Cache-Control "no-store"
+		import human_auth
+		handle @role_approver {
+			reverse_proxy release-gate:8080 {
+				header_up Authorization "Bearer {$GATE_APPROVER_TOKEN}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: release-approver 역할이 아니다" 403
+		}
+	}
+	# 실패 사례 검토 화면(admin-console): reviewer 역할 계정만. 읽기 3경로는 ops-feedback 읽기 토큰, 검토 게시는 reviewer 쓰기 토큰.
+	# 비식별 전 원본(POST /v1/traces 등 서비스 내부 면)은 열지 않는다. X-Openit-User 는 인증된 계정으로 덮어쓴다(클라이언트 값 무시).
+	@reviewread {
+		method GET
+		path /v1/cases /v1/cases/* /v1/deidentified-traces/*
+	}
+	@reviewwrite {
+		method POST
+		path /v1/cases/*/review
+	}
+	handle @reviewread {
+		import human_auth
+		handle @role_reviewer {
+			reverse_proxy ops-feedback-ingest:8080 {
+				header_up Authorization "Bearer {$OPS_REVIEWER_READ_TOKEN}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: reviewer 역할이 아니다" 403
+		}
+	}
+	handle @reviewwrite {
+		import human_auth
+		handle @role_reviewer {
+			reverse_proxy ops-feedback-ingest:8080 {
+				header_up Authorization "Bearer {$OPS_REVIEWER_WRITE_TOKEN}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: reviewer 역할이 아니다" 403
 		}
 	}
 	# 승인 화면 정적 파일: /admin/ 접두사를 떼고 전달한다(이미지는 /admin/ 을 모른다. 화면은 상대 경로 app.js·app.css 를 쓴다)
 	redir /admin /admin/ permanent
 	handle_path /admin/* {
-		import admin_auth
+		import human_auth      # 화면은 어느 역할이든 열린다. API는 위에서 역할로 막힌다
 		reverse_proxy admin-console:8080
 	}
 	# 키오스크 공개 API(PUBLIC_API.md): 같은 출처의 /v1/sessions…에 kiosk 역할 토큰을 붙인다. /v1/staff 는 위에서만 staff 토큰을 받는다.

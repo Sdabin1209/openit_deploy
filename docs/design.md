@@ -36,6 +36,7 @@
 | question-authoring -> ops-feedback-ingest | I7 읽기(개선 신호) | authoring | `QA_FAILURES_TOKEN` <- `OPS_READ_TOKENS` 역할 question-authoring |
 | (밖) 승인자 -> release-gate | `GET /v1/submissions/{id}/review-report`, `POST /v1/approvals` | (콘솔 UI 없음) | 읽기 토큰, `GATE_WRITE_TOKENS` 역할 release-approver |
 | (밖) 키오스크 프론트 -> gateway -> survey-service | 공개 API `/v1/sessions…` | edge | `SURVEY_API_TOKEN`(키오스크). 직원 개입은 `SURVEY_STAFF_API_TOKEN`, 내부 경로만 |
+| (밖) 검토 화면 -> gateway -> ops-feedback-ingest | `GET /v1/cases`·`/v1/cases/{id}`·`/v1/deidentified-traces/{ref}`(읽기 토큰), `POST /v1/cases/{id}/review`(reviewer 쓰기 토큰) | edge + serving | 사람 계정 reviewer 역할만(게이트웨이가 토큰을 붙임, D71) |
 | (밖) 검토자 -> ops-feedback-ingest | `POST /v1/cases/{id}/review` | (UI 없음) | `OPS_REVIEW_TOKENS` 역할 reviewer |
 | (밖) synthetic-data -> question-authoring / ops-feedback | I1 / I7 읽기 | 호스트(시험) 또는 GPU 서버 | 역할 synthetic-data |
 | (밖) model-lab -> model-registry | I3 게시 | GPU 서버에서 접근 경로 미정(CR-D12) | `MODEL_REGISTRY_WRITE_TOKENS` 역할 model-lab |
