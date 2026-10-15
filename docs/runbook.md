@@ -66,6 +66,9 @@ bash scripts/up.sh deploy
 
 ## 6. 시험
 
+- **인도 전에는 옵션 없는 전체 모드(`bash scripts/e2e.sh --reuse-build`)가 필수다.** 스케줄러, 백업·복구, 코드 축 롤백까지 돌고 약 4~5분(이미지 빌드 제외)이 걸린다.
+- 개발 중에는 `--fast`(예: `bash scripts/e2e.sh --fast --reuse-build`)를 쓴다. 단계 1~8과 단계 9 앞부분(compose 기동 검사)만 돌고 스케줄러, 백업·복구, 롤백은 생략한다. 요약에 생략한 구간과 "전체 합격 아님"이 표시되고, 종료 코드는 돌린 검사 기준이다.
+
 E2E의 승인자는 시험용 release-approver 토큰을 쓰는 스크립트다(`secrets/tokens/gate-write-release-approver`). 운영에서는 승인자에게만 이 역할의 토큰을 준다. 공개 API 토큰: `secrets/tokens/survey-api-kiosk`(프론트), `survey-api-staff`(직원 콘솔, 내부 경로).
 
 ```

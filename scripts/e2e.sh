@@ -4,11 +4,13 @@
 #  - 영역 사이 호출은 실제 서비스의 HTTP다(D49). 단계 상태: REAL / TEST-SUB(시험 대역으로 대신함) / BLOCKED(지금 구현으로는 이어지지 않음).
 #  - 합격: 하나라도 FAIL이면 종료 코드 1. BLOCKED는 실패가 아니지만 요약에 그대로 보인다.
 #  - E2E_GPU=1 이면 단계 3을 gpu-dev의 model-lab 파이프라인으로 돌리는 경로(scripts/e2e_gpu.sh)를 쓴다. 기본은 끔.
-# 사용: scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
+#  - --fast: 단계 1~8과 단계 9 앞부분(compose 기동 검사)까지만. 스케줄러, 백업·복구, 코드 축 롤백은 생략한다. 개발 중 빠른 확인용이며 **전체 합격이 아니다**.
+#    옵션 없이 돌리는 전체 모드가 인도 전 필수다. 종료 코드는 돌린 검사 기준이다.
+# 사용: scripts/e2e.sh [--fast] [--keep] [--keep-images] [--reuse-build]
 set -o pipefail
 source "$(dirname "$0")/lib.sh"
-KEEP=0; REUSE=0; KEEPIMG=0
-for x in "$@"; do case "$x" in --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;; esac; done
+KEEP=0; REUSE=0; KEEPIMG=0; FAST=0
+for x in "$@"; do case "$x" in --fast) FAST=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;; esac; done
 ID=$$; PROJECT=deploy-e2e-$ID; RPROJ=deploy-e2e-reg-$ID
 W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT=$PROJECT
@@ -36,6 +38,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+[ "$FAST" = 1 ] && echo "!!! --fast 모드: 스케줄러, 백업·복구, 코드 축 롤백 구간을 생략한다. 전체 합격이 아니다(인도 전에는 옵션 없는 전체 모드 필수) !!!"
 cat <<BANNER
 =============================================================================
  E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v1.3.2 (출고는 사람 승인, D53)
@@ -126,6 +129,7 @@ PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PM
 STEPS_RC=${PIPESTATUS[0]}
 [ "$STEPS_RC" = 0 ] && res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고" || res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"
 
+if [ "$FAST" = 0 ]; then   # --fast 에서는 아래 세 구간(스케줄러, 백업·복구, 롤백)을 건너뛴다
 sect "단계 9: 주기 잡 스케줄러 (D39)"
 chk "잡 엔트리포인트가 Compose 안에서 이미지·볼륨·네트워크로 실행된다(ops_feedback.job --help)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-ops-feedback python -m ops_feedback.job --help
 chk "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
@@ -177,9 +181,11 @@ SP=$(port survey-service)
 survey_ready_after() { for i in $(seq 1 40); do o=$(curl -s -m 5 "http://127.0.0.1:$SP/readyz"); echo "$o" | grep -q '"ready": true' && { echo "$o" | cut -c1-120; return 0; }; sleep 2; done; echo "$o"; return 1; }
 chk "롤백 뒤 survey-service /readyz 200 (복구한 포인터의 릴리스를 HTTP로 다시 적재)" survey_ready_after
 
+fi
 sect ""
 echo; echo "============================ 요약 ============================"
 if [ -f "$W/steps.log" ]; then sed -n '/== 요약 (단계 1~8)/,$p' "$W/steps.log"; fi
+[ "$FAST" = 1 ] && echo "-- FAST 모드: 생략한 구간 = 단계 9 스케줄러(D39), 백업·복구, digest 잠금 코드 축 롤백. 전체 합격 아님"
 echo "-- 9단계 및 준비 검사"
 printf '   PASS %s / FAIL %s\n' "$(printf '%s\n' "${RESULT[@]}" | grep -c '|PASS|')" "$FAILS"
 for r in "${RESULT[@]}"; do case "$r" in *"|FAIL|"*) echo "   FAIL: ${r%%|*}";; esac; done
@@ -188,5 +194,7 @@ TOTAL=0; for i in "${!SEC_NAMES[@]}"; do printf '   %5ds  %s\n' "${SEC_SECS[$i]}
 printf '   %5ds  합계 (정리 제외)\n' "$TOTAL"
 echo "대신한 것(TEST-SUB): 단계 3 모델과 EvaluationReport(시험용), 단계 4 승인자(스크립트가 시험용 토큰으로 결정), 단계 5 가짜 백엔드, 단계 6 봉투, 단계 7 reviewed_input"
 echo "막힌 것(BLOCKED): 위 요약의 BLOCKED 행. docs/change-requests/ 참고"
-[ "$FAILS" = 0 ] && echo "E2E 결과: 실행한 검사 전부 통과 (BLOCKED/TEST-SUB 단계가 있어 시나리오 전체 합격은 아니다)" || echo "E2E 결과: 실패 있음"
+if [ "$FAILS" != 0 ]; then echo "E2E 결과: 실패 있음"
+elif [ "$FAST" = 1 ]; then echo "E2E 결과(--fast): 실행한 검사 전부 통과. 생략한 구간이 있어 전체 합격이 아니다 -- 인도 전에는 옵션 없는 전체 모드를 돌릴 것"
+else echo "E2E 결과: 실행한 검사 전부 통과 (BLOCKED/TEST-SUB 단계가 있어 시나리오 전체 합격은 아니다)"; fi
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)
