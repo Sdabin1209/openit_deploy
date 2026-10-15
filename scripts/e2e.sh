@@ -17,6 +17,9 @@ UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" GATEWAY_PORT=
 export SURVEY_SCHEMA_DIR="$DEPLOY_ROOT/build/survey-schema" OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
+# 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
+SEC_NAMES=(); SEC_SECS=(); SEC_CUR=""; SEC_T0=$SECONDS
+sect() { local now=$SECONDS; if [ -n "$SEC_CUR" ]; then SEC_NAMES+=("$SEC_CUR"); SEC_SECS+=($((now-SEC_T0))); printf '  (소요 %ds)\n' $((now-SEC_T0)); fi; SEC_CUR="$1"; SEC_T0=$now; if [ -n "$1" ]; then echo; echo "== $1"; fi; }
 res() { RESULT+=("$1|$2|$3"); [ "$2" = FAIL ] && FAILS=$((FAILS+1)); printf '  [%s] %s: %s\n' "$2" "$1" "$3"; }
 chk() { local name=$1; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }
 cleanup() {
@@ -46,7 +49,7 @@ cat <<BANNER
 =============================================================================
 BANNER
 
-echo "== 준비: 이미지 빌드, 임시 레지스트리, digest 잠금"
+sect "준비: 이미지 빌드, 임시 레지스트리, digest 잠금"
 [ -d "$DEPLOY_ROOT/.venv" ] || python3 -m venv "$DEPLOY_ROOT/.venv"
 "$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt" setuptools wheel 2>&1 | tail -1
 have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 7 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
@@ -67,7 +70,7 @@ abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null
 
-echo; echo "== 단계 9 앞부분: Compose에서 이미지로 서비스가 뜬다"
+sect "단계 9 앞부분: Compose에서 이미지로 서비스가 뜬다"
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 abort_if_failed
 port() { port_of "${PROJECT}-$1-1" 8080; }
@@ -116,14 +119,14 @@ labels_kiosk() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Con
 chk "이미지 라벨(io.openit.* + app-version, unknown 없음) kiosk-frontend" labels_kiosk "$DEPLOY_REGISTRY/openit/kiosk-frontend@$KIOSK_FRONTEND_DIGEST"
 langgraph_label() { local v; v=$("$DOCKER" image inspect "$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST" --format '{{index .Config.Labels "io.openit.langgraph"}}' | tr -d '\r'); [ -n "$v" ] && [ "$v" != unknown ] && echo "io.openit.langgraph=$v"; }
 chk "survey-service 이미지의 io.openit.langgraph 라벨이 unknown이 아니다" langgraph_label
-echo; echo "== 단계 1~8 (실제 서비스의 HTTP로 잇는다)"
+sect "단계 1~8 (실제 서비스의 HTTP로 잇는다)"
 IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
 PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGW,\"ms\":$PMS}"
 "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id e2e-test | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 [ "$STEPS_RC" = 0 ] && res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고" || res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"
 
-echo; echo "== 단계 9: 주기 잡 스케줄러 (D39)"
+sect "단계 9: 주기 잡 스케줄러 (D39)"
 chk "잡 엔트리포인트가 Compose 안에서 이미지·볼륨·네트워크로 실행된다(ops_feedback.job --help)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-ops-feedback python -m ops_feedback.job --help
 chk "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
 chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_JOB_CONFIG=/nonexistent/job.yaml bash $DEPLOY_ROOT/scripts/run-job.sh job-ops-feedback; [ \$? = 2 ]"
@@ -139,7 +142,7 @@ $SCHED tick >/dev/null; $SCHED tick >/dev/null; sleep 3.5; $SCHED tick >/dev/nul
 chk "스케줄러: 기한이 되면 실행하고 기한 전 tick은 아무것도 안 한다(3초 주기, 3번 tick -> 2번 실행), 주기 미정·GPU 밖 잡은 실행 안 함" bash -c "[ \"\$(cat $W/sched/ran.txt)\" = \"\$(printf 'run\nrun')\" ] && echo '실행 2회, SHOULD-NOT-RUN 없음'"
 chk "config/jobs.yaml: GPU 잡 3개는 gpu-external(이 Compose에 없음)" bash -c "[ \$(grep -c 'where: gpu-external' $DEPLOY_ROOT/config/jobs.yaml) = 3 ] && ! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
-echo; echo "== 단계 9: 백업과 복구 (O16 미정: 설정으로만)"
+sect "단계 9: 백업과 복구 (O16 미정: 설정으로만)"
 chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.env"
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
@@ -162,7 +165,7 @@ PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PM
 chk "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
   "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test
 
-echo; echo "== 단계 9: digest 잠금으로 코드 축 롤백"
+sect "단계 9: digest 잠금으로 코드 축 롤백"
 OLD_REF=$("$DOCKER" inspect "${PROJECT}-survey-service-1" --format '{{.Config.Image}}' | tr -d '\r')
 cp "$DEPLOY_ROOT/build/images.env" "$W/images.env.bak"
 chk "새 버전 빌드(시험: COMMIT 라벨에 -test2)" env BUILD_SUFFIX=-test2 bash "$DEPLOY_ROOT/scripts/build-images.sh" survey-service
@@ -174,11 +177,15 @@ SP=$(port survey-service)
 survey_ready_after() { for i in $(seq 1 40); do o=$(curl -s -m 5 "http://127.0.0.1:$SP/readyz"); echo "$o" | grep -q '"ready": true' && { echo "$o" | cut -c1-120; return 0; }; sleep 2; done; echo "$o"; return 1; }
 chk "롤백 뒤 survey-service /readyz 200 (복구한 포인터의 릴리스를 HTTP로 다시 적재)" survey_ready_after
 
+sect ""
 echo; echo "============================ 요약 ============================"
 if [ -f "$W/steps.log" ]; then sed -n '/== 요약 (단계 1~8)/,$p' "$W/steps.log"; fi
 echo "-- 9단계 및 준비 검사"
 printf '   PASS %s / FAIL %s\n' "$(printf '%s\n' "${RESULT[@]}" | grep -c '|PASS|')" "$FAILS"
 for r in "${RESULT[@]}"; do case "$r" in *"|FAIL|"*) echo "   FAIL: ${r%%|*}";; esac; done
+echo "-- 구간별 소요 시간"
+TOTAL=0; for i in "${!SEC_NAMES[@]}"; do printf '   %5ds  %s\n' "${SEC_SECS[$i]}" "${SEC_NAMES[$i]}"; TOTAL=$((TOTAL+SEC_SECS[$i])); done
+printf '   %5ds  합계 (정리 제외)\n' "$TOTAL"
 echo "대신한 것(TEST-SUB): 단계 3 모델과 EvaluationReport(시험용), 단계 4 승인자(스크립트가 시험용 토큰으로 결정), 단계 5 가짜 백엔드, 단계 6 봉투, 단계 7 reviewed_input"
 echo "막힌 것(BLOCKED): 위 요약의 BLOCKED 행. docs/change-requests/ 참고"
 [ "$FAILS" = 0 ] && echo "E2E 결과: 실행한 검사 전부 통과 (BLOCKED/TEST-SUB 단계가 있어 시나리오 전체 합격은 아니다)" || echo "E2E 결과: 실패 있음"

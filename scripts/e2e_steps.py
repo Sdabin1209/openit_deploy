@@ -549,12 +549,18 @@ def step8():
 
 STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8)]
 only = set(filter(None, a.only.split(",")))
+TIMES = []
 for n, fn in STEPS:
     if only and n not in only: continue
+    t0 = time.time()
     try: fn()
     except AssertionError as e: rec(fn.__name__, "FAIL", str(e))
     except Exception as e: rec(fn.__name__, "FAIL", f"{type(e).__name__}: {e}")
+    TIMES.append((n, time.time() - t0)); print(f"  (소요 {TIMES[-1][1]:.1f}s)", flush=True)
 print("\n== 요약 (단계 1~8)")
 for s, st, d in RESULTS: print(f"  {str(s):>4} {st:9} {d[:170]}")
+print("\n== 단계별 소요 시간 (1~8)")
+for n, sec in TIMES: print(f"  {sec:7.1f}s  단계 {n}")
+print(f"  {sum(x for _, x in TIMES):7.1f}s  합계")
 (WORK / "steps.json").write_text(json.dumps([list(r) for r in RESULTS], ensure_ascii=False, indent=1))
 sys.exit(1 if any(r[1] == "FAIL" for r in RESULTS) else 0)
