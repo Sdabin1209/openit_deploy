@@ -106,3 +106,7 @@
 ## 여덟째 구간: admin-console(출고 승인 화면) -- 전체 모드 87 PASS / 0 FAIL, --fast 59 PASS / 0 FAIL
 
 - 이미지 `admin-console`을 로컬 폴더에서 빌드해 compose에 추가, 게이트웨이에 `/admin/`과 승인 경로 네 개(인증 뒤, 읽기/쓰기 토큰 분리, `X-Openit-User`, 보고서 해시 헤더 통과)를 반영. 경계 계약 기본 태그 v1.3.3. E2E 4g(승인 화면 경로를 게이트웨이 경유로 한 번: 목록 -> 보고서 헤더 해시 -> 승인, 승인자 ID가 인증 계정으로 기록, 위조 헤더 무시, 닫은 경로 404, 인증 없이 401). 화면 렌더링은 BLOCKED. 확인된 어긋남은 CR-D19.
+
+## 아홉째 구간: 이미지 게시 인터페이스(D24)
+
+`scripts/publish-image.sh`(서비스 이름 검증, 필수 라벨 검사, push + digest 대조, flock·임시 파일로 잠금 기록, 멱등, 형식 불변), 계약 문서 `docs/ci.md`, GitHub Actions 템플릿 `docs/ci-example/publish-image.yml`, 시험 `scripts/test-publish.sh`(임시 레지스트리, 빈 포트, 전 항목 통과). E2E 전체 모드는 이번에 돌리지 않았다. 미정: CI가 서버 레지스트리에 닿는 방법, 레지스트리 TLS·push 인증·도메인, digest 제출 병합 방식.

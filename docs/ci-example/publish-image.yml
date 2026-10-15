@@ -1,0 +1,49 @@
+# 영역 리포지토리에 복사해 쓰는 템플릿(.github/workflows/publish-image.yml). 값은 넣지 않는다: 비밀은 이름만 쓴다.
+# 고칠 곳: SERVICE_NAME(deploy 목록의 서비스 이름), 빌드 인자, 스모크 스크립트 경로.
+# 전제: self-hosted runner가 서버의 로컬 레지스트리에 닿는다(접근 방식은 deploy/docs/ci.md 3절, 미정).
+name: publish-image
+on:
+  push:
+    branches: [main]
+env:
+  SERVICE_NAME: survey-service            # 예: question-authoring, ops-feedback, release-gate, model-registry, kiosk-frontend ...
+  DEPLOY_REGISTRY: ${{ vars.DEPLOY_REGISTRY }}   # 예: 127.0.0.1:5000 (비밀 아님, 저장소 변수)
+jobs:
+  build-test-publish:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: 빌드 (의존은 Git 태그로 고정, 커밋을 REVISION으로)
+        run: |
+          REV=$(git rev-parse --short HEAD)
+          docker build -t "local/${SERVICE_NAME}:${REV}" --build-arg REVISION="$REV" --build-arg COMMIT="$REV" .
+          echo "REV=$REV" >> "$GITHUB_ENV"
+      - name: 필수 라벨 검사 (io.openit.* 4개 + revision != unknown)
+        run: |
+          for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema; do
+            v=$(docker image inspect "local/${SERVICE_NAME}:${REV}" --format "{{index .Config.Labels \"$k\"}}")
+            [ -n "$v" ] && [ "$v" != unknown ] || { echo "라벨 누락/unknown: $k"; exit 1; }
+          done
+      - name: 스모크 (이미지 빌드, /healthz·/readyz, 비root, 라벨; 고정 포트 금지)
+        run: bash scripts/smoke.sh
+      - name: 레지스트리 로그인 (인증을 켠 경우에만; secrets 는 if 조건에 못 쓰므로 환경 변수로 받아 셸에서 확인한다)
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          if [ -n "$REGISTRY_USER" ]; then echo "$REGISTRY_PASSWORD" | docker login "$DEPLOY_REGISTRY" -u "$REGISTRY_USER" --password-stdin; fi
+      - name: 게시 (push + digest 확인 + deploy 잠금 기록)
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ secrets.DEPLOY_REPO_TOKEN }}@github.com/Sdabin1209/openit_deploy.git" /tmp/deploy
+          cd /tmp/deploy
+          git checkout -b "publish/${SERVICE_NAME}-${REV}"
+          bash scripts/publish-image.sh "$SERVICE_NAME" "local/${SERVICE_NAME}:${REV}" --registry "$DEPLOY_REGISTRY" | tee /tmp/publish.out
+          tail -1 /tmp/publish.out
+      - name: digest 제출 (deploy 리포지토리에 브랜치로 올린다. 병합은 담당자)
+        run: |
+          cd /tmp/deploy
+          git add locks/
+          git diff --cached --quiet && { echo "변경 없음(UNCHANGED)"; exit 0; }
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -m "이미지 게시: ${SERVICE_NAME} ${REV}"
+          git push origin "publish/${SERVICE_NAME}-${REV}"
