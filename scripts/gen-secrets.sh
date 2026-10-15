@@ -12,7 +12,7 @@ roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="$
 put() { local f=$1; shift; [ -s "$D/$f" ] && return 0; printf '%s\n' "$@" > "$D/$f"; chmod 600 "$D/$f"; }
 
 # 서버가 받는 목록
-GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving)
+GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver)
 GATE_W=$(roles gate write operator ops-feedback question-authoring model-lab release-gate-collector release-approver)
 QA_R=$(roles qa read release-gate synthetic-data model-lab)
 OPS_R=$(roles ops read synthetic-data model-lab question-authoring)
@@ -33,11 +33,18 @@ put model-serving.env "MODEL_RUNTIME_TOKENS=survey-service=$(tok inference-surve
 put model-registry.env "MODEL_REGISTRY_READ_TOKENS=$MR_R" "MODEL_REGISTRY_WRITE_TOKENS=$MR_W"
 
 # 게이트웨이: 브라우저 대신 survey-service 토큰을 붙인다(토큰은 게이트웨이의 비밀). 직원 콘솔은 기본 인증(개발/E2E용, 운영 방식은 미정)
-put gateway.env "SURVEY_KIOSK_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_TOKEN=$(tok survey-api-staff)"
+put gateway.env "SURVEY_KIOSK_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_TOKEN=$(tok survey-api-staff)" "GATE_APPROVER_TOKEN=$(tok gate-write-release-approver)" "GATE_APPROVER_READ_TOKEN=$(tok gate-read-release-approver)"
 if [ ! -s "$D/gateway-staff-auth.caddy" ]; then
   GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
   HASH=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok staff-console-password)" | tr -d '\r')
   [ -n "$HASH" ] || die "caddy hash-password 실패"
   printf '(staff_auth) {\n\tbasic_auth {\n\t\tstaff %s\n\t}\n}\n' "$HASH" > "$D/gateway-staff-auth.caddy"; chmod 644 "$D/gateway-staff-auth.caddy"   # 게이트웨이(uid 10001)가 읽는다. bcrypt 해시만 있다
+fi
+# 출고 승인 화면(/admin/) 기본 인증: 계정 trainer-e2e (개발/E2E용, 운영 인증 방식은 미정)
+if [ ! -s "$D/gateway-admin-auth.caddy" ]; then
+  GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
+  HASH=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok admin-console-password)" | tr -d '\r')
+  [ -n "$HASH" ] || die "caddy hash-password 실패"
+  printf '(admin_auth) {\n\tbasic_auth {\n\t\ttrainer-e2e %s\n\t}\n}\n' "$HASH" > "$D/gateway-admin-auth.caddy"; chmod 644 "$D/gateway-admin-auth.caddy"
 fi
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

@@ -35,7 +35,7 @@ model-serving(model-runtime CPU/fake 변형): 포트 8080, uid 10001, `/healthz`
 
 ### 어긋나는 곳
 
-첫 구간의 CR-D01..D08은 `docs/change-requests/CR-D14-status-of-previous.md`에 현재 상태를 정리했다. D53 반영: CR-D16. 셋째 구간 상태: CR-D15. 이전 구간의 새 어긋남: CR-D10(승인 평가 실행기 구현 없음, 정책·실행기 형식 문서 없음), CR-D11(검토 게시 HTTP 면 없음), CR-D12(model-lab 파일 저장소 팩토리·GPU 접근 경로), CR-D13(수집기가 패키지 role을 구분하는지).
+첫 구간의 CR-D01..D08은 `docs/change-requests/CR-D14-status-of-previous.md`에 현재 상태를 정리했다. 출고 승인 화면(admin-console)의 게이트웨이 경로와 토큰 어긋남: CR-D19. D53 반영: CR-D16. 셋째 구간 상태: CR-D15. 이전 구간의 새 어긋남: CR-D10(승인 평가 실행기 구현 없음, 정책·실행기 형식 문서 없음), CR-D11(검토 게시 HTTP 면 없음), CR-D12(model-lab 파일 저장소 팩토리·GPU 접근 경로), CR-D13(수집기가 패키지 role을 구분하는지).
 
 ## 4. 이 영역이 이웃에게 지키는 것
 

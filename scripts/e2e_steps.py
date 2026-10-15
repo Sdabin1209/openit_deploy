@@ -222,6 +222,49 @@ def step3():
 def decisions_for(gate_read, subj):
     return gate_read.find_decisions(question_set=subj["question_set"], lora_a=subj["lora_a"], lora_b=subj["lora_b"])[0]
 
+ADMIN = lambda: ("trainer-e2e", TOK("admin-console-password"))   # 승인 화면 기본 인증 시험 계정(운영 인증 방식은 미정)
+
+def gw_raw(method, path, body=None, basic=None, headers=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(URL("gw") + path, data=data, method=method)
+    if basic: req.add_header("Authorization", "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode())
+    if data is not None: req.add_header("Content-Type", "application/json")
+    for k, v in (headers or {}).items(): req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null"), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        b = e.read()
+        try: return e.code, json.loads(b), dict(e.headers)
+        except Exception: return e.code, b.decode(errors="replace"), dict(e.headers)
+
+def reject_via_gateway(sid):
+    """승인 화면이 하는 경로를 게이트웨이를 거쳐 한 번 탄다: 목록(AWAITING_APPROVAL) -> review-report(헤더 해시) -> POST approvals(그 해시)."""
+    c, _, _ = gw_raw("GET", "/v1/submissions?status=AWAITING_APPROVAL"); assert c == 401, f"인증 없이 /v1/submissions 가 열려 있다 {c}"
+    assert gw_text("/admin/")[0] == 401, "인증 없이 /admin/ 이 열려 있다"
+    c, page, _ = gw_raw("GET", "/v1/submissions?status=AWAITING_APPROVAL", basic=ADMIN()); assert c == 200, (c, page)
+    assert any(x.get("submission_id") == sid for x in page["items"]), "대기 목록에 제출이 없다"
+    c, one, _ = gw_raw("GET", f"/v1/submissions/{sid}", basic=ADMIN()); assert c == 200, (c, one)
+    c, rep, hd = gw_raw("GET", f"/v1/submissions/{sid}/review-report", basic=ADMIN()); assert c == 200, (c, rep)
+    h = {k.lower(): v for k, v in hd.items()}
+    rh = h.get("x-openit-report-hash"); assert rh and rh.startswith("sha256:"), f"X-Openit-Report-Hash 헤더가 게이트웨이를 통과하지 않았다: {hd}"
+    assert "no-store" in h.get("cache-control", ""), f"Cache-Control: no-store 가 유지되지 않았다: {h.get('cache-control')}"
+    # 클라이언트가 보낸 X-Openit-User 와 본문 approver_id 는 무시되고 인증된 계정이 기록된다
+    body = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "submission_id": sid, "decision": "REJECT", "approver_id": "body-claimed-id",
+            "approver_role": "release-approver", "reason": "시험: 게이트웨이 경유 반려", "report_hash": rh}
+    c, ap_, _ = gw_raw("POST", "/v1/approvals", body, basic=ADMIN(), headers={"X-Openit-User": "spoofed-user"})
+    assert c == 201, (c, ap_)
+    ap_ = ap_.get("approval", ap_) if isinstance(ap_, dict) else ap_   # 응답은 {"approval": GateApproval, ...} 로 한 겹 싸여 있을 수 있다
+    assert ap_["approver_id"] == ADMIN()[0], f"승인자 ID가 인증된 계정이 아니다: {ap_['approver_id']}"
+    # 열지 않을 경로
+    for m, pth in (("POST", "/v1/activate"), ("POST", "/v1/rollback"), ("POST", "/v1/submissions"), ("GET", "/v1/releases"), ("GET", "/v1/decisions")):
+        cc = gw_raw(m, pth, {} if m == "POST" else None, basic=ADMIN())[0]; assert cc in (404, 403), f"{m} {pth} 가 게이트웨이에서 열려 있다 {cc}"
+    c2, body2, hd2 = gw_text("/admin/", ADMIN()); assert c2 == 200 and "app.js" in body2, (c2, body2[:100])
+    assert gw_text("/admin/app.js", ADMIN())[0] == 200
+    STATE["admin_gateway"] = {"approver": ap_["approver_id"], "report_hash": rh}; save()
+    rec("4g", "REAL", f"승인 화면 경로를 게이트웨이 경유로 한 번 탔다: 인증 없이 /admin/·/v1/submissions 401, 기본 인증(시험 계정 {ADMIN()[0]}) 뒤 목록(AWAITING_APPROVAL)·제출 조회·review-report(X-Openit-Report-Hash 헤더 통과, Cache-Control no-store 유지)·POST /v1/approvals(헤더 해시 사용) 201, 승인 기록의 approver_id가 인증 계정으로 찍힘(클라이언트가 보낸 X-Openit-User·본문 approver_id는 무시), /v1/activate·rollback·POST submissions·releases 는 게이트웨이에서 404. 화면 렌더링은 BLOCKED")
+    rec("4x", "BLOCKED", "승인 화면(/admin/)의 브라우저 렌더링·조작은 E2E에서 볼 수 없다. /config.json 은 절대 경로라 /admin/ 아래에서는 kiosk-frontend로 가서 404가 된다(화면은 없는 것으로 처리하므로 영향 없음, admin-console CR-003 후보)")
+    return ap_
+
 def step4():
     title(4, "후보 수집기가 새 조합을 찾아 자동 검사하고, 사람 승인으로 릴리스·번들을 만든다 (release-gate, D53)")
     if "lora" not in STATE: rec(4, "BLOCKED", "단계 3의 패키지가 없다"); return
@@ -258,7 +301,7 @@ def step4():
     try: gate_ap.decide(subs["1"]["submission_id"], "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="시험", report_hash="sha256:" + "0" * 64); raise AssertionError("낡은 보고서 해시로 승인됨")
     except bc.BoundaryError as e: assert e.code == "CONFLICT", e.code
     # 반려(REJECT) -> FAIL 판정
-    ru = dict(gate_ap.decide(sub_u["submission_id"], "REJECT", approver_id="trainer-test", approver_role="release-approver", reason="시험: 반려")); validate("GateApproval", ru)
+    ru = reject_via_gateway(sub_u["submission_id"]); validate("GateApproval", ru)
     du = wait(lambda: next(iter(decisions_for(gate_r, subj_u)), None), 30, "반려 판정"); validate("GateDecision", dict(du))
     hu = [c for c in du["checks"] if c["kind"] == "HUMAN_APPROVAL"]
     assert du["result"] == "REJECT" and hu and hu[0]["result"] == "FAIL" and "CHECK_FAILED" in du["reject_codes"], dict(du)

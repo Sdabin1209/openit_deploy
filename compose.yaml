@@ -39,6 +39,8 @@ configs:
     file: ${CONFIG_DIR:-./config}/Caddyfile
   gateway-staff-auth:
     file: ${SECRETS_DIR:-./secrets}/gateway-staff-auth.caddy   # 직원 콘솔 기본 인증(비밀)
+  gateway-admin-auth:
+    file: ${SECRETS_DIR:-./secrets}/gateway-admin-auth.caddy   # 출고 승인 화면 기본 인증(비밀)
 
 services:
   gateway:
@@ -50,20 +52,29 @@ services:
     configs:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
       - {source: gateway-staff-auth, target: /etc/caddy/staff-auth.caddy}
-    env_file: ${SECRETS_DIR:-./secrets}/gateway.env              # SURVEY_KIOSK_TOKEN, SURVEY_STAFF_TOKEN (게이트웨이의 비밀)
+      - {source: gateway-admin-auth, target: /etc/caddy/admin-auth.caddy}
+    env_file: ${SECRETS_DIR:-./secrets}/gateway.env              # SURVEY_KIOSK_TOKEN, SURVEY_STAFF_TOKEN, GATE_APPROVER_TOKEN, GATE_APPROVER_READ_TOKEN (게이트웨이의 비밀)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
       survey-service: {condition: service_healthy}
+      admin-console: {condition: service_healthy}
+      release-gate: {condition: service_healthy}
     tmpfs: ["/tmp", "/data:uid=10001,gid=10001", "/config:uid=10001,gid=10001"]
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"
-    networks: [edge]
+    networks: [edge, serving]   # serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
     networks: [edge]
+
+  admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
+    <<: *hardening
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
+    networks: [edge]
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
 
   survey-service:
     <<: *hardening

@@ -16,8 +16,8 @@
 
 | 네트워크 | 성격 | 붙는 서비스 | 용도 |
 | --- | --- | --- | --- |
-| edge | 일반(호스트 포트 가능) | gateway, survey-service | 외부 입구. 호스트 포트를 여는 것은 gateway뿐이다(D11) |
-| serving | internal | survey-service, release-gate, ops-feedback-ingest, model-serving | I4 읽기(survey→gate), I6 수집(survey→ops) |
+| edge | 일반(호스트 포트 가능) | gateway, survey-service, kiosk-frontend, admin-console | 외부 입구. 호스트 포트를 여는 것은 gateway뿐이다(D11) |
+| serving | internal | survey-service, release-gate, ops-feedback-ingest, model-serving, gateway(승인 경로 프록시용) | I4 읽기(survey→gate), I6 수집(survey→ops) |
 | authoring | internal | question-authoring, ops-feedback-ingest | 저작 면(관리자 콘솔 자리). ops-feedback-ingest를 더한 이유: 개선 신호(`/v1/signals`)가 I7 읽기 면을 부른다 |
 | release | internal | release-gate, question-authoring, model-registry, job-ops-feedback, job-release-gate-collect | 게이트가 I1(qa)·I3(model-registry)를 읽는 길, ops 잡이 I4를 읽는 길 |
 | logs | internal | ops-feedback-ingest, job-ops-feedback | 원본 Trace 저장소(`ops-data`)를 만지는 프로세스끼리 |

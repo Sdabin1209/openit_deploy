@@ -4,6 +4,8 @@
 }
 # 직원 콘솔 인증 조각. 비밀 파일(secrets/gateway-staff-auth.caddy)에 있다: 기본 인증(개발/E2E용). 운영 인증 방식(SSO, 사내망 제한 등)은 미정이다.
 import /etc/caddy/staff-auth.caddy
+# 출고 승인 화면 인증 조각(secrets/gateway-admin-auth.caddy): 기본 인증(개발/E2E용, 운영 방식 미정). 직원 콘솔 계정과 분리한다.
+import /etc/caddy/admin-auth.caddy
 :8080 {
 	# 접근 로그: 요청 본문은 남기지 않는다(Caddy는 본문을 기록하지 않는다). Authorization 헤더는 Caddy가 REDACTED로 바꾼다.
 	log {
@@ -27,6 +29,39 @@ import /etc/caddy/staff-auth.caddy
 				read_timeout 1h
 			}
 		}
+	}
+	# 출고 승인 화면(admin-console): 사람 인증 뒤에만, release-gate의 승인 경로 네 개만 프록시한다: 읽기(GET) 두 경로는 release-approver **읽기** 토큰, 결정(POST /v1/approvals)은 release-approver **쓰기** 토큰을 붙인다(게이트는 읽기 면에서 쓰기 토큰을 403으로 거부한다).
+	# 열지 않는 것: POST /v1/submissions, /v1/activate, /v1/rollback, /v1/releases*  (아래 handle /v1/* 가 404).
+	# 인증된 사용자 ID를 X-Openit-User 로 붙이고 클라이언트가 보낸 같은 이름 헤더는 덮어쓴다(D69). 응답의 X-Openit-Report-Hash 는 그대로 통과하고 Cache-Control 은 no-store를 유지한다.
+	@adminread {
+		method GET
+		path /v1/submissions /v1/submissions/*
+	}
+	@adminwrite {
+		method POST
+		path /v1/approvals
+	}
+	handle @adminread {
+		import admin_auth
+		reverse_proxy release-gate:8080 {
+			header_up Authorization "Bearer {$GATE_APPROVER_READ_TOKEN}"
+			header_up X-Openit-User "{http.auth.user.id}"
+			header_down Cache-Control "no-store"
+		}
+	}
+	handle @adminwrite {
+		import admin_auth
+		reverse_proxy release-gate:8080 {
+			header_up Authorization "Bearer {$GATE_APPROVER_TOKEN}"
+			header_up X-Openit-User "{http.auth.user.id}"
+			header_down Cache-Control "no-store"
+		}
+	}
+	# 승인 화면 정적 파일: /admin/ 접두사를 떼고 전달한다(이미지는 /admin/ 을 모른다. 화면은 상대 경로 app.js·app.css 를 쓴다)
+	redir /admin /admin/ permanent
+	handle_path /admin/* {
+		import admin_auth
+		reverse_proxy admin-console:8080
 	}
 	# 키오스크 공개 API(PUBLIC_API.md): 같은 출처의 /v1/sessions…에 kiosk 역할 토큰을 붙인다. /v1/staff 는 위에서만 staff 토큰을 받는다.
 	@kioskapi path /v1/sessions /v1/sessions/*
