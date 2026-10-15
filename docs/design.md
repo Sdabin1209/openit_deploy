@@ -32,6 +32,8 @@
 | release-gate -> model-registry | I3 읽기 | release | `GATE_I3_TOKEN` <- `MODEL_REGISTRY_READ_TOKENS` 역할 release-gate |
 | job-ops-feedback -> release-gate | I4 읽기(사례의 문항 세트 채움) | release | `OPS_GATE_READ_TOKEN` <- `GATE_READ_TOKENS` 역할 ops-feedback (롤백 자동 요청을 켜면 `OPS_GATE_WRITE_TOKEN`) |
 | question-authoring -> ops-feedback-ingest | I7 읽기(개선 신호) | authoring | `QA_FAILURES_TOKEN` <- `OPS_READ_TOKENS` 역할 question-authoring |
+| (밖) 승인자 -> release-gate | `GET /v1/submissions/{id}/review-report`, `POST /v1/approvals` | (콘솔 UI 없음) | 읽기 토큰, `GATE_WRITE_TOKENS` 역할 release-approver |
+| (밖) 키오스크 프론트 -> gateway -> survey-service | 공개 API `/v1/sessions…` | edge | `SURVEY_API_TOKEN`(키오스크). 직원 개입은 `SURVEY_STAFF_API_TOKEN`, 내부 경로만 |
 | (밖) 검토자 -> ops-feedback-ingest | `POST /v1/cases/{id}/review` | (UI 없음) | `OPS_REVIEW_TOKENS` 역할 reviewer |
 | (밖) synthetic-data -> question-authoring / ops-feedback | I1 / I7 읽기 | 호스트(시험) 또는 GPU 서버 | 역할 synthetic-data |
 | (밖) model-lab -> model-registry | I3 게시 | GPU 서버에서 접근 경로 미정(CR-D12) | `MODEL_REGISTRY_WRITE_TOKENS` 역할 model-lab |
@@ -137,6 +139,6 @@
 
 ## 11. 시험 자료와 운영 설정의 분리
 
-- `compose.test.yaml`, `test/`, `build/`, `state/`만 시험용이다. `compose.yaml`과 `config/`는 시험 자료를 참조하지 않는다(E2E가 `compose.yaml`·`config/`에 시험용 정책·실행기·시험 워커가 없음을 확인한다).
-- 시험 자료: `test/policy/test-gate-policy.json`(시험용 게이트 정책, 임계치 무의미, `compose.test.yaml`에서만 `GATE_POLICY_FILE`로 연결), `test/gate-runner/test_gate_runner.py`(시험용 승인 평가 실행기, 고정 지표), `test/ops-job/test-ops-job.yaml`(시험용 잡 설정), `test/fixtures/e2e-test-adapter/`(시험용 PEFT 형식 어댑터). 시험용 ID에도 `test`를 넣는다(`qs-e2e-test`, `pkg-e2e-test-*`).
-- 운영 게이트에는 정책이 없다: `can_pass:false`가 정상이다(D38, O11). 시험 구성에서만 `can_pass:true`가 된다.
+- `compose.test.yaml`, `test/`, `build/`, `state/`만 시험용이다. 게이트웨이는 이제 공개 API 경로(`/v1/sessions`)를 survey-service로 넘긴다(`config/Caddyfile`, 직원 개입 경로는 막음). `compose.yaml`과 `config/`는 시험 자료를 참조하지 않는다(E2E가 `compose.yaml`·`config/`에 시험용 정책·실행기·시험 워커가 없음을 확인한다).
+- 시험 자료(D53 이후 게이트의 시험용 정책·실행기는 사라졌다): `test/ops-job/test-ops-job.yaml`(시험용 잡 설정), `test/fixtures/e2e-test-adapter/`(시험용 PEFT 형식 어댑터). 시험용 ID에도 `test`를 넣는다(`qs-e2e-test`, `pkg-e2e-test-*`).
+- 출고는 사람 승인이다(D53): 자동 검사 후 `AWAITING_APPROVAL`, 승인자가 `POST /v1/approvals`. 운영·시험 모두 게이트에 정책 파일이 필요 없다(기본 정책). E2E의 승인자는 시험용 release-approver 토큰을 쓰는 스크립트다.

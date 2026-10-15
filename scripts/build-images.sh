@@ -16,6 +16,8 @@ SUFFIX=${BUILD_SUFFIX:-}
 if [ "$ONLY" = "  " ]; then rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"; fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
+# 경계 계약 태그(D53 이후 v1.3.1). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
+export BC="${BOUNDARY_TAG_ALL:-v1.3.1}"
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
@@ -32,7 +34,7 @@ record() { sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3" >> 
 commit_of() { echo "$(git -C "$WORKSPACE/$1" rev-parse --short HEAD)$SUFFIX"; }
 
 if want survey-service; then
-  ( cd "$CTX/survey-service" && PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
+  ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   set -a; source "$CTX/survey-service/build/wheels/VERSIONS.env"; set +a
   c=$(commit_of survey-service); img="deploy-build/survey-service:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$BOUNDARY_TAG" \
@@ -41,14 +43,14 @@ if want survey-service; then
   record survey-service "$img" "$c"
 fi
 if want question-authoring; then
-  ( cd "$CTX/question-authoring" && PYTHON="$PY" bash scripts/build_wheels.sh >/dev/null )
+  ( cd "$CTX/question-authoring" && CONTRACTS_TAG="$BC" PYTHON="$PY" bash scripts/build_wheels.sh >/dev/null )
   c=$(commit_of question-authoring); img="deploy-build/question-authoring:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$(cat "$CTX/question-authoring/build/contracts.tag")" \
     --build-arg SURVEY_SCHEMA_TAG="$(cat "$CTX/question-authoring/build/survey-schema.tag")" "$(hostpath "$CTX/question-authoring")" >/dev/null
   record question-authoring "$img" "$c"
 fi
 if want ops-feedback; then
-  ( cd "$CTX/ops-feedback" && PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
+  ( cd "$CTX/ops-feedback" && BOUNDARY_TAG="$BC" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   c=$(commit_of ops-feedback); img="deploy-build/ops-feedback:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg CONTRACTS_VERSION="$(cat "$CTX/ops-feedback/build/wheels/BOUNDARY_TAG")" \
     --build-arg SURVEY_SCHEMA_VERSION="$(cat "$CTX/ops-feedback/src/ops_feedback/_schemas/survey/v1/CONTRACT_VERSION")" "$(hostpath "$CTX/ops-feedback")" >/dev/null
@@ -57,12 +59,12 @@ fi
 if want release-gate; then
   # build_image.sh 는 컨텍스트 경로를 항상 wslpath -w 로 바꾸므로 docker.exe 로 부른다(같은 데몬). turn-engine/model-runtime 를 turn-engine/model-runtime 를 ../ 에서 git archive 한다(사본 기준)
   c=$(commit_of release-gate); img="deploy-build/release-gate:$c"
-  ( cd "$CTX/release-gate" && DOCKER=docker.exe PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
+  ( cd "$CTX/release-gate" && DOCKER=docker.exe BOUNDARY_CONTRACTS_TAG="$BC" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
   record release-gate "$img" "$c"
 fi
 if want model-registry; then
   # Dockerfile은 boundary-contracts를 ssh로 받는다. 태그 시점 소스로 만든 wheel을 빌드 컨텍스트 wheels로 대신 준다(ssh 없이)
-  ML="$CTX/model-lab"; BCTAG=${BOUNDARY_TAG_REGISTRY:-v1.2.0}
+  ML="$CTX/model-lab"; BCTAG=$BC
   rm -rf "$ML/vendor-wheels" "$ML/bc-src"; mkdir -p "$ML/vendor-wheels" "$ML/bc-src"
   git -C "$CTX/boundary-contracts" archive "$BCTAG" | tar -x -C "$ML/bc-src"
   "$PIP" wheel -q --no-deps -w "$ML/vendor-wheels" "$ML/bc-src" >/dev/null 2>&1
@@ -72,3 +74,10 @@ if want model-registry; then
     --build-arg "REVISION=$c" "$(hostpath "$ML")" >/dev/null
   record model-registry "$img" "$c"
 fi
+
+# 호스트에서 쓰는 wheel: E2E 클라이언트·검증기(v1.3.1)와 synthetic-data용(그 영역이 고정한 태그 v1.2.0)
+mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
+for tag in "$BC" v1.2.0; do
+  d="$DEPLOY_ROOT/build/hostsrc-$tag"; rm -rf "$d"; mkdir -p "$d"; git -C "$CTX/boundary-contracts" archive "$tag" | tar -x -C "$d"
+  mkdir -p "$DEPLOY_ROOT/build/hostwheels/$tag"; "$PIP" wheel -q --no-deps -w "$DEPLOY_ROOT/build/hostwheels/$tag" "$d" >/dev/null 2>&1
+done

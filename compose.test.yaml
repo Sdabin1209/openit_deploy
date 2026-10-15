@@ -1,6 +1,5 @@
 # 시험 전용 덮어쓰기(운영에 쓰지 않는다). 이 파일의 내용은 모두 시험 접근·시험 자료다.
 #  - 서비스마다 자기 test-* 네트워크와 Docker가 배정하는 호스트 포트를 더한다(E2E가 호스트에서 호출하려고).
-#  - 시험용 게이트 정책(test/policy)을 게이트에 연결한다. 정책의 임계치는 시험용으로 무의미하다.
 #  - ops-feedback 잡 설정은 test/ops-job 의 시험 값이다.
 # survey-service는 더 이상 시험 대역을 쓰지 않는다(실제 게이트·수집 서비스를 HTTP로 부른다).
 networks:   # 서비스마다 따로 둔다(공유하면 시험 접근이 격리 검사를 무너뜨린다)
@@ -21,37 +20,7 @@ services:
     networks: [serving, release, test-gate]
     ports: ["127.0.0.1::8080"]
     environment:
-      GATE_POLICY_FILE: /etc/gate/test-policy.json
-      GATE_ALLOW_TEST: "1"     # 시험 구성에만: 이름에 test가 있는 정책·실행기를 허용한다(운영 compose.yaml에는 없다)
       GATE_POLL_SECONDS: "2"
-    volumes:
-      - ${TEST_POLICY_FILE:?test/policy/test-gate-policy.json 경로}:/etc/gate/test-policy.json:ro
   model-registry:
     networks: [release, test-mr]
     ports: ["127.0.0.1::8080"]
-  job-release-gate-collect:
-    environment:
-      GATE_POLICY_FILE: /etc/gate/test-policy.json
-      GATE_ALLOW_TEST: "1"
-    volumes:
-      - ${TEST_POLICY_FILE:?}:/etc/gate/test-policy.json:ro
-
-  test-gate-worker:      # TEST-SUB: 실제 승인 평가 워커는 GPU 서버 몫(D40). 시험용 실행기를 꽂은 같은 이미지의 gate-worker
-    image: ${DEPLOY_REGISTRY:?}/openit/release-gate@${RELEASE_GATE_DIGEST:?}
-    command: ["gate-worker"]
-    environment:
-      GATE_RUNNER_FACTORY: test_gate_runner:make
-      GATE_WORKER_ID: test-worker-1
-      GATE_ALLOW_TEST: "1"
-      GATE_POLL_SECONDS: "2"
-      PYTHONPATH: /mnt/test-runner
-    volumes:
-      - gate-data:/data
-      - ${TEST_RUNNER_DIR:?test/gate-runner 경로}:/mnt/test-runner:ro
-    networks: [release]
-    read_only: true
-    tmpfs: ["/tmp"]
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck: {disable: true}     # 워커는 HTTP 서버가 아니다(이미지의 HEALTHCHECK는 서비스용)
-    depends_on: [release-gate]

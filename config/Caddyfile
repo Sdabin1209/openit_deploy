@@ -3,8 +3,16 @@
 	auto_https off
 }
 :8080 {
-	# 공개 API 경로(I10)는 O06 대기라 만들지 않는다. 이후 survey-service 업스트림은 이 자리에 추가한다.
-	# /readyz 는 업스트림이 생기면 그 준비 여부를 반영한다. 지금은 gateway 자체가 준비되면 ok.
+	# 공개 API(I10, PUBLIC_API.md): 세션 시작·발화·종료만 survey-service로 넘긴다. 직원 개입(/intervention)은 외부 입구로 열지 않는다.
+	# 인증(Bearer 토큰)은 survey-service가 한다. TLS·도메인은 미정이라 지금은 HTTP.
+	@intervention path /v1/sessions/*/intervention
+	handle @intervention {
+		respond "not found" 404
+	}
+	@kiosk path /v1/sessions /v1/sessions/*
+	handle @kiosk {
+		reverse_proxy survey-service:8080
+	}
 	handle /healthz {
 		respond "ok" 200
 	}

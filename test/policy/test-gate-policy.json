@@ -1,3 +1,0 @@
-{"gate_policy_version": "test-e2e-1", "o11_resolved": true,
- "required_checks": ["CLINICAL_SAFETY", "CONTRACT_COMPAT", "ACCEPTANCE_EVAL"],
- "checks": {"ACCEPTANCE_EVAL": {"thresholds": {"test_metric": {"min": 0.0}}}}}

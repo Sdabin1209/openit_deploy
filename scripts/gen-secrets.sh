@@ -13,7 +13,7 @@ put() { local f=$1; shift; [ -s "$D/$f" ] && return 0; printf '%s\n' "$@" > "$D/
 
 # 서버가 받는 목록
 GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data)
-GATE_W=$(roles gate write operator ops-feedback question-authoring model-lab release-gate-collector)
+GATE_W=$(roles gate write operator ops-feedback question-authoring model-lab release-gate-collector release-approver)
 QA_R=$(roles qa read release-gate synthetic-data model-lab)
 OPS_R=$(roles ops read synthetic-data model-lab question-authoring)
 MR_R=$(roles model-registry read release-gate model-lab)
@@ -25,7 +25,7 @@ tok deid-salt >/dev/null
 # 각 클라이언트가 받는 자기 토큰(이웃 서버가 그 역할로 알아본다)
 put release-gate.env "GATE_READ_TOKENS=$GATE_R" "GATE_WRITE_TOKENS=$GATE_W" "GATE_I1_TOKEN=$(tok qa-read-release-gate)" "GATE_I3_TOKEN=$(tok model-registry-read-release-gate)"
 put release-gate-job.env "GATE_I1_TOKEN=$(tok qa-read-release-gate)" "GATE_I3_TOKEN=$(tok model-registry-read-release-gate)"
-put survey-service.env "SURVEY_RELEASE_READER_TOKEN=$(tok gate-read-survey-service)" "SURVEY_TRACE_INGEST_TOKEN=$OPS_INGEST"
+put survey-service.env "SURVEY_RELEASE_READER_TOKEN=$(tok gate-read-survey-service)" "SURVEY_TRACE_INGEST_TOKEN=$OPS_INGEST" "SURVEY_API_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_API_TOKEN=$(tok survey-api-staff)"
 put ops-feedback-ingest.env "OPS_INGEST_TOKEN=$OPS_INGEST" "OPS_READ_TOKENS=$OPS_R" "OPS_REVIEW_TOKENS=reviewer=$(tok ops-review-reviewer)"
 put ops-feedback-job.env "OPS_DEID_SALT=$(tok deid-salt)" "OPS_GATE_READ_TOKEN=$(tok gate-read-ops-feedback)" "OPS_GATE_WRITE_TOKEN=$(tok gate-write-ops-feedback)"
 put question-authoring.env "QA_AUTHOR_TOKENS=$QA_AUTHOR:author-e2e:question-author" "QA_READ_TOKENS=$QA_R" "QA_FAILURES_TOKEN=$(tok ops-read-question-authoring)"

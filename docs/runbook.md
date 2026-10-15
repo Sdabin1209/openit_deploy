@@ -15,7 +15,7 @@ cp .env.example .env                      # DEPLOY_REGISTRY 등 확인
 bash scripts/up.sh deploy                 # 운영 구성. 주의: 아래 "알려진 한계"
 ```
 
-운영 구성(`compose.yaml`만)의 상태: 모든 영역 사이 호출이 HTTP로 연결되어 5개 서비스가 뜬다. 다만 (1) release-gate는 통과 기준(O11)이 없어 `can_pass:false`(정상)이고, (2) survey-service는 활성 릴리스가 없는 동안 `/readyz` 503 `no_active_release`, (3) 모델 백엔드는 `fake`뿐이다(CR-D08), (4) 승인 평가 실행기 구현이 없어(CR-D10, O11) 설사 정책이 있어도 PASS가 나지 않는다(`/readyz`의 `eval.state`가 `no_worker`/`runner_not_configured`). 이름에 test가 있는 정책·실행기는 `GATE_ALLOW_TEST=1`이 없으면 거부된다(운영 compose.yaml에 없음). ops-feedback 잡은 설정 파일(`OPS_JOB_CONFIG`, 사용자 결정 값)이 있어야 돈다.
+운영 구성(`compose.yaml`만)의 상태: 모든 영역 사이 호출이 HTTP로 연결되어 5개 서비스가 뜬다. 다만 (1) release-gate는 통과 기준(O11)이 없어 `can_pass:false`(정상)이고, (2) survey-service는 활성 릴리스가 없는 동안 `/readyz` 503 `no_active_release`, (3) 모델 백엔드는 `fake`뿐이다(CR-D08), (4) 출고는 사람 승인이다(D53): 자동 검사를 통과한 제출은 `AWAITING_APPROVAL`에서 기다리고(`/readyz`의 `awaiting_approval`), 승인자(역할 release-approver)가 `GET /v1/submissions/{id}/review-report`를 보고 `POST /v1/approvals`로 결정한다. 승인 전에는 PASS가 없다. ops-feedback 잡은 설정 파일(`OPS_JOB_CONFIG`, 사용자 결정 값)이 있어야 돈다.
 
 ## 2. 적용과 롤백 (코드 축)
 
@@ -66,7 +66,7 @@ bash scripts/up.sh deploy
 
 ## 6. 시험
 
-시험용 정책으로 판정·릴리스를 지나가는 구성은 `compose.test.yaml`뿐이다(`TEST_POLICY_FILE`, `TEST_RUNNER_DIR`). 운영에는 연결하지 않는다.
+E2E의 승인자는 시험용 release-approver 토큰을 쓰는 스크립트다(`secrets/tokens/gate-write-release-approver`). 운영에서는 승인자에게만 이 역할의 토큰을 준다. 공개 API 토큰: `secrets/tokens/survey-api-kiosk`(프론트), `survey-api-staff`(직원 콘솔, 내부 경로).
 
 ```
 bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]

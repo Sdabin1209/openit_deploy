@@ -15,7 +15,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" GATEWAY_PORT=
-export TEST_POLICY_FILE="$DEPLOY_ROOT/test/policy/test-gate-policy.json" TEST_RUNNER_DIR="$DEPLOY_ROOT/test/gate-runner" OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
+export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 res() { RESULT+=("$1|$2|$3"); [ "$2" = FAIL ] && FAILS=$((FAILS+1)); printf '  [%s] %s: %s\n' "$2" "$1" "$3"; }
 chk() { local name=$1; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }
@@ -35,14 +35,12 @@ trap cleanup EXIT
 
 cat <<BANNER
 =============================================================================
- !!! 시험용 정책 사용 !!!  게이트 통과 기준(O11)은 비어 있다(운영: can_pass=false, 정상).
- 이 실행은 test/policy/test-gate-policy.json (정책 버전 test-e2e-1, 임계치 무의미)을 compose.test.yaml 로만 게이트에 연결한다.
- E2E 합격 시나리오 실행 (프로젝트 $PROJECT)
+ E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v1.3.1 (출고는 사람 승인, D53)
  !! 시험 대역 사용 표시 !!
-   - 단계 3 모델: GPU 없이 시험용 어댑터(test/fixtures/e2e-test-adapter)를 model-registry에 HTTP로 게시한다(E2E_GPU=1이면 gpu-dev 경로, 기본 끔)
-   - 단계 4 승인 평가: 실행기 구현이 없어 시험용 실행기(test/gate-runner, 고정 지표)를 같은 이미지의 gate-worker에 꽂는다
-   - 단계 5 모델은 가짜 백엔드(fake), 한 턴은 개발용 CLI 하네스(공개 API O06 없음)
-   - 단계 6 TraceEnvelope와 단계 7 검토 확인은 이 스크립트가 만든 시험 자료/행위다
+   - 승인자: 사람 대신 이 스크립트가 시험용 승인자 토큰(release-approver)으로 POST /v1/approvals 를 호출한다. 시험용 정책·실행기는 없다(게이트에서 삭제됨)
+   - 단계 3 모델: GPU 없이 시험용 어댑터(test/fixtures/e2e-test-adapter)와 시험용 EvaluationReport(고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시한다(E2E_GPU=1이면 gpu-dev 경로, 기본 끔)
+   - 단계 5 모델은 가짜 백엔드(fake)
+   - 단계 6 TraceEnvelope와 단계 7 reviewed_input·검토 확인은 이 스크립트가 만든 시험 자료/행위다
    - 시험 자료는 운영 설정(compose.yaml, config/)에 들어가지 않는다
 =============================================================================
 BANNER
@@ -55,10 +53,10 @@ if [ $REUSE = 0 ] || ! have_images; then chk "빌드: 다섯 서비스 이미지
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
 # 호스트에서 쓰는 검증기·클라이언트: 영역 빌드가 만든 태그 wheel(boundary-contracts, 문진 스키마)
-"$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
+"$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/v1.3.1/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
 # synthetic-data run-once용 가상환경(호스트): 그 영역 런북대로 requirements.lock 의 서드파티 + 태그 wheel
 if [ ! -x "$DEPLOY_ROOT/build/venv-sd/bin/python" ]; then python3 -m venv "$DEPLOY_ROOT/build/venv-sd"; "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q attrs==26.1.0 jsonschema==4.10.3 packaging==26.3 pyrsistent==0.20.0 PyYAML==6.0.3 2>&1 | tail -1; fi
-"$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/boundary_contracts-*.whl 2>&1 | tail -1
+"$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/v1.2.0/boundary_contracts-*.whl 2>&1 | tail -1
 rm -rf "$DEPLOY_ROOT/build/ctx/synthetic-data"; mkdir -p "$DEPLOY_ROOT/build/ctx/synthetic-data"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DEPLOY_ROOT/build/ctx/synthetic-data"
 grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/registry.sh" up
@@ -83,38 +81,10 @@ for pair in "gateway:$PGW" "question-authoring:$PQA" "release-gate:$PGATE" "ops-
 done
 survey_noactive() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' "http://127.0.0.1:$PSURVEY/readyz"); echo "$o" | grep -q 'no_active_release' && echo "$o" | grep -q '\[503\]' && echo "활성 릴리스가 없어 503 no_active_release (정상: 아직 게이트에 PASS 릴리스가 없다)"; }
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
-gate_cannot_pass() { getj "$PGATE" /readyz | grep -q '"can_pass": true' && echo "시험용 정책으로 can_pass=true (시험 구성)"; }
-chk "gate /readyz: 시험용 정책이 연결되어 can_pass=true, judging enabled" bash -c "$(declare -f getj gate_cannot_pass); PGATE=$PGATE; gate_cannot_pass"
-chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate-policy|test_gate_runner|test-gate-worker|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
-# 정책 스키마: release-gate 이미지의 gate_policy.schema.json 으로 시험 정책을 검증한다
-policy_schema_ok() { "$DOCKER" run --rm --entrypoint python "$DEPLOY_REGISTRY/openit/release-gate@$RELEASE_GATE_DIGEST" -c "import release_gate,pathlib,sys;sys.stdout.write((pathlib.Path(release_gate.__file__).parent/'schemas'/'gate_policy.schema.json').read_text())" > "$W/gate_policy.schema.json" && "$VENV/bin/python" -c "
-import json,jsonschema,sys
-s=json.load(open('$W/gate_policy.schema.json')); p=json.load(open('$TEST_POLICY_FILE'))
-jsonschema.validate(p,s); print('test/policy/test-gate-policy.json 이 gate_policy.schema.json 을 통과한다')"; }
-chk "시험 정책이 release-gate의 정책 스키마를 통과" policy_schema_ok
-# 운영 모드(GATE_ALLOW_TEST 없음)에서 게이트가 시험용 정책을 거부하는지
-prod_gate_rejects() {
-  local n="${PROJECT}-prodcheck" tid ok=1 p out
-  "$DOCKER" rm -f "$n" >/dev/null 2>&1
-  "$DOCKER" run -d --name "$n" -p 127.0.0.1::8080 -v "$(hostpath "$TEST_POLICY_FILE"):/etc/gate/test-policy.json:ro" -e GATE_POLICY_FILE=/etc/gate/test-policy.json \
-    -e GATE_READ_TOKENS=a=x -e GATE_WRITE_TOKENS=operator=y "$DEPLOY_REGISTRY/openit/release-gate@$RELEASE_GATE_DIGEST" >/dev/null || return 1
-  sleep 6
-  if [ "$("$DOCKER" inspect -f '{{.State.Running}}' "$n" | tr -d '\r')" = false ]; then out="시작 거부(종료 코드 $("$DOCKER" inspect -f '{{.State.ExitCode}}' "$n" | tr -d '\r')): $("$DOCKER" logs "$n" 2>&1 | tail -1 | cut -c1-150)"; "$DOCKER" rm -f "$n" >/dev/null; echo "$out"; return 0; fi
-  p=$(port_of "$n" 8080); out=$(curl -s -m 5 "http://127.0.0.1:$p/readyz"); "$DOCKER" rm -f "$n" >/dev/null
-  echo "$out" | grep -q '"can_pass": false' && echo "can_pass:false 로 시작 (운영 모드): $(echo "$out" | cut -c1-200)"
-}
-chk "운영 모드(GATE_ALLOW_TEST 없음)의 게이트는 시험용 정책을 거부하고 통과를 낼 수 없다" prod_gate_rejects
-prod_gate_nopolicy() {
-  local n="${PROJECT}-prodcheck2" p out
-  "$DOCKER" rm -f "$n" >/dev/null 2>&1
-  "$DOCKER" run -d --name "$n" -p 127.0.0.1::8080 -e GATE_READ_TOKENS=a=x -e GATE_WRITE_TOKENS=operator=y "$DEPLOY_REGISTRY/openit/release-gate@$RELEASE_GATE_DIGEST" >/dev/null || return 1
-  sleep 5; p=$(port_of "$n" 8080); out=$(curl -s -m 5 "http://127.0.0.1:$p/readyz"); "$DOCKER" rm -f "$n" >/dev/null
-  echo "$out" | grep -q '"can_pass": false' && echo "$out" | cut -c1-250
-}
-chk "운영 구성(정책 없음) 게이트: can_pass:false 가 정상" prod_gate_nopolicy
-eval_state_ok() { getj "$PGATE" /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);e=d.get('eval',{});print('eval',e);sys.exit(0 if e.get('state') in ('ok','no_worker','runner_not_configured') else 1)"; }
-chk "gate /readyz 에 eval 상태(state)가 보인다" eval_state_ok
-chk "gateway: 공개 API 경로 없음(O06 대기) /v1/turns -> 404" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/turns)\" = 404 ]"
+chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
+no_auto_pass() { getj "$PGATE" /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
+chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
+chk "gateway: 공개 API는 /v1/sessions 만 survey-service로 넘기고(토큰 없으면 401), 그 밖의 경로와 직원 개입 경로는 404" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/sessions/x/intervention)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' http://127.0.0.1:$PGW/v1/sessions)\" = 401 ]"
 reach() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import urllib.request;urllib.request.urlopen('http://$2:8080/healthz',timeout=3)" >/dev/null 2>&1; }
 blocked() { ! reach "$@"; }
 chk "도달: survey-service -> ops-feedback-ingest (serving, I6)" reach survey-service ops-feedback-ingest
@@ -140,7 +110,7 @@ done
 
 echo; echo "== 단계 1~8 (실제 서비스의 HTTP로 잇는다)"
 IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
-PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR}"
+PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGW}"
 "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id e2e-test | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 [ "$STEPS_RC" = 0 ] && res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고" || res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"
@@ -167,7 +137,7 @@ printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.e
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\n' "$W/backups" > "$W/backup-test.env"
 export BACKUP_CONFIG="$W/backup-test.env"
-dc "$PROJECT" --profile jobs stop >/dev/null 2>&1; dc "$PROJECT" stop test-gate-worker >/dev/null 2>&1
+dc "$PROJECT" --profile jobs stop >/dev/null 2>&1
 STORES="survey-data qa-data ops-data gate-data models-data"
 for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
 mkdir -p "$W/backups/qa-data/20200101T000000Z"; touch -d '2020-01-01' "$W/backups/qa-data/20200101T000000Z"
@@ -201,8 +171,7 @@ if [ -f "$W/steps.log" ]; then sed -n '/== 요약 (단계 1~8)/,$p' "$W/steps.lo
 echo "-- 9단계 및 준비 검사"
 printf '   PASS %s / FAIL %s\n' "$(printf '%s\n' "${RESULT[@]}" | grep -c '|PASS|')" "$FAILS"
 for r in "${RESULT[@]}"; do case "$r" in *"|FAIL|"*) echo "   FAIL: ${r%%|*}";; esac; done
-echo "시험용 정책 사용: test/policy/test-gate-policy.json (test-e2e-1)"
-echo "대신한 것(TEST-SUB): 단계 3 모델(시험용 어댑터), 단계 4 승인 평가 실행기와 정책, 단계 5 한 턴(CLI 하네스·가짜 백엔드), 단계 6 봉투, 단계 7 검토 확인"
+echo "대신한 것(TEST-SUB): 단계 3 모델과 EvaluationReport(시험용), 단계 4 승인자(스크립트가 시험용 토큰으로 결정), 단계 5 가짜 백엔드, 단계 6 봉투, 단계 7 reviewed_input"
 echo "막힌 것(BLOCKED): 위 요약의 BLOCKED 행. docs/change-requests/ 참고"
 [ "$FAILS" = 0 ] && echo "E2E 결과: 실행한 검사 전부 통과 (BLOCKED/TEST-SUB 단계가 있어 시나리오 전체 합격은 아니다)" || echo "E2E 결과: 실패 있음"
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)

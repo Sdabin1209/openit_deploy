@@ -22,7 +22,7 @@
 | | survey-service | question-authoring | ops-feedback (ingest-api) | release-gate (gate-service) | model-registry (model-lab 소스) |
 | --- | --- | --- | --- | --- | --- |
 | digest 변수 | `SURVEY_SERVICE_DIGEST` | `QUESTION_AUTHORING_DIGEST` | `OPS_FEEDBACK_DIGEST` | `RELEASE_GATE_DIGEST` | `MODEL_REGISTRY_DIGEST` |
-| 필수 환경 | `SURVEY_RELEASE_READER=http`, `SURVEY_TRACE_INGEST=http`, `SURVEY_MODEL_BACKEND=fake`; URL `*_URL`, 토큰 변수 이름 `*_TOKEN_ENV` | `QA_AUTHOR_TOKENS`, `QA_READ_TOKENS` | `OPS_INGEST_TOKEN`; I7 읽기: `OPS_FAILURE_DB`+`OPS_READ_TOKENS` | `GATE_READ_TOKENS`, `GATE_WRITE_TOKENS`; 판정: `GATE_I1_FACTORY`/`GATE_I3_FACTORY`+`GATE_I1_URL/TOKEN`, `GATE_I3_URL/TOKEN`; 정책 `GATE_POLICY_FILE`(운영 없음) | `MODEL_REGISTRY_READ_TOKENS`, `MODEL_REGISTRY_WRITE_TOKENS`(역할 model-lab만) |
+| 필수 환경 | `SURVEY_RELEASE_READER=http`, `SURVEY_TRACE_INGEST=http`, `SURVEY_MODEL_BACKEND=fake`; URL `*_URL`, 토큰 변수 이름 `*_TOKEN_ENV`; 공개 API `SURVEY_API_TOKEN`(없으면 시작 안 함), `SURVEY_STAFF_API_TOKEN` | `QA_AUTHOR_TOKENS`, `QA_READ_TOKENS` | `OPS_INGEST_TOKEN`; I7 읽기: `OPS_FAILURE_DB`+`OPS_READ_TOKENS` | `GATE_READ_TOKENS`, `GATE_WRITE_TOKENS`(역할에 release-approver 포함); `GATE_I1_FACTORY`/`GATE_I3_FACTORY`+`GATE_I1_URL/TOKEN`, `GATE_I3_URL/TOKEN`; 정책 파일은 선택(기본 정책) | `MODEL_REGISTRY_READ_TOKENS`, `MODEL_REGISTRY_WRITE_TOKENS`(역할 model-lab만) |
 | 볼륨(`/data`) | `survey-data`: sessions.db, outbox.db, releases/ | `qa-data`: questions.sqlite3 | `ops-data`: log.db, failures.db (잡과 공유) | `gate-data`: registry.sqlite3 + releases/ (수집 잡·워커와 공유) | `models-data`: 파일 레지스트리 |
 | 네트워크 | edge, serving | authoring, release | serving, logs, authoring | serving, release | release |
 | 이미지 HEALTHCHECK | 있음 | 있음 | 있음 | 있음(서비스용; 워커는 끈다) | 있음 |
@@ -33,7 +33,7 @@
 
 ### 어긋나는 곳
 
-첫 구간의 CR-D01..D08은 `docs/change-requests/CR-D14-status-of-previous.md`에 현재 상태를 정리했다. 셋째 구간 상태: CR-D15. 이전 구간의 새 어긋남: CR-D10(승인 평가 실행기 구현 없음, 정책·실행기 형식 문서 없음), CR-D11(검토 게시 HTTP 면 없음), CR-D12(model-lab 파일 저장소 팩토리·GPU 접근 경로), CR-D13(수집기가 패키지 role을 구분하는지).
+첫 구간의 CR-D01..D08은 `docs/change-requests/CR-D14-status-of-previous.md`에 현재 상태를 정리했다. D53 반영: CR-D16. 셋째 구간 상태: CR-D15. 이전 구간의 새 어긋남: CR-D10(승인 평가 실행기 구현 없음, 정책·실행기 형식 문서 없음), CR-D11(검토 게시 HTTP 면 없음), CR-D12(model-lab 파일 저장소 팩토리·GPU 접근 경로), CR-D13(수집기가 패키지 role을 구분하는지).
 
 ## 4. 이 영역이 이웃에게 지키는 것
 
