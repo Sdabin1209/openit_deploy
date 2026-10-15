@@ -15,7 +15,7 @@
 | boundary-contracts | E2E의 검증기로만(`boundary_contracts.validator`, v1.1.0 태그 wheel). 이미지 안의 버전은 영역이 정한다 |
 | 문진 스키마 | E2E의 QuestionBank 검증(`openit-survey-schema` wheel, 정수 버전 1) |
 
-## 3. 서비스 5개: 환경 변수, 포트, 볼륨, 헬스체크
+## 3. 서비스 6개(표는 5개 + 아래 model-serving): 환경 변수, 포트, 볼륨, 헬스체크
 
 출처는 각 영역 런북·Dockerfile이고 확인은 Compose에서 실제로 띄운 것이다. 모두 컨테이너 포트 8080, uid 10001, `/healthz`·`/readyz`, 라벨 `io.openit.*` 6개.
 
@@ -28,6 +28,8 @@
 | 이미지 HEALTHCHECK | 있음 | 있음 | 있음 | 있음(서비스용; 워커는 끈다) | 있음 |
 | 쓰기 토큰 소유 | — | 저자 | 수집(survey) | 역할 5개 | model-lab |
 | 확인 | healthy, 활성 릴리스 전 `/readyz` 503 `no_active_release`, 적재 후 200 | healthy, I1 읽기 면 | healthy, 수집·I7 읽기 | healthy, `can_pass:false`(운영), 시험용 정책으로 true | healthy, 게시·조회 |
+
+model-serving(model-runtime CPU/fake 변형): 포트 8080, uid 10001, `/healthz`·`/readyz`; 환경 `MODEL_RUNTIME_BACKEND`(fake), `MODEL_RUNTIME_SCHEMA_DIR`(문진 스키마 읽기 전용 마운트), `MODEL_RUNTIME_RELEASE_URL`/`_TOKEN`(게이트 I4 읽기), `MODEL_RUNTIME_TOKENS`, `MODEL_RUNTIME_BUNDLE_DIR`(볼륨 `serving-data`); 네트워크 serving. GPU 변형(VARIANT=gpu)은 GPU 서버 전용이라 이 Compose에 없다.
 
 주기 잡: `job-ops-feedback`(`python -m ops_feedback.job --config`, `OPS_DEID_SALT`), `job-release-gate-collect`(`python -m release_gate collect`). GPU 서버 몫(Compose에 없음): model-lab `run-once`, release-gate `gate-worker`(승인 평가), synthetic-data의 LLM 생성. synthetic-data의 규칙 기반 run-once는 CPU만 쓰므로 어디서든 돌 수 있다(E2E는 호스트).
 

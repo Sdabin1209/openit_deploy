@@ -7,6 +7,7 @@ networks:   # 서비스마다 따로 둔다(공유하면 시험 접근이 격리
   test-ops:
   test-gate:
   test-mr:
+  test-ms:
 services:
   survey-service:
     ports: ["127.0.0.1::8080"]
@@ -21,6 +22,11 @@ services:
     ports: ["127.0.0.1::8080"]
     environment:
       GATE_POLL_SECONDS: "2"
+  model-serving:
+    networks: [serving, test-ms]
+    ports: ["127.0.0.1::8080"]
+    environment:
+      MODEL_RUNTIME_BACKEND: fake   # 시험: 출력이 고정된 가짜 백엔드
   model-registry:
     networks: [release, test-mr]
     ports: ["127.0.0.1::8080"]

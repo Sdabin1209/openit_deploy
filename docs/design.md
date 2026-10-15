@@ -17,7 +17,7 @@
 | 네트워크 | 성격 | 붙는 서비스 | 용도 |
 | --- | --- | --- | --- |
 | edge | 일반(호스트 포트 가능) | gateway, survey-service | 외부 입구. 호스트 포트를 여는 것은 gateway뿐이다(D11) |
-| serving | internal | survey-service, release-gate, ops-feedback-ingest | I4 읽기(survey→gate), I6 수집(survey→ops) |
+| serving | internal | survey-service, release-gate, ops-feedback-ingest, model-serving | I4 읽기(survey→gate), I6 수집(survey→ops) |
 | authoring | internal | question-authoring, ops-feedback-ingest | 저작 면(관리자 콘솔 자리). ops-feedback-ingest를 더한 이유: 개선 신호(`/v1/signals`)가 I7 읽기 면을 부른다 |
 | release | internal | release-gate, question-authoring, model-registry, job-ops-feedback, job-release-gate-collect | 게이트가 I1(qa)·I3(model-registry)를 읽는 길, ops 잡이 I4를 읽는 길 |
 | logs | internal | ops-feedback-ingest, job-ops-feedback | 원본 Trace 저장소(`ops-data`)를 만지는 프로세스끼리 |
@@ -30,6 +30,8 @@
 | survey-service -> ops-feedback-ingest | I6 `/v1/traces` | serving | `SURVEY_TRACE_INGEST_TOKEN` <- `OPS_INGEST_TOKEN` |
 | release-gate -> question-authoring | I1 읽기 | release | `GATE_I1_TOKEN` <- `QA_READ_TOKENS` 역할 release-gate |
 | release-gate -> model-registry | I3 읽기 | release | `GATE_I3_TOKEN` <- `MODEL_REGISTRY_READ_TOKENS` 역할 release-gate |
+| survey-service -> model-serving | I9 `PUT /v1/releases/{id}`, parse, generate | serving | `SURVEY_INFERENCE_TOKEN` <- `MODEL_RUNTIME_TOKENS` 역할 survey-service |
+| model-serving -> release-gate | I4 번들 읽기(서버가 직접) | serving | `MODEL_RUNTIME_RELEASE_TOKEN` <- `GATE_READ_TOKENS` 역할 model-serving |
 | job-ops-feedback -> release-gate | I4 읽기(사례의 문항 세트 채움) | release | `OPS_GATE_READ_TOKEN` <- `GATE_READ_TOKENS` 역할 ops-feedback (롤백 자동 요청을 켜면 `OPS_GATE_WRITE_TOKEN`) |
 | question-authoring -> ops-feedback-ingest | I7 읽기(개선 신호) | authoring | `QA_FAILURES_TOKEN` <- `OPS_READ_TOKENS` 역할 question-authoring |
 | (밖) 승인자 -> release-gate | `GET /v1/submissions/{id}/review-report`, `POST /v1/approvals` | (콘솔 UI 없음) | 읽기 토큰, `GATE_WRITE_TOKENS` 역할 release-approver |

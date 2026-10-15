@@ -15,7 +15,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" GATEWAY_PORT=
-export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
+export SURVEY_SCHEMA_DIR="$DEPLOY_ROOT/build/survey-schema" OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 res() { RESULT+=("$1|$2|$3"); [ "$2" = FAIL ] && FAILS=$((FAILS+1)); printf '  [%s] %s: %s\n' "$2" "$1" "$3"; }
 chk() { local name=$1; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }
@@ -39,7 +39,7 @@ cat <<BANNER
  !! 시험 대역 사용 표시 !!
    - 승인자: 사람 대신 이 스크립트가 시험용 승인자 토큰(release-approver)으로 POST /v1/approvals 를 호출한다. 시험용 정책·실행기는 없다(게이트에서 삭제됨)
    - 단계 3 모델: GPU 없이 시험용 어댑터(test/fixtures/e2e-test-adapter)와 시험용 EvaluationReport(고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시한다(E2E_GPU=1이면 gpu-dev 경로, 기본 끔)
-   - 단계 5 모델은 가짜 백엔드(fake)
+   - 단계 5 모델: model-serving 컨테이너(CPU)의 가짜 백엔드(출력 고정: 파서 {"items": []}, 생성기 "(가짜 응답)"). 시험용 번들의 serving_config.constraint도 fake에 맞춘다(TEST-SUB)
    - 단계 6 TraceEnvelope와 단계 7 reviewed_input·검토 확인은 이 스크립트가 만든 시험 자료/행위다
    - 시험 자료는 운영 설정(compose.yaml, config/)에 들어가지 않는다
 =============================================================================
@@ -48,7 +48,7 @@ BANNER
 echo "== 준비: 이미지 빌드, 임시 레지스트리, digest 잠금"
 [ -d "$DEPLOY_ROOT/.venv" ] || python3 -m venv "$DEPLOY_ROOT/.venv"
 "$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt" setuptools wheel 2>&1 | tail -1
-have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 5 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
+have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 6 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
 if [ $REUSE = 0 ] || ! have_images; then chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
@@ -70,10 +70,10 @@ echo; echo "== 단계 9 앞부분: Compose에서 이미지로 서비스가 뜬�
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 abort_if_failed
 port() { port_of "${PROJECT}-$1-1" 8080; }
-PQA=$(port question-authoring); PGATE=$(port release-gate); POPS=$(port ops-feedback-ingest); PSURVEY=$(port survey-service); PMR=$(port model-registry); PGW=$(port gateway)
-echo "  Docker가 배정한 호스트 포트: gateway=$PGW qa=$PQA gate=$PGATE ops=$POPS survey=$PSURVEY model-registry=$PMR"
+PQA=$(port question-authoring); PGATE=$(port release-gate); POPS=$(port ops-feedback-ingest); PSURVEY=$(port survey-service); PMR=$(port model-registry); PMS=$(port model-serving); PGW=$(port gateway)
+echo "  Docker가 배정한 호스트 포트: gateway=$PGW qa=$PQA gate=$PGATE ops=$POPS survey=$PSURVEY model-registry=$PMR model-serving=$PMS"
 getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
-for pair in "gateway:$PGW" "question-authoring:$PQA" "release-gate:$PGATE" "ops-feedback-ingest:$POPS" "model-registry:$PMR" "survey-service:$PSURVEY"; do
+for pair in "gateway:$PGW" "question-authoring:$PQA" "release-gate:$PGATE" "ops-feedback-ingest:$POPS" "model-registry:$PMR" "model-serving:$PMS" "survey-service:$PSURVEY"; do
   n=${pair%%:*}; p=${pair##*:}
   chk "/healthz $n" getj "$p" /healthz
   [ "$n" = survey-service ] && continue
@@ -93,6 +93,9 @@ chk "도달: release-gate -> question-authoring (release, I1)" reach release-gat
 chk "도달: release-gate -> model-registry (release, I3)" reach release-gate model-registry
 chk "차단: survey-service -> question-authoring" blocked survey-service question-authoring
 chk "차단: survey-service -> model-registry" blocked survey-service model-registry
+chk "도달: survey-service -> model-serving (serving, I9)" reach survey-service model-serving
+chk "도달: model-serving -> release-gate (serving, I4 번들 읽기)" reach model-serving release-gate
+chk "차단: model-serving -> question-authoring" blocked model-serving question-authoring
 chk "도달: question-authoring -> ops-feedback-ingest (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback-ingest
 chk "차단: ops-feedback-ingest -> model-registry" blocked ops-feedback-ingest model-registry
 noegress() { ! "$DOCKER" exec "${PROJECT}-release-gate-1" python -c "import urllib.request;urllib.request.urlopen('http://1.1.1.1',timeout=3)" >/dev/null 2>&1; }
@@ -100,17 +103,17 @@ chk "내부 네트워크 밖으로 나가지 못함(release-gate -> 외부 인�
 nonroot() { [ "$("$DOCKER" exec "${PROJECT}-$1-1" id -u | tr -d '\r')" != 0 ]; }
 bydigest() { "$DOCKER" inspect "${PROJECT}-$1-1" --format '{{.Config.Image}}' | tr -d '\r' | grep -E '@sha256:[0-9a-f]{64}$'; }
 labels6() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.turn-engine io.openit.model-runtime; do echo "$L" | grep -q "\"$k\"" || { echo "라벨 누락 $k"; return 1; }; done; echo "$L" | cut -c1-230; }
-for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry; do
+for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry model-serving; do
   chk "비root 실행 $s" nonroot "$s"
   chk "컨테이너가 digest로 만들어짐 $s" bydigest "$s"
 done
-for pair in "survey-service:$SURVEY_SERVICE_DIGEST" "question-authoring:$QUESTION_AUTHORING_DIGEST" "ops-feedback:$OPS_FEEDBACK_DIGEST" "release-gate:$RELEASE_GATE_DIGEST" "model-registry:$MODEL_REGISTRY_DIGEST"; do
+for pair in "survey-service:$SURVEY_SERVICE_DIGEST" "question-authoring:$QUESTION_AUTHORING_DIGEST" "ops-feedback:$OPS_FEEDBACK_DIGEST" "release-gate:$RELEASE_GATE_DIGEST" "model-registry:$MODEL_REGISTRY_DIGEST" "model-serving:$MODEL_SERVING_DIGEST"; do
   chk "이미지 라벨 6개(io.openit.*) ${pair%%:*}" labels6 "$DEPLOY_REGISTRY/openit/${pair%%:*}@${pair#*:}"
 done
 
 echo; echo "== 단계 1~8 (실제 서비스의 HTTP로 잇는다)"
 IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
-PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGW}"
+PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGW,\"ms\":$PMS}"
 "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id e2e-test | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 [ "$STEPS_RC" = 0 ] && res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고" || res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"

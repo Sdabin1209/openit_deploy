@@ -55,3 +55,9 @@
 - 이미지 5개를 계약 v1.3.1 wheel로 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --reuse-build --keep`: 72 PASS / 0 FAIL.
 - 4단계: 제출 -> 자동 검사 -> AWAITING_APPROVAL -> review-report -> `POST /v1/approvals`(시험용 release-approver 토큰, TEST-SUB). 승인 전 PASS 없음, operator 403, 낡은 report_hash 409, REJECT -> REJECT 판정, APPROVE 재전송 멱등·번복 409, 승인 뒤 PASS·릴리스·번들·활성화. 시험용 정책·실행기는 삭제.
 - 5단계: 게이트웨이 경유 공개 API 한 턴(Bearer 토큰, 같은 turn_id 멱등, 직원 개입 경로는 외부에 닫힘), 서비스가 Trace를 I6로 전송. 7단계: `reviewed_input` 포함 검토. 막힘은 CR-D16.
+
+## 다섯째 구간: 추론 서버(model-serving, model-runtime v0.5.0), LangGraph survey-service
+
+- 이미지 6개(model-serving 추가; survey-service는 LangGraph 오케스트레이터 HEAD, 게이트·survey는 model-runtime v0.5.0 wheel)를 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --reuse-build --keep`: 80 PASS / 0 FAIL.
+- 5단계가 model-serving을 거친다: 서비스 -> PUT 적재(서버가 게이트 I4에서 번들 읽음) -> parse -> generate. 고정 출력 "(가짜 응답)"으로 서비스 내부 가짜가 아님을 확인했고 `/v1/info`·토큰 거부도 확인했다. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살며 다시 띄우면 다음 턴이 복구된다.
+- 위험 정지 -> 직원 RESUME은 fake 출력이 고정이라 여전히 못 한다: CR-D17(fake에 시험용 위험 스위치 요청). 번들 캐시 볼륨 소유자 문제는 `model-serving-init`으로 우회(CR-D17).

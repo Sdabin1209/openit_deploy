@@ -31,6 +31,7 @@ volumes:          # 저장소마다 볼륨 하나, 쓰기는 소유 서비스만
   qa-data:        # 문항 저장소 questions.sqlite3
   ops-data:       # log.db(원본 Trace), failures.db(실패 사례)
   gate-data:      # 릴리스 레지스트리 registry.sqlite3 + releases/
+  serving-data:   # model-serving: 게이트에서 받은 번들 캐시(다시 받을 수 있어 백업 대상 아님)
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
 
 configs:
@@ -66,6 +67,7 @@ services:
     depends_on:
       ops-feedback-ingest: {condition: service_healthy}
       release-gate: {condition: service_healthy}
+      model-serving: {condition: service_healthy}
 
   question-authoring:
     <<: *hardening
@@ -99,6 +101,33 @@ services:
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
     volumes: [gate-data:/data]
     networks: [serving, release]
+    healthcheck:
+      <<: *pyhealth
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+
+  model-serving-init:   # 번들 캐시 볼륨 소유자를 앱 사용자(10001)로 맞추는 일회성 작업(이미지에 /data 소유 설정이 없어 PermissionError, CR-D17)
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    command: ["sh", "-c", "mkdir -p /data/bundles && chown -R 10001:10001 /data"]
+    user: "0:0"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    volumes: [serving-data:/data]
+    restart: "no"
+
+  model-serving:        # 추론 서버(model-runtime, CPU/fake 변형). survey-service가 I9(HTTP)로 부른다
+    <<: *hardening
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving@${MODEL_SERVING_DIGEST:?locks/images.lock}
+    env_file:
+      - ${CONFIG_DIR:-./config}/model-serving.env
+      - ${SECRETS_DIR:-./secrets}/model-serving.env             # MODEL_RUNTIME_TOKENS, MODEL_RUNTIME_RELEASE_TOKEN (비밀)
+    volumes:
+      - serving-data:/data
+      - ${SURVEY_SCHEMA_DIR:-./build/survey-schema}:/opt/survey-schema:ro   # 문진 스키마(이미지에 없음). build-images.sh가 survey-service 사본에서 만든다
+    networks: [serving]
+    depends_on:
+      model-serving-init: {condition: service_completed_successfully}
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
