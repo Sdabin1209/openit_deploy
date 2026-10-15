@@ -18,7 +18,7 @@
 | --- | --- | --- | --- |
 | edge | 일반(호스트 포트 가능) | gateway, survey-service | 외부 입구. 호스트 포트를 여는 것은 gateway뿐이다(D11) |
 | serving | internal | survey-service, release-gate, ops-feedback-ingest | I4 읽기(survey→gate), I6 수집(survey→ops) |
-| authoring | internal | question-authoring | 저작 면(관리자 콘솔 자리) |
+| authoring | internal | question-authoring, ops-feedback-ingest | 저작 면(관리자 콘솔 자리). ops-feedback-ingest를 더한 이유: 개선 신호(`/v1/signals`)가 I7 읽기 면을 부른다 |
 | release | internal | release-gate, question-authoring, model-registry, job-ops-feedback, job-release-gate-collect | 게이트가 I1(qa)·I3(model-registry)를 읽는 길, ops 잡이 I4를 읽는 길 |
 | logs | internal | ops-feedback-ingest, job-ops-feedback | 원본 Trace 저장소(`ops-data`)를 만지는 프로세스끼리 |
 
@@ -31,6 +31,8 @@
 | release-gate -> question-authoring | I1 읽기 | release | `GATE_I1_TOKEN` <- `QA_READ_TOKENS` 역할 release-gate |
 | release-gate -> model-registry | I3 읽기 | release | `GATE_I3_TOKEN` <- `MODEL_REGISTRY_READ_TOKENS` 역할 release-gate |
 | job-ops-feedback -> release-gate | I4 읽기(사례의 문항 세트 채움) | release | `OPS_GATE_READ_TOKEN` <- `GATE_READ_TOKENS` 역할 ops-feedback (롤백 자동 요청을 켜면 `OPS_GATE_WRITE_TOKEN`) |
+| question-authoring -> ops-feedback-ingest | I7 읽기(개선 신호) | authoring | `QA_FAILURES_TOKEN` <- `OPS_READ_TOKENS` 역할 question-authoring |
+| (밖) 검토자 -> ops-feedback-ingest | `POST /v1/cases/{id}/review` | (UI 없음) | `OPS_REVIEW_TOKENS` 역할 reviewer |
 | (밖) synthetic-data -> question-authoring / ops-feedback | I1 / I7 읽기 | 호스트(시험) 또는 GPU 서버 | 역할 synthetic-data |
 | (밖) model-lab -> model-registry | I3 게시 | GPU 서버에서 접근 경로 미정(CR-D12) | `MODEL_REGISTRY_WRITE_TOKENS` 역할 model-lab |
 

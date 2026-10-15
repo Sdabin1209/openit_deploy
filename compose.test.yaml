@@ -15,13 +15,14 @@ services:
     networks: [authoring, release, test-qa]
     ports: ["127.0.0.1::8080"]
   ops-feedback-ingest:
-    networks: [serving, logs, test-ops]
+    networks: [serving, logs, authoring, test-ops]
     ports: ["127.0.0.1::8080"]
   release-gate:
     networks: [serving, release, test-gate]
     ports: ["127.0.0.1::8080"]
     environment:
       GATE_POLICY_FILE: /etc/gate/test-policy.json
+      GATE_ALLOW_TEST: "1"     # 시험 구성에만: 이름에 test가 있는 정책·실행기를 허용한다(운영 compose.yaml에는 없다)
       GATE_POLL_SECONDS: "2"
     volumes:
       - ${TEST_POLICY_FILE:?test/policy/test-gate-policy.json 경로}:/etc/gate/test-policy.json:ro
@@ -31,6 +32,7 @@ services:
   job-release-gate-collect:
     environment:
       GATE_POLICY_FILE: /etc/gate/test-policy.json
+      GATE_ALLOW_TEST: "1"
     volumes:
       - ${TEST_POLICY_FILE:?}:/etc/gate/test-policy.json:ro
 
@@ -40,6 +42,7 @@ services:
     environment:
       GATE_RUNNER_FACTORY: test_gate_runner:make
       GATE_WORKER_ID: test-worker-1
+      GATE_ALLOW_TEST: "1"
       GATE_POLL_SECONDS: "2"
       PYTHONPATH: /mnt/test-runner
     volumes:

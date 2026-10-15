@@ -15,7 +15,7 @@ cp .env.example .env                      # DEPLOY_REGISTRY 등 확인
 bash scripts/up.sh deploy                 # 운영 구성. 주의: 아래 "알려진 한계"
 ```
 
-운영 구성(`compose.yaml`만)의 상태: 모든 영역 사이 호출이 HTTP로 연결되어 5개 서비스가 뜬다. 다만 (1) release-gate는 통과 기준(O11)이 없어 `can_pass:false`(정상)이고, (2) survey-service는 활성 릴리스가 없는 동안 `/readyz` 503 `no_active_release`, (3) 모델 백엔드는 `fake`뿐이다(CR-D08), (4) 승인 평가 실행기가 없어(CR-D10) 설사 정책이 있어도 PASS가 나지 않는다. ops-feedback 잡은 설정 파일(`OPS_JOB_CONFIG`, 사용자 결정 값)이 있어야 돈다.
+운영 구성(`compose.yaml`만)의 상태: 모든 영역 사이 호출이 HTTP로 연결되어 5개 서비스가 뜬다. 다만 (1) release-gate는 통과 기준(O11)이 없어 `can_pass:false`(정상)이고, (2) survey-service는 활성 릴리스가 없는 동안 `/readyz` 503 `no_active_release`, (3) 모델 백엔드는 `fake`뿐이다(CR-D08), (4) 승인 평가 실행기 구현이 없어(CR-D10, O11) 설사 정책이 있어도 PASS가 나지 않는다(`/readyz`의 `eval.state`가 `no_worker`/`runner_not_configured`). 이름에 test가 있는 정책·실행기는 `GATE_ALLOW_TEST=1`이 없으면 거부된다(운영 compose.yaml에 없음). ops-feedback 잡은 설정 파일(`OPS_JOB_CONFIG`, 사용자 결정 값)이 있어야 돈다.
 
 ## 2. 적용과 롤백 (코드 축)
 

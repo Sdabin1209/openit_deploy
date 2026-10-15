@@ -70,7 +70,9 @@ services:
   question-authoring:
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
-    env_file: ${SECRETS_DIR:-./secrets}/question-authoring.env   # QA_AUTHOR_TOKENS, QA_READ_TOKENS (비밀)
+    env_file:
+      - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
+      - ${SECRETS_DIR:-./secrets}/question-authoring.env        # QA_AUTHOR_TOKENS, QA_READ_TOKENS, QA_FAILURES_TOKEN (비밀)
     volumes: [qa-data:/data]
     networks: [authoring, release]
     healthcheck:
@@ -82,9 +84,9 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
-      - ${SECRETS_DIR:-./secrets}/ops-feedback-ingest.env       # OPS_INGEST_TOKEN, OPS_READ_TOKENS (비밀)
+      - ${SECRETS_DIR:-./secrets}/ops-feedback-ingest.env       # OPS_INGEST_TOKEN, OPS_READ_TOKENS, OPS_REVIEW_TOKENS (비밀)
     volumes: [ops-data:/data]
-    networks: [serving, logs]
+    networks: [serving, logs, authoring]   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]

@@ -85,7 +85,35 @@ survey_noactive() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' "http://127.0
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
 gate_cannot_pass() { getj "$PGATE" /readyz | grep -q '"can_pass": true' && echo "시험용 정책으로 can_pass=true (시험 구성)"; }
 chk "gate /readyz: 시험용 정책이 연결되어 can_pass=true, judging enabled" bash -c "$(declare -f getj gate_cannot_pass); PGATE=$PGATE; gate_cannot_pass"
-chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate-policy|test_gate_runner|test-gate-worker|smoke_fakes|GATE_POLICY_FILE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
+chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate-policy|test_gate_runner|test-gate-worker|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
+# 정책 스키마: release-gate 이미지의 gate_policy.schema.json 으로 시험 정책을 검증한다
+policy_schema_ok() { "$DOCKER" run --rm --entrypoint python "$DEPLOY_REGISTRY/openit/release-gate@$RELEASE_GATE_DIGEST" -c "import release_gate,pathlib,sys;sys.stdout.write((pathlib.Path(release_gate.__file__).parent/'schemas'/'gate_policy.schema.json').read_text())" > "$W/gate_policy.schema.json" && "$VENV/bin/python" -c "
+import json,jsonschema,sys
+s=json.load(open('$W/gate_policy.schema.json')); p=json.load(open('$TEST_POLICY_FILE'))
+jsonschema.validate(p,s); print('test/policy/test-gate-policy.json 이 gate_policy.schema.json 을 통과한다')"; }
+chk "시험 정책이 release-gate의 정책 스키마를 통과" policy_schema_ok
+# 운영 모드(GATE_ALLOW_TEST 없음)에서 게이트가 시험용 정책을 거부하는지
+prod_gate_rejects() {
+  local n="${PROJECT}-prodcheck" tid ok=1 p out
+  "$DOCKER" rm -f "$n" >/dev/null 2>&1
+  "$DOCKER" run -d --name "$n" -p 127.0.0.1::8080 -v "$(hostpath "$TEST_POLICY_FILE"):/etc/gate/test-policy.json:ro" -e GATE_POLICY_FILE=/etc/gate/test-policy.json \
+    -e GATE_READ_TOKENS=a=x -e GATE_WRITE_TOKENS=operator=y "$DEPLOY_REGISTRY/openit/release-gate@$RELEASE_GATE_DIGEST" >/dev/null || return 1
+  sleep 6
+  if [ "$("$DOCKER" inspect -f '{{.State.Running}}' "$n" | tr -d '\r')" = false ]; then out="시작 거부(종료 코드 $("$DOCKER" inspect -f '{{.State.ExitCode}}' "$n" | tr -d '\r')): $("$DOCKER" logs "$n" 2>&1 | tail -1 | cut -c1-150)"; "$DOCKER" rm -f "$n" >/dev/null; echo "$out"; return 0; fi
+  p=$(port_of "$n" 8080); out=$(curl -s -m 5 "http://127.0.0.1:$p/readyz"); "$DOCKER" rm -f "$n" >/dev/null
+  echo "$out" | grep -q '"can_pass": false' && echo "can_pass:false 로 시작 (운영 모드): $(echo "$out" | cut -c1-200)"
+}
+chk "운영 모드(GATE_ALLOW_TEST 없음)의 게이트는 시험용 정책을 거부하고 통과를 낼 수 없다" prod_gate_rejects
+prod_gate_nopolicy() {
+  local n="${PROJECT}-prodcheck2" p out
+  "$DOCKER" rm -f "$n" >/dev/null 2>&1
+  "$DOCKER" run -d --name "$n" -p 127.0.0.1::8080 -e GATE_READ_TOKENS=a=x -e GATE_WRITE_TOKENS=operator=y "$DEPLOY_REGISTRY/openit/release-gate@$RELEASE_GATE_DIGEST" >/dev/null || return 1
+  sleep 5; p=$(port_of "$n" 8080); out=$(curl -s -m 5 "http://127.0.0.1:$p/readyz"); "$DOCKER" rm -f "$n" >/dev/null
+  echo "$out" | grep -q '"can_pass": false' && echo "$out" | cut -c1-250
+}
+chk "운영 구성(정책 없음) 게이트: can_pass:false 가 정상" prod_gate_nopolicy
+eval_state_ok() { getj "$PGATE" /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);e=d.get('eval',{});print('eval',e);sys.exit(0 if e.get('state') in ('ok','no_worker','runner_not_configured') else 1)"; }
+chk "gate /readyz 에 eval 상태(state)가 보인다" eval_state_ok
 chk "gateway: 공개 API 경로 없음(O06 대기) /v1/turns -> 404" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/turns)\" = 404 ]"
 reach() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import urllib.request;urllib.request.urlopen('http://$2:8080/healthz',timeout=3)" >/dev/null 2>&1; }
 blocked() { ! reach "$@"; }
@@ -95,8 +123,7 @@ chk "도달: release-gate -> question-authoring (release, I1)" reach release-gat
 chk "도달: release-gate -> model-registry (release, I3)" reach release-gate model-registry
 chk "차단: survey-service -> question-authoring" blocked survey-service question-authoring
 chk "차단: survey-service -> model-registry" blocked survey-service model-registry
-chk "차단: question-authoring -> ops-feedback-ingest" blocked question-authoring ops-feedback-ingest
-chk "차단: ops-feedback-ingest -> question-authoring" blocked ops-feedback-ingest question-authoring
+chk "도달: question-authoring -> ops-feedback-ingest (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback-ingest
 chk "차단: ops-feedback-ingest -> model-registry" blocked ops-feedback-ingest model-registry
 noegress() { ! "$DOCKER" exec "${PROJECT}-release-gate-1" python -c "import urllib.request;urllib.request.urlopen('http://1.1.1.1',timeout=3)" >/dev/null 2>&1; }
 chk "내부 네트워크 밖으로 나가지 못함(release-gate -> 외부 인터넷)" noegress

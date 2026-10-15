@@ -335,24 +335,25 @@ def step7():
     if not STATE.get("cases"): rec(7, "BLOCKED", "FailureCase가 없다(단계 6)"); return
     fs = HttpFailureStore(URL("ops"), TOK("ops-read-synthetic-data"))
     mine = {c["case_id"] for c in STATE["cases"]}
-    confirmed = [c for c in fs.list_cases(review_status="CONFIRMED")[0] if c["case_id"] in mine]
-    if not confirmed:
-        # 검토 화면이 없고 검토 게시는 HTTP로 열려 있지 않다(CR-D11). 런북의 ReviewQueue.review API를 ops-feedback 이미지 안에서
-        # 호출해 검토자의 확인을 대신한다(TEST-SUB). 쓰기 주체는 ops-feedback 자기 이미지·볼륨이다.
-        cid = STATE["cases"][0]["case_id"]
-        code = f'''
-import json
-from ops_feedback.failurestore import FailureStoreImpl
-from ops_feedback.review import ReviewQueue
-q = ReviewQueue(FailureStoreImpl.sqlite("/data/failures.db"))
-r = q.review({cid!r}, "CONFIRMED", "reviewer", expected={{"items": [{{"item_no": 0, "target": {{"question_id": "Q1", "repeat_key": "", "slot_id": "body_temp"}}, "value": "36.5", "source_text": "삼십육점오", "intent": "ANSWERED_INTENT", "progress_op": None, "guide_id": None}}]}}, expected_kind="PARSER", note="E2E 시험용 확인")
-print(json.dumps({{"review_status": r.get("review_status"), "version": r.get("version")}}))
-'''
-        cmd = [a.docker, "run", "--rm", "-i", "-v", f"{a.project}_ops-data:/data", IMAGES["ops-feedback"], "python", "-"]
-        out = sh(cmd, inp=code).stdout; assert "CONFIRMED" in out, out
-        confirmed = fs.list_cases(review_status="CONFIRMED")[0]; assert confirmed, "확인한 사례가 I7 읽기에 보이지 않는다"
-        for c in confirmed: validate("FailureCase", dict(c))
-        rec("7a", "TEST-SUB", f"검토 UI·HTTP 검토 면이 없어(CR-D11) ops-feedback 이미지의 ReviewQueue.review API로 검토자 확인을 대신: 사례 {cid} -> CONFIRMED(새 version), I7 HTTP 읽기에서 확인됨")
+    cid = STATE["cases"][0]["case_id"]
+    # 개선 신호(저작으로의 환류): question-authoring이 I7을 HTTP로 읽어 문항별 사례 수를 낸다. 저자 토큰으로 읽는다
+    c, sig = http("GET", "qa", f"/v1/signals?question_set_id={QS}", TOK("qa-author-e2e")); assert c == 200, (c, sig)
+    blob = json.dumps(sig, ensure_ascii=False)
+    assert QS in blob and any(k in blob for k in ("case_count", "cases", "count")), f"신호에 문항 세트/사례 수가 없다: {blob[:300]}"
+    assert http("GET", "qa", "/v1/signals", TOK("qa-read-synthetic-data"))[0] == 403, "읽기 토큰으로 신호가 열림"
+    assert f'"s-{RID}"' not in blob and "삼십육" not in blob, "신호에 발화/ID 원문이 있다"
+    rec("7s", "REAL", f"question-authoring GET /v1/signals(저자 토큰, 읽기 토큰은 403)가 ops-feedback I7을 HTTP로 읽어 문항 세트 {QS}의 사례 수를 낸다(저작으로의 환류). 응답 {blob[:200]}")
+    rv_tok = TOK("ops-review-reviewer")
+    bad = {"review_status": "CONFIRMED", "expected": {"items": [{"bad": 1}]}, "expected_kind": "PARSER"}
+    c, e = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, bad); assert c == 400, (c, e); validate("BoundaryError", e)
+    c, e2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, {"review_status": "CONFIRMED", "expected": {"items": []}}); assert c == 400, (c, e2)
+    assert http("POST", "ops", f"/v1/cases/{cid}/review", TOK("ops-read-synthetic-data"), bad)[0] == 403, "읽기 토큰으로 검토 게시됨"
+    assert http("POST", "ops", f"/v1/cases/nonexistent-case/review", rv_tok, {"review_status": "DISMISSED"})[0] == 404
+    good = {"review_status": "CONFIRMED", "expected_kind": "PARSER", "expected": {"items": [{"item_no": 0, "target": {"question_id": "Q1", "repeat_key": "", "slot_id": "body_temp"}, "value": "36.5", "source_text": "삼십육점오", "intent": "ANSWERED_INTENT", "progress_op": None, "guide_id": None}]}}
+    c, r1 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, good); assert c == 201, (c, r1); validate("FailureCase", r1)
+    c, r2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, good); assert c == 200 and r2 == r1, (c, "같은 검토 재전송이 같은 결과가 아니다")
+    confirmed = [x for x in fs.list_cases(review_status="CONFIRMED")[0] if x["case_id"] in mine]; assert confirmed
+    rec("7a", "REAL", f"검토 확인을 HTTP로: POST /v1/cases/{{id}}/review(검토 토큰) 잘못된 expected는 400({e.get('message','')[:80]}), expected_kind 없음 400, 읽기 토큰 403, 없는 사례 404, 올바른 확인은 201(새 version, FailureCase 스키마 통과), 재전송 200 같은 결과. 검토 UI는 아직 없다")
     out = run_sd("2", seeds=True, failure=True); m, _ = read_manifest(out)
     seeded = json.dumps(m.get("ext", {}), ensure_ascii=False) + (WORK / "sd-work-2" / "report.json").read_text()
     for f in (WORK / "datasets" / f"ds-{RID}" / m["version"] / "files").rglob("*.jsonl"):
@@ -361,7 +362,7 @@ print(json.dumps({{"review_status": r.get("review_status"), "version": r.get("ve
     prev = STATE["dataset"]["version"]
     if cited and m["version"] != prev:
         STATE["dataset2"] = {"id": m["dataset_id"], "version": m["version"], "content_hash": m["content_hash"]}; save()
-        rec(7, "REAL", f"synthetic-data가 I7(HTTP)로 CONFIRMED FailureCase를 읽어 새 데이터셋 버전 {m['version']}(이전 {prev})이 사례 ID를 시드로 인용. 학습(model-lab)·저작으로의 환류는 실행하지 않았다(model-lab은 E2E_GPU=1 경로, 저작의 I7 소비는 이번 구성에 없음)")
+        rec(7, "REAL", f"synthetic-data가 I7(HTTP)로 CONFIRMED FailureCase를 읽어 새 데이터셋 버전 {m['version']}(이전 {prev})이 사례 ID를 시드로 인용. 저작으로의 환류는 7s(개선 신호). 학습(model-lab) 회귀 평가는 실행하지 않았다(CPU로 도는 model-lab 이미지가 없고 E2E_GPU는 신호 전, CR-D12)")
     else:
         rec("7b", "BLOCKED", f"새 데이터셋 버전 {m['version']}(이전 {prev})이 만들어졌으나 시드 인용이 없다(CONFIRMED가 아닌 사례는 시드로 쓰이지 않는다). 인용 확인: {cited}. 학습(model-lab)과 저작으로의 환류는 실행하지 않았다")
 

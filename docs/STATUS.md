@@ -43,3 +43,9 @@
 - 7단계: synthetic-data가 I7(HTTP)로 읽는 것은 REAL, 검토 확인만 TEST-SUB(CR-D11). 8단계: REAL(요청 주체는 e2e의 ops-feedback 역할 토큰; ops 잡의 자동 롤백 평가는 설정하지 않았다). 남은 막힘은 위 표와 CR-D10..D12.
 - E2E_GPU=1 경로는 신호 전이라 돌리지 않았다.
 - 정리 명령: 시험이 끝나면 e2e.sh가 자동 정리한다(`--keep`일 때만 수동). 로컬 이미지 정리: `for i in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^deploy-build/'); do docker rmi -f $i; done`.
+
+## 셋째 구간 (영역들이 막힘을 푼 뒤)
+
+- 최신 HEAD로 5개 이미지를 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --keep`/`--reuse-build`: 검사 76개 PASS, FAIL 0.
+- 바뀐 것: 7단계 검토를 실제 HTTP(`POST /v1/cases/{id}/review`)로(잘못된 expected 400, 읽기 토큰 403, 없는 사례 404, 201, 재전송 200), 저작으로의 환류 `GET /v1/signals` 확인, 게이트 운영 모드 시험 정책 거부·eval 상태·정책 스키마 검사 추가, qa에 I7 읽기 토큰 연결(ops-ingest를 authoring 네트워크에 추가).
+- 남은 막힘 표는 CR-D15와 보고서에 있다.
