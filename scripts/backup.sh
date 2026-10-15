@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: survey-data qa-data ops-data gate-data (비우면 전부)
+#  환경: DEPLOY_PROJECT(기본 deploy), BACKUP_CONFIG(기본 config/backup.env)
+# 설정(BACKUP_DIR, BACKUP_RETENTION_DAYS)이 없거나 비어 있으면 거부한다(코드에 기본값 없음, O16 미정).
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+CFG=${BACKUP_CONFIG:-$DEPLOY_ROOT/config/backup.env}
+[ -f "$CFG" ] || { echo "거부: 백업 설정 파일이 없다: $CFG (config/backup.env.example 참고. 주기·보관 기간은 사용자 결정 O16)" >&2; exit 2; }
+BACKUP_DIR=; BACKUP_RETENTION_DAYS=
+set -a; source "$CFG"; set +a
+[ -n "$BACKUP_DIR" ] || { echo "거부: BACKUP_DIR 이 비어 있다" >&2; exit 2; }
+[[ "$BACKUP_RETENTION_DAYS" =~ ^[0-9]+$ ]] || { echo "거부: BACKUP_RETENTION_DAYS 가 비었거나 정수가 아니다: '$BACKUP_RETENTION_DAYS'" >&2; exit 2; }
+P=${DEPLOY_PROJECT:-deploy}
+LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}
+UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK")
+[ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금 파일에 없다"
+mkdir -p "$BACKUP_DIR"
+STORES=${*:-survey-data qa-data ops-data gate-data}
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+for s in $STORES; do
+  mkdir -p "$BACKUP_DIR/$s"
+  # 일관성은 SQLite backup API(읽기 전용 연결)가 보장한다. WAL 모드 DB를 읽으려면 -shm 파일이 필요해 볼륨을 쓰기 가능으로 붙이고,
+  # 도구는 원본을 바꾸지 않는다(만든 -wal/-shm 은 지운다). 서비스가 떠 있어도 된다.
+  "$DOCKER" run --rm -v "${P}_${s}:/src" -v "$(hostpath "$BACKUP_DIR"):/out" -v "$(hostpath "$DEPLOY_ROOT/scripts"):/tool:ro" \
+    "$UTIL" python /tool/backup_tool.py backup /src "/out/$s/.partial-$TS" --store "$s" --owner "$(id -u):$(id -g)" >/dev/null
+  mv "$BACKUP_DIR/$s/.partial-$TS" "$BACKUP_DIR/$s/$TS"
+  echo "백업: $s -> $BACKUP_DIR/$s/$TS"
+  # 보관 기간이 지난 스냅샷을 지운다. 방금 만든 것과 가장 최근 하나는 남긴다.
+  if [ "$BACKUP_RETENTION_DAYS" -ge 0 ]; then
+    mapfile -t old < <(find "$BACKUP_DIR/$s" -mindepth 1 -maxdepth 1 -type d -name '2*' -mtime +"$BACKUP_RETENTION_DAYS" | sort)
+    total=$(find "$BACKUP_DIR/$s" -mindepth 1 -maxdepth 1 -type d -name '2*' | wc -l)
+    for d in "${old[@]}"; do [ "$total" -gt 1 ] || break; rm -rf "$d"; total=$((total-1)); echo "보관 기간 경과로 삭제: $d"; done
+  fi
+done

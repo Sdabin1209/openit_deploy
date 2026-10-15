@@ -1,0 +1,8 @@
+# 서버 밖 외부 감시 연동 자리(D10). 값은 사용자 결정 뒤에 채운다. 이 파일은 예시이고 어떤 스크립트도 읽지 않는다.
+targets:
+  - name: gateway-healthz
+    url: null            # 공개 주소가 정해지면 https://<도메인>/healthz
+    interval_seconds: null
+    expect_status: 200
+notify:
+  channel: null          # 예: 메일, 메신저. 유지보수 담당의 연락처는 여기에 쓰지 않고 감시 서비스에 둔다

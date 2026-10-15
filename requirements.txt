@@ -1,0 +1,4 @@
+# deploy 스크립트(E2E, 스케줄러)용 가상환경 의존. 경계 계약과 문진 스키마 패키지는 build-images.sh가 만든 wheel(태그 시점 소스)로 설치한다.
+jsonschema==4.26.0
+referencing==0.37.0
+PyYAML==6.0.3

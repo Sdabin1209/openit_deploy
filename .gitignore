@@ -1,0 +1,9 @@
+.venv/
+build/
+secrets/
+state/
+backups/
+.env
+.env.local
+*.pyc
+__pycache__/

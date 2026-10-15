@@ -1,0 +1,17 @@
+{
+	admin off
+	auto_https off
+}
+:8080 {
+	# 공개 API 경로(I10)는 O06 대기라 만들지 않는다. 이후 survey-service 업스트림은 이 자리에 추가한다.
+	# /readyz 는 업스트림이 생기면 그 준비 여부를 반영한다. 지금은 gateway 자체가 준비되면 ok.
+	handle /healthz {
+		respond "ok" 200
+	}
+	handle /readyz {
+		respond "ok" 200
+	}
+	handle {
+		respond "not found" 404
+	}
+}

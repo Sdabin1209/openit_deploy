@@ -1,0 +1,17 @@
+# 서버 안의 로컬 레지스트리(D24). 본 compose(compose.yaml)보다 먼저 떠 있어야 한다. 별도 프로젝트로 둔다.
+# 이미지는 digest로 참조한다. 이름에 deploy를 접두어로 둔다(compose -p 가 프로젝트 이름을 정한다: 기본 deploy-registry).
+# 호스트 바인드는 REGISTRY_HOST_BIND(기본 127.0.0.1)와 REGISTRY_HOST_PORT(기본 5000), 운영 서버(리눅스)용. Docker Desktop(WSL)은 데몬이 VM 안에 있어
+# 127.0.0.1 게시 포트에 닿지 못하므로 시험에서만 REGISTRY_HOST_BIND=0.0.0.0, REGISTRY_HOST_PORT=(빈 값, Docker 배정)으로 띄우고 끝나면 내린다.
+services:
+  registry:
+    image: ${REGISTRY_IMAGE:?locks/images.lock 의 REGISTRY_IMAGE}
+    container_name: ${REGISTRY_PROJECT:-deploy-registry}
+    restart: unless-stopped
+    ports:
+      - "${REGISTRY_HOST_BIND-127.0.0.1}:${REGISTRY_HOST_PORT-5000}:5000"
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    volumes:
+      - registry-data:/var/lib/registry
+volumes:
+  registry-data:
