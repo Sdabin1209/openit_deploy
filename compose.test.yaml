@@ -27,6 +27,7 @@ services:
     ports: ["127.0.0.1::8080"]
     environment:
       MODEL_RUNTIME_BACKEND: fake   # 시험: 출력이 고정된 가짜 백엔드
+      MODEL_RUNTIME_FAKE_RISK_PHRASE: 'TEST-RISK'   # 시험 전용: 발화에 이 문구가 있으면 fake 파서가 위험 신호를 낸다(운영 compose.yaml에는 넣지 않는다)
   model-registry:
     networks: [release, test-mr]
     ports: ["127.0.0.1::8080"]

@@ -61,3 +61,7 @@
 - 이미지 6개(model-serving 추가; survey-service는 LangGraph 오케스트레이터 HEAD, 게이트·survey는 model-runtime v0.5.0 wheel)를 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --reuse-build --keep`: 80 PASS / 0 FAIL.
 - 5단계가 model-serving을 거친다: 서비스 -> PUT 적재(서버가 게이트 I4에서 번들 읽음) -> parse -> generate. 고정 출력 "(가짜 응답)"으로 서비스 내부 가짜가 아님을 확인했고 `/v1/info`·토큰 거부도 확인했다. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살며 다시 띄우면 다음 턴이 복구된다.
 - 위험 정지 -> 직원 RESUME은 fake 출력이 고정이라 여전히 못 한다: CR-D17(fake에 시험용 위험 스위치 요청). 번들 캐시 볼륨 소유자 문제는 `model-serving-init`으로 우회(CR-D17).
+
+## 여섯째 구간: model-runtime v0.5.1
+
+- `model-serving`을 v0.5.1 태그로 다시 빌드(라벨 0.5.1), chown 초기화 컨테이너 제거(번들 캐시는 `serving-data:/var/lib/model-runtime`), serving_config를 `/v1/info`의 기대값으로 생성, 위험 문구 스위치는 `compose.test.yaml`에만. 5단계에 위험 정지 -> 직원 RESUME/END를 REAL로 추가. `bash scripts/e2e.sh --reuse-build --keep`: 80 PASS / 0 FAIL. CR-D18.

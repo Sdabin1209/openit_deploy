@@ -81,7 +81,7 @@ for pair in "gateway:$PGW" "question-authoring:$PQA" "release-gate:$PGATE" "ops-
 done
 survey_noactive() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' "http://127.0.0.1:$PSURVEY/readyz"); echo "$o" | grep -q 'no_active_release' && echo "$o" | grep -q '\[503\]' && echo "활성 릴리스가 없어 503 no_active_release (정상: 아직 게이트에 PASS 릴리스가 없다)"; }
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
-chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
+chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
 no_auto_pass() { getj "$PGATE" /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
 chk "gateway: 공개 API는 /v1/sessions 만 survey-service로 넘기고(토큰 없으면 401), 그 밖의 경로와 직원 개입 경로는 404" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$PGW/v1/sessions/x/intervention)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' http://127.0.0.1:$PGW/v1/sessions)\" = 401 ]"

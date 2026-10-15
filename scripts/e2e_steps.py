@@ -24,7 +24,10 @@ PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(
 WORK.mkdir(parents=True, exist_ok=True)
 RID = a.run_id
 TOK = lambda n: (pathlib.Path(a.secrets) / "tokens" / n).read_text().strip()
-URL = lambda k: f"http://127.0.0.1:{PORTS[k]}"
+def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가 바뀔 수 있어 매번 Docker에게 묻는다
+    out = subprocess.run([a.docker, "port", f"{a.project}-model-serving-1", "8080/tcp"], capture_output=True, text=True).stdout
+    return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
+URL = lambda k: f"http://127.0.0.1:{_ms_port() if k == 'ms' else PORTS[k]}"
 RESULTS = []; STATE_FILE = WORK / "state.json"
 STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
@@ -149,17 +152,21 @@ def step2():
 def make_packages():
     """시험용 어댑터 + model-runtime FakeBackend 적재 + ModelPackageManifest 2건을 만든다."""
     fx = ROOT / "test/fixtures/e2e-test-adapter"
-    code = '''
-import json, pathlib, model_runtime as m, survey_schema
-from boundary_contracts import canonical as c
-cfgs = m.fake_serving_configs()
-hashes = {r: m.serving_config_hash(v) for r, v in cfgs.items()}
-ad = {r: pathlib.Path("/mnt/fx")/r for r in ("LORA_A", "LORA_B")}
-m.load(ad, cfgs, schema_dir=survey_schema.schema_dir(), expected_serving_config_hashes=hashes, backend=m.FakeBackend())
-print(json.dumps({"cfgs": cfgs, "hashes": hashes, "adapter_hash": {r: c.directory_hash(p) for r, p in ad.items()}, "runtime": m.RUNTIME_VERSION}))
-'''
-    d = json.loads(docker_py(IMAGES["survey-service"], code, [(hostpath(fx), "/mnt/fx")]))
-    assert d["adapter_hash"]["LORA_A"] == canonical.directory_hash(fx / "LORA_A")
+    # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다(v0.5.1)
+    c, info = http("GET", "ms", "/v1/info", TOK("inference-survey-service")); assert c == 200, (c, info)
+    ex = info["serving_config_expectation"]
+    cfg = {"prompt_template_version": ex["prompt_template_versions"][0],
+           "decoding": {"constraint_mode": "constrained", "temperature": 0, "seed": 1000, "max_tokens": 512}, "max_attempts": 3,
+           "constraint": ex["constraint"], "output_contract": ex["output_contract"], "protection_policy_version": ex["protection_policy_versions"][0]}
+    # 대조: survey 이미지(model-runtime)의 fake_serving_configs 와 일치하는지
+    probe = "import json, model_runtime as m\nprint(json.dumps(m.fake_serving_configs()['LORA_A']))\n"
+    try:
+        ref = json.loads(docker_py(IMAGES["survey-service"], probe))
+        STATE["fake_cfg_vs_survey_image"] = sorted(k for k in cfg if ref.get(k) != cfg[k])
+    except Exception as e:
+        STATE["fake_cfg_vs_survey_image"] = "대조 실패 " + str(e)[:80]
+    d = {"cfgs": {r: cfg for r in ("LORA_A", "LORA_B")}, "hashes": {r: canonical.sha256_hash(cfg) for r in ("LORA_A", "LORA_B")},
+         "adapter_hash": {r: canonical.directory_hash(fx / r) for r in ("LORA_A", "LORA_B")}, "runtime": info["runtime_version"]}
     pk = {}
     for role in ("LORA_A", "LORA_B"):
         mf = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "package_id": f"pkg-{RID}-{role.lower().replace('_', '-')}", "version": "1", "role": role,
@@ -209,7 +216,7 @@ def step3():
         reg_ro = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); reg_ro.publish(pk["LORA_A"][0], pk["LORA_A"][1], b"{}"); raise AssertionError("읽기 토큰으로 게시됨")
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
     STATE["lora"] = refs; save()
-    rec(3, "TEST-SUB", "학습 대신 시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct)와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. model-runtime FakeBackend 적재 확인. 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2의 실제 데이터셋. model-lab 파이프라인은 실행하지 않음")
+    rec(3, "TEST-SUB", f"학습 대신 시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct)와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(survey 이미지 fake_serving_configs와 다른 키: {STATE.get('fake_cfg_vs_survey_image')}). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2의 실제 데이터셋. model-lab 파이프라인은 실행하지 않음")
 
 def decisions_for(gate_read, subj):
     return gate_read.find_decisions(question_set=subj["question_set"], lora_a=subj["lora_a"], lora_b=subj["lora_b"])[0]
@@ -327,6 +334,25 @@ def step5():
     assert cu == 200 and not (isinstance(ru, dict) and ru.get("turn_failure_signal")) and "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
     kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 404, "직원 개입 경로가 외부 입구로 열려 있다"
+    # 위험 정지 -> 직원 개입: 추론 서버의 fake 파서가 시험 문구(TEST-RISK)로 위험 신호를 낸다(MODEL_RUNTIME_FAKE_RISK_PHRASE, 시험 구성 전용)
+    c, info2 = http("GET", "ms", "/v1/info", ms_tok); assert info2.get("test_hooks", {}).get("fake_risk_phrase"), "시험용 위험 문구 스위치가 켜져 있지 않다"
+    def staff(sid_, decision, tid):
+        return http("POST", "survey", f"/v1/sessions/{sid_}/intervention", TOK("survey-api-staff"), {"session_id": sid_, "decision": decision, "turn_id": tid})
+    sr = f"sess-{RID}-risk"; assert kiosk("/v1/sessions", {"session_id": sr, "kind": "SESSION_START"})[0] == 200
+    c, rr = public_turn(sr, "r1", "TEST-RISK 가슴이 아파요"); assert c == 200 and rr["turn_failure_signal"], (c, rr)
+    validate_survey("FrontendInput", rr); alert = rr["turn_failure_signal"]["staff_alert"]
+    assert alert in ("DELIVERED", "DELIVERY_FAILED"), rr
+    c, paused = public_turn(sr, "r2", "체온은 삼십육 도예요"); assert c == 200 and paused["response_text"] is None, ("정지된 세션이 말을 이어 감", paused)
+    assert http("POST", "gw", f"/v1/sessions/{sr}/intervention", TOK("survey-api-staff"), {"session_id": sr, "decision": "RESUME", "turn_id": "i1"})[0] == 404, "직원 개입이 외부 입구로 열려 있다"
+    c, rs = staff(sr, "RESUME", "i1"); assert c == 200 and rs["response_text"], (c, rs); validate_survey("FrontendInput", rs)
+    c, rs2 = staff(sr, "RESUME", "i1"); assert c == 200 and rs2 == rs, "같은 turn_id 재전송이 같은 응답이 아니다"
+    c, after = public_turn(sr, "r3", "체온은 삼십육 도예요"); assert c == 200 and after["response_text"] and not after["turn_failure_signal"], (c, after)
+    se = f"sess-{RID}-risk-end"; assert kiosk("/v1/sessions", {"session_id": se, "kind": "SESSION_START"})[0] == 200
+    c, re_ = public_turn(se, "r1", "TEST-RISK"); assert c == 200 and re_["turn_failure_signal"], (c, re_)
+    c, en2 = staff(se, "END", "i1"); assert c == 200, (c, en2)
+    c, ce = public_turn(se, "r2", "체온"); assert c == 409, ("끝난 세션에 턴이 받아들여짐", c, ce)
+    STATE["risk_alert"] = alert; save()
+    rec("5r", "REAL", f"위험 정지 -> 직원 개입(내부 경로, staff 토큰): TEST-RISK 발화로 세션 정지(응답 turn_failure_signal staff_alert={alert}), 정지 중 발화는 response_text null, RESUME 200(같은 turn_id 재전송은 같은 응답) 뒤 발화가 이어지고, END 뒤 턴은 409. 게이트웨이의 intervention은 404. 위험 문구는 시험 구성의 model-serving에만 설정(운영 compose.yaml에 없음)")
     # 직원 개입은 서비스에 직접(내부 경로)만: 키오스크 토큰은 403, 직원 토큰은 멈추지 않은 세션에 409(PUBLIC_API.md)
     ib = {"session_id": sid, "decision": "RESUME", "turn_id": "i1"}
     assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", TOK("survey-api-kiosk"), ib)[0] == 403, "키오스크 토큰으로 직원 개입이 열림"

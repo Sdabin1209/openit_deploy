@@ -105,17 +105,6 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  model-serving-init:   # 번들 캐시 볼륨 소유자를 앱 사용자(10001)로 맞추는 일회성 작업(이미지에 /data 소유 설정이 없어 PermissionError, CR-D17)
-    image: ${UTIL_IMAGE:?locks/images.lock}
-    command: ["sh", "-c", "mkdir -p /data/bundles && chown -R 10001:10001 /data"]
-    user: "0:0"
-    cap_drop: ["ALL"]
-    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
-    security_opt: ["no-new-privileges:true"]
-    read_only: true
-    volumes: [serving-data:/data]
-    restart: "no"
-
   model-serving:        # 추론 서버(model-runtime, CPU/fake 변형). survey-service가 I9(HTTP)로 부른다
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving@${MODEL_SERVING_DIGEST:?locks/images.lock}
@@ -123,11 +112,9 @@ services:
       - ${CONFIG_DIR:-./config}/model-serving.env
       - ${SECRETS_DIR:-./secrets}/model-serving.env             # MODEL_RUNTIME_TOKENS, MODEL_RUNTIME_RELEASE_TOKEN (비밀)
     volumes:
-      - serving-data:/data
+      - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다, v0.5.1)
       - ${SURVEY_SCHEMA_DIR:-./build/survey-schema}:/opt/survey-schema:ro   # 문진 스키마(이미지에 없음). build-images.sh가 survey-service 사본에서 만든다
     networks: [serving]
-    depends_on:
-      model-serving-init: {condition: service_completed_successfully}
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]

@@ -17,7 +17,7 @@ if [ "$ONLY" = "  " ]; then rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"; fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
 # 경계 계약 태그(D53 이후 v1.3.1). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
-export BC="${BOUNDARY_TAG_ALL:-v1.3.1}" MR="${MODEL_RUNTIME_TAG_ALL:-v0.5.0}"
+export BC="${BOUNDARY_TAG_ALL:-v1.3.1}" MR="${MODEL_RUNTIME_TAG_ALL:-v0.5.1}"
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
@@ -87,9 +87,9 @@ if want model-serving; then
   # 추론 서버(model-runtime, CPU/fake 변형). 같은 Dockerfile의 변형은 VARIANT 인자(기본 cpu, gpu는 GPU 서버 전용·13GB라 E2E 제외).
   # boundary-contracts 폴더는 태그 시점 소스를 빌드 컨텍스트 boundary 로 준다(CI는 태그 설치로 바꾼다).
   MS="$CTX/model-serving"; rm -rf "$MS" "$CTX/bc-folder"; mkdir -p "$MS" "$CTX/bc-folder"
-  git -C "$WORKSPACE/model-runtime" archive HEAD | tar -x -C "$MS"
+  git -C "$WORKSPACE/model-runtime" archive "$MR" | tar -x -C "$MS"   # 추론 서버는 model-runtime 태그 시점 소스
   git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder"
-  c=$(commit_of model-runtime); img="deploy-build/model-serving:$c"
+  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}")$SUFFIX; img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$(hostpath "$CTX/bc-folder")" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
     --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$(hostpath "$MS")" >/dev/null
   record model-serving "$img" "$c"

@@ -1,5 +1,9 @@
 # 변경 이력
 
+## 2026-10-15 여섯째 구간
+
+- model-runtime v0.5.1: init 제거, 기대값 기반 serving_config, 위험 정지 -> 직원 개입 E2E, CR-D18.
+
 ## 2026-10-15 다섯째 구간
 
 - model-serving(추론 서버) 추가, survey가 I9로 호출, E2E 5단계가 추론 서버를 거침(중단·복구 포함), model-runtime v0.5.0·LangGraph survey 이미지, CR-D17.
