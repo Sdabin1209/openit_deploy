@@ -39,7 +39,7 @@ for name in ("survey-service", "release-gate", "question-authoring", "ops-feedba
     if name == "survey-service": extra = f": ready={d.get('ready')} active_release={d.get('active_release')} problems={d.get('problems')}"
     if name == "release-gate": extra = f": judging={d.get('judging')} awaiting_approval={d.get('awaiting_approval')}"
     if name == "survey-service" and d.get("inference"): extra += f" inference={json.dumps(d.get('inference'), ensure_ascii=False)[:160]}"
-    if name == "model-serving": extra = f": {d.get('status')} 사유={d.get('reason') or '-'} (not ready + 사유 '백엔드를 올리는 중' 이면 모델 내려받기·적재 중)"
+    if name == "model-serving": extra = f": {d.get('status')} 사유={d.get('reason') or '-'} (not ready + 사유 '백엔드를 올리는 중' 이면 모델 내려받기·적재 중)" + (" -> 모델 캐시 쓰기 불가 가능성: HF 볼륨 소유자 확인(docs/RUN.md '모델 캐시가 쓰기 불가일 때'), scripts/demo.sh diag" if "OSError" in str(d.get('reason')) else "")
     if c == 0: extra = f" ({d.get('error')})"
     print(f"  {name:20} /readyz {c}{extra}")
 PY

@@ -12,7 +12,7 @@
 #      compose.llm.local.yaml   데모: MODEL_SERVING_GPU_IMAGE=deploy-build/model-serving-gpu:<커밋> 로컬 이미지를 태그로 직접 참조, pull_policy: never
 #                               (13GB 이미지를 레지스트리에 두 벌로 두지 않으려는 것; demo.sh up --llm 이 이렇게 한다). 이 경로는 digest 고정을 하지 않는다.
 #  - GPU 컨테이너 접근: bash scripts/doctor.sh --llm
-#  - 첫 기동은 huggingface.co 에서 모델(약 3GB)을 hf-cache 볼륨으로 받는다(인터넷 필요). 오프라인이면 볼륨을 미리 채우고 HF_HUB_OFFLINE=1.
+#  - 첫 기동은 huggingface.co 에서 모델(약 3GB)을 hf-cache 볼륨(/var/lib/model-runtime/hf)으로 받는다(인터넷 필요). 오프라인이면 볼륨을 미리 채우고 HF_HUB_OFFLINE=1.
 # 변수: HF_CACHE_VOLUME(기본 deploy-llm-hf-cache), DEMO_LLM_PROFILE(프로파일 경로, 이미지 안 /app/profiles/ 아래. 기본 gpu-12g.json), HF_HUB_OFFLINE(기본 0)
 volumes:
   hf-cache:        # Hugging Face 모델 캐시(HF_HOME). 다시 받을 수 있어 백업 대상이 아니다.
@@ -23,11 +23,11 @@ services:
     environment:
       MODEL_RUNTIME_BACKEND: vllm
       MODEL_RUNTIME_PROFILE: ${DEMO_LLM_PROFILE:-/app/profiles/gpu-12g.json}
-      HF_HOME: /var/lib/hf-cache
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
-      XDG_CACHE_HOME: /var/lib/hf-cache/xdg   # read_only 루트에서 라이브러리 캐시가 쓸 곳(필요한지는 GPU 서버에서 확인 전)
     volumes:
-      - hf-cache:/var/lib/hf-cache
+      # 이미지가 준비한 경로(HF_HOME 기본값 /var/lib/model-runtime/hf, 이미지가 uid 10001 소유로 만든다)에 마운트한다. HF_HOME 을 덮어쓰지 않는다:
+      # 이미지에 없는 경로에 마운트하면 root 소유가 되어 uid 10001 서버가 쓰지 못한다(readyz 503 OSError). 빈 새 볼륨은 처음 마운트될 때 이 경로의 소유자로 초기화된다
+      - hf-cache:/var/lib/model-runtime/hf
     deploy:
       resources:
         reservations:

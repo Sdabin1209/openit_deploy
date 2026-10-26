@@ -26,7 +26,7 @@ x-hardening: &hardening
 
 volumes:
   serving-data:     # 번들 캐시(게이트에서 다시 받을 수 있다)
-  # hf-cache:       # GPU 변형: Hugging Face 모델 캐시. 아래 model-serving 의 주석을 같이 푼다 (uid 10001 쓰기 권한은 GPU 이미지에서 확인 안 함)
+  # hf-cache:       # GPU 변형: Hugging Face 모델 캐시. 아래 model-serving 의 주석을 같이 푼다 (마운트 경로는 이미지가 준비한 /var/lib/model-runtime/hf)
 
 services:
   model-serving:
@@ -37,10 +37,9 @@ services:
     environment:
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}
       MODEL_RUNTIME_RELEASE_URL: ${RELEASE_URL:?RELEASE_URL(release-gate 주소)이 필요하다}
-      # HF_HOME: /var/lib/hf-cache          # GPU 변형(예시, 주석)
     volumes:
       - serving-data:/var/lib/model-runtime
-      # - hf-cache:/var/lib/hf-cache        # GPU 변형(예시, 주석)
+      # - hf-cache:/var/lib/model-runtime/hf   # GPU 변형(예시, 주석): 이미지가 uid 10001 소유로 준비한 HF_HOME 기본 경로. HF_HOME 을 덮어쓰지 않는다
     extra_hosts: ["host.docker.internal:host-gateway"]   # 게이트가 같은 호스트의 다른 컴포즈 프로젝트에 있을 때(시험·단일 서버)
     ports:
       - "${INFERENCE_BIND:-0.0.0.0}:${INFERENCE_PORT-8080}:8080"

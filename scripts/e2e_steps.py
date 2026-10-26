@@ -763,6 +763,16 @@ def diag():
         print(f"-- model-serving /v1/info: HTTP {c} backend={info.get('backend') if c == 200 else '-'} 기대 constraint={ex.get('constraint')} prompt={ex.get('prompt_template_versions')} loaded={info.get('loaded') if c == 200 else '-'}")
     except Exception as e:
         print(f"-- model-serving /v1/info 를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}")
+    try:
+        c, rz = http("GET", "ms", "/readyz"); reason = rz.get("reason") if isinstance(rz, dict) else None
+        print(f"-- model-serving /readyz: HTTP {c} status={rz.get('status') if isinstance(rz, dict) else rz} 사유={reason}")
+        r = sh([a.docker, "exec", MS_CONTAINER, "sh", "-c", "echo uid=$(id -u); echo hf_home=${HF_HOME:-<unset>}; d=${HF_HOME:-/var/lib/model-runtime/hf}; echo owner=$(stat -c %U:%u \"$d\"); (test -w \"$d\" && echo writable) || echo NOT-writable"], check=False)
+        info_txt = " ".join((r.stdout or "").split()) or (r.stderr or "").strip()[:160]
+        print(f"-- model-serving 컨테이너 안(읽기만, 쓰기 시험 없음): {info_txt}")
+        if "NOT-writable" in (r.stdout or "") or "OSError" in str(reason):
+            print("   -> 모델 캐시 쓰기 불가 가능성: HF 경로가 root 소유이거나 이미지가 준비한 경로가 아닌 곳에 마운트됐다. 빈 볼륨이면 demo.sh down 뒤 docker volume rm deploy-llm-hf-cache 로 지우고 다시 up --llm (docs/RUN.md '모델 캐시가 쓰기 불가일 때')")
+    except Exception as e:
+        print(f"-- model-serving /readyz·컨테이너 점검을 건너뜀: {type(e).__name__}: {str(e)[:120]}")
     print(f"-- 상태 파일 요약: 릴리스 {STATE.get('releases')}, 제출 {STATE.get('demo_subs')}, llm 대조 {STATE.get('llm_cfg_vs_server')}")
     rec("diag", "REAL", "진단 출력만 했다(변경 없음)")
 
