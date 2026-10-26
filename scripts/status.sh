@@ -60,6 +60,7 @@ for p in "${PROJECTS[@]}"; do
   vols=$("$DOCKER" volume ls -q --filter "label=com.docker.compose.project=$p" 2>/dev/null | wc -l)
   echo "  볼륨 $vols 개 (내리기: scripts/down.sh $p --stop|--remove|--purge)"
 done
+hf_cache_report
 if [ $any = 0 ]; then
   echo "떠 있거나 멈춘 프로젝트가 없다 (${PROJECTS[*]})."
   echo "다음: scripts/registry.sh up  ->  scripts/up.sh deploy  (상시 구성)   또는   scripts/demo.sh up  (눈으로 보는 데모)"

@@ -3,7 +3,7 @@
 #   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
 #   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen2.5-1.5B + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
-#   scripts/demo.sh status | down | reset [--stop-before-approval]
+#   scripts/demo.sh status | reset [--stop-before-approval] | down [--purge-cache]   (모델 캐시 볼륨은 down 해도 남는다. --purge-cache 로 명시적으로 지운다)
 # 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 시험 구성(compose.test.yaml)을 쓴다.
 # 표준 `docker`만 쓴다. 컨테이너의 호스트 포트는 Docker가 배정한다(고정 포트 없음). 임시 레지스트리도 빈 포트를 고른다.
 # 환경 변수: DEMO_PROJECT(기본 deploy-demo, 반드시 deploy-demo 로 시작), DEMO_BIND(gateway 호스트 바인드, 기본 127.0.0.1; 다른 PC에서 보려면 0.0.0.0 -- HTTP·기본 인증이라 시험 때만),
@@ -12,11 +12,12 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1   # 사용법·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
 source "$(dirname "$0")/lib.sh"
 CMD=${1:-}; shift || true
-STOP=0; REBUILD=0; EXT=""; LLM=0; YES_LARGE=0; LLM_PROFILE_NAME=""
+STOP=0; REBUILD=0; EXT=""; LLM=0; YES_LARGE=0; LLM_PROFILE_NAME=""; PURGE_CACHE=0; PURGE_YES=0
 while [ $# -gt 0 ]; do case "$1" in
   --stop-before-approval) STOP=1; shift;; --rebuild) REBUILD=1; shift;;
   --external-inference) [ $# -ge 2 ] || die "--external-inference 에는 URL이 필요하다"; EXT=$2; shift 2;;
   --external-inference=*) EXT=${1#*=}; shift;;
+  --purge-cache) PURGE_CACHE=1; shift;; --yes-purge-"${HF_CACHE_VOLUME:-deploy-llm-hf-cache}") PURGE_YES=1; shift;;
   --llm) LLM=1; shift;; --yes-large) YES_LARGE=1; shift;;
   --profile) [ $# -ge 2 ] || die "--profile 에는 이름이 필요하다 (예: gpu-12g)"; LLM_PROFILE_NAME=$2; shift 2;;
   --profile=*) LLM_PROFILE_NAME=${1#*=}; shift;;
@@ -24,11 +25,17 @@ while [ $# -gt 0 ]; do case "$1" in
 [ -z "$LLM_PROFILE_NAME" ] || [ $LLM = 1 ] || die "--profile 은 --llm 과 함께 쓴다"
 [ $LLM = 0 ] || [ -z "$EXT" ] || die "--llm 은 --external-inference 와 함께 쓰지 않는다 (외부 GPU 서버는 그 서버에서 compose.inference.yaml, docs/RUN.md 7-1)"
 [[ "${LLM_PROFILE_NAME:-gpu-12g}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "프로파일 이름은 소문자·숫자·하이픈이다: $LLM_PROFILE_NAME"
+[ $PURGE_CACHE = 1 ] || [ $PURGE_YES = 0 ] || die "--yes-purge-$HF_CACHE_VOLUME 는 --purge-cache 와 함께만 쓴다"
+[ $PURGE_CACHE = 0 ] || [ "$CMD" = down ] || die "--purge-cache 는 down 과 함께 쓴다 (모델 캐시는 기본적으로 남는다)"
 P=${DEMO_PROJECT:-deploy-demo}
 case "$P" in deploy-demo*) ;; *) die "DEMO_PROJECT 는 deploy-demo 로 시작해야 한다 (상시 구성과 섞이지 않게)";; esac
 W="$DEPLOY_ROOT/state/demo"
 usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; }
 
+set_llm_image() { # 데모는 방금 빌드한 로컬 GPU 이미지를 태그로 직접 쓴다(레지스트리에 올리지 않는다: 13GB 이중 보관 방지). digest 고정은 데모에서 하지 않는다
+  MODEL_SERVING_GPU_IMAGE=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null || true)
+  export MODEL_SERVING_GPU_IMAGE="${MODEL_SERVING_GPU_IMAGE:-deploy-build/model-serving-gpu:unset}" MODEL_SERVING_GPU_PULL=never
+}
 env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트가 같은 값을 본다)
   export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT="$P" DEPLOY_SKIP_DOCTOR=1
   export REGISTRY_PROJECT="$P-reg" REGISTRY_HOST_BIND="${DEMO_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
@@ -40,6 +47,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   if [ -f "$W/llm" ]; then
     LLM=1; LLM_PROFILE_NAME=$(sed -n 1p "$W/llm")
     export DEMO_LLM_PROFILE="/app/profiles/$LLM_PROFILE_NAME.json"
+    set_llm_image
     COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/test/compose.llm-demo.yaml"; export COMPOSE_EXTRA
   fi
   # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
@@ -128,13 +136,15 @@ case "$CMD" in
     if [ $LLM = 1 ]; then
       have_gpu() { local img; img=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null); [ -n "$img" ] && "$DOCKER" image inspect "$img" >/dev/null 2>&1; }
       if [ $REBUILD = 1 ] || ! have_gpu; then echo "== GPU 이미지 빌드(model-serving-gpu, 약 13GB)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" --gpu $( [ $YES_LARGE = 1 ] && echo --yes-large ) || die "GPU 이미지 빌드 실패 (비대화형이면 --yes-large)"; fi
+      set_llm_image   # 빌드로 images.env 가 바뀌었을 수 있다
       echo "== 중립 LoRA 패키지(학습하지 않은 시험용 대체) 생성: 프로파일 $LLM_PROFILE_NAME"
       bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "$LLM_PROFILE_NAME" "$W/llm-package" || die "중립 LoRA 패키지 생성 실패"
+      if hf_cache_exists; then echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 재사용 (모델을 다시 받지 않는다)"; else echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 생성 (프로젝트 밖 볼륨: down 해도 남는다)"; hf_cache_ensure; fi
     fi
     grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
     echo "== 임시 레지스트리와 digest 잠금(이 데모 전용)"
     bash "$DEPLOY_ROOT/scripts/registry.sh" up || die "레지스트리 기동 실패 (데몬이 닿지 못하면 DEMO_REGISTRY_BIND=0.0.0.0 으로 다시, 끝나면 down)"
-    bash "$DEPLOY_ROOT/scripts/publish-images.sh" || die "게시 실패"
+    bash "$DEPLOY_ROOT/scripts/publish-images.sh" $( [ $LLM = 1 ] && echo $SERVICES ) || die "게시 실패"   # --llm: GPU 이미지는 게시하지 않는다(이름 지정으로 제외)
     bash "$DEPLOY_ROOT/scripts/check-compose.sh" || exit 1
     bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null || die "비밀 생성 실패"
     echo "== 데모 프로젝트 $P 기동 (compose.yaml + compose.test.yaml, 호스트 포트는 Docker 배정)"
@@ -158,7 +168,8 @@ case "$CMD" in
     bash "$DEPLOY_ROOT/scripts/registry.sh" down -v 2>&1 | tail -1
     for i in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^127\.0\.0\.1:[0-9]+/openit/'); do "$DOCKER" rmi -f "$i" >/dev/null 2>&1; done
     [ -n "$W" ] && [ "$W" = "$DEPLOY_ROOT/state/demo" ] && rm -rf "$W"
-    echo "정리 완료 ($P 로 시작하는 자원과 state/demo). 상시 구성과 로컬 deploy-build 이미지는 그대로다." ;;
+    echo "정리 완료 ($P 로 시작하는 자원과 state/demo). 상시 구성과 로컬 deploy-build 이미지(GPU 이미지 포함)는 그대로다."
+    if [ $PURGE_CACHE = 1 ]; then hf_cache_purge $PURGE_YES; else hf_cache_report; fi ;;
   reset)
     "$0" down || true
     exec "$0" up $( [ $STOP = 1 ] && echo --stop-before-approval ) $( [ $LLM = 1 ] && echo --llm ) $( [ -n "$LLM_PROFILE_NAME" ] && echo --profile "$LLM_PROFILE_NAME" ) $( [ $YES_LARGE = 1 ] && echo --yes-large ) ;;

@@ -62,6 +62,24 @@ external_inference_setup() {
   case " ${COMPOSE_EXTRA:-} " in *compose.external-inference.yaml*) ;; *) COMPOSE_EXTRA="${COMPOSE_EXTRA:+$COMPOSE_EXTRA }$DEPLOY_ROOT/compose.external-inference.yaml";; esac
   export COMPOSE_EXTRA
 }
+# Hugging Face 캐시 볼륨(실제 LLM): 프로젝트 밖 이름 있는 볼륨이라 down/reset/--purge 가 지우지 않는다. 지우기는 명시적 확인으로만.
+export HF_CACHE_VOLUME="${HF_CACHE_VOLUME:-deploy-llm-hf-cache}"
+hf_cache_exists() { "$DOCKER" volume inspect "$HF_CACHE_VOLUME" >/dev/null 2>&1; }
+hf_cache_size() { "$DOCKER" system df -v 2>/dev/null | tr -d '\r' | awk -v n="$HF_CACHE_VOLUME" '$1==n{print $NF; exit}'; }   # docker system df -v 표의 SIZE 열(출력 형식 의존: 못 읽으면 빈 값)
+hf_cache_ensure() { hf_cache_exists || "$DOCKER" volume create --label io.openit.purpose=hf-cache "$HF_CACHE_VOLUME" >/dev/null; }
+hf_cache_report() { # 상태 한 줄(없으면 아무것도 안 낸다)
+  hf_cache_exists || return 0
+  echo "HF 캐시 볼륨 $HF_CACHE_VOLUME: 크기 $(hf_cache_size | grep . || echo '알 수 없음') (프로젝트 밖 볼륨: down 해도 남는다. 다음 --llm up 이 모델을 다시 받지 않는다. 지우기: scripts/down.sh --purge-hf-cache)"
+}
+hf_cache_purge() { # hf_cache_purge <확인 완료 0|1>
+  hf_cache_exists || { echo "HF 캐시 볼륨($HF_CACHE_VOLUME)이 없다."; return 0; }
+  echo "지울 볼륨: $HF_CACHE_VOLUME (크기 $(hf_cache_size | grep . || echo '알 수 없음')). 지우면 다음 --llm up 이 모델(약 3GB, 측정 전)을 다시 받는다. 되돌릴 수 없다."
+  if [ "${1:-0}" != 1 ]; then
+    if [ -t 0 ]; then printf '계속하려면 볼륨 이름 "%s" 을(를) 그대로 입력: ' "$HF_CACHE_VOLUME"; read -r ans; [ "$ans" = "$HF_CACHE_VOLUME" ] || { echo "취소했다." >&2; return 1; }
+    else echo "비대화형이다. 진행하려면 --yes-purge-$HF_CACHE_VOLUME 을 명시하라." >&2; return 1; fi
+  fi
+  "$DOCKER" volume rm "$HF_CACHE_VOLUME" >/dev/null && echo "HF 캐시 볼륨을 지웠다. (Docker Desktop은 볼륨을 지워도 디스크 파일이 줄지 않을 수 있다)"
+}
 # 컨테이너 포트가 Docker가 배정한 호스트 포트를 읽는다. port_of <컨테이너> <내부포트>
 port_of() { "$DOCKER" port "$1" "$2/tcp" | head -1 | tr -d '\r' | sed 's/.*://'; }
 # 빈 포트를 하나 고른다. 임시 레지스트리가 push 대상 포트를 명시적으로 쓰려고 쓴다(컨테이너의 호스트 포트는 Docker가 배정한다).

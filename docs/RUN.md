@@ -162,7 +162,8 @@ bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모�
 | 항목 | 값 | 상태 |
 | --- | --- | --- |
 | GPU 이미지(`model-serving-gpu`) 용량 | 약 13GB | model-runtime의 안내값. 서버에서 측정 전 |
-| HF 캐시 볼륨(`hf-cache`) 용량 | 약 3GB (기반 모델 Qwen/Qwen2.5-1.5B-Instruct) | 측정 전 |
+| HF 캐시 볼륨(`deploy-llm-hf-cache`) 용량 | 약 3GB (기반 모델 Qwen/Qwen2.5-1.5B-Instruct) | 측정 전 |
+| **합계** | **약 16GB** = 이미지 13GB(데몬에 한 벌) + 캐시 3GB. 데모는 이미지를 레지스트리에 올리지 않으므로 **이중 보관이 없다** | 서버에서 측정 전 |
 | 첫 기동 시간(모델 내려받기+적재) | 모름 | 측정 전. 헬스체크 start_period를 900초로 넉넉히 잡았다(잠정) |
 | 프로파일 | `/app/profiles/gpu-12g.json`(12GB급, 기본), `rtx4090-24g.json`(24GB) | 이미지 안. `DEMO_LLM_PROFILE`로 고른다 |
 
@@ -176,7 +177,7 @@ bash scripts/publish-images.sh model-serving-gpu   # 레지스트리에 올리�
 ```
 
 - 기본 빌드(`build-images.sh`, 옵션 없음)에는 GPU 이미지가 들어가지 않는다. 기존 8개 서비스 흐름은 그대로다. 옵션 없이 `publish-images.sh`를 부르면 `build/images.env`에 GPU 이미지가 있을 때 그것도 올라가므로(약 13GB) 이름을 지정하는 편이 안전하다.
-- `compose.llm.yaml`: model-serving을 GPU 이미지·`MODEL_RUNTIME_BACKEND=vllm`·`MODEL_RUNTIME_PROFILE`로 바꾸고, GPU 장치 1개 예약(`deploy.resources.reservations.devices`), 이름 있는 볼륨 `hf-cache`(`HF_HOME`)를 붙인다. 쓰는 법(릴리스 연결 전의 수동 확인용): `docker compose -p <프로젝트> -f compose.yaml -f compose.llm.yaml --env-file locks/images.lock --env-file state/registry.env up -d`. 기본 `compose.yaml`은 바뀌지 않았다.
+- `compose.llm.yaml`: model-serving을 GPU 이미지·`MODEL_RUNTIME_BACKEND=vllm`·`MODEL_RUNTIME_PROFILE`로 바꾸고, GPU 장치 1개 예약(`deploy.resources.reservations.devices`), 프로젝트 밖 이름 있는 볼륨(`external`, 기본 `deploy-llm-hf-cache`, `HF_CACHE_VOLUME`; 직접 쓸 때는 먼저 `docker volume create deploy-llm-hf-cache`)을 `HF_HOME`으로 붙인다. 쓰는 법(릴리스 연결 전의 수동 확인용): `docker compose -p <프로젝트> -f compose.yaml -f compose.llm.yaml --env-file locks/images.lock --env-file state/registry.env up -d`. 기본 `compose.yaml`은 바뀌지 않았다.
 - **조합 규칙.** `compose.llm.yaml`은 `compose.external-inference.yaml`과 함께 쓰지 않는다(그쪽은 이 구성의 model-serving을 끈다). 다른 GPU 서버에 두려면 그 서버에서 `compose.inference.yaml`에 `INFERENCE_IMAGE=<GPU 이미지>`, `INFERENCE_BACKEND=vllm`과 프로파일을 준다. `compose.test.yaml`(가짜 백엔드)과 같이 쓰면 `-f` 순서에서 `compose.llm.yaml`이 뒤에 와야 한다.
 - **인터넷.** 첫 기동은 huggingface.co에서 모델을 받는다. 오프라인이면 `hf-cache` 볼륨을 미리 채우고 `HF_HUB_OFFLINE=1`을 준다(이 볼륨 채우는 절차는 정리하지 않았다).
 - 읽기 전용 루트에서 vLLM이 쓸 캐시 위치가 더 필요한지는 GPU 서버에서 확인 전이다(`XDG_CACHE_HOME`을 볼륨 안으로 두었다).
@@ -188,18 +189,18 @@ bash scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]     # reset --ll
 bash scripts/demo.sh status                                          # model-serving 의 /readyz 사유(적재 중인지)와 survey-service 의 inference 요약
 ```
 
-`up --llm`이 하는 일(순서): (1) `doctor.sh --up --llm` (2) 기본 8개 이미지 빌드(없을 때) (3) `model-serving-gpu`가 없으면 `build-images.sh --gpu`(용량 안내, 비대화형이면 `--yes-large`) (4) `make-llm-package.sh`로 중립 LoRA 패키지 생성 (5) 임시 레지스트리에 게시(**GPU 이미지도 올라가므로 도커 디스크에 이미지가 데몬과 레지스트리 볼륨에 두 벌 생긴다: 약 26GB, 측정 전**) (6) `compose.yaml` + `compose.test.yaml` + `compose.llm.yaml` + `test/compose.llm-demo.yaml`로 기동 (7) E2E 단계 1~3·데모 단계를 돌려 릴리스를 만들고 활성화 (8) 적재가 끝날 때까지 기다린다.
+`up --llm`이 하는 일(순서): (1) `doctor.sh --up --llm` (2) 기본 8개 이미지 빌드(없을 때) (3) `model-serving-gpu`가 없으면 `build-images.sh --gpu`(용량 안내, 비대화형이면 `--yes-large`) (4) `make-llm-package.sh`로 중립 LoRA 패키지 생성 (5) 임시 레지스트리에 기본 8개 이미지만 게시한다(**GPU 이미지는 게시하지 않는다**: model-serving은 방금 빌드한 로컬 이미지 `deploy-build/model-serving-gpu:<커밋>`를 태그로 직접 쓰고 `pull_policy: never`. digest 고정은 데모에서 하지 않는다. 운영/CI는 게시된 digest를 쓰는 기존 방식 그대로 -- `compose.llm.yaml`의 `MODEL_SERVING_GPU_IMAGE`/`MODEL_SERVING_GPU_PULL`로 고른다) (6) `compose.yaml` + `compose.test.yaml` + `compose.llm.yaml` + `test/compose.llm-demo.yaml`로 기동 (7) E2E 단계 1~3·데모 단계를 돌려 릴리스를 만들고 활성화 (8) 적재가 끝날 때까지 기다린다.
 
 - **모델은 학습하지 않은 Qwen/Qwen2.5-1.5B-Instruct + 시스템 프롬프트(prompt-2) + 효과 없는 LoRA(lora_B=0)이다. 시험용 대체다.** 작은 모델이라 응답이 거칠 수 있고, 출력 보호가 규칙 기반 대체 문장으로 바꾸기도 한다.
 - **중립 LoRA 패키지.** `scripts/make-llm-package.sh <프로파일> <폴더>`가 model-runtime 태그(v0.5.2)의 `git archive`에서 `make_neutral_package.py`와 `profiles/<이름>.json`을 꺼내 deploy의 `.venv`로 만든다. Docker 없이 실행되고 같은 입력이면 같은 바이트다(이 PC에서 실행해 `SUMMARY.json`과 결정성을 확인했다). 데모의 단계 3이 이 패키지를 model-registry에 게시한다. 서빙 설정은 fake의 `/v1/info` 기대값이 아니라 패키지의 vllm 설정이고, 서버가 적재할 때 같은 설정인지 스스로 검사한다. 평가 보고서는 이전처럼 **시험용 고정 지표**(TEST-SUB)다.
 - **시험 위험 문구.** vllm 백엔드는 `MODEL_RUNTIME_FAKE_RISK_PHRASE`가 있으면 시작을 거부하므로 `test/compose.llm-demo.yaml`이 그 값을 비운다. 그래서 `TEST-RISK`는 이 모드에서 동작하지 않을 수 있다(위험 정지는 모델 출력에 달려 있다).
-- **기다림.** 첫 기동은 모델 내려받기(약 3GB)와 적재로 오래 걸린다. `up`은 최대 20분(`DEMO_LLM_WAIT_MIN`) 30초마다 model-serving과 survey-service의 `/readyz`를 보여 준다. 시간이 지나도 **실패로 끝내지 않고** "아직 적재 중"이라 안내하고 끝낸다. `status`로 확인한다. 모델 캐시(`hf-cache`)는 데모 `down`이 지우므로 다음 `up`에서 다시 받는다.
+- **기다림.** 첫 기동은 모델 내려받기(약 3GB)와 적재로 오래 걸린다. `up`은 최대 20분(`DEMO_LLM_WAIT_MIN`) 30초마다 model-serving과 survey-service의 `/readyz`를 보여 준다. 시간이 지나도 **실패로 끝내지 않고** "아직 적재 중"이라 안내하고 끝낸다. `status`로 확인한다. **모델 캐시는 기본적으로 남는다**: `deploy-llm-hf-cache`는 프로젝트 밖 이름 있는 볼륨(없으면 `up --llm`이 만든다)이라 `demo.sh down/reset`, `down.sh --remove/--purge`가 지우지 않고, 다음 `up --llm`이 모델(약 3GB)을 다시 받지 않는다. 지우기: `bash scripts/demo.sh down --purge-cache` 또는 `bash scripts/down.sh --purge-hf-cache` (볼륨 이름을 직접 입력, 비대화형은 `--yes-purge-deploy-llm-hf-cache`). `status.sh`가 이 볼륨의 존재와 크기(`docker system df -v` 표를 읽음, 형식이 다르면 '알 수 없음')를 보여 준다. 로컬 GPU 이미지(`deploy-build/model-serving-gpu`)도 `down`이 지우지 않는다(`docker rmi`는 사용자가 판단).
 - **미확인(서버에서 확인 필요).** 이 PC에서는 Docker가 꺼져 있어 이 흐름을 실행하지 못했다. 확인한 것은 `bash -n`, 인자 검사, `py_compile`, 중립 패키지 생성기 실행(`SUMMARY.json`)과 패키지 매니페스트의 `ModelPackageManifest` 스키마 통과다. 후보 수집·자동 검사(문항-모델 호환)가 vllm 설정에서 통과하는지, 서버의 실제 적재 시간, 위험 정지 동작은 확인하지 않았다.
 - **조합 규칙.** `--llm`은 `--external-inference`와 함께 쓰지 않는다. 다른 GPU 서버에 두려면 7-1절을 따른다.
 
 **용량과 정리.**
 - 확인: `docker system df`(이미지·볼륨·빌드 캐시의 크기와 회수 가능량). Docker Engine(리눅스)은 보통 `/var/lib/docker`(`docker info --format '{{.DockerRootDir}}'`), Docker Desktop은 VM 디스크 안이라 이 셸의 `df`로 보이지 않는다(설정의 Resources > Disk image 위치).
-- 지울지는 사용자가 판단한다. GPU 이미지: `docker image ls 'deploy-build/model-serving-gpu'`로 보고 필요 없으면 `docker rmi <이미지>`(레지스트리에 올렸다면 레지스트리 볼륨에도 있다: `scripts/down.sh <레지스트리 프로젝트> --registry --purge`는 레지스트리 볼륨까지 지운다). HF 캐시: 프로젝트를 `--purge`로 내리면 `<프로젝트>_hf-cache` 볼륨도 지워지고 다음 기동에서 다시 받는다. 빌드 캐시: `docker builder prune`.
+- 지울지는 사용자가 판단한다. GPU 이미지: `docker image ls 'deploy-build/model-serving-gpu'`로 보고 필요 없으면 `docker rmi <이미지>`(레지스트리에 올렸다면 레지스트리 볼륨에도 있다: `scripts/down.sh <레지스트리 프로젝트> --registry --purge`는 레지스트리 볼륨까지 지운다). HF 캐시: `bash scripts/down.sh --purge-hf-cache`(또는 `demo.sh down --purge-cache`)로만 지워진다. **Docker Desktop(WSL2)은 이미지·볼륨을 지워도 호스트의 디스크 파일이 줄지 않을 수 있다**(디스크 이미지 축소는 Docker Desktop 설정에서 사용자가 판단). 빌드 캐시: `docker builder prune`.
 
 ## 8. 흔한 문제
 
