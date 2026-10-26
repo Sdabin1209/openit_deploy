@@ -201,6 +201,8 @@ bash scripts/demo.sh status                                          # model-ser
 - **미확인(서버에서 확인 필요).** 이 PC에서는 Docker가 꺼져 있어 이 흐름을 실행하지 못했다. 확인한 것은 `bash -n`, 인자 검사, `py_compile`, 중립 패키지 생성기 실행(`SUMMARY.json`)과 패키지 매니페스트의 `ModelPackageManifest` 스키마 통과다. 후보 수집·자동 검사(문항-모델 호환)가 vllm 설정에서 통과하는지, 서버의 실제 적재 시간, 위험 정지 동작은 확인하지 않았다.
 - **조합 규칙.** `--llm`은 `--external-inference`와 함께 쓰지 않는다. 다른 GPU 서버에 두려면 7-1절을 따른다.
 
+- **읽기 전용 루트에서의 캐시·홈·원격 측정.** model-serving은 `read_only` 루트(보안 설정 유지)라서 vLLM·torch·triton의 기본 캐시 위치(`/home/runtime/.cache`)에 쓰면 `OSError: [Errno 30] Read-only file system`으로 적재가 실패한다(`/readyz` 503 사유 `RuntimeError`). `compose.llm.yaml`이 `HOME`, `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT`, `TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `TORCH_HOME`을 쓰기 가능한 serving-data 볼륨(`/var/lib/model-runtime/…`, uid 10001 소유, 재시작해도 컴파일 캐시 유지)로 돌린다. `VLLM_NO_USAGE_STATS=1`, `DO_NOT_TRACK=1`, `HF_HUB_DISABLE_TELEMETRY=1`로 원격 측정을 끈다(의료 시스템). `TMPDIR`는 돌리지 않았다: `/tmp`는 noexec tmpfs이고 컴파일 산출물은 위 캐시 경로에 쓰이며, tmpfs의 exec 허용은 보안 설정을 약화하므로 택하지 않았다. 이 수정은 GPU 서버에서 확인 전이다. 장기적으로는 이 환경 변수가 model-runtime 이미지의 기본값이어야 한다(v0.5.3 후보, STATUS.md).
+
 **모델 캐시가 쓰기 불가일 때** (`/readyz` 503 사유 `OSError`, `status.sh`/`diag`에 "모델 캐시 쓰기 불가 가능성" 안내).
 - 원인: model-serving은 uid 10001로 도는데, HF 캐시 볼륨이 이미지가 준비하지 않은 경로에 마운트되었거나(예: 옛 설정의 `/var/lib/hf-cache`) root 소유로 초기화되어 쓸 수 없다. 이미지는 `/var/lib/model-runtime/hf`와 `bundles`를 uid 10001 소유로 만들어 두므로 `compose.llm.yaml`은 그 경로에 마운트한다. 빈 새 볼륨은 처음 마운트될 때 그 경로의 소유자로 초기화된다.
 - 확인(읽기만): `bash scripts/demo.sh diag`가 컨테이너 안의 실행 uid, HF 경로 소유자, 쓰기 가능 여부(`test -w`)를 보여 준다. 직접: `docker exec <프로젝트>-model-serving-1 sh -c 'id -u; stat -c %U /var/lib/model-runtime/hf; test -w /var/lib/model-runtime/hf && echo writable'`.
@@ -222,6 +224,7 @@ bash scripts/demo.sh status                                          # model-ser
 | 게이트웨이 401 | 인증 없이 직원·승인 경로를 부른 것. 계정과 `secrets/tokens/*-password` 파일의 암호로 로그인. 역할이 다르면 403 |
 | 제출이 `REJECTED_AUTO`, `CONTRACT_COMPAT` FAIL (model-runtime 버전이 게이트 기준과 다르다) | 이미지마다 model-runtime 태그가 다르다. 모든 이미지는 같은 태그(`lib.sh`의 `DEPLOY_MR_TAG`, 현재 v0.5.2)로 빌드해야 한다 | 이미지를 다시 빌드(`demo.sh up`은 라벨이 다르면 기본 8개를 자동 재빌드, GPU 이미지는 라벨이 같으면 건너뜀). `demo.sh diag`로 확인 |
 | `up --llm` 뒤 model-serving `/readyz`가 503 `OSError`로 계속 | HF 캐시 경로가 uid 10001이 쓰지 못하는 곳(root 소유 볼륨/이미지에 없는 경로) | 7-2절 '모델 캐시가 쓰기 불가일 때' (`demo.sh diag`로 확인, 빈 볼륨이면 `down` 뒤 `docker volume rm deploy-llm-hf-cache`) |
+| model-serving `/readyz` 503 사유 `RuntimeError`, 로그에 `OSError: [Errno 30] Read-only file system: '/home/runtime/.cache'` | 읽기 전용 루트에서 vLLM·torch 캐시가 홈 아래를 쓰려 한다 | `compose.llm.yaml`의 캐시·홈 환경 변수가 있는지 확인(`demo.sh config --llm`). 7-2절 '읽기 전용 루트에서의 캐시·홈·원격 측정' |
 | 포트 충돌 | 컨테이너 호스트 포트는 Docker가 배정하므로 드물다. 레지스트리는 `REGISTRY_HOST_PORT=`(빈 값)으로 빈 포트를 고른다 |
 | `state/registry.env`가 없다 | 레지스트리를 아직 안 띄웠다. `bash scripts/registry.sh up`을 먼저 |
 | `이미 데모 상태가 있다` | `demo.sh down` 또는 `reset` |

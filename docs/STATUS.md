@@ -138,3 +138,12 @@ admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-appr
 ## model-runtime 태그 통일 (v0.5.2)
 
 - 서버의 `demo.sh up --llm`에서 제출 3건이 `REJECTED_AUTO`(`CONTRACT_COMPAT`: 학습 때의 model-runtime 0.5.2이 게이트 기준 0.5.1과 다르다)였다. 중립 패키지·GPU 이미지는 v0.5.2, release-gate·survey-service·CPU model-serving은 v0.5.1로 빌드된 어긋남이 원인이다(`demo.sh diag`로 확인). 우회하지 않고 `scripts/lib.sh`의 `DEPLOY_MR_TAG` 하나(기본 v0.5.2)로 모든 이미지와 중립 패키지 생성기를 통일했다(`DEPLOY_MR_TAG_GPU` 제거). `demo.sh up`의 `have_images`는 이미지 라벨 `io.openit.model-runtime`이 현재 태그와 다르면 기본 8개를 다시 빌드한다(GPU 이미지는 라벨이 같으면 재빌드하지 않는다). 이 PC에서의 실행 확인 범위는 보고에 적었다. 위 '여섯째 구간'의 v0.5.1 서술은 당시 기록이다.
+
+## model-runtime v0.5.3 후보 (deploy가 compose로 대신하고 있는 것)
+
+model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.yaml`이 환경 변수로 돌리는 것이며, 장기적으로는 이미지(Dockerfile ENV)의 기본값이어야 한다.
+
+- 읽기 전용 루트에서 쓰기 가능한 경로로 돌리는 캐시·홈: `HOME=/var/lib/model-runtime/home`, `XDG_CACHE_HOME=/var/lib/model-runtime/cache`, `VLLM_CACHE_ROOT=…/cache/vllm`, `TORCHINDUCTOR_CACHE_DIR=…/cache/torchinductor`, `TRITON_CACHE_DIR=…/cache/triton`, `TORCH_HOME=…/cache/torch`. 안 돌리면 vLLM 적재가 `/home/runtime/.cache`에서 `OSError: [Errno 30]`(GPU 서버에서 확인)로 실패한다. 이미지가 이 하위 디렉터리를 uid 10001 소유로 미리 만들어 두면 더 좋다.
+- 원격 측정 기본 차단(의료 시스템): `VLLM_NO_USAGE_STATS=1`, `DO_NOT_TRACK=1`, `HF_HUB_DISABLE_TELEMETRY=1`.
+- 앞선 확인: HF 캐시는 이미지가 준비한 `/var/lib/model-runtime/hf`를 쓴다(HF_HOME 덮어쓰기 불필요).
+- 미정: `/tmp`(tmpfs, noexec)에서 실행이 필요한 산출물이 있는지(GPU 서버에서 확인 전). 있다면 `TMPDIR`를 이미지가 준비한 볼륨 경로로 돌리는 편이 tmpfs exec 허용보다 낫다.
