@@ -72,6 +72,8 @@ bash scripts/e2e.sh           # 처음이므로 --reuse-build 없이: 이미지 
 - `BLOCKED`: 지금 구현이나 환경으로는 확인할 수 없는 것(예: 실제 브라우저 렌더링, 웹 푸시 수신). 실패가 아니지만 "전체 합격"도 아니다.
 - 구간별 소요 시간 표가 같이 나온다.
 
+주의: 이름이 비슷한 두 스크립트를 구분한다. `publish-images.sh`(복수)는 로컬에서 `build-images.sh`로 만든 이미지 전체를 레지스트리에 올리고(E2E가 쓴다), `publish-image.sh`(단수)는 영역 CI가 이미지 하나를 올릴 때 쓴다([ci.md](ci.md)).
+
 운영 구성으로 띄우는 것(`up.sh`)과 롤백·백업·복구는 [runbook.md](runbook.md), 이미지 게시는 [ci.md](ci.md)를 본다.
 
 ## E. 증상별 표

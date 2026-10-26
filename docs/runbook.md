@@ -23,6 +23,7 @@
 
 ## 2. 적용과 롤백 (코드 축)
 
+- 이름 구분: `publish-image.sh`(단수) = 영역 CI가 이미지 하나를 올릴 때, `publish-images.sh`(복수) = 로컬에서 `build-images.sh`로 만든 이미지 전체를 올릴 때.
 - 이미지 게시(D24): 영역 CI가 `scripts/publish-image.sh <서비스> <이미지> --registry <주소>`로 올리고 digest를 잠금에 기록한다. 계약과 실패 시 동작은 [ci.md](ci.md). 시험: `bash scripts/test-publish.sh`.
 
 - 새 버전 적용: 영역 이미지를 빌드·게시 → `publish-images.sh <영역>`이 잠금을 갱신(이전 것은 `locks/history/`) → `up.sh deploy`(바뀐 서비스만 교체). 잠금 파일을 커밋한다.

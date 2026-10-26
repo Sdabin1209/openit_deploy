@@ -5,16 +5,30 @@
 #   서비스 이름: survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console
 #   레지스트리: --registry, 없으면 환경 변수 DEPLOY_REGISTRY, 없으면 state/registry.env
 #   환경: DEPLOY_LOCK (기본 locks/images.lock)
-# 종료 코드: 0 성공(또는 이미 같은 digest), 2 사용법/서비스 이름이 목록에 없음, 3 필수 라벨 누락, 4 push·digest 확인 실패, 5 잠금 기록 실패
+# 종료 코드: 0 성공(또는 이미 같은 digest), 1 Docker 실행 파일/데몬에 닿지 않음, 2 사용법/서비스 이름이 목록에 없음, 3 필수 라벨 누락, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패
 # 표준 출력 마지막 줄(기계가 읽는다): PUBLISHED <서비스> <digest> <revision> | UNCHANGED <서비스> <digest> <revision>
 # 멱등: 같은 이미지를 다시 올리면 같은 digest이고 잠금·history는 바뀌지 않는다. 잠금은 flock 으로 직렬화하고 임시 파일에 쓴 뒤 바꿔 넣는다.
 # 잠금 파일 형식은 publish-images.sh 와 같다: 머리말 한 줄 + 정렬된 KEY=value (<서비스>_DIGEST, <서비스>_REVISION, 외부 이미지 줄 유지).
 set -euo pipefail
+DEPLOY_NO_DOCKER=1   # 사용법·인자 검사는 Docker 없이도 항상 동작해야 한다. 데몬 감지는 인자를 확인한 뒤에 한다
 source "$(dirname "$0")/lib.sh"
-SVC="${1:-}"; SRC="${2:-}"; shift 2 2>/dev/null || true
+usage() {
+  cat <<USAGE
+영역 CI가 이미지 하나를 올릴 때 쓴다. 로컬에서 build-images.sh 로 만든 이미지 전체를 올리려면 publish-images.sh(복수)를 쓴다.
+
+사용: scripts/publish-image.sh <서비스 이름> <이미지 ID|이미지 이름|tar 파일> [--registry host:port]
+  서비스 이름: $SERVICES
+  레지스트리: --registry, 없으면 환경 변수 DEPLOY_REGISTRY, 없으면 state/registry.env
+  환경: DEPLOY_LOCK (기본 locks/images.lock)
+종료 코드: 0 성공(또는 이미 같은 digest), 2 사용법/서비스 이름이 목록에 없음, 3 필수 라벨 누락, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패, 1 Docker 실행 파일/데몬에 닿지 않음
+자세한 계약: docs/ci.md
+USAGE
+}
+case "${1:-}" in -h|--help) usage; exit 0;; esac
+SVC="${1:-}"; SRC="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift $#; fi
 REG="${DEPLOY_REGISTRY:-}"
-while [ $# -gt 0 ]; do case "$1" in --registry) REG="${2:-}"; shift 2;; *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
-[ -n "$SVC" ] && [ -n "$SRC" ] || { sed -n '2,10p' "$0" >&2; exit 2; }
+while [ $# -gt 0 ]; do case "$1" in --registry) REG="${2:-}"; shift 2;; -h|--help) usage; exit 0;; *) echo "알 수 없는 인자: $1" >&2; usage >&2; exit 2;; esac; done
+[ -n "$SVC" ] && [ -n "$SRC" ] || { usage >&2; exit 2; }
 case " $SERVICES " in *" $SVC "*) ;; *) echo "거부: 서비스 이름 '$SVC' 이(가) 목록에 없다 ($SERVICES)" >&2; exit 2;; esac
 if [ -z "$REG" ]; then
   RF="${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"
@@ -22,6 +36,7 @@ if [ -z "$REG" ]; then
 fi
 REG=${REG#http://}; REG=${REG#https://}; REG=${REG%/}
 [ -n "$REG" ] || { echo "거부: 레지스트리 주소가 없다(--registry 또는 DEPLOY_REGISTRY)" >&2; exit 2; }
+detect_docker   # 인자가 맞은 뒤에만 데몬을 확인한다(종료 코드 1: 데몬 불가)
 LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; HIST="$(dirname "$LOCK")/history"; mkdir -p "$HIST"; [ -f "$LOCK" ] || : > "$LOCK"
 
 # 이미지 얻기: tar 파일이면 docker load
