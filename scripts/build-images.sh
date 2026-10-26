@@ -147,13 +147,13 @@ if want admin-console; then
 fi
 
 if want_gpu; then
-  # 추론 서버 GPU 변형(D72/D73): 같은 Dockerfile 의 VARIANT=gpu. 문진 스키마 내장. 프로파일은 이미지 안 /app/profiles/ (model-runtime $DEPLOY_MR_TAG_GPU).
+  # 추론 서버 GPU 변형(D72/D73): 같은 Dockerfile 의 VARIANT=gpu. 문진 스키마 내장. 프로파일은 이미지 안 /app/profiles/ (model-runtime $DEPLOY_MR_TAG).
   MSG="$CTX/model-serving-gpu"; rm -rf "$MSG" "$CTX/bc-folder-gpu" "$CTX/ms-schema-gpu"; mkdir -p "$MSG" "$CTX/bc-folder-gpu" "$CTX/ms-schema-gpu"
-  git -C "$WORKSPACE/model-runtime" archive "$DEPLOY_MR_TAG_GPU" | tar -x -C "$MSG"
+  git -C "$WORKSPACE/model-runtime" archive "$DEPLOY_MR_TAG" | tar -x -C "$MSG"
   git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder-gpu"
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema-gpu"
-  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$DEPLOY_MR_TAG_GPU^{commit}")$SUFFIX; img="deploy-build/model-serving-gpu:$c"
-  echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG_GPU)"
+  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$DEPLOY_MR_TAG^{commit}")$SUFFIX; img="deploy-build/model-serving-gpu:$c"
+  echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
     --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$MSG" >/dev/null

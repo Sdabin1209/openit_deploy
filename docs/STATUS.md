@@ -134,3 +134,7 @@ admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-appr
 ## 열넷째 구간: 데모 스크립트 (`scripts/demo.sh`)
 
 `up [--stop-before-approval] [--rebuild] | activate | status | down | reset`. 별도 프로젝트 `deploy-demo`(상시 구성과 따로), compose.yaml + compose.test.yaml(E2E 시험 구성), 호스트 포트는 Docker 배정, 임시 레지스트리는 빈 포트. e2e_steps.py의 단계 코드를 재사용한다(`demo4`: 후보 수집·자동 검사·(시험용 승인자 승인)·활성화, `demo_activate`; 둘은 E2E 기본 실행에 들어가지 않는다). 끝에 접속 주소, 계정과 암호 파일 경로(값 출력 없음), 위험 정지 시험 문구, 승인 대기 시험 제출, 실패 사례 검토용 시험 사례, "이 데이터는 시험용 대체" 문구를 출력한다. 호스트 준비는 `scripts/prepare-host.sh`로 e2e.sh와 공유한다. **검증 한계**: 이 PC는 Docker Desktop이 꺼져 있어 실행하지 못했다(`bash -n`, 사용법·인자 오류 코드, 정적 검사만).
+
+## model-runtime 태그 통일 (v0.5.2)
+
+- 서버의 `demo.sh up --llm`에서 제출 3건이 `REJECTED_AUTO`(`CONTRACT_COMPAT`: 학습 때의 model-runtime 0.5.2이 게이트 기준 0.5.1과 다르다)였다. 중립 패키지·GPU 이미지는 v0.5.2, release-gate·survey-service·CPU model-serving은 v0.5.1로 빌드된 어긋남이 원인이다(`demo.sh diag`로 확인). 우회하지 않고 `scripts/lib.sh`의 `DEPLOY_MR_TAG` 하나(기본 v0.5.2)로 모든 이미지와 중립 패키지 생성기를 통일했다(`DEPLOY_MR_TAG_GPU` 제거). `demo.sh up`의 `have_images`는 이미지 라벨 `io.openit.model-runtime`이 현재 태그와 다르면 기본 8개를 다시 빌드한다(GPU 이미지는 라벨이 같으면 재빌드하지 않는다). 이 PC에서의 실행 확인 범위는 보고에 적었다. 위 '여섯째 구간'의 v0.5.1 서술은 당시 기록이다.

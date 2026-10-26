@@ -213,7 +213,7 @@ def make_packages():
         for r in gm: assert canonical.sha256_hash(d["cfgs"][r]) == d["hashes"][r], f"{r} 서빙 설정 해시가 패키지와 다르다"
     else:
         fx = ROOT / "test/fixtures/e2e-test-adapter"
-        # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다(v0.5.1)
+        # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다
         c, info = http("GET", "ms", "/v1/info", INF_TOK()); assert c == 200, (c, info)
         ex = info["serving_config_expectation"]
         cfg = {"prompt_template_version": ex["prompt_template_versions"][0],

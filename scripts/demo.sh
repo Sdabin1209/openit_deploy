@@ -156,15 +156,24 @@ case "$CMD" in
     fi
     [ -z "$EXT" ] || bash "$DEPLOY_ROOT/scripts/doctor.sh" --up --inference "$EXT" || { rm -f "$W/external-inference"; exit 1; }
     bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || die "호스트 가상환경 준비 실패"
-    have_images() { # 기본 8개 이미지가 기록되어 있고 로컬에 모두 있는가(GPU 이미지 기록은 따로 본다: 그것이 없다고 8개를 다시 빌드하지 않는다)
-      local n=0 img; [ -f "$DEPLOY_ROOT/build/images.env" ] || return 1
-      while read -r name img _; do [ "$name" = model-serving-gpu ] && continue; n=$((n+1)); "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"
+    mr_label_ok() { # 이미지의 io.openit.model-runtime 라벨이 현재 태그와 같은가(라벨이 없는 이미지는 해당 없음; v 접두사는 무시). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+      local l; l=$("$DOCKER" image inspect "$1" --format '{{index .Config.Labels "io.openit.model-runtime"}}' 2>/dev/null | tr -d '\r') || return 1
+      case "$l" in ""|"<no value>"|none) return 0;; esac
+      [ "${l#v}" = "${DEPLOY_MR_TAG#v}" ]
+    }
+    have_images() { # 기본 8개 이미지가 기록되어 있고 로컬에 모두 있고 model-runtime 라벨이 현재 태그와 같은가(GPU 이미지 기록은 따로 본다: 그것이 없다고 8개를 다시 빌드하지 않는다)
+      local n=0 name img; [ -f "$DEPLOY_ROOT/build/images.env" ] || return 1
+      while read -r name img _; do
+        [ "$name" = model-serving-gpu ] && continue; n=$((n+1))
+        "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1
+        mr_label_ok "$img" || { echo "  $img 의 model-runtime 라벨이 현재 태그($DEPLOY_MR_TAG)와 다르다: 다시 빌드한다" >&2; return 1; }
+      done < "$DEPLOY_ROOT/build/images.env"
       [ "$n" -ge 8 ]
     }
     if [ $REBUILD = 1 ] || ! have_images; then echo "== 이미지 빌드(현재 HEAD)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" || die "이미지 빌드 실패"; fi
     bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels || die "호스트 클라이언트 준비 실패"
     if [ $LLM = 1 ]; then
-      have_gpu() { local img; img=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null); [ -n "$img" ] && "$DOCKER" image inspect "$img" >/dev/null 2>&1; }
+      have_gpu() { local img; img=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null); [ -n "$img" ] && "$DOCKER" image inspect "$img" >/dev/null 2>&1 && mr_label_ok "$img"; }
       if [ $REBUILD_GPU = 1 ] || ! have_gpu; then echo "== GPU 이미지 빌드(model-serving-gpu, 약 13GB)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" --gpu $( [ $YES_LARGE = 1 ] && echo --yes-large ) || die "GPU 이미지 빌드 실패 (비대화형이면 --yes-large)"; fi
       set_llm_image   # 빌드로 images.env 가 바뀌었을 수 있다
       echo "== 중립 LoRA 패키지(학습하지 않은 시험용 대체) 생성: 프로파일 $LLM_PROFILE_NAME"

@@ -136,7 +136,7 @@ services:
       - ${CONFIG_DIR:-./config}/model-serving.env
       - ${SECRETS_DIR:-./secrets}/model-serving.env             # MODEL_RUNTIME_TOKENS, MODEL_RUNTIME_RELEASE_TOKEN (비밀)
     volumes:
-      - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다, v0.5.1)
+      - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다)
     networks: [serving]
     healthcheck:
       <<: *pyhealth

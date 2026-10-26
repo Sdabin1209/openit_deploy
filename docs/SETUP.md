@@ -101,5 +101,6 @@ bash scripts/demo.sh status | down | reset
 | `doctor`: `형제 리포가 없다` | 폴더 이름이 workspace.yaml과 다르거나 clone 안 함 | C절. 폴더 이름을 `head/workspace.yaml`의 path와 같게 |
 | `doctor`: `태그가 없다: boundary-contracts v1.3.3` 등 | 리포가 태그 없이 clone됐거나 오래됨 | `git -C ../boundary-contracts fetch --tags`; 그래도 없으면 원격에 태그가 없는 것이니 head에 알린다 |
 | `port is already allocated` / 포트 충돌 | 시험은 고정 포트를 쓰지 않는다(Docker 배정, 레지스트리는 빈 포트 선택). 운영 구성의 gateway(기본 8080)·레지스트리(기본 5000)가 다른 프로세스와 겹친 것 | `.env`의 `GATEWAY_PORT`, `REGISTRY_HOST_PORT`를 바꾼다 |
+| 게이트가 제출을 `REJECTED_AUTO`로 반려하고 `CONTRACT_COMPAT` FAIL(`학습 때의 model-runtime X이 게이트 기준 Y와 다르다`) | 이미지들이 서로 다른 model-runtime 태그로 빌드됨 | **모든 이미지는 같은 model-runtime 태그로 빌드해야 한다**(`scripts/lib.sh`의 `DEPLOY_MR_TAG` 한 곳). 어긋난 이미지를 다시 빌드한다(`demo.sh up`은 라벨 `io.openit.model-runtime`이 다르면 자동 재빌드). 진단: `bash scripts/demo.sh diag` |
 | `python3 -m venv` 실패(`ensurepip is not available`) | python3-venv 패키지 없음 | `sudo apt-get install -y python3-venv` |
 | 빌드 중 pip/npm/pull 실패 | 인터넷 또는 프록시 | 인터넷 확인(프록시는 `HTTP(S)_PROXY`). 오프라인이면 이미 만든 이미지로 `--reuse-build`만 가능 |
