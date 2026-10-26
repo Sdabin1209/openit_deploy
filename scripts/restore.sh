@@ -9,6 +9,6 @@ LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK")
 using=$("$DOCKER" ps -q --filter "volume=${P}_${S}" | tr -d '\r')
 [ -z "$using" ] || die "${P}_${S} 를 쓰는 컨테이너가 떠 있다. 서비스를 먼저 멈춘다(compose stop)"
-"$DOCKER" run --rm -v "${P}_${S}:/dst" -v "$(hostpath "$SNAP"):/snap:ro" -v "$(hostpath "$DEPLOY_ROOT/scripts"):/tool:ro" \
+"$DOCKER" run --rm -v "${P}_${S}:/dst" -v "$SNAP:/snap:ro" -v "$DEPLOY_ROOT/scripts:/tool:ro" \
   "$UTIL" python /tool/backup_tool.py restore /snap /dst --uid 10001 --gid 10001
 echo "복구: $S <- $SNAP"

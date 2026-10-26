@@ -7,17 +7,14 @@ source "$(dirname "$0")/lib.sh"
 P=${REGISTRY_PROJECT:-deploy-registry}
 mkdir -p "$DEPLOY_ROOT/state"
 LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"
-run() {
-  local ef; ef=$(mktemp); envfile "$ef"; trap 'rm -f "$ef"' RETURN
-  "$DOCKER" compose -p "$P" -f "$(hostpath "$DEPLOY_ROOT/compose.registry.yaml")" --env-file "$(hostpath "$LOCK")" --env-file "$(hostpath "$ef")" "$@"
-}
+run() { "$DOCKER" compose -p "$P" -f "$DEPLOY_ROOT/compose.registry.yaml" --env-file "$LOCK" "$@"; }
 case "${1:-}" in
   up)
     # REGISTRY_HOST_PORT 가 빈 값이면 빈 포트를 골라 쓴다(고정 포트 충돌 방지). 충돌하면 다시 고른다.
     port=${REGISTRY_HOST_PORT-5000}
     for try in 1 2 3 4 5; do
       [ -n "${REGISTRY_HOST_PORT+x}" ] && [ -z "${REGISTRY_HOST_PORT}" ] && port=$(free_port)
-      if REGISTRY_HOST_PORT=$port run up -d >/dev/null 2>&1; then break; fi   # 함수 호출에 붙인 변수는 envfile이 읽는다
+      if REGISTRY_HOST_PORT=$port run up -d >/dev/null 2>&1; then break; fi
       run down >/dev/null 2>&1 || true
       [ "$try" = 5 ] && die "레지스트리를 띄우지 못했다"
     done

@@ -35,7 +35,7 @@ cleanup() {
   bash "$DEPLOY_ROOT/scripts/registry.sh" down -v >/dev/null 2>&1
   for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -E '^127\.0\.0\.1:[0-9]+/openit/'); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done
   if [ $KEEPIMG = 0 ]; then for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -E '^deploy-build/'); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done; fi
-  rm -rf "$W" 2>/dev/null || "$DOCKER" run --rm -v "$(hostpath "$DEPLOY_ROOT/state"):/s" "$UTIL_REF" rm -rf "/s/e2e-$ID"
+  rm -rf "$W" 2>/dev/null || "$DOCKER" run --rm -v "$DEPLOY_ROOT/state:/s" "$UTIL_REF" rm -rf "/s/e2e-$ID"
   echo "정리 완료 (프로젝트 $PROJECT, 레지스트리 $RPROJ, 이미지, 임시 폴더)"
   return $rc
 }

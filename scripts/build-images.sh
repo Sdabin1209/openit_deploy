@@ -42,29 +42,39 @@ if want survey-service; then
   c=$(commit_of survey-service); img="deploy-build/survey-service:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$BOUNDARY_TAG" \
     --build-arg SCHEMA_CONTRACT_VERSION="$SCHEMA_CONTRACT_VERSION" --build-arg TURN_ENGINE_TAG="$TURN_ENGINE_TAG" \
-    --build-arg MODEL_RUNTIME_TAG="$MODEL_RUNTIME_TAG" --build-arg LANGGRAPH_VERSION="$LG" "$(hostpath "$CTX/survey-service")" >/dev/null
+    --build-arg MODEL_RUNTIME_TAG="$MODEL_RUNTIME_TAG" --build-arg LANGGRAPH_VERSION="$LG" "$CTX/survey-service" >/dev/null
   record survey-service "$img" "$c"
 fi
 if want question-authoring; then
   ( cd "$CTX/question-authoring" && CONTRACTS_TAG="$BC" PYTHON="$PY" bash scripts/build_wheels.sh >/dev/null )
   c=$(commit_of question-authoring); img="deploy-build/question-authoring:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$(cat "$CTX/question-authoring/build/contracts.tag")" \
-    --build-arg SURVEY_SCHEMA_TAG="$(cat "$CTX/question-authoring/build/survey-schema.tag")" "$(hostpath "$CTX/question-authoring")" >/dev/null
+    --build-arg SURVEY_SCHEMA_TAG="$(cat "$CTX/question-authoring/build/survey-schema.tag")" "$CTX/question-authoring" >/dev/null
   record question-authoring "$img" "$c"
 fi
 if want ops-feedback; then
   ( cd "$CTX/ops-feedback" && BOUNDARY_TAG="$BC" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   c=$(commit_of ops-feedback); img="deploy-build/ops-feedback:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg CONTRACTS_VERSION="$(cat "$CTX/ops-feedback/build/wheels/BOUNDARY_TAG")" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(cat "$CTX/ops-feedback/src/ops_feedback/_schemas/survey/v1/CONTRACT_VERSION")" "$(hostpath "$CTX/ops-feedback")" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION="$(cat "$CTX/ops-feedback/src/ops_feedback/_schemas/survey/v1/CONTRACT_VERSION")" "$CTX/ops-feedback" >/dev/null
   record ops-feedback "$img" "$c"
 fi
 if want release-gate; then
-  # build_image.sh 는 컨텍스트 경로를 `wslpath -w ... || 그대로`로 바꾼다: wslpath 가 있는 WSL에서는 윈도 경로가 만들어지므로 docker.exe 로(같은 데몬),
-  # 리눅스 서버(wslpath 없음)에서는 경로가 그대로라 선택된 $DOCKER 로 부른다. turn-engine/model-runtime 는 ../ 에서 git archive 한다(사본 기준).
-  RG_DOCKER="$DOCKER"; if command -v wslpath >/dev/null 2>&1 && command -v docker.exe >/dev/null 2>&1; then RG_DOCKER=docker.exe; fi
+  # release-gate 의 scripts/build_image.sh 는 컨텍스트 경로를 `wslpath -w`(있으면)로 바꾼다. WSL에서 표준 리눅스 docker 와는 맞지 않아(CR-D21)
+  # 같은 일을 여기서 한다: 영역의 stage_context.sh 로 컨텍스트를 만들고 영역의 Dockerfile 로 표준 `docker build`.
+  # turn-engine/model-runtime wheel 은 형제 리포의 태그 시점 소스(git archive, 사본 기준)에서 만든다.
+  RGD="$CTX/release-gate"; libs="$RGD/.build/libwheels"; rm -rf "$libs" "$RGD/.build/lib-src"; mkdir -p "$libs"
+  for spec in "turn-engine:$DEPLOY_TE_TAG" "model-runtime:$MR"; do
+    repo="${spec%%:*}"; rtag="${spec##*:}"; src="$RGD/.build/lib-src/$repo"; mkdir -p "$src"
+    git -C "$CTX/$repo" archive "$rtag" | tar -x -C "$src"
+    "$PY" -m pip wheel -q --no-deps -w "$libs" "$src" >&2
+  done
+  ctx="$( cd "$RGD" && GATE_LIB_WHEELS_DIR="$libs" BOUNDARY_CONTRACTS_TAG="$BC" PYTHON="$PY" bash scripts/stage_context.sh 2>/dev/null )"
+  ver() { ls "$ctx/wheels" | sed -n "s/^$1-\([^-]*\)-.*/\1/p" | head -1; }
   c=$(commit_of release-gate); img="deploy-build/release-gate:$c"
-  ( cd "$CTX/release-gate" && DOCKER="$RG_DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
+  "$DOCKER" build -q -t "$img" -f "$RGD/Dockerfile" --build-arg COMMIT="$c" --build-arg BOUNDARY_VERSION="$(ver boundary_contracts)" \
+    --build-arg SURVEY_SCHEMA_VERSION="$(cat "$ctx/survey-schema/CONTRACT_VERSION")" \
+    --build-arg TURN_ENGINE_VERSION="$(ver turn_engine)" --build-arg MODEL_RUNTIME_VERSION="$(ver model_runtime)" "$ctx" >/dev/null
   record release-gate "$img" "$c"
 fi
 if want model-registry; then
@@ -75,8 +85,8 @@ if want model-registry; then
   "$PIP" wheel -q --no-deps -w "$ML/vendor-wheels" "$ML/bc-src" >/dev/null 2>&1
   whl=$(basename "$(ls "$ML"/vendor-wheels/boundary_contracts-*.whl | head -1)")
   c=$(commit_of model-lab); img="deploy-build/model-registry:$c"
-  "$DOCKER" build -q -t "$img" --build-context "wheels=$(hostpath "$ML/vendor-wheels")" --build-arg "BC_SPEC=/wheels/$whl" \
-    --build-arg "REVISION=$c" "$(hostpath "$ML")" >/dev/null
+  "$DOCKER" build -q -t "$img" --build-context "wheels=$ML/vendor-wheels" --build-arg "BC_SPEC=/wheels/$whl" \
+    --build-arg "REVISION=$c" "$ML" >/dev/null
   record model-registry "$img" "$c"
 fi
 
@@ -94,8 +104,8 @@ if want model-serving; then
   git -C "$WORKSPACE/model-runtime" archive "$MR" | tar -x -C "$MS"   # 추론 서버는 model-runtime 태그 시점 소스
   git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}")$SUFFIX; img="deploy-build/model-serving:$c"
-  "$DOCKER" build -q -t "$img" --build-context "boundary=$(hostpath "$CTX/bc-folder")" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$(hostpath "$MS")" >/dev/null
+  "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$MS" >/dev/null
   record model-serving "$img" "$c"
 fi
 
@@ -103,13 +113,13 @@ if want kiosk-frontend; then
   # 키오스크 앱+직원 콘솔 정적 이미지(태그 없음 = main). 빌드 컨텍스트는 git archive 사본
   KF="$CTX/kiosk-frontend"; AV=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$KF/package.json" | head -1)
   c=$(commit_of kiosk-frontend); img="deploy-build/kiosk-frontend:$c"
-  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA=1 --build-arg APP_VERSION="${AV:-unknown}" "$(hostpath "$KF")" >/dev/null
+  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA=1 --build-arg APP_VERSION="${AV:-unknown}" "$KF" >/dev/null
   record kiosk-frontend "$img" "$c"
 fi
 
 if want admin-console; then
   # 출고 승인 화면 정적 이미지(태그 없음 = 로컬 폴더). /v1 은 프록시하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
   c=$(commit_of admin-console); img="deploy-build/admin-console:$c"
-  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACTS="$BC" --build-arg SURVEY_SCHEMA=n/a "$(hostpath "$CTX/admin-console")" >/dev/null
+  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACTS="$BC" --build-arg SURVEY_SCHEMA=n/a "$CTX/admin-console" >/dev/null
   record admin-console "$img" "$c"
 fi

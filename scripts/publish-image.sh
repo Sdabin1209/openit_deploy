@@ -27,7 +27,7 @@ LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; HIST="$(dirname "$LOCK")/
 # 이미지 얻기: tar 파일이면 docker load
 IMG="$SRC"
 if [ -f "$SRC" ]; then
-  out=$("$DOCKER" load -i "$(hostpath "$SRC")" 2>&1) || { echo "$out" >&2; echo "거부: tar를 읽지 못했다" >&2; exit 4; }
+  out=$("$DOCKER" load -i "$SRC" 2>&1) || { echo "$out" >&2; echo "거부: tar를 읽지 못했다" >&2; exit 4; }
   IMG=$(echo "$out" | tr -d '\r' | sed -n 's/^Loaded image: //p; s/^Loaded image ID: //p' | tail -1)
   [ -n "$IMG" ] || { echo "$out" >&2; echo "거부: tar에서 이미지를 찾지 못했다" >&2; exit 4; }
 fi

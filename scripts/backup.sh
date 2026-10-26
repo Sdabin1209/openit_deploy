@@ -21,7 +21,7 @@ for s in $STORES; do
   mkdir -p "$BACKUP_DIR/$s"
   # 일관성은 SQLite backup API(읽기 전용 연결)가 보장한다. WAL 모드 DB를 읽으려면 -shm 파일이 필요해 볼륨을 쓰기 가능으로 붙이고,
   # 도구는 원본을 바꾸지 않는다(만든 -wal/-shm 은 지운다). 서비스가 떠 있어도 된다.
-  "$DOCKER" run --rm -v "${P}_${s}:/src" -v "$(hostpath "$BACKUP_DIR"):/out" -v "$(hostpath "$DEPLOY_ROOT/scripts"):/tool:ro" \
+  "$DOCKER" run --rm -v "${P}_${s}:/src" -v "$BACKUP_DIR:/out" -v "$DEPLOY_ROOT/scripts:/tool:ro" \
     "$UTIL" python /tool/backup_tool.py backup /src "/out/$s/.partial-$TS" --store "$s" --owner "$(id -u):$(id -g)" >/dev/null
   mv "$BACKUP_DIR/$s/.partial-$TS" "$BACKUP_DIR/$s/$TS"
   echo "백업: $s -> $BACKUP_DIR/$s/$TS"

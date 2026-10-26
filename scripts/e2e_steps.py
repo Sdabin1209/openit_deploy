@@ -62,9 +62,6 @@ def sh(cmd, env=None, inp=None, check=True):
 def docker_py(image, code, mounts=()):
     cmd = [a.docker, "run", "--rm", "-i"] + [x for s, d in mounts for x in ("-v", f"{s}:{d}:ro")] + [image, "python", "-"]
     r = sh(cmd, inp=code); return r.stdout
-def hostpath(p):
-    if a.docker.endswith(".exe"): return subprocess.check_output(["wslpath", "-w", str(p)], text=True).strip()
-    return str(p)
 def wait(fn, timeout, what, every=2):
     t = time.time()
     while time.time() - t < timeout:

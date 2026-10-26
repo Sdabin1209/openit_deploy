@@ -23,16 +23,19 @@
 
 ## B. WSL2 + Docker Desktop (윈도)
 
-1. 윈도에 WSL2와 배포판(Ubuntu 등)을 설치하고, Docker Desktop을 설치한다(WSL2 백엔드).
-2. Docker Desktop > Settings > Resources > **WSL integration**에서 쓰는 배포판을 **켠다**. 그러면 배포판 안에서 `docker`가 동작한다.
-3. **순서**: 윈도를 켠 뒤 Docker Desktop을 먼저 시작하고 엔진이 "Running"이 된 다음 WSL 터미널을 연다. 연동 설정을 바꿨거나 이상하면 윈도에서 `wsl --shutdown` 한 뒤 다시 연다.
-4. 배포판 안에서 1절 A의 1번(git, python3, python3-venv, curl)을 한다. Docker Engine은 **설치하지 않는다**(Docker Desktop이 준다).
-5. 확인: 배포판 안에서 `docker info`가 되고 `/var/run/docker.sock`이 있다.
+**전제: WSL 배포판 안에서 표준 `docker` 명령이 데몬에 닿는 상태**다. 스크립트는 `docker` CLI 하나와 설정된 데몬(`DOCKER_HOST`/context)만 쓴다. `docker.exe`로 갈아타거나 경로를 바꾸거나 설정을 우회하는 코드는 없다. 환경이 맞지 않으면 `bash scripts/doctor.sh`가 FAIL과 고치는 법을 보여 주고, 아래 절차로 환경을 맞춘다.
 
-주의:
-- **interop이 꺼진 배포판**(`/etc/wsl.conf`의 `[interop] enabled=false`)은 윈도 프로그램(`docker.exe`, `docker-credential-desktop.exe`)을 실행하지 못한다. 이 경우 반드시 2번의 WSL integration으로 리눅스 `docker`를 써야 한다(스크립트는 `docker.exe` 폴백을 쓰지 않는다).
-- **자격증명 도우미**: `~/.docker/config.json`의 `credsStore`가 윈도 도우미(`desktop.exe`)를 가리키면 interop이 꺼진 곳에서 이미지 빌드가 `error getting credentials … exec format error`로 실패한다. `scripts/lib.sh`가 이를 감지해 `state/docker-config/`(빈 설정, gitignore)로 자동 우회한다. 사용자 설정은 읽기만 하고 고치거나 출력하지 않는다. 안내 한 줄이 나온다.
-- Docker Desktop의 이미지 저장 디스크는 윈도 드라이브에 있다. WSL에서 `df`는 그 여유를 알려 주지 않는다(최소 20GB 여유 권장).
+1. 윈도에 WSL2와 배포판(Ubuntu 등)을 설치하고, Docker Desktop(WSL2 백엔드)을 설치한다.
+2. Docker Desktop > Settings > Resources > **WSL integration**에서 쓰는 배포판을 **켠다**. 그러면 배포판 안에서 `docker`가 동작하고 `/var/run/docker.sock`이 생긴다.
+3. **순서**: 윈도를 켠 뒤 Docker Desktop을 먼저 시작하고 엔진이 "Running"이 된 다음 WSL 터미널을 연다. 연동 설정을 바꿨거나 이상하면 윈도에서 `wsl --shutdown` 한 뒤 다시 연다.
+4. 배포판 안에서 A절 1번(git, python3, python3-venv, curl)을 한다. Docker Engine은 **설치하지 않는다**(Docker Desktop이 준다).
+5. 확인: 배포판 안에서 `docker info`, `docker compose version`, `docker buildx version`이 된다. `bash scripts/doctor.sh`가 모두 OK.
+
+**자격증명 도우미 설정 맞추기 (interop이 꺼진 배포판에서 필수).** `~/.docker/config.json`에 `"credsStore": "desktop.exe"`가 있으면 이미지 pull/build가 `error getting credentials … docker-credential-desktop.exe: exec format error`로 실패한다. interop이 꺼진 배포판(`/etc/wsl.conf`의 `[interop] enabled=false`)은 윈도 프로그램을 실행하지 못하기 때문이다. 이것은 환경 설정 문제라서 스크립트가 숨기지 않는다. doctor가 FAIL로 알려 주면 **사용자가 직접** 둘 중 하나를 한다.
+- (권장) `~/.docker/config.json`에서 `"credsStore"` 항목을 지운다. 이 프로젝트의 이미지는 익명 pull로 받으므로 영향이 없다(저장된 레지스트리 로그인만 쓸 수 없게 된다). 백업해 두고 편집한다. doctor는 이 파일을 읽기만 하고 고치지 않으며 내용도 출력하지 않는다.
+- 또는 interop을 켠다: `/etc/wsl.conf`에 `[interop]` / `enabled=true`를 쓰고 윈도에서 `wsl --shutdown` 후 다시 연다.
+
+참고: Docker Desktop의 이미지 저장 디스크는 윈도 드라이브에 있다. WSL에서 `df`는 그 여유를 알려 주지 않는다(최소 20GB 여유 권장).
 
 ## C. 워크스페이스 구성 (형제 리포 clone)
 
@@ -75,10 +78,10 @@ bash scripts/e2e.sh           # 처음이므로 --reuse-build 없이: 이미지 
 
 | 증상 | 원인 | 해결 |
 | --- | --- | --- |
-| `docker.exe: command not found` | (옛 스크립트의 가정) 리눅스 서버에는 `docker.exe`가 없다 | 최신 deploy를 쓴다. 리눅스에서는 `docker`만 쓴다. `doctor.sh`로 확인 |
+| `docker: command not found` / `docker 실행 파일을 찾을 수 없다` | Docker 미설치 또는 WSL 연동 꺼짐 | A절(리눅스) 또는 B절(WSL: 연동 켜기). 다른 실행 파일을 쓰려면 `DOCKER=<경로>` |
 | `Cannot connect to the Docker daemon` | 데몬이 꺼져 있다 | 리눅스: `sudo systemctl start docker`. WSL: Docker Desktop을 먼저 시작하고 연동을 켠 뒤 WSL을 다시 연다(`wsl --shutdown`) |
 | `permission denied while trying to connect to the Docker daemon socket` | 사용자가 docker 그룹이 아니다 | `sudo usermod -aG docker $USER` 후 다시 로그인 |
-| `error getting credentials … docker-credential-desktop.exe: exec format error` | interop이 꺼진 WSL에서 윈도 자격증명 도우미를 실행하려 함 | 자동 우회된다(`state/docker-config`). 직접 `docker build`할 때는 `DOCKER_CONFIG=<deploy>/state/docker-config` 또는 `~/.docker/config.json`의 `credsStore` 항목 제거 |
+| `error getting credentials … docker-credential-desktop.exe: exec format error` | interop이 꺼진 WSL에서 윈도 자격증명 도우미를 실행하려 함 | B절 "자격증명 도우미 설정 맞추기": `~/.docker/config.json`의 `credsStore` 항목을 직접 지우거나 interop을 켠다 (doctor가 이 증상을 미리 FAIL로 알려 준다) |
 | `doctor`: `형제 리포가 없다` | 폴더 이름이 workspace.yaml과 다르거나 clone 안 함 | C절. 폴더 이름을 `head/workspace.yaml`의 path와 같게 |
 | `doctor`: `태그가 없다: boundary-contracts v1.3.3` 등 | 리포가 태그 없이 clone됐거나 오래됨 | `git -C ../boundary-contracts fetch --tags`; 그래도 없으면 원격에 태그가 없는 것이니 head에 알린다 |
 | `port is already allocated` / 포트 충돌 | 시험은 고정 포트를 쓰지 않는다(Docker 배정, 레지스트리는 빈 포트 선택). 운영 구성의 gateway(기본 8080)·레지스트리(기본 5000)가 다른 프로세스와 겹친 것 | `.env`의 `GATEWAY_PORT`, `REGISTRY_HOST_PORT`를 바꾼다 |

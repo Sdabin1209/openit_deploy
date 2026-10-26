@@ -1,6 +1,6 @@
 # 런북: deploy
 
-경로는 모두 이 리포지토리 기준이다. WSL에서는 데몬에 닿는 `docker`(통합)를 쓰고, 안 되면 `docker.exe`를 쓴다(`scripts/lib.sh`가 고른다).
+경로는 모두 이 리포지토리 기준이다. 스크립트는 표준 `docker` CLI와 설정된 데몬(`DOCKER_HOST`/context) 하나의 경로만 쓴다(다른 실행 파일은 `DOCKER` 변수). 환경 문제는 코드가 숨기지 않고 `scripts/doctor.sh`가 진단한다([SETUP.md](SETUP.md)).
 
 ## 1. 설치: 두 가지 경우
 
@@ -95,5 +95,4 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 | 새 잠금을 적용해도 컨테이너가 안 바뀜 | 셸에 같은 이름의 `*_DIGEST` 변수가 남아 있나 | `dc`가 지우지만 compose를 직접 부를 때는 `env -u`로 지운다 |
 | 컨테이너가 `operation not permitted`로 안 뜸 | `cap_drop: ALL`과 파일 권한이 있는 바이너리 | 필요한 capability만 `cap_add` (gateway의 `NET_BIND_SERVICE`) |
 | SQLite `unable to open database file` (백업·읽기) | WAL 모드 DB를 읽기 전용 마운트로 연 것 | 백업 도구처럼 쓰기 가능 마운트로 읽기 전용 연결을 쓰고 만든 `-wal/-shm`을 지운다 |
-| 빌드가 `error getting credentials … docker-credential-desktop.exe: exec format error` 로 실패 | interop이 꺼진 WSL에서 `~/.docker/config.json`의 `credsStore`가 윈도 도우미(desktop.exe)를 가리킨다 | `scripts/lib.sh`가 자동으로 `state/docker-config`(빈 설정, gitignore)로 `DOCKER_CONFIG`를 돌린다(안내 한 줄). 사용자 설정은 건드리지 않고 내용을 출력하지도 않는다. 정상 도우미면 건드리지 않는다 |
-| docker.exe로 compose 환경 변수가 안 보임 | 윈도 프로그램은 WSL 환경 변수를 받지 못한다 | `--env-file`로 넘긴다(`lib.sh`의 `envfile`) |
+| 빌드가 `error getting credentials … docker-credential-desktop.exe: exec format error` 로 실패 | interop이 꺼진 WSL에서 `~/.docker/config.json`의 `credsStore`가 윈도 도우미를 가리킨다 | 환경 설정 문제: `credsStore` 항목을 직접 지우거나 interop을 켠다(SETUP.md B절). doctor가 미리 FAIL로 알려 준다 |

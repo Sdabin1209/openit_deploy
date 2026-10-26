@@ -21,7 +21,7 @@ mk_image() { # mk_image <태그> <revision> [라벨 생략: no-revision]
   { echo "FROM $UTIL"; echo "RUN echo $rev > /rev.txt"
     echo 'LABEL io.openit.service="test" io.openit.contracts.boundary="v1.3.3" io.openit.contracts.survey-schema="1"'
     [ "${3:-}" = no-revision ] || echo "LABEL io.openit.revision=\"$rev\""; } > "$d/Dockerfile"
-  "$DOCKER" build -q -t "$tag" "$(hostpath "$d")" >/dev/null
+  "$DOCKER" build -q -t "$tag" "$d" >/dev/null
 }
 echo "== publish-image.sh 시험 (임시 레지스트리, 프로젝트 deploy-pubtest-$ID)"
 bash "$DEPLOY_ROOT/scripts/registry.sh" up >/dev/null 2>&1 || { echo "레지스트리를 띄우지 못했다"; exit 1; }

@@ -126,3 +126,7 @@ admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-appr
 ## 열두째 구간: 누구나 따라 할 수 있는 설치 (사전 점검 + SETUP.md)
 
 `scripts/doctor.sh`(읽기 전용 사전 점검: git, python3·venv, docker·데몬·compose·buildx, 자격증명 우회 알림, 형제 리포와 필요한 태그, 디스크, 인터넷 도달, 고정 포트 없음; 항목마다 OK/WARN/FAIL과 한국어 해결 한 줄), `e2e.sh`/`up.sh` 시작에서 자동 실행(`DEPLOY_SKIP_DOCTOR=1`로 건너뜀), 의존 태그를 `lib.sh` 한 곳으로, `docs/SETUP.md`(환경 유형별 설치). 시험: 정상 환경 전부 OK, docker 제거·없는 소켓·형제 리포 이름 변경·태그 삭제 상황에서 FAIL과 해결 문구 확인, e2e.sh가 doctor FAIL에서 즉시 멈춤.
+
+## 열셋째 구간: 표준 docker 경로 하나로 (WSL 분기·우회 제거)
+
+사용자 지시: 꼼수·우회 없이 표준 방법. `lib.sh`에서 docker.exe 폴백, wslpath/hostpath 변환, `/proc/version` 판정, 자격증명 우회(`check_docker_creds`, 82911c1), `--env-file`을 통한 환경 전달(envfile)을 모두 없앴다. 남은 것은 `DOCKER` 변수로 실행 파일 지정과 `docker info` 실패 시 명확한 오류 중단뿐이다. `doctor.sh`는 우회 대신 진단과 고치는 법을 낸다(데몬 꺼짐·소켓 없음·권한·compose/buildx 없음·자격증명 도우미 실행 불가). release-gate의 `build_image.sh`가 `wslpath -w`를 쓰는 점은 `build-images.sh`가 같은 일을 표준 docker build로 하는 것으로 비켰고 CR-D21로 올렸다. SETUP.md B절을 "표준 docker가 데몬에 닿는 상태가 전제 + 환경 설정 절차"로 고쳤다.
