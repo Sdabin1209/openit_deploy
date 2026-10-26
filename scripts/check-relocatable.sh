@@ -8,6 +8,7 @@
 #      이미지는 새로 만든다(네트워크 필요, docker 층 캐시가 있으면 빠르다). 다른 이미지를 지우지 않도록 --keep-images 로 돌린다. 끝나면 임시 폴더를 지운다.
 # 사용: scripts/check-relocatable.sh [--static-only | --relocate-only]
 set -uo pipefail
+DEPLOY_NO_DOCKER=1   # 정적 검사에는 docker 가 필요 없다. 이동 시험에서만 detect_docker 를 부른다
 source "$(dirname "$0")/lib.sh"
 MODE=${1:-all}
 FAILS=0; ok() { echo "  [PASS] $1"; }; ng() { echo "  [FAIL] $1"; FAILS=$((FAILS+1)); }
@@ -35,6 +36,7 @@ static_check() {
 }
 
 relocate_check() {
+  detect_docker   # 데몬에 못 닿으면 여기서 명확한 오류로 멈춘다
   echo "== (b) 이동 시험: 다른 루트 이름(ws-relocate-XXXX)에 clone 해 deploy 의 e2e --fast"
   local T; T=$(mktemp -d "${TMPDIR:-/tmp}/ws-relocate-XXXX")
   # shellcheck disable=SC2064

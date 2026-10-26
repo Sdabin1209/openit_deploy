@@ -60,9 +60,11 @@ if want ops-feedback; then
   record ops-feedback "$img" "$c"
 fi
 if want release-gate; then
-  # build_image.sh 는 컨텍스트 경로를 항상 wslpath -w 로 바꾸므로 docker.exe 로 부른다(같은 데몬). turn-engine/model-runtime 를 turn-engine/model-runtime 를 ../ 에서 git archive 한다(사본 기준)
+  # build_image.sh 는 컨텍스트 경로를 `wslpath -w ... || 그대로`로 바꾼다: wslpath 가 있는 WSL에서는 윈도 경로가 만들어지므로 docker.exe 로(같은 데몬),
+  # 리눅스 서버(wslpath 없음)에서는 경로가 그대로라 선택된 $DOCKER 로 부른다. turn-engine/model-runtime 는 ../ 에서 git archive 한다(사본 기준).
+  RG_DOCKER="$DOCKER"; if command -v wslpath >/dev/null 2>&1 && command -v docker.exe >/dev/null 2>&1; then RG_DOCKER=docker.exe; fi
   c=$(commit_of release-gate); img="deploy-build/release-gate:$c"
-  ( cd "$CTX/release-gate" && DOCKER=docker.exe BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
+  ( cd "$CTX/release-gate" && DOCKER="$RG_DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
   record release-gate "$img" "$c"
 fi
 if want model-registry; then

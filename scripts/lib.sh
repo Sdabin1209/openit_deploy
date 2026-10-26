@@ -3,14 +3,31 @@
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(cd "$DEPLOY_ROOT/.." && pwd)"
 VENV="$DEPLOY_ROOT/.venv"
-# WSL에서 docker가 없으면 docker.exe를 쓴다.
-if [ -z "${DOCKER:-}" ]; then
-  # docker가 데몬에 닿으면 그것을, 아니면(WSL에서 통합이 꺼진 경우) docker.exe 를 쓴다.
-  if docker info >/dev/null 2>&1; then DOCKER=docker; else DOCKER=docker.exe; fi
-fi
+die() { echo "오류: $*" >&2; exit 1; }
+# docker 고르기. 환경 변수 DOCKER 가 있으면 그것을 쓴다(실행 파일이 있어야 한다).
+#  1) 일반 리눅스·WSL 통합: `docker` 가 있고 데몬에 닿으면 그것.
+#  2) WSL(/proc/version 에 microsoft)이면서 `docker.exe` 가 실제로 있고 그 데몬에 닿을 때만 docker.exe 로 폴백한다.
+#  3) 그 밖에는 원인을 구분해 한국어 오류로 즉시 중단한다(docker 실행 파일 없음 / 데몬에 닿지 않음).
+# docker 가 필요 없는 스크립트(정적 검사 등)는 source 하기 전에 DEPLOY_NO_DOCKER=1 을 둔다. 나중에 필요하면 detect_docker 를 부른다.
+detect_docker() {
+  if [ -n "${DOCKER:-}" ]; then
+    command -v "$DOCKER" >/dev/null 2>&1 || die "DOCKER='$DOCKER' 실행 파일을 찾을 수 없다. DOCKER 변수를 지우거나 올바른 경로로 지정하라."
+    return 0
+  fi
+  local wsl=0 has_docker=0 has_exe=0
+  grep -qi microsoft /proc/version 2>/dev/null && wsl=1
+  command -v docker >/dev/null 2>&1 && has_docker=1
+  [ $wsl = 1 ] && command -v docker.exe >/dev/null 2>&1 && has_exe=1
+  if [ $has_docker = 1 ] && docker info >/dev/null 2>&1; then DOCKER=docker; return 0; fi
+  if [ $has_exe = 1 ] && docker.exe info >/dev/null 2>&1; then DOCKER=docker.exe; return 0; fi
+  if [ $has_docker = 0 ] && [ $has_exe = 0 ]; then
+    die "docker 실행 파일이 없다. Docker를 설치하라(리눅스: docker 엔진과 compose 플러그인, WSL: Docker Desktop 통합 또는 docker.exe)."
+  fi
+  die "Docker 데몬에 닿지 않는다: 데몬이 떠 있는지(리눅스: systemctl start docker, WSL: Docker Desktop 실행) 확인하고, 현재 사용자가 docker 그룹에 속하는지(권한)도 확인하라."
+}
+[ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # docker.exe에는 윈도 경로를 넘겨야 한다.
 hostpath() { if [ "$DOCKER" = docker.exe ] && command -v wslpath >/dev/null 2>&1; then wslpath -w "$1"; else echo "$1"; fi; }
-die() { echo "오류: $*" >&2; exit 1; }
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름
 SERVICES="survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console"
 # 이미지 이름은 영역 이름과 같다. 로컬 레지스트리 안의 저장소 이름은 openit/<영역>.
