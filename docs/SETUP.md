@@ -84,6 +84,8 @@ bash scripts/demo.sh status | down | reset
 ```
 상시 구성(`up.sh deploy`)은 활성 릴리스가 없어 survey-service가 `/readyz` 503(`no_active_release`)이고 키오스크가 직원 호출 화면을 띄운다. 그것이 정상이며, 화면을 눌러 보려면 데모를 쓴다. 데모의 데이터는 **시험용 대체**(가짜 모델, 시험용 승인자)다. 호스트 포트는 Docker가 배정하고 안내에 출력된다. 암호는 출력하지 않고 `state/demo/secrets/tokens/`의 파일에 있다. `down`은 데모 프로젝트(`deploy-demo`로 시작하는 자원)와 `state/demo`만 지운다.
 
+실행 방법 전체(상시 구성, 데모, 화면별 사용, 원격 접속, 내리기, 흔한 문제)는 **[RUN.md](RUN.md)**.
+
 운영 구성으로 띄우는 것(`up.sh`)과 롤백·백업·복구는 [runbook.md](runbook.md), 이미지 게시는 [ci.md](ci.md)를 본다.
 
 ## E. 증상별 표

@@ -4,7 +4,7 @@
 
 ## 1. 설치: 두 가지 경우
 
-설치 가이드는 [SETUP.md](SETUP.md). 유일한 전제는 **형제 폴더 배치**다: deploy의 상위 폴더에 리포들이 나란히 있고 폴더 이름이 `head/workspace.yaml`과 같다. 루트 폴더 이름과 위치는 자유다(절대 경로는 어디에도 박혀 있지 않다). 확인: `bash scripts/check-relocatable.sh`(정적 검사 + 다른 루트 이름에 clone해 `e2e.sh --fast`).
+설치 가이드는 [SETUP.md](SETUP.md). 띄우고 화면을 눌러 보는 방법은 [RUN.md](RUN.md). 유일한 전제는 **형제 폴더 배치**다: deploy의 상위 폴더에 리포들이 나란히 있고 폴더 이름이 `head/workspace.yaml`과 같다. 루트 폴더 이름과 위치는 자유다(절대 경로는 어디에도 박혀 있지 않다). 확인: `bash scripts/check-relocatable.sh`(정적 검사 + 다른 루트 이름에 clone해 `e2e.sh --fast`).
 
 ### (A) 개발·CI 워크스페이스 (소스가 있고 빌드·E2E를 한다)
 
