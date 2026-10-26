@@ -38,7 +38,6 @@ describe() { # 볼륨 이름(프로젝트 접두 제거) -> 들어 있는 것
     gate-data) echo "릴리스 이력(registry.sqlite3)과 번들(releases/), 승인 기록";;
     models-data) echo "모델 패키지(어댑터)";;
     serving-data) echo "추론 서버 번들 캐시(다시 받을 수 있음)";;
-    schema-data) echo "문진 스키마 사본(다시 만들어짐)";;
     gateway-*) echo "gateway 설정 사본(다시 만들어짐)";;
     *) echo "(알 수 없음)";;
   esac

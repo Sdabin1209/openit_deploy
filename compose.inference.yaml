@@ -1,15 +1,19 @@
-# 단독 추론 서버(D72): model-serving 하나를 이 파일만으로 다른 호스트에서 띄운다. deploy 의 compose.yaml·네트워크·서비스 이름에 의존하지 않는다.
+# 단독 추론 서버(D72): model-serving 컨테이너 하나를 이 파일만으로 다른 호스트에서 띄운다.
+# deploy 의 compose.yaml·네트워크·서비스 이름·잠금 파일에 의존하지 않는다. 문진 스키마는 이미지에 내장되어 있다(/opt/survey-schema).
+#
+# 필수 변수 (이 셋만 있으면 `docker compose -f compose.inference.yaml config` 가 데몬 없이 병합된다):
+#   변수                 뜻
+#   INFERENCE_IMAGE      이미지 전체 참조, digest 로 고정(예: <레지스트리>/openit/model-serving@sha256:...). GPU 변형 이미지도 여기에 둔다
+#   RELEASE_URL          release-gate 주소(서버가 번들을 직접 읽는다). 이 호스트에서 닿아야 한다
+#   INFERENCE_ENV_FILE   토큰 env 파일의 경로(값이 아니다):
+#                          MODEL_RUNTIME_TOKENS=<호출자>=<토큰>[,...]   MODEL_RUNTIME_RELEASE_TOKEN=<게이트 읽기 토큰>
+#                        (프로파일 등 모델 설정 변수도 이 파일에 둔다)
+# 선택 변수:
+#   INFERENCE_BACKEND    기본 fake. GPU 변형 이미지는 model-runtime 이 정한 값(vllm 등)
+#   INFERENCE_BIND       호스트 바인드 주소. 기본 0.0.0.0 (같은 호스트에서만 쓰면 127.0.0.1)
+#   INFERENCE_PORT       호스트 포트. 기본 8080. 빈 값(INFERENCE_PORT=)이면 Docker 가 배정한다(`docker port` 로 읽는다)
 # 사용 (추론 서버를 둘 호스트에서):
-#   docker compose -p deploy-inference -f compose.inference.yaml --env-file <잠금 파일> up -d --wait
-# 필요한 환경 변수(--env-file 또는 셸):
-#   DEPLOY_REGISTRY / MODEL_SERVING_DIGEST / SURVEY_SERVICE_DIGEST   이미지 위치와 digest (locks/images.lock 과 레지스트리 주소)
-#   INFERENCE_IMAGE      (선택) 이미지 전체 이름을 직접 지정. GPU 변형 이미지는 여기에 digest 참조로 둔다. 비우면 model-serving digest(CPU/fake)
-#   RELEASE_URL          release-gate 주소 (서버가 번들을 직접 읽는다). 이 호스트에서 닿아야 한다
-#   INFERENCE_ENV_FILE   토큰 env 파일 경로(값이 아니다): MODEL_RUNTIME_TOKENS=<호출자>=<토큰>[,...] 와 MODEL_RUNTIME_RELEASE_TOKEN=<게이트 읽기 토큰>.
-#                        (프로파일 등 모델 설정 변수도 이 파일이나 INFERENCE_EXTRA_ENV_FILE 에 둔다)
-#   INFERENCE_BACKEND    (선택) 기본 fake. GPU 변형 이미지는 vllm 등 model-runtime 이 정한 값
-#   INFERENCE_BIND / INFERENCE_PORT   (선택) 호스트 바인드(기본 0.0.0.0)와 포트(기본 8080, 빈 값이면 Docker 배정)
-# 문진 스키마는 이미지에 없다: inference-schema 가 survey-service 이미지(digest)에서 꺼내 볼륨에 둔다(일회성). 이 이미지를 이 호스트가 받을 수 있어야 한다.
+#   INFERENCE_IMAGE=... RELEASE_URL=... INFERENCE_ENV_FILE=... docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
 name: deploy-inference
 
 x-hardening: &hardening
@@ -21,41 +25,25 @@ x-hardening: &hardening
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 
 volumes:
-  schema-data:
   serving-data:     # 번들 캐시(게이트에서 다시 받을 수 있다)
   # hf-cache:       # GPU 변형: Hugging Face 모델 캐시. 아래 model-serving 의 주석을 같이 푼다 (uid 10001 쓰기 권한은 GPU 이미지에서 확인 안 함)
 
 services:
-  inference-schema:
-    image: ${DEPLOY_REGISTRY:?DEPLOY_REGISTRY}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?SURVEY_SERVICE_DIGEST}
-    user: "0:0"
-    command: ["python", "-c", "import shutil, survey_schema; shutil.copytree(str(survey_schema.contract_version_dir(1)), '/out', dirs_exist_ok=True)"]
-    cap_drop: ["ALL"]
-    cap_add: ["DAC_OVERRIDE"]
-    security_opt: ["no-new-privileges:true"]
-    read_only: true
-    volumes: [schema-data:/out]
-    restart: "no"
-
   model-serving:
     <<: *hardening
-    image: ${INFERENCE_IMAGE:-${DEPLOY_REGISTRY:?DEPLOY_REGISTRY}/openit/model-serving@${MODEL_SERVING_DIGEST:?MODEL_SERVING_DIGEST}}
+    image: ${INFERENCE_IMAGE:?INFERENCE_IMAGE(model-serving 이미지, digest 참조)가 필요하다}
     env_file:
-      - ${INFERENCE_ENV_FILE:?토큰 env 파일 경로(INFERENCE_ENV_FILE)가 필요하다}
+      - ${INFERENCE_ENV_FILE:?INFERENCE_ENV_FILE(토큰 env 파일 경로)이 필요하다}
     environment:
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}
-      MODEL_RUNTIME_SCHEMA_DIR: /opt/survey-schema/schemas
-      MODEL_RUNTIME_RELEASE_URL: ${RELEASE_URL:?release-gate 주소(RELEASE_URL)가 필요하다}
+      MODEL_RUNTIME_RELEASE_URL: ${RELEASE_URL:?RELEASE_URL(release-gate 주소)이 필요하다}
       # HF_HOME: /var/lib/hf-cache          # GPU 변형(예시, 주석)
     volumes:
       - serving-data:/var/lib/model-runtime
-      - schema-data:/opt/survey-schema:ro
       # - hf-cache:/var/lib/hf-cache        # GPU 변형(예시, 주석)
     extra_hosts: ["host.docker.internal:host-gateway"]   # 게이트가 같은 호스트의 다른 컴포즈 프로젝트에 있을 때(시험·단일 서버)
     ports:
       - "${INFERENCE_BIND:-0.0.0.0}:${INFERENCE_PORT-8080}:8080"
-    depends_on:
-      inference-schema: {condition: service_completed_successfully}
     # GPU 예약(예시, 주석): NVIDIA Container Toolkit 이 있는 호스트에서
     # deploy:
     #   resources:

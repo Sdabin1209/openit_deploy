@@ -92,8 +92,12 @@ if want model-serving; then
   MS="$CTX/model-serving"; rm -rf "$MS" "$CTX/bc-folder"; mkdir -p "$MS" "$CTX/bc-folder"
   git -C "$WORKSPACE/model-runtime" archive "$MR" | tar -x -C "$MS"   # 추론 서버는 model-runtime 태그 시점 소스
   git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder"
+  # 문진 스키마를 이미지에 내장한다(D72): survey-service 태그 시점의 schema/ 를 빌드 컨텍스트 schema 로 준다 -> /opt/survey-schema.
+  # 추론 서버가 스키마 마운트·일회성 추출 서비스 없이 이미지 하나로 뜬다(다른 호스트에서도 같다).
+  rm -rf "$CTX/ms-schema"; mkdir -p "$CTX/ms-schema"
+  git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}")$SUFFIX; img="deploy-build/model-serving:$c"
-  "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
+  "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
     --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$MS" >/dev/null
   record model-serving "$img" "$c"
 fi

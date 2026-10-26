@@ -7,8 +7,6 @@
 services:
   model-serving:
     profiles: ["local-inference"]          # 프로필로 비활성: 기본으로는 뜨지 않는다
-  model-serving-schema:
-    profiles: ["local-inference"]
   survey-service:
     environment:
       SURVEY_INFERENCE_URL: ${INFERENCE_URL:?외부 추론 서버 주소(INFERENCE_URL)가 필요하다}

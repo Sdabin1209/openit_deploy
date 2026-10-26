@@ -23,6 +23,7 @@ ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2)
 ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: http://gpu-host:8080). 비우면 이 프로젝트의 model-serving 컨테이너")
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(EXTERNAL_INFERENCE_TOKEN=... 한 줄). 비우면 이 구성이 만든 토큰")
+ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
 PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(a.root); WORK = pathlib.Path(a.work)
 WORK.mkdir(parents=True, exist_ok=True)
@@ -390,21 +391,22 @@ def step5():
     assert http("GET", "ms", "/v1/info", None)[0] in (401, 403), "토큰 없이 추론 서버 /v1/가 열림"
     c, st_ = http("GET", "ms", f"/v1/releases/{new}", ms_tok); assert c == 200 and st_["state"] == "LOADED", (c, st_)
     rd = survey_ready()[1]; inf = rd.get("inference") or {}
-    # 추론 서버를 멈췄다 다시 띄운다: 그 턴만 실패하고 서비스는 산다, 다시 띄우면 복구(404 -> PUT 재적재)
-    mname = MS_CONTAINER
-    sidc = f"sess-{RID}-c"; assert kiosk("/v1/sessions", {"session_id": sidc, "kind": "SESSION_START"})[0] == 200
-    sh([a.docker, "stop", "-t", "3", mname])
-    try:
-        cd_, rd_ = public_turn(sidc, "turn-down", "체온은 삼십육점오 도예요")
-        failed = cd_ != 200 or (isinstance(rd_, dict) and rd_.get("turn_failure_signal"))
-        assert failed, f"추론 서버가 멈췄는데 턴이 성공했다: {cd_} {rd_}"
-        assert http("GET", "survey", "/healthz")[0] == 200, "추론 서버 중단으로 서비스가 죽었다"
-    finally:
-        sh([a.docker, "start", mname])
-    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", mname]).stdout.strip() == "healthy", 60, "추론 서버 복구")
-    cu, ru = public_turn(sidc, "turn-up", "체온은 삼십육점오 도예요")
-    assert cu == 200 and not (isinstance(ru, dict) and ru.get("turn_failure_signal")) and "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
-    kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
+    if not a.skip_ms_restart:
+        # 추론 서버를 멈췄다 다시 띄운다: 그 턴만 실패하고 서비스는 산다, 다시 띄우면 복구(404 -> PUT 재적재)
+        mname = MS_CONTAINER
+        sidc = f"sess-{RID}-c"; assert kiosk("/v1/sessions", {"session_id": sidc, "kind": "SESSION_START"})[0] == 200
+        sh([a.docker, "stop", "-t", "3", mname])
+        try:
+            cd_, rd_ = public_turn(sidc, "turn-down", "체온은 삼십육점오 도예요")
+            failed = cd_ != 200 or (isinstance(rd_, dict) and rd_.get("turn_failure_signal"))
+            assert failed, f"추론 서버가 멈췄는데 턴이 성공했다: {cd_} {rd_}"
+            assert http("GET", "survey", "/healthz")[0] == 200, "추론 서버 중단으로 서비스가 죽었다"
+        finally:
+            sh([a.docker, "start", mname])
+        wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", mname]).stdout.strip() == "healthy", 60, "추론 서버 복구")
+        cu, ru = public_turn(sidc, "turn-up", "체온은 삼십육점오 도예요")
+        assert cu == 200 and not (isinstance(ru, dict) and ru.get("turn_failure_signal")) and "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
+        kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
     # 직원 개입은 서비스에 직접(내부 경로)만: 키오스크 토큰은 403, 직원 토큰은 멈추지 않은 세션에 409(PUBLIC_API.md)
     ib = {"session_id": sid, "decision": "RESUME", "turn_id": "i1"}
