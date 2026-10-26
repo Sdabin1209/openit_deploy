@@ -4,20 +4,11 @@
 
 ## 1. 설치: 두 가지 경우
 
-유일한 전제는 **형제 폴더 배치**다: deploy의 상위 폴더에 리포들이 나란히 있고 폴더 이름이 `head/workspace.yaml`과 같다. 루트 폴더 이름과 위치는 자유다(절대 경로는 어디에도 박혀 있지 않다). 확인: `bash scripts/check-relocatable.sh`(정적 검사 + 다른 루트 이름에 clone해 `e2e.sh --fast`).
+설치 가이드는 [SETUP.md](SETUP.md). 유일한 전제는 **형제 폴더 배치**다: deploy의 상위 폴더에 리포들이 나란히 있고 폴더 이름이 `head/workspace.yaml`과 같다. 루트 폴더 이름과 위치는 자유다(절대 경로는 어디에도 박혀 있지 않다). 확인: `bash scripts/check-relocatable.sh`(정적 검사 + 다른 루트 이름에 clone해 `e2e.sh --fast`).
 
 ### (A) 개발·CI 워크스페이스 (소스가 있고 빌드·E2E를 한다)
 
-```
-git clone git@github.com:Sdabin1209/openit_head.git <루트>/head     # 루트 폴더 이름은 자유
-bash <루트>/head/setup.sh                                            # workspace.yaml 의 형제 리포를 모두 clone
-cd <루트>/deploy
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-bash scripts/lock-third-party.sh          # gateway, registry, 유틸 이미지를 받아 digest 고정 (이미 고정돼 있으면 건너뜀)
-bash scripts/e2e.sh                       # 빌드 + 임시 레지스트리 + 전체 E2E (인도 전 필수). 개발 중에는 --fast --reuse-build
-```
-
-수동 순서: `registry.sh up` -> `build-images.sh` -> `publish-images.sh`(잠금 `locks/images.lock` 갱신) -> `gen-secrets.sh` -> `.env.example`을 `.env`로 복사해 `DEPLOY_REGISTRY` 확인 -> `up.sh deploy`.
+설치 방법 전체(환경 유형별, 워크스페이스 구성, 첫 실행, 증상별 표)는 **[SETUP.md](SETUP.md)** 한 문서에 있다. 요약: `head/setup.sh`로 형제 리포를 받고 -> `bash scripts/doctor.sh` -> `bash scripts/e2e.sh`(인도 전 필수) / 개발 중에는 `--fast --reuse-build`. 수동 순서: `registry.sh up` -> `build-images.sh` -> `publish-images.sh`(잠금 `locks/images.lock` 갱신) -> `gen-secrets.sh` -> `.env.example`을 `.env`로 복사해 `DEPLOY_REGISTRY` 확인 -> `up.sh deploy`.
 
 ### (B) 운영·테스트 서버 (소스 없이 deploy 리포 + 레지스트리의 digest 이미지로 띄우는 것이 장기 형태)
 

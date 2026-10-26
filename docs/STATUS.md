@@ -122,3 +122,7 @@ admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-appr
 - `scripts/check-relocatable.sh`: (a) 형제 리포 13개의 git 추적 파일에 절대 경로·워크스페이스 이름·호스트 이름이 없음(허용 목록 `relocatable-allow.txt`, 지금 0건, 검사 정규식은 양성 시료로 확인), (b) 임시 `ws-relocate-XXXX/`에 13개 리포를 로컬 clone한 뒤 그 안의 deploy에서 `e2e.sh --fast` 통과(60 PASS / 0 FAIL), 끝나면 임시 폴더 삭제.
 - `scripts/check-standalone.sh`: 형제 리포·`build/`·`.venv` 없는 deploy 리포 사본 + 임시 레지스트리의 digest 이미지만으로 `gen-secrets.sh` -> `up.sh`가 운영 구성을 띄운다(통과). 이를 위해 추론 서버의 문진 스키마를 워크스페이스의 `build/survey-schema` 대신 survey-service 이미지의 패키지에서 꺼내는 일회성 작업(`model-serving-schema`)으로 바꿨다.
 - runbook 1절을 (A) 개발·CI 워크스페이스, (B) 운영·테스트 서버로 나눠 현재 사실로 고쳤다. (B)에서 아직 안 되는 것: 영역 이미지가 서버 레지스트리에 들어가는 길(CI 접근 방식, TLS·인증), 잠금 파일 전달, 레지스트리 이관 절차 -- 모두 미정.
+
+## 열두째 구간: 누구나 따라 할 수 있는 설치 (사전 점검 + SETUP.md)
+
+`scripts/doctor.sh`(읽기 전용 사전 점검: git, python3·venv, docker·데몬·compose·buildx, 자격증명 우회 알림, 형제 리포와 필요한 태그, 디스크, 인터넷 도달, 고정 포트 없음; 항목마다 OK/WARN/FAIL과 한국어 해결 한 줄), `e2e.sh`/`up.sh` 시작에서 자동 실행(`DEPLOY_SKIP_DOCTOR=1`로 건너뜀), 의존 태그를 `lib.sh` 한 곳으로, `docs/SETUP.md`(환경 유형별 설치). 시험: 정상 환경 전부 OK, docker 제거·없는 소켓·형제 리포 이름 변경·태그 삭제 상황에서 FAIL과 해결 문구 확인, e2e.sh가 doctor FAIL에서 즉시 멈춤.

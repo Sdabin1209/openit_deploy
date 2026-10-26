@@ -1,0 +1,86 @@
+# 설치 가이드 (이 문서 하나로 따라 한다)
+
+원칙: 처음부터 누구나 어떤 환경에서든 따라 할 수 있어야 한다. 의존은 **가상환경(.venv)과 컨테이너**로 만들고, 그것으로 못 만드는 것(git, python3, Docker 자체)은 아래에 어떻게 구성하는지 적었다. 경로는 어디에도 고정되어 있지 않다(루트 폴더 이름과 위치는 자유). 막히면 먼저 `bash scripts/doctor.sh`를 돌려 무엇이 없는지 본다.
+
+## 0. 필요한 것 한눈에
+
+| 필요 | 이유 | 만드는 법 |
+| --- | --- | --- |
+| git | 워크스페이스 리포 clone, 이미지 빌드가 태그 시점 소스를 꺼낸다 | A절(리눅스), WSL은 배포판에 설치 |
+| python3 (3.10+)와 venv 모듈 | E2E·스크립트가 `.venv` 가상환경을 만든다 | A절 |
+| Docker (데몬 + compose + buildx 플러그인) | 모든 서비스·이미지 | A절(리눅스) 또는 B절(WSL2) |
+| 형제 리포 11~13개 | 이미지는 각 영역 리포의 소스로 빌드한다 | C절 |
+| 인터넷(빌드할 때만) | 베이스 이미지, pip, npm | 이미 만든 이미지로 `--reuse-build`만 할 때는 불필요 |
+| curl | 점검·스모크(선택) | 패키지 관리자 |
+
+## A. 일반 리눅스 서버 (Ubuntu/Debian 예시)
+
+1. 기본 도구: `sudo apt-get update && sudo apt-get install -y git python3 python3-venv curl`
+2. Docker Engine: **공식 문서의 설치 절차**(https://docs.docker.com/engine/install/)를 따른다. 설치할 패키지: `docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`.
+3. 데몬 켜기: `sudo systemctl enable --now docker`
+4. 권한: 현재 사용자를 docker 그룹에 넣고 **다시 로그인**한다: `sudo usermod -aG docker $USER`. (그렇지 않으면 `permission denied while trying to connect to the Docker daemon socket`)
+5. 확인: `docker run --rm hello-world`, `docker compose version`, `docker buildx version`.
+
+## B. WSL2 + Docker Desktop (윈도)
+
+1. 윈도에 WSL2와 배포판(Ubuntu 등)을 설치하고, Docker Desktop을 설치한다(WSL2 백엔드).
+2. Docker Desktop > Settings > Resources > **WSL integration**에서 쓰는 배포판을 **켠다**. 그러면 배포판 안에서 `docker`가 동작한다.
+3. **순서**: 윈도를 켠 뒤 Docker Desktop을 먼저 시작하고 엔진이 "Running"이 된 다음 WSL 터미널을 연다. 연동 설정을 바꿨거나 이상하면 윈도에서 `wsl --shutdown` 한 뒤 다시 연다.
+4. 배포판 안에서 1절 A의 1번(git, python3, python3-venv, curl)을 한다. Docker Engine은 **설치하지 않는다**(Docker Desktop이 준다).
+5. 확인: 배포판 안에서 `docker info`가 되고 `/var/run/docker.sock`이 있다.
+
+주의:
+- **interop이 꺼진 배포판**(`/etc/wsl.conf`의 `[interop] enabled=false`)은 윈도 프로그램(`docker.exe`, `docker-credential-desktop.exe`)을 실행하지 못한다. 이 경우 반드시 2번의 WSL integration으로 리눅스 `docker`를 써야 한다(스크립트는 `docker.exe` 폴백을 쓰지 않는다).
+- **자격증명 도우미**: `~/.docker/config.json`의 `credsStore`가 윈도 도우미(`desktop.exe`)를 가리키면 interop이 꺼진 곳에서 이미지 빌드가 `error getting credentials … exec format error`로 실패한다. `scripts/lib.sh`가 이를 감지해 `state/docker-config/`(빈 설정, gitignore)로 자동 우회한다. 사용자 설정은 읽기만 하고 고치거나 출력하지 않는다. 안내 한 줄이 나온다.
+- Docker Desktop의 이미지 저장 디스크는 윈도 드라이브에 있다. WSL에서 `df`는 그 여유를 알려 주지 않는다(최소 20GB 여유 권장).
+
+## C. 워크스페이스 구성 (형제 리포 clone)
+
+유일한 전제는 **형제 폴더 배치**다: deploy의 상위 폴더에 리포들이 나란히 있고 폴더 이름이 `head/workspace.yaml`과 같다. 루트 폴더 이름은 자유다.
+
+1. GitHub **읽기 접근**을 만든다(저장소는 비공개). 둘 중 하나를 고른다.
+   - **읽기 전용 SSH 키**: 이 머신 전용 키(`ssh-keygen -t ed25519`)를 만들어 공개키를 GitHub에 읽기 전용으로 등록한다. 리포가 여러 개라 리포마다 deploy key를 만들기보다 읽기 권한만 가진 전용 계정/기계 사용자 하나에 등록하는 쪽이 간단하다. 개인 키는 `~/.ssh`에 두고 권한 600.
+   - **읽기 전용 토큰**: fine-grained personal access token(Repository permissions: Contents = Read-only, 대상은 이 프로젝트 리포들)을 만들고 HTTPS로 clone한다: `git config --global url."https://github.com/".insteadOf "git@github.com:"`, `git config --global credential.helper store` 뒤 첫 clone 때 토큰을 입력(파일 `~/.git-credentials`, 권한 600).
+   - **주의**: 키·토큰 값은 저장소, 채팅, 로그, 이슈에 **절대 넣지 않는다**. 이 프로젝트의 스크립트도 비밀 값을 출력하지 않는다.
+2. head를 clone하고 나머지를 받는다:
+   ```
+   mkdir -p <루트> && cd <루트>
+   git clone git@github.com:Sdabin1209/openit_head.git head
+   bash head/setup.sh        # workspace.yaml 의 나머지 리포를 clone (있는 것은 건드리지 않음)
+   ```
+3. 확인: `ls <루트>`에 `deploy`, `boundary-contracts`, `survey-service` … 가 보이고, `bash deploy/scripts/doctor.sh`가 형제 리포와 태그를 확인한다.
+
+## D. 첫 실행 순서
+
+```
+cd <루트>/deploy
+bash scripts/doctor.sh        # 사전 점검. FAIL 이 있으면 해결 방법(한 줄)을 따른다
+bash scripts/e2e.sh           # 처음이므로 --reuse-build 없이: 이미지 빌드 + 임시 레지스트리 + 전체 합격 시나리오 (인도 전 필수)
+```
+`e2e.sh`와 `up.sh`는 시작에서 doctor를 자동으로 돌리고 FAIL이면 멈춘다(건너뛰기 `DEPLOY_SKIP_DOCTOR=1`). `.venv`와 필요한 의존은 스크립트가 만든다.
+
+- `--fast`: 단계 1~8과 compose 기동 검사만(약 2분). 개발 중 확인용이며 **전체 합격이 아니다**.
+- `--reuse-build`: 이미 만든 로컬 이미지(`deploy-build/*`)를 쓰고 빌드를 건너뛴다. **소스(영역 리포)를 바꿨다면 쓰지 않는다**: 옛 이미지로 시험하게 된다. 빌드하지 않아 빠르고 인터넷도 필요 없다.
+- `--keep`: 끝나도 시험 자원을 남긴다(디버깅). 평소에는 끝나면 컨테이너·네트워크·볼륨·임시 레지스트리·임시 폴더를 모두 지운다.
+
+**결과 읽는 법.** 끝의 요약에 `PASS n / FAIL m`과 단계별 상태가 나온다. 종료 코드 0은 "실행한 검사가 모두 통과"다.
+- `REAL`: 실제 서비스가 실제 인터페이스로 처리한 것.
+- `TEST-SUB`: 시험 대역으로 대신한 것(예: 승인자를 스크립트가 시험용 토큰으로, 모델을 가짜 백엔드·시험용 어댑터로). 이름에 test가 들어간다.
+- `BLOCKED`: 지금 구현이나 환경으로는 확인할 수 없는 것(예: 실제 브라우저 렌더링, 웹 푸시 수신). 실패가 아니지만 "전체 합격"도 아니다.
+- 구간별 소요 시간 표가 같이 나온다.
+
+운영 구성으로 띄우는 것(`up.sh`)과 롤백·백업·복구는 [runbook.md](runbook.md), 이미지 게시는 [ci.md](ci.md)를 본다.
+
+## E. 증상별 표
+
+| 증상 | 원인 | 해결 |
+| --- | --- | --- |
+| `docker.exe: command not found` | (옛 스크립트의 가정) 리눅스 서버에는 `docker.exe`가 없다 | 최신 deploy를 쓴다. 리눅스에서는 `docker`만 쓴다. `doctor.sh`로 확인 |
+| `Cannot connect to the Docker daemon` | 데몬이 꺼져 있다 | 리눅스: `sudo systemctl start docker`. WSL: Docker Desktop을 먼저 시작하고 연동을 켠 뒤 WSL을 다시 연다(`wsl --shutdown`) |
+| `permission denied while trying to connect to the Docker daemon socket` | 사용자가 docker 그룹이 아니다 | `sudo usermod -aG docker $USER` 후 다시 로그인 |
+| `error getting credentials … docker-credential-desktop.exe: exec format error` | interop이 꺼진 WSL에서 윈도 자격증명 도우미를 실행하려 함 | 자동 우회된다(`state/docker-config`). 직접 `docker build`할 때는 `DOCKER_CONFIG=<deploy>/state/docker-config` 또는 `~/.docker/config.json`의 `credsStore` 항목 제거 |
+| `doctor`: `형제 리포가 없다` | 폴더 이름이 workspace.yaml과 다르거나 clone 안 함 | C절. 폴더 이름을 `head/workspace.yaml`의 path와 같게 |
+| `doctor`: `태그가 없다: boundary-contracts v1.3.3` 등 | 리포가 태그 없이 clone됐거나 오래됨 | `git -C ../boundary-contracts fetch --tags`; 그래도 없으면 원격에 태그가 없는 것이니 head에 알린다 |
+| `port is already allocated` / 포트 충돌 | 시험은 고정 포트를 쓰지 않는다(Docker 배정, 레지스트리는 빈 포트 선택). 운영 구성의 gateway(기본 8080)·레지스트리(기본 5000)가 다른 프로세스와 겹친 것 | `.env`의 `GATEWAY_PORT`, `REGISTRY_HOST_PORT`를 바꾼다 |
+| `python3 -m venv` 실패(`ensurepip is not available`) | python3-venv 패키지 없음 | `sudo apt-get install -y python3-venv` |
+| 빌드 중 pip/npm/pull 실패 | 인터넷 또는 프록시 | 인터넷 확인(프록시는 `HTTP(S)_PROXY`). 오프라인이면 이미 만든 이미지로 `--reuse-build`만 가능 |
