@@ -56,18 +56,12 @@ cat <<BANNER
 BANNER
 
 sect "준비: 이미지 빌드, 임시 레지스트리, digest 잠금"
-[ -d "$DEPLOY_ROOT/.venv" ] || python3 -m venv "$DEPLOY_ROOT/.venv"
-"$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt" setuptools wheel 2>&1 | tail -1
+bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv
 have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 8 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
 if [ $REUSE = 0 ] || ! have_images; then chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
-# 호스트에서 쓰는 검증기·클라이언트: 영역 빌드가 만든 태그 wheel(boundary-contracts, 문진 스키마)
-"$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/v1.3.3/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
-# synthetic-data run-once용 가상환경(호스트): 그 영역 런북대로 requirements.lock 의 서드파티 + 태그 wheel
-if [ ! -x "$DEPLOY_ROOT/build/venv-sd/bin/python" ]; then python3 -m venv "$DEPLOY_ROOT/build/venv-sd"; "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q attrs==26.1.0 jsonschema==4.10.3 packaging==26.3 pyrsistent==0.20.0 PyYAML==6.0.3 2>&1 | tail -1; fi
-"$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/v1.2.0/boundary_contracts-*.whl 2>&1 | tail -1
-rm -rf "$DEPLOY_ROOT/build/ctx/synthetic-data"; mkdir -p "$DEPLOY_ROOT/build/ctx/synthetic-data"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DEPLOY_ROOT/build/ctx/synthetic-data"
+bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
 grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/registry.sh" up
 chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh"

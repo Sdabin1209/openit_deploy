@@ -18,6 +18,7 @@ ap.add_argument("--ports", required=True); ap.add_argument("--images", required=
 ap.add_argument("--docker", default="docker"); ap.add_argument("--root", required=True)
 ap.add_argument("--work", required=True, help="이번 실행의 임시 작업 폴더")
 ap.add_argument("--run-id", default="e2e-test")
+ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기까지만 만든다(사람이 /admin/ 에서 승인)")
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
 a = ap.parse_args()
 PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(a.root); WORK = pathlib.Path(a.work)
@@ -609,11 +610,63 @@ def step8():
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
     rec(8, "REAL", f"ops-feedback 토큰의 RollbackRequest -> RollbackReceipt APPLIED(멱등), 활성 포인터 {new}->{old}, 실제 survey-service가 /readyz에서 이전 릴리스로 복귀, 롤백 권한 없는 역할은 PERMISSION_DENIED, 롤백 뒤 공개 API로 새 세션 한 턴 처리(이전 릴리스). 롤백을 요청한 주체는 e2e(ops-feedback 역할 토큰)이고 ops-feedback 잡의 자동 롤백 평가는 아님")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8)]
+def _gate_clients():
+    return (HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")), HttpGateService(URL("gate"), TOK("gate-write-operator")),
+            HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")), HttpGateService(URL("gate"), TOK("gate-write-release-approver")))
+
+def demo4():
+    """demo.sh 용: 후보 수집·자동 검사까지 하고, 승인은 --demo-stop 이면 사람에게 남긴다(아니면 시험용 승인자 토큰으로 대신: TEST-SUB). 승인 화면에 볼 제출 하나는 항상 대기로 둔다."""
+    title("demo4", "데모 릴리스: 후보 수집·자동 검사 -> 승인 -> 활성화 (release-gate)")
+    if "lora" not in STATE: rec("demo4", "BLOCKED", "단계 3의 패키지가 없다"); return
+    gate_r, gate_op, gate_rep, gate_ap = _gate_clients()
+    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
+    assert r.returncode in (0, 75), f"collect 종료 {r.returncode}: {(r.stderr + r.stdout)[-500:]}"
+    A, B = STATE["lora"]["LORA_A"], STATE["lora"]["LORA_B"]
+    subj = {v["version"]: {"question_set": v, "lora_a": A, "lora_b": B} for v in STATE["qs"]}
+    subj_u = {"question_set": STATE["qsu"], "lora_a": A, "lora_b": B}
+    subs = {k: dict(gate_op.submit_candidate(sj, requested_by_role="operator")) for k, sj in subj.items()}
+    sub_u = dict(gate_op.submit_candidate(subj_u, requested_by_role="operator"))
+    def report_of(sid):
+        try: return dict(gate_rep.get_review_report(sid))
+        except bc.BoundaryError: return None
+    for k, sub in list(subs.items()) + [("u", sub_u)]:
+        wait(lambda sid=sub["submission_id"]: report_of(sid), 60, f"자동 검사 후 승인 요청 보고서 {k}")
+    STATE["demo_subs"] = {**{k: v["submission_id"] for k, v in subs.items()}, "u": sub_u["submission_id"]}; save()
+    if a.demo_stop:
+        rec("demo4", "REAL", f"후보 수집·자동 검사까지 완료. 승인 대기 제출: " + ", ".join(f"문항 세트 v{k}={v['submission_id']}" for k, v in subs.items()) + f", 보지 못한 문항 세트={sub_u['submission_id']}. 사람이 /admin/ 에서 승인한 뒤 demo.sh activate")
+        return
+    rels = {}
+    for k, sub in subs.items():
+        gate_ap.decide(sub["submission_id"], "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="데모: 시험용 승인자(스크립트)가 대신 승인")
+    for k, sj in subj.items():
+        d = wait(lambda sj=sj: next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
+        rels[k] = d.get("release_id")
+    for k in sorted(rels): gate_op.activate(rels[k], requested_by_role="operator")
+    STATE["releases"] = rels; save()
+    rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 토큰으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
+
+def demo_activate():
+    """사람이 /admin/ 에서 승인한 제출의 릴리스를 활성화한다(오래된 문항 세트 버전부터)."""
+    title("demo_activate", "승인된 제출의 릴리스 활성화")
+    gate_r, gate_op, _, _ = _gate_clients()
+    rels = {}
+    for k in sorted(v["version"] for v in STATE["qs"]):
+        sj = {"question_set": next(v for v in STATE["qs"] if v["version"] == k), "lora_a": STATE["lora"]["LORA_A"], "lora_b": STATE["lora"]["LORA_B"]}
+        d = next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None)
+        if d: rels[k] = d.get("release_id")
+    if not rels: rec("demo_activate", "BLOCKED", "승인된(PASS) 제출이 아직 없다. /admin/ 에서 승인한 뒤 다시 실행한다"); return
+    cur = gate_r.get_active_pointer()
+    for k in sorted(rels):
+        if not cur or cur["release_id"] != rels[k]: cur = gate_op.activate(rels[k], requested_by_role="operator")
+    STATE["releases"] = rels; save()
+    rec("demo_activate", "REAL", f"승인된 릴리스 활성화: {rels}, 현재 활성 {dict(cur)['release_id']}")
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:
     if only and n not in only: continue
+    if n.startswith("demo") and n not in only: continue   # demo.sh 전용 단계는 E2E 기본 실행에 넣지 않는다
     t0 = time.time()
     try: fn()
     except AssertionError as e: rec(fn.__name__, "FAIL", str(e))

@@ -31,6 +31,10 @@
 - 내용 축(릴리스 활성 포인터) 되돌리기는 게이트의 몫이다(`POST /v1/rollback`). deploy가 하지 않는다.
 - 지원하지 않는 계약 버전의 묶음 거부는 서비스가 한다. survey-service는 `/readyz`의 `release_loader.rejections`로 낸다.
 
+## 2-1. 화면을 직접 눌러 보는 데모
+
+`bash scripts/demo.sh up`(승인을 사람이 해 보려면 `--stop-before-approval`, 이후 `demo.sh activate`), `status`, `down`, `reset`. 상시 구성과 따로 `deploy-demo` 프로젝트로 뜬다. 자세한 안내와 한계는 [SETUP.md](SETUP.md) "데모" 절.
+
 ## 3. 상태 보기
 
 ```
