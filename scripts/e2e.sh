@@ -19,7 +19,7 @@ W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT=$PROJECT
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" GATEWAY_PORT=
+export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml" GATEWAY_PORT=
 export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
@@ -44,11 +44,11 @@ trap cleanup EXIT
 [ "$FAST" = 1 ] && echo "!!! --fast 모드: 스케줄러, 백업·복구, 코드 축 롤백 구간을 생략한다. 전체 합격이 아니다(인도 전에는 옵션 없는 전체 모드 필수) !!!"
 cat <<BANNER
 =============================================================================
- E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v1.3.3 (출고는 사람 승인, D53)
+ E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v2.0.0 (출고는 사람 승인, D53)
  !! 시험 대역 사용 표시 !!
    - 승인자: 사람 대신 이 스크립트가 시험용 승인자 토큰(release-approver)으로 POST /v1/approvals 를 호출한다. 시험용 정책·실행기는 없다(게이트에서 삭제됨)
    - 단계 3 모델: GPU 없이 시험용 어댑터(test/fixtures/e2e-test-adapter)와 시험용 EvaluationReport(고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시한다(E2E_GPU=1이면 gpu-dev 경로, 기본 끔)
-   - 단계 5 모델: model-serving 컨테이너(CPU)의 가짜 백엔드(출력 고정: 파서 {"items": []}, 생성기 "(가짜 응답)"). 시험용 번들의 serving_config.constraint도 fake에 맞춘다(TEST-SUB)
+   - 단계 5 모델: model-serving 컨테이너(CPU)의 가짜 백엔드. A 출력은 입력 문항 기준으로 유효한 ActionExtraction(NEXT, 다음 문항, values 비어 있음), B 출력은 문장 "(가짜 응답)"이다(test/fake-model/fake_server.py: model-runtime 서버 그대로, 고정 출력만 시험용). 시험용 번들의 serving_config는 서버 /v1/info 기대값으로 만든다(TEST-SUB)
    - 직원 콘솔 접근: 개발/E2E용 기본 인증(운영 방식은 미정). 실제 브라우저·STT·웹 푸시 수신은 E2E에서 볼 수 없다(BLOCKED, VAPID 키 없이 SSE만)
    - 단계 6 TraceEnvelope와 단계 7 reviewed_input·검토 확인은 이 스크립트가 만든 시험 자료/행위다
    - 시험 자료는 운영 설정(compose.yaml, config/)에 들어가지 않는다

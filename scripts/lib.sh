@@ -14,10 +14,11 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v1.3.3}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
-DEPLOY_BC_TAG_SD="v1.2.0"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용)
-DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.5.3}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
-DEPLOY_TE_TAG="v0.2.0"                               # turn-engine (영역 빌드 스크립트의 기본 태그)
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v2.0.0}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
+DEPLOY_BC_TAG_SD="v2.0.0"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용, requirements.lock)
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.6.1}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.3.0}"          # turn-engine (survey-service·release-gate 빌드와 model-serving 이미지 라벨)
+export DEPLOY_TE_TAG
 DEPLOY_SS_TAG="survey-schema-v1.0.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름
 SERVICES="survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console"
@@ -72,7 +73,7 @@ hf_cache_report() { # 상태 한 줄(없으면 아무것도 안 낸다)
 }
 hf_cache_purge() { # hf_cache_purge <확인 완료 0|1>
   hf_cache_exists || { echo "HF 캐시 볼륨($HF_CACHE_VOLUME)이 없다."; return 0; }
-  echo "지울 볼륨: $HF_CACHE_VOLUME (크기 $(hf_cache_size | grep . || echo '알 수 없음')). 지우면 다음 --llm up 이 모델(약 3GB, 측정 전)을 다시 받는다. 되돌릴 수 없다."
+  echo "지울 볼륨: $HF_CACHE_VOLUME (크기 $(hf_cache_size | grep . || echo '알 수 없음')). 지우면 다음 --llm up 이 모델(약 8GB, Qwen3-4B 계산값, 측정 전)을 다시 받는다. 되돌릴 수 없다."
   if [ "${1:-0}" != 1 ]; then
     if [ -t 0 ]; then printf '계속하려면 볼륨 이름 "%s" 을(를) 그대로 입력: ' "$HF_CACHE_VOLUME"; read -r ans; [ "$ans" = "$HF_CACHE_VOLUME" ] || { echo "취소했다." >&2; return 1; }
     else echo "비대화형이다. 진행하려면 --yes-purge-$HF_CACHE_VOLUME 을 명시하라." >&2; return 1; fi

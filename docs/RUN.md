@@ -56,7 +56,8 @@ bash scripts/demo.sh reset                       # down 후 up
 - 처음에는 이미지 빌드가 들어가 오래 걸릴 수 있다(측정 안 함). E2E 단계 1~8 구간은 약 45초(STATUS.md).
 - **출력 읽는 법.** 끝에 "데모 접속 안내" 블록이 나온다: 주소(Docker가 배정한 포트), 화면별 경로(`/` 키오스크, `/staff/` 직원 콘솔, `/admin/` 승인·검토), 계정 이름, 암호 파일 위치, 위험 문구. 암호 값은 출력하지 않는다.
 - **계정.** 직원 콘솔 `staff`, 승인자 `trainer-e2e`(역할 release-approver), 검토자 `reviewer-e2e`(역할 reviewer). 암호는 각각 `state/demo/secrets/tokens/staff-console-password`, `admin-console-password`, `reviewer-console-password` 파일에 있다(`cat`으로 연다).
-- **위험 문구.** 키오스크에서 `TEST-RISK`를 말하거나 입력하면 시험용 가짜 모델이 위험으로 판정해 정지한다. 시험 구성에만 있는 문구이며 운영 구성에는 없다.
+- **직원 알림.** 입력원이 비어 있어(OPEN_GAPS G01) 알림이 만들어지지 않는다. 위험 문구로 정지시키는 시험은 없다. survey-service `/readyz`의 `staff_alert_source.active`가 `false`로 드러내며 고장이 아니다.
+- **가짜 모델.** 시험 구성의 model-serving은 model-runtime 서버 그대로이고 fake 백엔드의 고정 출력만 `test/fake-model/fake_server.py`가 바꾼다: A는 입력 문항의 다음 문항으로 가는 유효한 ActionExtraction(`NEXT`, `values` 없음), B는 `(가짜 응답)`. 환자 답을 저장하지 않는다.
 - 이 데이터는 **시험용 대체**다(가짜 모델, 시험용 어댑터·평가 보고서, 시험용 승인자 스크립트). 실제 모델·실제 승인이 아니다.
 
 ## 5. 화면별로 써 보는 법
@@ -65,11 +66,11 @@ bash scripts/demo.sh reset                       # down 후 up
 
 **키오스크 `/`** (인증 없음)
 1. 시작 버튼 -> 안내 문장 -> 듣기. 음성(STT)을 쓸 수 없으면 입력창이 나온다. 문진 한 턴: 말하거나 입력하고 응답을 읽는다.
-2. 위험 정지: `TEST-RISK`를 입력한다 -> 직원 알림이 만들어지고, 알림이 전달되면(`DELIVERED`) "직원이 오고 있습니다"(대기) 화면이 된다. 대기 중 키오스크는 2초 간격으로 상태를 확인한다. 직원이 재개하면 `resume_text`와 함께 듣기로 돌아간다.
+2. 위험 정지: 지금은 입력원이 없어 만들 수 없다(G01). 정지 화면(대기, `resume_text`)은 설계 문서 기준으로만 남아 있고 이 구성에서는 볼 수 없다.
 3. 알림 전달에 실패하면(`DELIVERY_FAILED`) "직원을 직접 불러 주세요" 화면이 최우선으로 뜬다.
 
 **직원 콘솔 `/staff/`** (계정 `staff`)
-- 알림 목록과 실시간 알림(SSE). 위험 정지가 나면 목록에 열린 알림이 뜬다.
+- 알림 목록과 실시간 알림(SSE). 지금은 알림 입력원이 없어 목록이 비어 있는 것이 정상이다(G01). 아래 `DELIVERED` 등의 서술은 v1 구조에서 확인한 것이며 이번 v2 E2E에서는 건너뛰었다(5d-skip).
 - `DELIVERED`/`DELIVERY_FAILED`는 알림이 직원 쪽에 전달되었는지에 따라 갈린다. 직원 콘솔을 열어 SSE로 연결해 둔 상태에서 위험 정지를 내면 `DELIVERED`로 나오는 것을 E2E에서 확인했다(확인함). 연결이 없을 때 정확히 어떤 값이 되는지는 설계 문서 기준이며 데모에서 직접 확인하지 않았다.
 - 알림마다 재개(RESUME) 또는 종료(END)를 고른다. 확인 후 전송이며, 같은 알림에는 같은 `turn_id`가 쓰인다. E2E에서 두 경로 모두 API로 확인함.
 
@@ -162,8 +163,8 @@ bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모�
 | 항목 | 값 | 상태 |
 | --- | --- | --- |
 | GPU 이미지(`model-serving-gpu`) 용량 | 약 13GB | model-runtime의 안내값. 서버에서 측정 전 |
-| HF 캐시 볼륨(`deploy-llm-hf-cache`) 용량 | 약 3GB (기반 모델 Qwen/Qwen2.5-1.5B-Instruct) | 측정 전 |
-| **합계** | **약 16GB** = 이미지 13GB(데몬에 한 벌) + 캐시 3GB. 데모는 이미지를 레지스트리에 올리지 않으므로 **이중 보관이 없다** | 서버에서 측정 전 |
+| HF 캐시 볼륨(`deploy-llm-hf-cache`) 용량 | 약 8GB (기반 모델 Qwen/Qwen3-4B, bf16: 약 4.0B 파라미터 x 2바이트 계산값) | 계산한 추정, 서버에서 측정 전 |
+| **합계** | **약 21GB** = 이미지 13GB(데몬에 한 벌) + 캐시 8GB(추정). 데모는 이미지를 레지스트리에 올리지 않으므로 **이중 보관이 없다** | 서버에서 측정 전 |
 | 첫 기동 시간(모델 내려받기+적재) | 모름 | 측정 전. 헬스체크 start_period를 900초로 넉넉히 잡았다(잠정) |
 | 프로파일 | `/app/profiles/gpu-12g.json`(12GB급, 기본), `rtx4090-24g.json`(24GB) | 이미지 안. `DEMO_LLM_PROFILE`로 고른다 |
 
@@ -171,7 +172,7 @@ bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모�
 
 ```
 bash scripts/doctor.sh --up --llm               # GPU 컨테이너 접근, 프로파일 대 GPU 메모리, 도커 디스크, huggingface.co 도달
-bash scripts/build-images.sh --gpu              # GPU 변형만 빌드(model-runtime `DEPLOY_MR_TAG`, 현재 v0.5.3, 문진 스키마 내장). 빌드 전 docker system df 와 약 13GB 안내.
+bash scripts/build-images.sh --gpu              # GPU 변형만 빌드(model-runtime `DEPLOY_MR_TAG`, 현재 v0.6.1, 문진 스키마 내장). 빌드 전 docker system df 와 약 13GB 안내.
                                                 #   비대화형이면 --yes-large 를 명시해야 진행한다
 bash scripts/publish-images.sh model-serving-gpu   # 레지스트리에 올리고 잠금에 MODEL_SERVING_GPU_DIGEST 기록
 ```
@@ -192,16 +193,27 @@ bash scripts/demo.sh status                                          # model-ser
 
 `up --llm`이 하는 일(순서): (0) **병합 사전 검증**(빌드·게시 전에 `docker compose config`로 model-serving 이미지가 로컬 태그인지 확인, 실패하면 빌드·게시 없이 멈춤) (1) `doctor.sh --up --llm` (2) 기본 8개 이미지 빌드(없을 때) (3) `model-serving-gpu`가 없으면 `build-images.sh --gpu`(용량 안내, 비대화형이면 `--yes-large`) (4) `make-llm-package.sh`로 중립 LoRA 패키지 생성 (5) 임시 레지스트리에 기본 8개 이미지만 게시한다(**GPU 이미지는 게시하지 않는다**: model-serving은 방금 빌드한 로컬 이미지 `deploy-build/model-serving-gpu:<커밋>`를 태그로 직접 쓰고 `pull_policy: never`. digest 고정은 데모에서 하지 않는다. 운영/CI는 게시된 digest를 쓰는 기존 방식 그대로 -- `compose.llm.yaml`의 `MODEL_SERVING_GPU_IMAGE`/`MODEL_SERVING_GPU_PULL`로 고른다) (6) 기동 직전 병합 검증을 한 번 더 한 뒤 `compose.yaml` + `compose.test.yaml` + `compose.llm.yaml` + `compose.llm.local.yaml` + `test/compose.llm-demo.yaml`로 기동 (7) E2E 단계 1~3·데모 단계를 돌려 릴리스를 만들고 활성화 (8) 적재가 끝날 때까지 기다린다.
 
-- **모델은 학습하지 않은 Qwen/Qwen2.5-1.5B-Instruct + 시스템 프롬프트(prompt-2) + 효과 없는 LoRA(lora_B=0)이다. 시험용 대체다.** 작은 모델이라 응답이 거칠 수 있고, 출력 보호가 규칙 기반 대체 문장으로 바꾸기도 한다.
+- **모델은 학습하지 않은 Qwen/Qwen3-4B(프로파일 `gpu-12g`) + 학습 데이터의 시스템 프롬프트(`prompt-4` 조립) + 효과 없는 LoRA(lora_B=0)이다. 시험용 대체다.** 학습하지 않았으므로 A 출력이 ActionExtraction 형식(문항 ID, `values`, `next_item` 규칙)을 못 지킬 수 있다. 그러면 서버가 재시도한 뒤 503 `OUTPUT_INVALID`를 내고, survey-service가 한 번 다시 보낸 뒤에도 안 되면 그 턴을 실패 신호로 처리한다(값을 지어내지 않는다, D75). B 출력은 문장이며 형식이 깨지면 규칙 기반 대체 문장이 나간다. **서버(gpu-dev)에서 Qwen3-4B가 12GB에 적재되는지, A·B 어댑터 동시 적재가 되는지, 제약 디코딩이 형식을 지키는지는 모두 미검증이다**(OPEN_GAPS U01, U07, U03, U04).
 - **진단.** 릴리스 준비가 실패하면(`데모 릴리스 준비 실패`) `bash scripts/demo.sh diag`: release-gate의 모든 제출(status)과 각 GateDecision의 checks(kind, result, detail)·reject_codes, 활성 포인터, 후보 수집기 다시 실행(멱등) 결과, model-registry 패키지 요약, model-serving `/v1/info`(vllm 백엔드는 모델을 올리기 전에는 `serving_config_expectation`이 비어 있어 서빙 설정을 서버 값에서 맞출 수 없다: 그래서 패키지의 설정을 쓴다)를 읽기 전용으로 보여 준다. 자동 검사에서 반려되면 데모 실행도 60초를 기다리지 않고 같은 사유를 바로 출력한다.
 - **재실행.** 이미 있는 이미지는 다시 빌드하지 않는다: 기본 8개는 `build/images.env`의 기록과 로컬 이미지가 모두 있으면 건너뛰고, GPU 이미지(13GB)는 기록과 이미지가 있으면 건너뛴다(8개를 다시 빌드해도 GPU 기록은 지우지 않는다). 강제: `--rebuild`(8개), `--rebuild-gpu`(GPU). 실패한 뒤에는 `demo.sh down`으로 상태(`state/demo`)를 지우고 다시 `up --llm`을 한다(로컬 이미지와 HF 캐시는 남는다).
-- **중립 LoRA 패키지.** `scripts/make-llm-package.sh <프로파일> <폴더>`가 model-runtime 태그(`DEPLOY_MR_TAG`, 현재 v0.5.3)의 `git archive`에서 `make_neutral_package.py`와 `profiles/<이름>.json`을 꺼내 deploy의 `.venv`로 만든다. Docker 없이 실행되고 같은 입력이면 같은 바이트다(이 PC에서 실행해 `SUMMARY.json`과 결정성을 확인했다). 데모의 단계 3이 이 패키지를 model-registry에 게시한다. 서빙 설정은 fake의 `/v1/info` 기대값이 아니라 패키지의 vllm 설정이고, 서버가 적재할 때 같은 설정인지 스스로 검사한다. 평가 보고서는 이전처럼 **시험용 고정 지표**(TEST-SUB)다.
-- **시험 위험 문구.** vllm 백엔드는 `MODEL_RUNTIME_FAKE_RISK_PHRASE`가 있으면 시작을 거부하므로 `test/compose.llm-demo.yaml`이 그 값을 비운다. 그래서 `TEST-RISK`는 이 모드에서 동작하지 않을 수 있다(위험 정지는 모델 출력에 달려 있다).
-- **기다림.** 첫 기동은 모델 내려받기(약 3GB)와 적재로 오래 걸린다. `up`은 최대 20분(`DEMO_LLM_WAIT_MIN`) 30초마다 model-serving과 survey-service의 `/readyz`를 보여 준다. 시간이 지나도 **실패로 끝내지 않고** "아직 적재 중"이라 안내하고 끝낸다. `status`로 확인한다. **모델 캐시는 기본적으로 남는다**: `deploy-llm-hf-cache`는 프로젝트 밖 이름 있는 볼륨(없으면 `up --llm`이 만든다)이라 `demo.sh down/reset`, `down.sh --remove/--purge`가 지우지 않고, 다음 `up --llm`이 모델(약 3GB)을 다시 받지 않는다. 지우기: `bash scripts/demo.sh down --purge-cache` 또는 `bash scripts/down.sh --purge-hf-cache` (볼륨 이름을 직접 입력, 비대화형은 `--yes-purge-deploy-llm-hf-cache`). `status.sh`가 이 볼륨의 존재와 크기(`docker system df -v` 표를 읽음, 형식이 다르면 '알 수 없음')를 보여 준다. 로컬 GPU 이미지(`deploy-build/model-serving-gpu`)도 `down`이 지우지 않는다(`docker rmi`는 사용자가 판단).
+- **중립 LoRA 패키지.** `scripts/make-llm-package.sh <프로파일> <폴더>`가 model-runtime 태그(`DEPLOY_MR_TAG`, 현재 v0.6.1)의 `git archive`에서 `make_neutral_package.py`와 `profiles/<이름>.json`을 꺼내 deploy의 `.venv`로 만든다. Docker 없이 실행되고 같은 입력이면 같은 바이트다(이 PC에서 실행해 `SUMMARY.json`과 결정성을 확인했다). **Qwen3-4B의 차원(은닉 2560, 36층, 어텐션 헤드 32, KV 헤드 8, head_dim 128)은 코드에 박지 않고** Hugging Face `config.json`(리비전 `1cfa9a72…` 고정, sha256 `8ba006f7…` 검사)을 받아 `--model-config`로 넘긴다(받은 파일은 `build/hf-config/`에 보관한다. 인터넷이 없으면 `미확인`으로 중단하고 차원을 추정하지 않는다. 표에 없는 모델(예: `rtx4090-24g`의 Qwen3-8B)도 같은 이유로 중단한다). **시스템 프롬프트**는 model-runtime의 `make_neutral_package.py`가 인자로 받지 않아(v0.6.1) 자리표시 문장이 들어가므로, 생성 뒤 `scripts/apply_system_prompts.py`가 `test/llm-demo/lora_a.system.txt`(927자), `lora_b.system.txt`(281자)로 바꾸고 `adapter_hash`·`system_prompt.sha256`·`content_hash`를 다시 계산한다(서빙 설정 해시는 그대로). 이 두 파일은 학습 서버 데이터의 system 메시지를 model-lab 리포의 `prompts/`에서 복사한 데모 입력이며 학습과 짝인지는 이 PC에서 확인하지 못했다. 매니페스트 lineage의 turn-engine 버전은 게이트 기준(`DEPLOY_TE_TAG`)과 같은 `0.3.0`으로 맞춘다(중립 패키지의 기본 `none`은 `CONTRACT_COMPAT`에서 반려된다). 데모의 단계 3이 이 패키지를 model-registry에 게시한다. 서빙 설정은 fake의 `/v1/info` 기대값이 아니라 패키지의 vllm 설정이고, 서버가 적재할 때 같은 설정인지 스스로 검사한다. 평가 보고서는 이전처럼 **시험용 고정 지표**(TEST-SUB)다.
+- **시험 위험 문구는 없어졌다.** 계약 2.0.0에서 `MODEL_RUNTIME_FAKE_RISK_PHRASE`가 없어졌고(설정이 남아 있으면 서버가 시작을 거부한다) 직원 알림의 입력원이 비어 있다(OPEN_GAPS G01). `test/compose.llm-demo.yaml`은 필요 없어져 지웠다.
+- **기다림.** 첫 기동은 모델 내려받기(약 8GB, 추정)와 적재로 오래 걸린다. `up`은 최대 20분(`DEMO_LLM_WAIT_MIN`) 30초마다 model-serving과 survey-service의 `/readyz`를 보여 준다. 시간이 지나도 **실패로 끝내지 않고** "아직 적재 중"이라 안내하고 끝낸다. `status`로 확인한다. **모델 캐시는 기본적으로 남는다**: `deploy-llm-hf-cache`는 프로젝트 밖 이름 있는 볼륨(없으면 `up --llm`이 만든다)이라 `demo.sh down/reset`, `down.sh --remove/--purge`가 지우지 않고, 다음 `up --llm`이 모델(약 8GB, 추정)을 다시 받지 않는다. 지우기: `bash scripts/demo.sh down --purge-cache` 또는 `bash scripts/down.sh --purge-hf-cache` (볼륨 이름을 직접 입력, 비대화형은 `--yes-purge-deploy-llm-hf-cache`). `status.sh`가 이 볼륨의 존재와 크기(`docker system df -v` 표를 읽음, 형식이 다르면 '알 수 없음')를 보여 준다. 로컬 GPU 이미지(`deploy-build/model-serving-gpu`)도 `down`이 지우지 않는다(`docker rmi`는 사용자가 판단).
 - **미확인(서버에서 확인 필요).** 이 PC에서는 Docker가 꺼져 있어 이 흐름을 실행하지 못했다. 확인한 것은 `bash -n`, 인자 검사, `py_compile`, 중립 패키지 생성기 실행(`SUMMARY.json`)과 패키지 매니페스트의 `ModelPackageManifest` 스키마 통과다. 후보 수집·자동 검사(문항-모델 호환)가 vllm 설정에서 통과하는지, 서버의 실제 적재 시간, 위험 정지 동작은 확인하지 않았다.
 - **조합 규칙.** `--llm`은 `--external-inference`와 함께 쓰지 않는다. 다른 GPU 서버에 두려면 7-1절을 따른다.
 
 - **읽기 전용 루트에서의 캐시·홈·원격 측정.** model-serving은 `read_only` 루트(보안 설정 유지)라서 캐시·홈이 쓰기 가능한 serving-data 볼륨(`/var/lib/model-runtime/…`)을 가리켜야 한다(안 그러면 ~/.cache(컨테이너 HOME 아래)에서 `OSError: [Errno 30] Read-only file system`으로 적재 실패, `/readyz` 503 `RuntimeError`). 이 환경 변수(`HOME`, `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT`, `TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `TORCH_HOME`)와 원격 측정 차단(`VLLM_NO_USAGE_STATS`, `DO_NOT_TRACK`, `HF_HUB_DISABLE_TELEMETRY`)은 **model-runtime v0.5.3부터 이미지의 ENV 기본값**이라 `compose.llm.yaml`은 다시 정하지 않는다(두 곳에서 어긋나는 것을 막으려는 것). 서버는 시작 때 캐시 디렉터리를 만들고 쓸 수 없으면 `/readyz`에 분명한 사유를 낸다. `compose.llm.yaml`에는 백엔드·프로파일·오프라인 같은 배포마다 달라지는 값만 있다. `TMPDIR`는 돌리지 않는다(`/tmp`는 noexec tmpfs, tmpfs exec 허용은 보안 설정 약화). 이 구성은 GPU 서버에서 확인 전이다.
+
+### 7-2-2. 서버(gpu-dev)에서 할 일 -- Qwen3-4B 기준 (서버 미검증)
+
+이 PC(GPU 없음)에서는 아래를 **하지 않았다.** 서버에 접속해 차례로 하고 결과를 OPEN_GAPS U07(새 구조의 실제 LLM 데모), U01(12GB에서 Qwen3-4B 적재, A·B 동시 적재)에 기록한다.
+
+1. 최신 `main`을 받는다: 영역 리포 전부와 태그(boundary-contracts `v2.0.0`, turn-engine `v0.3.0`, model-runtime `v0.6.1`). `bash scripts/doctor.sh --up --llm`이 태그와 GPU·디스크·huggingface.co 도달을 본다.
+2. `bash scripts/demo.sh up --llm --yes-large` (프로파일은 기본 `gpu-12g` = Qwen3-4B). 이미지가 v0.5.x 라벨이면 기본 8개와 GPU 이미지를 다시 빌드한다(약 13GB, 7-2절의 전환 안내). 첫 기동은 모델(약 8GB, 추정)을 받는다.
+3. 패키지 생성 단계가 `config.json`을 받으려면 서버에서도 huggingface.co에 닿아야 한다. 닿지 않으면 `미확인`으로 멈춘다(`build/hf-config/Qwen__Qwen3-4B.config.json`을 다른 곳에서 받아 같은 위치에 두면 sha256 검사 뒤 쓴다).
+4. 확인할 것(결과를 있는 그대로 적는다): (a) model-serving `/readyz`가 200이 되는가(적재, 메모리), (b) `/v1/info`의 `system_prompt_sha256`이 패키지(`test/llm-demo` 프롬프트)와 같은가, (c) 제출 3건이 `REJECTED_AUTO` 없이 승인 대기까지 가는가(`demo.sh diag`), (d) 키오스크 한 턴이 형식 위반(`OUTPUT_INVALID`) 없이 도는가 -- 학습하지 않은 모델이라 실패할 수 있고, 그 빈도가 U04 자료다, (e) `nvidia-smi`의 사용 메모리(프로파일 `engine` 값이 추정이므로 확정 근거).
+5. 안 되면 `bash scripts/demo.sh diag`와 model-serving 로그(발화·모델 출력 원문은 로그에 없다)를 모아 헤드에게 넘긴다. 프로파일 값(`max_model_len`, `gpu_memory_utilization` 등)은 deploy가 아니라 model-runtime이 소유한다.
+6. LoRA 교체 시험(D72, U08): 같은 기반 모델의 두 번째 어댑터가 생기면 model-serving만 바꾸고 나머지가 그대로 도는지 본다. 지금은 두 번째 어댑터가 없어 하지 못했다.
 
 **모델 캐시가 쓰기 불가일 때** (`/readyz` 503 사유 `OSError`, `status.sh`/`diag`에 "모델 캐시 쓰기 불가 가능성" 안내).
 - 원인: model-serving은 uid 10001로 도는데, HF 캐시 볼륨이 이미지가 준비하지 않은 경로에 마운트되었거나(예: 옛 설정의 `/var/lib/hf-cache`) root 소유로 초기화되어 쓸 수 없다. 이미지는 `/var/lib/model-runtime/hf`와 `bundles`를 uid 10001 소유로 만들어 두므로 `compose.llm.yaml`은 그 경로에 마운트한다. 빈 새 볼륨은 처음 마운트될 때 그 경로의 소유자로 초기화된다.
@@ -227,7 +239,7 @@ bash scripts/demo.sh status                                          # model-ser
 | 형제 리포 또는 태그가 없다 | `head/setup.sh`로 받는다. 태그가 없으면 doctor가 어떤 리포의 어떤 태그인지 알린다([SETUP.md](SETUP.md) C절) |
 | survey-service `/readyz` 503 `no_active_release`, 키오스크가 직원 호출 화면 | 상시 구성에서는 정상(활성 릴리스 없음). 눌러 보려면 데모 |
 | 게이트웨이 401 | 인증 없이 직원·승인 경로를 부른 것. 계정과 `secrets/tokens/*-password` 파일의 암호로 로그인. 역할이 다르면 403 |
-| 제출이 `REJECTED_AUTO`, `CONTRACT_COMPAT` FAIL (model-runtime 버전이 게이트 기준과 다르다) | 이미지마다 model-runtime 태그가 다르다. 모든 이미지는 같은 태그(`lib.sh`의 `DEPLOY_MR_TAG`, 현재 v0.5.3)로 빌드해야 한다 | 이미지를 다시 빌드(`demo.sh up`은 라벨이 다르면 기본 8개를 자동 재빌드, GPU 이미지는 라벨이 같으면 건너뜀). `demo.sh diag`로 확인 |
+| 제출이 `REJECTED_AUTO`, `CONTRACT_COMPAT` FAIL (model-runtime 버전이 게이트 기준과 다르다) | 이미지마다 model-runtime 태그가 다르다. 모든 이미지는 같은 태그(`lib.sh`의 `DEPLOY_MR_TAG`, 현재 v0.6.1)로 빌드해야 한다 | 이미지를 다시 빌드(`demo.sh up`은 라벨이 다르면 기본 8개를 자동 재빌드, GPU 이미지는 라벨이 같으면 건너뜀). `demo.sh diag`로 확인 |
 | `up --llm` 뒤 model-serving `/readyz`가 503 `OSError`로 계속 | HF 캐시 경로가 uid 10001이 쓰지 못하는 곳(root 소유 볼륨/이미지에 없는 경로) | 7-2절 '모델 캐시가 쓰기 불가일 때' (`demo.sh diag`로 확인, 빈 볼륨이면 `down` 뒤 `docker volume rm deploy-llm-hf-cache`) |
 | model-serving `/readyz` 503 사유 `RuntimeError`, 로그에 `OSError: [Errno 30] Read-only file system: '~/.cache(컨테이너 HOME 아래)'` | 읽기 전용 루트에서 vLLM·torch 캐시가 홈 아래를 쓰려 한다 | `compose.llm.yaml`의 캐시·홈 환경 변수가 있는지 확인(`demo.sh config --llm`). 7-2절 '읽기 전용 루트에서의 캐시·홈·원격 측정' |
 | 포트 충돌 | 컨테이너 호스트 포트는 Docker가 배정하므로 드물다. 레지스트리는 `REGISTRY_HOST_PORT=`(빈 값)으로 빈 포트를 고른다 |
@@ -237,7 +249,7 @@ bash scripts/demo.sh status                                          # model-ser
 ## 9. 알려진 한계
 
 - 실제 브라우저에서 화면을 눌러 본 확인이 없다(렌더링은 E2E에서 BLOCKED). 5절은 설계 문서 기준이다.
-- 모델은 가짜 백엔드뿐이다(실제 GPU 모델은 미연결). 데모의 승인자·어댑터·평가 보고서는 시험용 대체다.
+- 모델은 가짜 백엔드뿐이다(실제 GPU 모델은 이 PC에서 시험하지 못했다: 7-2-2절은 서버 미검증). 데모의 승인자·어댑터·평가 보고서는 시험용 대체다.
 - 운영 로그인 방식과 HTTPS(도메인·인증서)는 미정이다. 지금은 HTTP + 기본 인증이다.
 - 웹 푸시·음성 인식(STT) 수신 확인, 백업 설정(O16), 주기 잡 간격은 미정 또는 미확인이다.
 - 이 문서의 시간은 측정한 것만 적었다.

@@ -10,8 +10,8 @@ case "${1:-}" in
     [ -d "$DEPLOY_ROOT/.venv" ] || python3 -m venv "$DEPLOY_ROOT/.venv"
     "$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt" setuptools wheel 2>&1 | tail -1 ;;
   wheels)
-    # 호스트에서 쓰는 검증기·클라이언트: 영역 빌드가 만든 태그 wheel(boundary-contracts, 문진 스키마)
-    "$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG"/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/question-authoring/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
+    # 호스트에서 쓰는 검증기·클라이언트: 영역 빌드가 만든 태그 wheel(boundary-contracts)과 survey-service HEAD 의 문진 스키마(v2 구조의 FrontendInput·TurnTrace 검증용)
+    "$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG"/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/survey-service/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
     # synthetic-data run-once용 가상환경(호스트): 그 영역 런북대로 requirements.lock 의 서드파티 + 태그 wheel
     if [ ! -x "$DEPLOY_ROOT/build/venv-sd/bin/python" ]; then python3 -m venv "$DEPLOY_ROOT/build/venv-sd"; "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q attrs==26.1.0 jsonschema==4.10.3 packaging==26.3 pyrsistent==0.20.0 PyYAML==6.0.3 2>&1 | tail -1; fi
     "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG_SD"/boundary_contracts-*.whl 2>&1 | tail -1

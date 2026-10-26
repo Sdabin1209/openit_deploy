@@ -6,7 +6,7 @@
 #              (비대화형은 --yes-purge-<프로젝트> 를 명시해야 한다)
 #   --registry 로컬 레지스트리(REGISTRY_PROJECT, 기본 deploy-registry)도 내린다. 이미지는 레지스트리 볼륨에 남는다.
 #              레지스트리 볼륨 삭제는 --purge 와 함께 쓸 때만, 따로 확인한다
-#   --purge-hf-cache  실제 LLM의 Hugging Face 캐시 볼륨(deploy-llm-hf-cache, 약 3GB)을 지운다. **캐시는 기본적으로 남는다**(프로젝트 밖 볼륨이라
+#   --purge-hf-cache  실제 LLM의 Hugging Face 캐시 볼륨(deploy-llm-hf-cache, 약 8GB(Qwen3-4B 추정))을 지운다. **캐시는 기본적으로 남는다**(프로젝트 밖 볼륨이라
 #              --remove/--purge 도 지우지 않는다). 볼륨 이름을 직접 쳐야 하며 비대화형은 --yes-purge-deploy-llm-hf-cache. 다른 옵션 없이 쓰면 프로젝트는 건드리지 않는다
 # 프로젝트 이름은 deploy 또는 deploy- 로 시작해야 한다(다른 이름은 거부). 끝나면 남은 자원을 보여 준다.
 # 참고: `dc` 는 lib.sh 안의 셸 함수라 터미널에서 직접 칠 수 없다. 이 스크립트를 쓴다. 표준 docker 만 쓴다.

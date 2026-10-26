@@ -30,7 +30,7 @@
 | survey-service -> ops-feedback-ingest | I6 `/v1/traces` | serving | `SURVEY_TRACE_INGEST_TOKEN` <- `OPS_INGEST_TOKEN` |
 | release-gate -> question-authoring | I1 읽기 | release | `GATE_I1_TOKEN` <- `QA_READ_TOKENS` 역할 release-gate |
 | release-gate -> model-registry | I3 읽기 | release | `GATE_I3_TOKEN` <- `MODEL_REGISTRY_READ_TOKENS` 역할 release-gate |
-| survey-service -> model-serving | I9 `PUT /v1/releases/{id}`, parse, generate | serving | `SURVEY_INFERENCE_TOKEN` <- `MODEL_RUNTIME_TOKENS` 역할 survey-service |
+| survey-service -> model-serving | I9 `PUT /v1/releases/{id}`, extract(JSON), respond(text) | serving | `SURVEY_INFERENCE_TOKEN` <- `MODEL_RUNTIME_TOKENS` 역할 survey-service |
 | model-serving -> release-gate | I4 번들 읽기(서버가 직접) | serving | `MODEL_RUNTIME_RELEASE_TOKEN` <- `GATE_READ_TOKENS` 역할 model-serving |
 | job-ops-feedback -> release-gate | I4 읽기(사례의 문항 세트 채움) | release | `OPS_GATE_READ_TOKEN` <- `GATE_READ_TOKENS` 역할 ops-feedback (롤백 자동 요청을 켜면 `OPS_GATE_WRITE_TOKEN`) |
 | question-authoring -> ops-feedback-ingest | I7 읽기(개선 신호) | authoring | `QA_FAILURES_TOKEN` <- `OPS_READ_TOKENS` 역할 question-authoring |

@@ -24,6 +24,7 @@ ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(EXTERNAL_INFERENCE_TOKEN=... 한 줄). 비우면 이 구성이 만든 토큰")
 ap.add_argument("--llm-package", default="", help="실제 LLM 데모: make_neutral_package.py 가 만든 폴더(LORA_A, LORA_B). 단계 3이 시험용 fake 어댑터 대신 이 중립 LoRA 패키지(vllm 서빙 설정)를 게시한다")
+ap.add_argument("--turn-engine-version", default=os.environ.get("DEPLOY_TE_TAG", "v0.3.0").lstrip("v"), help="매니페스트 lineage 의 turn-engine 버전(게이트 기준과 문자열이 같아야 한다, D80). e2e.sh 가 lib.sh 의 값을 넘긴다")
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
 PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(a.root); WORK = pathlib.Path(a.work)
@@ -130,10 +131,10 @@ def upload(set_id, text, fname):
 
 def step1():
     title(1, "저자가 문항 자료를 올리고 미리보기를 확인한다 (question-authoring, I1 HTTP 읽기)")
-    form = (ROOT / "build/ctx/question-authoring/examples/question_form.txt").read_text()
+    form = (ROOT / "test/fixtures/question-form-v2.txt").read_text()   # 학습 데이터셋 v2 의 문항 ID 31개(survey-service 의 QuestionFlow 와 같은 순서). 값은 모두 시험용
     r1, raw1 = upload(QS, form, "form1.txt")
-    r2, _ = upload(QS, form.replace("오늘 체온이 얼마였나요?", "오늘 측정한 체온이 얼마였나요?"), "form2.txt")
-    ru, _ = upload(QSU, form.replace("체온", "맥박수").replace("body_temp", "pulse"), "unseen.txt")
+    r2, _ = upload(QS, form.replace("시험 문항 Q1.D01입니다. 알려 주세요.", "시험 문항 Q1.D01입니다. 말씀해 주세요."), "form2.txt")
+    ru, _ = upload(QSU, form.replace("알려 주세요.", "들려 주세요."), "unseen.txt")
     assert http("GET", "qa", "/v1/drafts")[0] == 403
     rd = qa_reader()   # HTTP I1, 읽기 토큰(synthetic-data 역할)
     assert http("GET", "qa", "/v1/drafts", TOK("qa-read-synthetic-data"))[0] == 403, "읽기 토큰으로 저작 경로가 열리면 안 된다"
@@ -179,8 +180,17 @@ def read_manifest(out):
 
 def step2():
     title(2, "문항을 읽어 학습·평가 데이터를 만든다 (synthetic-data run-once를 호스트에서, 문항은 I1 HTTP)")
-    out = run_sd("1", seeds=False); m, root = read_manifest(out)
-    assert out["status"] in ("PUBLISHED", "ALREADY_PUBLISHED"), out
+    out = run_sd("1", seeds=False)
+    if out.get("status") == "NOTHING_TO_DO":
+        # OPEN_GAPS G02: synthetic-data 의 생성 파이프라인이 아직 v1 내용을 만들어 v2 스키마 검사에서 전부 빠진다(영역의 역할이 정해지기 전). 데이터셋이 게시되지 않는다.
+        rep_ = json.loads((WORK / "sd-work-1" / "report.json").read_text())
+        assert any("v2 스키마 위반" in n for n in rep_.get("notes", [])) and rep_.get("dropped", {}).get("schema_sample", 0) > 0, f"예상한 G02 상태가 아니다: {rep_}"
+        out2 = run_sd("1b", seeds=False); assert out2.get("status") == "NOTHING_TO_DO", f"재실행이 같은 결과가 아니다: {out2}"
+        # 이후 단계의 계보(lineage.dataset)에 쓸 자리표시 참조(TEST-SUB): 게시된 데이터셋이 아니다
+        STATE["dataset"] = {"id": f"ds-{RID}", "version": "0-test-sub", "content_hash": canonical.sha256_hash({"test-sub": "no dataset published (OPEN_GAPS G02)"})}; save()
+        rec(2, "BLOCKED", f"synthetic-data run-once(호스트, 문항은 I1 HTTP)는 돌았으나 데이터셋이 게시되지 않았다(status NOTHING_TO_DO, 합성 샘플 {rep_['dropped']['schema_sample']}건이 v2 스키마 위반으로 제외, 재실행도 같은 결과). 원인은 OPEN_GAPS G02(생성기가 v1 내용을 만든다, 영역 역할 미정)이며 deploy가 고칠 수 없다. 이후 단계의 lineage.dataset 은 자리표시 참조(TEST-SUB)로 대신한다"); return
+    assert out.get("status") in ("PUBLISHED", "ALREADY_PUBLISHED"), out
+    m, root = read_manifest(out)
     files = {f["path"]: f for f in m["files"]}
     for f in m["files"]:
         assert canonical.file_hash(root / "files" / f["path"]) == f["content_hash"], f"파일 해시 불일치 {f['path']}"
@@ -209,35 +219,41 @@ def make_packages():
         except Exception as e:
             STATE["llm_cfg_vs_server"] = "서버 대조 건너뜀(적재 중일 수 있다): " + str(e)[:80]
         d = {"cfgs": {r: gm[r]["serving_config"] for r in gm}, "hashes": {r: gm[r]["serving_config_hash"] for r in gm},
-             "adapter_hash": {r: gm[r]["adapter_hash"] for r in gm}, "runtime": gm["LORA_A"]["lineage"]["model_runtime_version"]}
+             "adapter_hash": {r: gm[r]["adapter_hash"] for r in gm}, "runtime": gm["LORA_A"]["lineage"]["model_runtime_version"],
+             "system_prompt": {r: gm[r]["system_prompt"] for r in gm}}
+        for r in gm: assert canonical.file_hash(adir[r] / gm[r]["system_prompt"]["path"]) == gm[r]["system_prompt"]["sha256"], f"{r} 시스템 프롬프트 해시가 패키지와 다르다"
         for r in gm: assert canonical.sha256_hash(d["cfgs"][r]) == d["hashes"][r], f"{r} 서빙 설정 해시가 패키지와 다르다"
     else:
         fx = ROOT / "test/fixtures/e2e-test-adapter"
         # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다
         c, info = http("GET", "ms", "/v1/info", INF_TOK()); assert c == 200, (c, info)
         ex = info["serving_config_expectation"]
-        cfg = {"prompt_template_version": ex["prompt_template_versions"][0],
-               "decoding": {"constraint_mode": "constrained", "temperature": 0, "seed": 1000, "max_tokens": 512}, "max_attempts": 3,
-               "constraint": ex["constraint"], "output_contract": ex["output_contract"], "protection_policy_version": ex["protection_policy_versions"][0]}
+        # LORA_A 는 제약 디코딩(ActionExtraction JSON), LORA_B 는 문장이라 제약 없음(model-runtime make_neutral_package.py 와 같은 규칙)
+        mkcfg = lambda mode: {"prompt_template_version": ex["prompt_template_version_default"],
+               "decoding": {"constraint_mode": mode, "temperature": 0, "retry_temperature": 0.7, "seed": 1000, "max_tokens": 512}, "max_attempts": 3,
+               "constraint": ex["constraint"], "output_contract": ex["output_contract"], "protection_policy_version": ex["protection_policy_versions"][-1]}
+        cfgs = {"LORA_A": mkcfg("constrained"), "LORA_B": mkcfg("none")}
         # 대조: survey 이미지(model-runtime)의 fake_serving_configs 와 일치하는지
         probe = "import json, model_runtime as m\nprint(json.dumps(m.fake_serving_configs()['LORA_A']))\n"
         try:
             ref = json.loads(docker_py(IMAGES["survey-service"], probe))
-            STATE["fake_cfg_vs_survey_image"] = sorted(k for k in cfg if ref.get(k) != cfg[k])
+            STATE["fake_cfg_vs_survey_image"] = sorted(k for k in cfgs["LORA_A"] if ref.get(k) != cfgs["LORA_A"][k])
         except Exception as e:
-            STATE["fake_cfg_vs_survey_image"] = "대조 실패 " + str(e)[:80]
-        d = {"cfgs": {r: cfg for r in ("LORA_A", "LORA_B")}, "hashes": {r: canonical.sha256_hash(cfg) for r in ("LORA_A", "LORA_B")},
-             "adapter_hash": {r: canonical.directory_hash(fx / r) for r in ("LORA_A", "LORA_B")}, "runtime": info["runtime_version"]}
+            STATE["fake_cfg_vs_survey_image"] = "대조 불가(v0.6.1 survey 이미지에 fake_serving_configs 가 없을 수 있다) " + str(e)[-80:]
+        sp = {r: {"path": "system_prompt.txt", "sha256": canonical.file_hash(fx / r / "system_prompt.txt")} for r in ("LORA_A", "LORA_B")}
+        d = {"cfgs": cfgs, "hashes": {r: canonical.sha256_hash(cfgs[r]) for r in cfgs},
+             "adapter_hash": {r: canonical.directory_hash(fx / r) for r in ("LORA_A", "LORA_B")}, "runtime": info["runtime_version"], "system_prompt": sp}
         adir = {r: fx / r for r in ("LORA_A", "LORA_B")}
     pk = {}
     for role in ("LORA_A", "LORA_B"):
         mf = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "package_id": f"pkg-{RID}-{role.lower().replace('_', '-')}", "version": "1", "role": role,
               "created_at": "2026-10-15T00:00:00Z", "runtime_contract_version": 1,
-              "base_model": {"id": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "main"},
+              "base_model": (gm[role]["base_model"] if a.llm_package else {"id": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "main"}),   # 실제 LLM 데모는 패키지(프로파일)의 기반 모델(gpu-12g = Qwen3-4B)
               "adapter_hash": d["adapter_hash"][role], "serving_config": d["cfgs"][role], "serving_config_hash": d["hashes"][role],
-              "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "turn_engine_version": "0.2.0",
+              "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "turn_engine_version": a.turn_engine_version,
                           "model_runtime_version": d["runtime"], "question_sets": STATE["qs"][-1:]},
               "eval_report_ref": f"eval-{RID}-{role.lower().replace('_', '-')}"}
+        mf["system_prompt"] = d["system_prompt"][role]   # 모델 패키지의 일부(D75): 어댑터 디렉터리 안 파일의 {path, sha256}
         if a.llm_package: mf["ext"] = gm[role].get("ext", {})   # 중립(학습하지 않은) 패키지 표시
         mf["content_hash"] = canonical.content_hash(mf); validate("ModelPackageManifest", mf)
         ref = {"id": mf["package_id"], "version": mf["version"], "content_hash": mf["content_hash"]}
@@ -278,10 +294,10 @@ def step3():
     try:
         reg_ro = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); reg_ro.publish(pk["LORA_A"][0], pk["LORA_A"][1], b"{}"); raise AssertionError("읽기 토큰으로 게시됨")
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
-    STATE["lora"] = refs; save()
-    src_desc = ("학습하지 않은 중립 LoRA(model-runtime make_neutral_package.py, vllm 서빙 설정, lora_B=0이라 출력은 기반 모델과 같다)" if a.llm_package
-                else "시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct)")
-    rec(3, "TEST-SUB", f"학습 대신 {src_desc}와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(survey 이미지 fake_serving_configs와 다른 키: {STATE.get('fake_cfg_vs_survey_image')}). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2의 실제 데이터셋. model-lab 파이프라인은 실행하지 않음")
+    STATE["lora"] = refs; STATE["system_prompt"] = {r: pk[r][0]["system_prompt"]["sha256"] for r in pk}; save()
+    src_desc = ("학습하지 않은 중립 LoRA(model-runtime make_neutral_package.py + 학습 데이터 system 메시지 프롬프트, vllm 서빙 설정, lora_B=0이라 출력은 기반 모델과 같다)" if a.llm_package
+                else "시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct; fake 백엔드는 기반 모델을 적재하지 않는다)")
+    rec(3, "TEST-SUB", f"학습 대신 {src_desc}와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(survey 이미지 fake_serving_configs와 다른 키: {STATE.get('fake_cfg_vs_survey_image')}). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2가 게시한 실제 데이터셋(단계 2가 BLOCKED이면 자리표시 참조, TEST-SUB). 시스템 프롬프트는 어댑터 디렉터리의 system_prompt.txt와 ModelPackageManifest.system_prompt(path, sha256)로 패키지에 들어 있다(시험용 자리표시 문장). model-lab 파이프라인·패키징 코드는 실행하지 않음(이웃 코드를 가져오지 않는다)")
 
 def decisions_for(gate_read, subj):
     return gate_read.find_decisions(question_set=subj["question_set"], lora_a=subj["lora_a"], lora_b=subj["lora_b"])[0]
@@ -424,6 +440,37 @@ def gw_text(path, basic=None):
 def public_turn(sid, tid, text):
     c, r = kiosk(f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": text, "turn_id": tid}); return c, r
 
+def ms_call(path, body, token):
+    """추론 서버 직접 호출(v2): (상태, 본문 문자열, 소문자 헤더). 서비스를 거치지 않고 extract(JSON)·respond(text)의 계약을 확인하려는 것."""
+    req = urllib.request.Request(URL("ms") + path, data=json.dumps(body, ensure_ascii=False).encode(), method="POST")
+    req.add_header("Authorization", f"Bearer {token}"); req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r: return r.status, r.read().decode(), {k.lower(): v for k, v in r.headers.items()}
+    except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="replace"), {k.lower(): v for k, v in e.headers.items()}
+
+# 가짜 백엔드의 고정 출력(test/fake-model/fake_server.py): A 는 입력 문항의 다음 문항으로 가는 유효한 ActionExtraction(값 없음), B 는 문장.
+# model-runtime v0.6.1 의 기본 고정 출력(next_item=END)은 첫 문항에서도 END 라 서비스의 검증(validate_extraction)이 모든 턴을 반려한다.
+FAKE_EXTRACTION = {"action": "NEXT", "next_item": "Q1.D04", "values": []}   # 아래 직접 호출의 입력 question_id 가 Q1.D03 이다
+FAKE_RESPONSE_TEXT = "(가짜 응답)"
+
+def model_server_v2_check(new, tok):
+    """PUT 적재(서비스가 이미 함) 뒤 extract(JSON) -> respond(text) 를 직접 한 번씩 부른다."""
+    ein = {"question_id": "Q1.D03", "current_question": "다음은 고혈압입니다. 진단받은 적이 있으신지, 지금 약을 드시는지 알려 주세요.", "user_utterance": "십 년 전에 고혈압 진단을 받았어요.",
+           "state": {"Q1.D02.diagnosed": {"value": False, "status": "ANSWERED"}}}
+    validate("ActionExtractionInput", ein)
+    c, body, h = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 200, (c, body[:200])
+    out = json.loads(body); validate("ActionExtraction", out); assert out == FAKE_EXTRACTION, out
+    assert h.get("content-type", "").startswith("application/json") and h.get("x-openit-outcome") == "ok", h
+    rin = {"action": "START", "topic": "고혈압 진단과 복약", "next": {"type": "NEXT", "question_id": "Q1.D01", "text": "혹시 고혈압으로 진단받으셨나요?"}}
+    validate("ResponseRequest", rin)
+    c, body, h = ms_call(f"/v1/releases/{new}/respond", rin, tok); assert c == 200, (c, body[:200])
+    assert body == FAKE_RESPONSE_TEXT and h.get("content-type", "").startswith("text/plain") and h.get("x-openit-outcome") == "ok", (body[:80], h)
+    c, bad, _ = ms_call(f"/v1/releases/{new}/extract", {"question_id": "Q1"}, tok); assert c == 400, ("계약 위반 입력이 400이 아니다", c, bad[:100])
+    c, nf, _ = ms_call("/v1/releases/rel-none-x/extract", ein, tok); assert c == 404, ("적재되지 않은 릴리스가 404가 아니다", c)
+    c, info = http("GET", "ms", "/v1/info", tok)
+    assert info.get("system_prompt_sha256") == STATE.get("system_prompt"), f"서버가 쓰는 시스템 프롬프트 해시가 패키지와 다르다: {info.get('system_prompt_sha256')} / {STATE.get('system_prompt')}"
+    return "extract(JSON, ActionExtraction 스키마, X-Openit-Outcome ok) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
+
 def step5():
     title(5, "서비스가 새 포인터를 보고 새 세션부터 새 릴리스로 한 턴 이상을 처리한다 (공개 API, 게이트웨이 경유)")
     if "pointers" not in STATE: rec(5, "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -434,9 +481,9 @@ def step5():
     assert http("POST", "survey", "/v1/sessions", None, {"session_id": sid, "kind": "SESSION_START"})[0] == 401, "survey-service가 토큰 없는 요청을 받아들임"
     c, st = kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, (c, st)
     validate_survey("FrontendInput", st); assert st["response_text"], st
-    c, t1 = public_turn(sid, "turn-1", "체온은 삼십육점오 도예요"); assert c == 200, (c, t1); validate_survey("FrontendInput", t1)
-    c, t1b = public_turn(sid, "turn-1", "체온은 삼십육점오 도예요"); assert c == 200 and t1b == t1, "같은 turn_id 재시도가 같은 응답이 아니다"
-    c, t2 = public_turn(sid, "turn-2", "기침은 없어요"); assert c == 200, (c, t2)
+    c, t1 = public_turn(sid, "turn-1", "뇌졸중은 없고 약도 안 먹어요"); assert c == 200, (c, t1); validate_survey("FrontendInput", t1)
+    c, t1b = public_turn(sid, "turn-1", "뇌졸중은 없고 약도 안 먹어요"); assert c == 200 and t1b == t1, "같은 turn_id 재시도가 같은 응답이 아니다"
+    c, t2 = public_turn(sid, "turn-2", "약도 안 먹어요"); assert c == 200, (c, t2)
     # 한 턴이 추론 서버(model-serving)를 거쳤다: 서버의 가짜 백엔드는 출력이 고정이라 생성기 문장이 "(가짜 응답)" 이다
     texts = " ".join(str(x.get("response_text")) for x in (t1, t2))
     assert "(가짜 응답)" in texts, f"model-serving의 고정 출력이 아니다(서비스 내부 가짜?): {texts[:200]}"
@@ -445,6 +492,7 @@ def step5():
     assert info["backend"] == "fake", info
     assert http("GET", "ms", "/v1/info", None)[0] in (401, 403), "토큰 없이 추론 서버 /v1/가 열림"
     c, st_ = http("GET", "ms", f"/v1/releases/{new}", ms_tok); assert c == 200 and st_["state"] == "LOADED", (c, st_)
+    v2chk = model_server_v2_check(new, ms_tok)
     rd = survey_ready()[1]; inf = rd.get("inference") or {}
     if not a.skip_ms_restart:
         # 추론 서버를 멈췄다 다시 띄운다: 그 턴만 실패하고 서비스는 산다, 다시 띄우면 복구(404 -> PUT 재적재)
@@ -452,14 +500,14 @@ def step5():
         sidc = f"sess-{RID}-c"; assert kiosk("/v1/sessions", {"session_id": sidc, "kind": "SESSION_START"})[0] == 200
         sh([a.docker, "stop", "-t", "3", mname])
         try:
-            cd_, rd_ = public_turn(sidc, "turn-down", "체온은 삼십육점오 도예요")
+            cd_, rd_ = public_turn(sidc, "turn-down", "뇌졸중은 없고 약도 안 먹어요")
             failed = cd_ != 200 or (isinstance(rd_, dict) and rd_.get("turn_failure_signal"))
             assert failed, f"추론 서버가 멈췄는데 턴이 성공했다: {cd_} {rd_}"
             assert http("GET", "survey", "/healthz")[0] == 200, "추론 서버 중단으로 서비스가 죽었다"
         finally:
             sh([a.docker, "start", mname])
         wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", mname]).stdout.strip() == "healthy", 60, "추론 서버 복구")
-        cu, ru = public_turn(sidc, "turn-up", "체온은 삼십육점오 도예요")
+        cu, ru = public_turn(sidc, "turn-up", "뇌졸중은 없고 약도 안 먹어요")
         assert cu == 200 and not (isinstance(ru, dict) and ru.get("turn_failure_signal")) and "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
         kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
@@ -472,10 +520,10 @@ def step5():
     # 서비스가 턴마다 Trace를 I6로 보냈는지(outbox 전송 수)
     sent = wait(lambda: (lambda cr: cr[1]["trace_outbox"]["sent"] if cr[1]["trace_outbox"]["sent"] >= 2 else None)(survey_ready()), 30, "Trace 전송")
     STATE["sess_a"] = sid; save()
-    rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9: 서비스 -> PUT 적재 -> parse -> generate)를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
+    rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9 v2: 서비스 -> PUT 적재 -> extract(JSON) -> respond(text))를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 서버 직접 호출: {v2chk}. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
 
 def step5f():
-    title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 위험 정지 알림 (kiosk-frontend)")
+    title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 직원 알림 입력원 없음 (kiosk-frontend)")
     if "pointers" not in STATE: rec("5f", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
     # (a) 정적 화면
     c, html, _ = gw_text("/"); assert c == 200 and "문진" in html, (c, html[:100])
@@ -490,7 +538,7 @@ def step5f():
     # (b) 브라우저가 부르는 순서를 HTTP로(토큰 없이 같은 출처): 세션 시작, 발화 2턴, state 조회, 종료
     sf = f"sess-{RID}-fe"
     c, st = kiosk("/v1/sessions", {"session_id": sf, "kind": "SESSION_START"}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
-    for i, text in enumerate(("체온은 삼십육점오 도예요", "기침은 없어요"), 1):
+    for i, text in enumerate(("뇌졸중은 없고 약도 안 먹어요", "약도 안 먹어요"), 1):
         c, tr = public_turn(sf, f"fe-{i}", text); assert c == 200, (c, tr); validate_survey("FrontendInput", tr)
     c, state = state_of(sf); assert c == 200, (c, state); validate("SessionState", state)
     assert state["state"] == "ACTIVE", state
@@ -502,57 +550,29 @@ def step5f():
     c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 in (401, 403), c3   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
-    # (d) 위험 정지 -> 알림(OPEN) + SSE -> 직원 RESUME -> state ACTIVE+resume_text -> 알림 RESOLVED. 추론 서버의 fake 파서가 시험 문구(TEST-RISK)로 위험 신호를 낸다
-    c, info2 = http("GET", "ms", "/v1/info", INF_TOK()); assert info2.get("test_hooks", {}).get("fake_risk_phrase"), "시험용 위험 문구 스위치가 꺼져 있다"
-    # 구독자가 없을 때의 위험 정지: 전달 경로가 없어 DELIVERY_FAILED 신호가 나오지만 알림은 저장되어 목록에 OPEN으로 보인다
-    s0 = f"sess-{RID}-risk0"; assert kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
-    c, r0 = public_turn(s0, "r1", "TEST-RISK 가슴이 아파요"); assert c == 200 and r0["turn_failure_signal"] and r0["turn_failure_signal"]["staff_alert"] == "DELIVERY_FAILED", (c, r0)
-    c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); assert any(x["session_id"] == s0 and x["status"] == "OPEN" for x in pg0["items"]), "DELIVERY_FAILED여도 저장된 알림이 목록에 있어야 한다"
-    c, e0 = gws("POST", f"/v1/sessions/{s0}/intervention", {"session_id": s0, "decision": "END", "turn_id": "i0"}); assert c == 200, (c, e0)
-    sse_out = WORK / "sse.txt"; fh = open(sse_out, "wb")
-    sse = subprocess.Popen(["curl", "-sN", "--max-time", "60", "-u", f"staff:{STAFF()[1]}", URL("gw") + "/v1/staff/alerts/stream"], stdout=fh, stderr=subprocess.DEVNULL)
-    time.sleep(2)
-    try:
-        sr = f"sess-{RID}-risk"; assert kiosk("/v1/sessions", {"session_id": sr, "kind": "SESSION_START"})[0] == 200
-        c, rr = public_turn(sr, "r1", "TEST-RISK 가슴이 아파요"); assert c == 200, (c, rr)
-        validate_survey("FrontendInput", rr)
-        assert rr["turn_failure_signal"] is None, f"SSE 구독자가 있는데 전달 실패 신호가 났다: {rr}"; alert = "DELIVERED(신호 없음)"
-        c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); mine = [x for x in pg["items"] if x["session_id"] == sr]; validate("StaffAlertPage", pg)
-        assert c == 200 and len(mine) == 1 and mine[0]["status"] == "OPEN", pg
-        c, paused = public_turn(sr, "r2", "체온은 삼십육 도예요"); assert c == 200 and paused["response_text"] is None, ("정지된 세션이 말을 이어 감", paused)
-        c, stp = state_of(sr); validate("SessionState", stp); assert stp["state"] != "ACTIVE", stp
-        c, rs = gws("POST", f"/v1/sessions/{sr}/intervention", {"session_id": sr, "decision": "RESUME", "turn_id": "i1"}); assert c == 200 and rs["response_text"], (c, rs)
-        validate_survey("FrontendInput", rs)
-        c, rs2 = gws("POST", f"/v1/sessions/{sr}/intervention", {"session_id": sr, "decision": "RESUME", "turn_id": "i1"}); assert c == 200 and rs2 == rs, "같은 turn_id 재전송이 같은 응답이 아니다"
-        c, st2 = state_of(sr); validate("SessionState", st2)
-        assert st2["state"] == "ACTIVE" and st2["resume_text"], st2
-        c, done = gws("GET", "/v1/staff/alerts?status=RESOLVED"); r_ = [x for x in done["items"] if x["session_id"] == sr]
-        assert r_ and r_[0]["status"] == "RESOLVED" and r_[0]["resolved_by_decision"] == "RESUME", done
-        c, after = public_turn(sr, "r3", "체온은 삼십육 도예요"); assert c == 200 and after["response_text"] and not after["turn_failure_signal"], (c, after)
-        # END 경로
-        se = f"sess-{RID}-risk-end"; assert kiosk("/v1/sessions", {"session_id": se, "kind": "SESSION_START"})[0] == 200
-        assert public_turn(se, "r1", "TEST-RISK")[0] == 200
-        c, en2 = gws("POST", f"/v1/sessions/{se}/intervention", {"session_id": se, "decision": "END", "turn_id": "i1"}); assert c == 200, (c, en2)
-        assert public_turn(se, "r2", "체온")[0] == 409, "끝난 세션에 턴이 받아들여짐"
-        time.sleep(2)
-    finally:
-        sse.terminate(); fh.close()
-    txt = sse_out.read_text(errors="replace")
-    assert "event: alert" in txt and sr in txt, f"SSE에 alert 이벤트가 없다: {txt[:300]}"
-    assert "event: resolved" in txt, f"SSE에 resolved 이벤트가 없다: {txt[:300]}"
-    assert "id:" in txt, "SSE id 줄이 전달되지 않았다"
-    STATE["risk_alert"] = alert; save()
-    rec("5d", "REAL", f"위험 정지(model-serving fake의 시험 문구 TEST-RISK, 시험 구성 전용): 구독자가 없을 때는 DELIVERY_FAILED 신호이지만 알림은 저장되어 OPEN으로 보이고, SSE 구독자가 있으면 {alert}로 전달 실패 신호 없이 /v1/staff/alerts OPEN에 알림, 게이트웨이 경유 SSE(/v1/staff/alerts/stream)로 alert·resolved 이벤트와 id 수신, 정지 중 발화는 무응답, 직원 RESUME(기본 인증, 같은 turn_id 멱등) -> state ACTIVE + resume_text, 알림 RESOLVED(RESUME), 이후 발화 재개, END 경로(이후 턴 409)")
+    # (d) 직원 알림의 입력원이 없다(OPEN_GAPS G01, D78/D79): 알림이 *나오지 않는 것*과 /readyz 의 staff_alert_source.active=false 를 확인한다.
+    c, rz = survey_ready(); sas = rz.get("staff_alert_source"); assert isinstance(sas, dict) and sas.get("active") is False, f"/readyz 의 staff_alert_source 가 active=false 가 아니다: {sas}"
+    s0 = f"sess-{RID}-nors"; assert kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
+    for i, text in enumerate(("숨이 안 쉬어져요", "가슴이 너무 아파요"), 1):   # v1 이었다면 위험으로 멈췄을 발화(시험 자료). 입력원이 없으므로 멈추지 않아야 한다
+        c, rr = public_turn(s0, f"nr{i}", text); assert c == 200, (c, rr); validate_survey("FrontendInput", rr)
+        assert not (rr.get("turn_failure_signal") or {}).get("staff_alert") in ("DELIVERED", "DELIVERY_FAILED"), f"입력원이 없는데 직원 알림이 나왔다: {rr}"
+    c, stn = state_of(s0); validate("SessionState", stn); assert stn["state"] == "ACTIVE", ("입력원이 없는데 세션이 멈췄다", stn)
+    c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); validate("StaffAlertPage", pg0)
+    assert not [x for x in pg0["items"] if x["session_id"] == s0], "입력원이 없는데 알림 목록에 이 세션의 알림이 있다"
+    assert kiosk(f"/v1/sessions/{s0}/end", {"session_id": s0, "kind": "SESSION_END"})[0] == 200
+    rec("5d", "REAL", "직원 알림 입력원 없음(G01): /readyz staff_alert_source.active=false, v1 이었다면 위험 정지였을 발화 2건에도 세션은 ACTIVE로 이어지고 알림 목록(OPEN)에 이 세션의 알림이 없으며 전달 실패 신호도 없다. 이것은 '알림이 동작한다'는 뜻이 아니라 알림이 일부러 비어 있다는 확인이다")
+    rec("5d-skip", "SKIPPED", "직원 콘솔 알림 화면 시험(알림 OPEN, SSE alert/resolved, 직원 RESUME/END, 정지 중 발화 무응답)은 건너뛴다. 이유: 알림을 만들려면 survey-service 의 시험용 입력원(SURVEY_RISK_SOURCE=tests.smoke_fakes:risk_source)이 필요한데, 그 코드는 survey-service 리포의 tests/ 에만 있고 이미지에 없다(스모크가 tests/ 를 읽기 전용으로 붙임). 다른 영역 리포의 시험 코드를 이 시험 구성에 끌어와 결합하는 것은 하지 않았고 운영 설정에 넣지도 않는다. 직원 개입의 권한 분리(키오스크 403, 직원 토큰 409)는 단계 5에서 REAL 로 본다")
     rec("5x", "BLOCKED", "실제 브라우저에서의 화면 동작, STT(Web Speech API), 웹 푸시 수신은 E2E에서 볼 수 없다(보안 출처 HTTPS·VAPID 키 필요, 푸시는 VAPID 없이 비활성: SSE만 확인). 운영 TLS·직원 콘솔 인증 방식은 미정")
 
 def trace_env(release_id, n):
     keys = list(survey_schema.load_schema("TurnTrace")["$defs"]["TurnTrace"].get("required") or [])
     t = {k: None for k in keys}
     t.update(session_id=f"s-{RID}", turn_id=f"t-{RID}-{n}", contract_version=1)
-    t["parser_input"] = {"utterance": "체온은 삼십육점오 도예요", "last_directive": None, "awaiting_questions": [],
-        "question_names": [{"question_id": "Q1", "name": "체온", "slots": ["body_temp"]}], "answered_slots": [], "guide_list": []}
-    t["parser_output"] = {"items": []}
-    STATE["parser_input"] = t["parser_input"]
+    # v2 TurnTrace(D74): 모델 입력은 ActionExtractionInput 그대로(extract_input). 추출이 형식을 못 지킨 턴(OUTPUT_INVALID)을 시험 자료로 만든다
+    t["extract_input"] = {"question_id": "Q1.D01", "current_question": "시험 문항 Q1.D01입니다. 알려 주세요.", "user_utterance": "뇌졸중은 없고 약도 안 먹어요", "state": {}}
+    validate("ActionExtractionInput", t["extract_input"])
+    t["extract_output"] = None; t["extract_status"] = "OUTPUT_INVALID"; t["extract_attempts"] = 2
+    STATE["extract_input"] = t["extract_input"]
     t["orchestrator_output"] = {"turn_kind": None, "session_info_created": None, "log_entry": None, "dispatch_called": False,
         "turn_failure_signal": {"session_id": f"s-{RID}", "write_committed": "NOT_COMMITTED", "staff_alert": "NONE"}, "intervention_result": None}
     e = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "release_id": release_id, "runtime_contract_version": 1,
@@ -585,8 +605,9 @@ def step6():
     STATE["cases"] = [dict(c) for c in cases]; save()
     rec("6b", "REAL", f"비식별 잡 run-once(컨테이너, 시험용 잡 설정 test/ops-job): FailureCase {len(cases)}건 게시, 스키마 통과, 비식별 trace에 원본 세션·턴 ID 없음(I7 HTTP 읽기), 재실행은 새 사례 0건(멱등). 요약 {json.dumps(summ)[:160]}")
 
+GOOD_EXPECTED = {"action": "NEXT", "next_item": "Q1.D02", "values": [{"key": "Q1.D01.diagnosed", "value": False, "precision": "exact", "status": "ANSWERED", "save": True}]}   # 검토자가 쓴 정답(시험 자료, ActionExtraction)
 def bad_ok():
-    return {"review_status": "CONFIRMED", "expected_kind": "PARSER", "expected": {"items": [{"item_no": 0, "target": {"question_id": "Q1", "repeat_key": "", "slot_id": "body_temp"}, "value": "36.5", "source_text": "삼십육점오", "intent": "ANSWERED_INTENT", "progress_op": None, "guide_id": None}]}}
+    return {"review_status": "CONFIRMED", "expected_kind": "LORA_A", "expected": GOOD_EXPECTED}
 
 def step7():
     title(7, "실패 사례가 데이터 생성·학습·저작으로 돌아간다 (I7 HTTP)")
@@ -602,15 +623,15 @@ def step7():
     assert f'"s-{RID}"' not in blob and "삼십육" not in blob, "신호에 발화/ID 원문이 있다"
     rec("7s", "REAL", f"question-authoring GET /v1/signals(저자 토큰, 읽기 토큰은 403)가 ops-feedback I7을 HTTP로 읽어 문항 세트 {QS}의 사례 수를 낸다(저작으로의 환류). 응답 {blob[:200]}")
     rv_tok = TOK("ops-review-reviewer")
-    bad = {"review_status": "CONFIRMED", "expected": {"items": [{"bad": 1}]}, "expected_kind": "PARSER"}
+    bad = {"review_status": "CONFIRMED", "expected": {"items": [{"bad": 1}]}, "expected_kind": "LORA_A"}
     c, e = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, bad); assert c == 400, (c, e); validate("BoundaryError", e)
-    c, e2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, {"review_status": "CONFIRMED", "expected": {"items": []}}); assert c == 400, (c, e2)
+    c, e2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, {"review_status": "CONFIRMED", "expected": GOOD_EXPECTED}); assert c == 400, (c, e2)
     assert http("POST", "ops", f"/v1/cases/{cid}/review", TOK("ops-read-synthetic-data"), bad)[0] == 403, "읽기 토큰으로 검토 게시됨"
     assert http("POST", "ops", f"/v1/cases/nonexistent-case/review", rv_tok, {"review_status": "DISMISSED"})[0] == 404
-    pi = dict(__import__("copy").deepcopy(STATE["parser_input"])); pi["utterance"] = "체온은 36.5도예요"   # 개인정보를 뺀 문장으로 검토자가 쓴 입력(시험 자료)
-    badri = {**bad_ok(), "reviewed_input": {"utterance": 1}}
+    pi = dict(__import__("copy").deepcopy(STATE["extract_input"])); pi["user_utterance"] = "뇌졸중은 진단받은 적 없어요"   # 개인정보를 뺀 문장으로 검토자가 쓴 입력(시험 자료, ActionExtractionInput)
+    badri = {**bad_ok(), "reviewed_input": {"user_utterance": 1}}
     c, eri = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, badri); assert c == 400, ("잘못된 reviewed_input이 받아들여짐", c, eri)
-    good = {"review_status": "CONFIRMED", "expected_kind": "PARSER", "reviewed_input": pi, "expected": {"items": [{"item_no": 0, "target": {"question_id": "Q1", "repeat_key": "", "slot_id": "body_temp"}, "value": "36.5", "source_text": "삼십육점오", "intent": "ANSWERED_INTENT", "progress_op": None, "guide_id": None}]}}
+    good = {"review_status": "CONFIRMED", "expected_kind": "LORA_A", "reviewed_input": pi, "expected": GOOD_EXPECTED}
     # ---- 게이트웨이 경유 검토(admin-console 검토 화면의 경로): 사람 계정(reviewer-e2e) 인증 뒤, ops-feedback 읽기/reviewer 쓰기 토큰은 게이트웨이가 붙인다
     assert gw_raw("GET", "/v1/cases")[0] == 401, "인증 없이 /v1/cases 가 열려 있다"
     assert gw_raw("POST", f"/v1/cases/{cid}/review", good)[0] == 401
@@ -670,7 +691,7 @@ def step8():
     # 공개 API: 롤백 뒤에도 서비스가 산다. 새 세션은 이전 릴리스로 시작된다(/readyz active_release), 롤백 전에 시작한 세션도 이어서 처리된다
     sidb = f"sess-{RID}-b"
     c, st = kiosk("/v1/sessions", {"session_id": sidb, "kind": "SESSION_START"}); assert c == 200, (c, st)
-    c, tb = public_turn(sidb, "turn-1", "체온은 삼십칠 도예요"); assert c == 200, (c, tb)
+    c, tb = public_turn(sidb, "turn-1", "뇌졸중은 없어요"); assert c == 200, (c, tb)
     kiosk(f"/v1/sessions/{sidb}/end", {"session_id": sidb, "kind": "SESSION_END"})
     bad = HttpGateService(URL("gate"), TOK("gate-write-question-authoring"))
     try: bad.request_rollback({**req, "request_id": f"rbk-{RID}-2"}); raise AssertionError("허용되지 않은 역할이 롤백함")

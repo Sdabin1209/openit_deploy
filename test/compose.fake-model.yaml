@@ -1,0 +1,7 @@
+# 시험 전용(E2E·데모의 fake 모델): model-serving 의 fake 백엔드 고정 출력을 입력 문항 기준으로 유효한 ActionExtraction 으로 바꾼다.
+# 이유와 내용: test/fake-model/fake_server.py. 운영 compose.yaml 에 넣지 않는다. 실제 LLM 모드(compose.llm.yaml)에는 붙이지 않는다(vllm 백엔드).
+services:
+  model-serving:
+    command: ["python", "/test-fake-model/fake_server.py"]
+    volumes:
+      - ./test/fake-model:/test-fake-model:ro

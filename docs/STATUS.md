@@ -149,3 +149,15 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 - 미정: `/tmp`(tmpfs, noexec)에서 실행이 필요한 산출물이 있는지(GPU 서버에서 확인 전). 있다면 `TMPDIR`를 이미지가 준비한 볼륨 경로로 돌리는 편이 tmpfs exec 허용보다 낫다.
 
 - v0.5.3 채택: `DEPLOY_MR_TAG` 기본을 v0.5.3으로 올렸다(통일 태그 정책 유지). v0.5.3 이미지가 캐시·홈·원격 측정 차단 ENV를 기본값으로 갖고 서버가 캐시 디렉터리를 만들므로 `compose.llm.yaml`의 중복 환경 변수를 제거했다(위 후보 항목 해소). GPU 서버 확인 전.
+
+## 열다섯째 구간: 계약 2.0.0 구조로 이전 (2026-10-27, 브랜치 migrate-contracts-2.0.0, 이 PC 한 환경)
+
+기준: boundary-contracts v2.0.0, turn-engine v0.3.0, model-runtime v0.6.1. 이웃 main: survey-service 846dc79, release-gate 7139123, ops-feedback acaf413, synthetic-data 507f58b, model-lab e3fd917, question-authoring f5f02b9, admin-console 4517e91, kiosk-frontend b4a27ea, model-runtime fd185c4(= v0.6.1).
+
+### 시험 결과 (실제로 돌린 것, 이 PC의 WSL2 + Docker Desktop 한 환경. 깨끗한 두 번째 환경 확인은 못 했다)
+- `bash scripts/doctor.sh`: 통과(WARN 0). `bash scripts/build-images.sh`: 8개 이미지 빌드 exit=0.
+- `bash scripts/e2e.sh --reuse-build`(전체 모드): **87 PASS / 0 FAIL**, 합계 247초. `--fast` 중간 실행에서는 단계 5의 기대값(fake 출력)만 실패해 고친 뒤 전체 모드로 다시 돌렸다. 전체 모드 이후에 `e2e_steps.py`의 실제 LLM 경로(`--llm-package`)의 기반 모델 표기를 패키지 값으로 고쳤고 이 경로는 실행해 보지 못했다(구문 검사만).
+- 단계 상태: 1 REAL(v2 문항 양식 31개 ID) / 2 **BLOCKED**(synthetic-data NOTHING_TO_DO, G02) / 3 TEST-SUB(시스템 프롬프트 포함 패키지) / 4 REAL+TEST-SUB(자동 검사·사람 승인·릴리스·번들) / 5 REAL(PUT -> extract -> respond, 서버 직접 호출 검사) / 5d REAL(알림이 나오지 않음, `staff_alert_source.active=false`) / 5d-skip **SKIPPED**(직원 콘솔 알림 화면: 시험용 입력원이 survey-service tests/ 에만 있음) / 6 TEST-SUB+REAL / 7 REAL(시드 인용 포함) / 8 REAL / 9 REAL.
+- 확인한 것과 못 한 것: `make-llm-package.sh gpu-12g`는 실행해 두 번 같은 바이트(결정성)와 `ModelPackageManifest` 스키마 통과를 확인했다. `demo.sh config --llm`(병합 검증)은 통과했다. **GPU가 필요한 실제 LLM 데모, GPU 이미지 빌드, Qwen3-4B 적재는 하지 않았다(서버 미검증, OPEN_GAPS U07/U01).** 서버 절차는 RUN.md 7-2-2.
+- 막힌 점은 CR-D22: (1) model-runtime fake 기본 출력(next_item=END)이 v2 흐름에서 모든 턴을 반려시켜 deploy가 시험 전용 진입점으로 고정 출력을 바꿨다, (2) synthetic-data G02, (3) 직원 알림 시험용 입력원, (4) `make_neutral_package.py`가 프롬프트 인자를 받지 않음.
+- `locks/images.lock`은 건드리지 않았다(E2E는 임시 잠금을 쓴다).

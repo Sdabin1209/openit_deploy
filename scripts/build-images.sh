@@ -45,8 +45,8 @@ if [ "$ONLY" = "  " ]; then
 fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
-# 경계 계약 태그(D53 이후 v1.3.1). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
-export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG"   # 태그는 lib.sh 한 곳에서 정한다
+# 경계 계약·turn-engine·model-runtime 태그(lib.sh 의 기준값, 2.0.0 구조). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
+export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG" TE="$DEPLOY_TE_TAG"   # 태그는 lib.sh 한 곳에서 정한다
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
@@ -64,7 +64,7 @@ record() { sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3" >> 
 commit_of() { echo "$(git -C "$WORKSPACE/$1" rev-parse --short HEAD)$SUFFIX"; }
 
 if want survey-service; then
-  ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
+  ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" TURN_ENGINE_TAG="$TE" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   set -a; source "$CTX/survey-service/build/wheels/VERSIONS.env"; set +a
   # io.openit.langgraph 라벨: 이미지에 설치되는 잠금 파일(requirements.lock)의 langgraph 버전
   LG=$(sed -n 's/^langgraph==\(.*\)$/\1/p' "$CTX/survey-service/requirements.lock" | head -1); [ -n "$LG" ] || { echo "requirements.lock 에서 langgraph 버전을 못 읽었다" >&2; exit 1; }
@@ -92,7 +92,7 @@ if want release-gate; then
   # 영역의 build_image.sh 를 표준 `docker` 와 일반 경로로 부른다(turn-engine/model-runtime 는 형제 리포의 태그 시점 소스, 사본 기준).
   # 전제: release-gate 의 build_image.sh 가 docker.exe·wslpath 를 가정하지 않는 버전이다(CR-D21). 그 전 버전은 WSL 에서 UNC 경로를 만들어 실패한다.
   c=$(commit_of release-gate); img="deploy-build/release-gate:$c"
-  ( cd "$CTX/release-gate" && DOCKER="$DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
+  ( cd "$CTX/release-gate" && DOCKER="$DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" TURN_ENGINE_TAG="$TE" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
   record release-gate "$img" "$c"
 fi
 if want model-registry; then
@@ -108,7 +108,7 @@ if want model-registry; then
   record model-registry "$img" "$c"
 fi
 
-# 호스트에서 쓰는 wheel: E2E 클라이언트·검증기(v1.3.1)와 synthetic-data용(그 영역이 고정한 태그 v1.2.0)
+# 호스트에서 쓰는 wheel: E2E 클라이언트·검증기와 synthetic-data용(그 영역이 고정한 태그, lib.sh DEPLOY_BC_TAG_SD)
 mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
 for tag in "$BC" "$DEPLOY_BC_TAG_SD"; do
   d="$DEPLOY_ROOT/build/hostsrc-$tag"; rm -rf "$d"; mkdir -p "$d"; git -C "$CTX/boundary-contracts" archive "$tag" | tar -x -C "$d"
@@ -127,7 +127,7 @@ if want model-serving; then
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}")$SUFFIX; img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$MS" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" "$MS" >/dev/null
   record model-serving "$img" "$c"
 fi
 
@@ -156,7 +156,7 @@ if want_gpu; then
   echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$MSG" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" "$MSG" >/dev/null
   record model-serving-gpu "$img" "$c"
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
   OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)

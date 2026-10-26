@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 사람이 화면을 직접 눌러 볼 수 있는 데모 환경. 상시 구성(`deploy` 프로젝트)과 따로, 같은 서버에서 함께 돌 수 있다.
 #   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
-#   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen2.5-1.5B + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
+#   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen3-4B(프로파일 gpu-12g) + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
 #   scripts/demo.sh config --llm [--profile gpu-12g]            컨테이너를 띄우지 않고 실제 LLM 구성의 병합(docker compose config)만 검증한다(이미지 참조가 로컬 태그인지)
 #   scripts/demo.sh diag                                        켜져 있는 데모의 release-gate 제출·판정(checks)·수집기·모델 패키지 요약(읽기 전용)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
@@ -41,10 +41,10 @@ set_llm_image() { # 데모는 방금 빌드한 로컬 GPU 이미지를 태그로
 env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트가 같은 값을 본다)
   export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT="$P" DEPLOY_SKIP_DOCTOR=1
   export REGISTRY_PROJECT="$P-reg" REGISTRY_HOST_BIND="${DEMO_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
-  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
+  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
-  # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 compose.test.yaml 의 fake 백엔드를 덮고,
-  # test/compose.llm-demo.yaml 이 vllm 에서 서버가 시작을 거부하는 시험 위험 문구를 비운다
+  # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 compose.test.yaml 의 fake 백엔드를 덮는다. 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
+
   if [ $LLM = 1 ] && [ "$CMD" = up ]; then printf '%s\n' "${LLM_PROFILE_NAME:-gpu-12g}" > "$W/llm"; fi
   if [ $LLM = 0 ] && [ -f "$W/llm" ]; then LLM=1; LLM_PROFILE_NAME=$(sed -n 1p "$W/llm"); fi
   if [ $LLM = 1 ]; then
@@ -52,7 +52,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     export DEMO_LLM_PROFILE="/app/profiles/$LLM_PROFILE_NAME.json"
     set_llm_image
     # 이미지는 파일로 고른다(compose.llm.local.yaml = 로컬 태그). 중첩 기본값 한 파일로는 안쪽 필수 변수가 먼저 평가되어 실패한다
-    COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml $DEPLOY_ROOT/test/compose.llm-demo.yaml"; export COMPOSE_EXTRA
+    COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml"; export COMPOSE_EXTRA
   fi
   # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
   if [ -n "$EXT" ]; then external_inference_setup "$EXT"; printf '%s\n%s\n' "$EXT" "$INFERENCE_TOKEN_FILE" > "$W/external-inference"
@@ -75,7 +75,6 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
     --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id demo-test --only "$only" \
     "${msx[@]}" "$@"
 }
-risk_phrase() { sed -n "s/^[[:space:]]*MODEL_RUNTIME_FAKE_RISK_PHRASE:[[:space:]]*['\"]\{0,1\}\([^'\"#]*\)['\"]\{0,1\}.*/\1/p" "$DEPLOY_ROOT/compose.test.yaml" | head -1 | sed 's/[[:space:]]*$//'; }
 
 guide() {
   local gw; gw=$(port_of "$P-gateway-1" 8080)
@@ -97,10 +96,9 @@ guide() {
    reviewer-e2e     $W/secrets/tokens/reviewer-console-password
    예: cat $W/secrets/tokens/staff-console-password
 
- $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다. 아래 위험 문구는 그 서버가 시험 스위치(MODEL_RUNTIME_FAKE_RISK_PHRASE)로 떠 있을 때만 듣는다" )
- $( [ $LLM = 1 ] && printf '%s' " 실제 LLM: 학습하지 않은 Qwen/Qwen2.5-1.5B-Instruct + 시스템 프롬프트(prompt-2) + 효과 없는 LoRA(시험용 대체, 프로파일 $LLM_PROFILE_NAME). 학습된 모델이 아니고 작은 모델이라 응답이 거칠 수 있다(출력 보호가 규칙 기반 대체 문장으로 바꾸기도 한다). 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다. 아래 TEST-RISK 문구는 가짜 모델 전용이라 이 모드에서는 동작하지 않을 수 있다: 위험 정지는 모델 출력에 달려 있다." )
- 키오스크에서 위험 정지를 시험하려면 이 문구를 말하거나(입력) 한다:  $(risk_phrase)
-   (시험 구성의 가짜 모델에만 있는 문구다. 정지되면 직원 콘솔(/staff/)에 알림이 뜨고 RESUME/END 로 풀 수 있다)
+ $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )
+ $( [ $LLM = 1 ] && printf '%s' " 실제 LLM: 학습하지 않은 기반 모델(프로파일 $LLM_PROFILE_NAME, gpu-12g 는 Qwen/Qwen3-4B) + 학습 데이터의 시스템 프롬프트(prompt-4 조립) + 효과 없는 LoRA(lora_B=0, 시험용 대체). 학습된 모델이 아니라서 A 출력이 형식을 못 지키면 그 턴은 실패 신호로 처리된다(503 OUTPUT_INVALID, 값을 지어내지 않는다, D75). 12GB GPU에서 적재되는지는 서버 미검증이다. 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다." )
+ 직원 알림: 지금은 입력원이 없다(OPEN_GAPS G01). 직원 콘솔(/staff/)에 알림이 뜨지 않는 것이 정상이며 survey-service /readyz 의 staff_alert_source.active=false 로 드러난다.
  승인 화면: 승인 대기 시험 제출이 있다$( [ $STOP = 1 ] && echo " (--stop-before-approval: 문항 세트 v1·v2 모두 대기. 승인한 뒤 scripts/demo.sh activate)" || echo " (보지 못한 문항 세트 제출 1건. v1·v2는 스크립트가 시험용 승인자로 이미 승인·활성화)")
  실패 사례 검토 화면: 시험 사례 1건(PENDING). /admin/ 의 검토 메뉴(검토자 계정)
 
@@ -132,7 +130,7 @@ llm_config_check() { # llm_config_check sentinel|real : 병합된 compose 설정
 wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 시간 상한 후에도 실패시키지 않고 안내하고 끝낸다
   local mins=${DEMO_LLM_WAIT_MIN:-20} t0=$SECONDS mp sp sc ms
   mp=$(port_of "$P-model-serving-1" 8080); sp=$(port_of "$P-survey-service-1" 8080)
-  echo "== 실제 LLM 적재 대기 (최대 ${mins}분, 환경 변수 DEMO_LLM_WAIT_MIN 로 바꾼다). 첫 기동은 huggingface.co 에서 모델(약 3GB)을 받고 적재한다"
+  echo "== 실제 LLM 적재 대기 (최대 ${mins}분, 환경 변수 DEMO_LLM_WAIT_MIN 로 바꾼다). 첫 기동은 huggingface.co 에서 모델(약 8GB(Qwen3-4B 추정))을 받고 적재한다"
   while [ $((SECONDS - t0)) -lt $((mins * 60)) ]; do
     sc=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$sp/readyz" 2>/dev/null || true)
     if [ "$sc" = 200 ]; then echo "survey-service 준비됨: 활성 릴리스 적재를 마쳤다. 위 주소에서 키오스크를 눌러 본다"; return 0; fi
