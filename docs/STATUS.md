@@ -161,3 +161,10 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 - 확인한 것과 못 한 것: `make-llm-package.sh gpu-12g`는 실행해 두 번 같은 바이트(결정성)와 `ModelPackageManifest` 스키마 통과를 확인했다. `demo.sh config --llm`(병합 검증)은 통과했다. **GPU가 필요한 실제 LLM 데모, GPU 이미지 빌드, Qwen3-4B 적재는 하지 않았다(서버 미검증, OPEN_GAPS U07/U01).** 서버 절차는 RUN.md 7-2-2.
 - 막힌 점은 CR-D22: (1) model-runtime fake 기본 출력(next_item=END)이 v2 흐름에서 모든 턴을 반려시켜 deploy가 시험 전용 진입점으로 고정 출력을 바꿨다, (2) synthetic-data G02, (3) 직원 알림 시험용 입력원, (4) `make_neutral_package.py`가 프롬프트 인자를 받지 않음.
 - `locks/images.lock`은 건드리지 않았다(E2E는 임시 잠금을 쓴다).
+
+## 열여섯째 구간: model-runtime v0.6.2 채택 (2026-10-27, 브랜치 follow-mr-0.6.2, 이 PC 한 환경)
+
+기준: boundary-contracts v2.0.0, turn-engine v0.3.0, model-runtime v0.6.2. 이웃 main: survey-service ef94945, release-gate 9f0ff9e, model-lab 3b3c812, ops-feedback acaf413 (모두 이 PC에서 확인).
+- 한 일: `DEPLOY_MR_TAG` v0.6.2(이미지 라벨 기대값 포함). 우회 제거: `test/fake-model/fake_server.py`, `scripts/apply_system_prompts.py` 삭제. fake 모델은 표준 서버 + `MODEL_RUNTIME_FAKE_FLOW_FILE=test/fake-model/question_flow.json`(survey-service `question_flow`의 31개 순서 사본). `make-llm-package.sh`는 `make_neutral_package.py --system-prompt-a/-b`를 쓴다. CR-D22 v2 1·4항은 해소.
+- 시험(실제로 돌린 것, 깨끗한 두 번째 환경은 확인하지 못했다): `doctor.sh` 통과(WARN 0), `build-images.sh` exit=0(model-serving·survey-service·release-gate 이미지 라벨 `io.openit.model-runtime`=0.6.2 확인), `e2e.sh --reuse-build`(새 이미지를 빌드한 뒤, 전체 모드) 87 PASS / 0 FAIL 246초. `make-llm-package.sh gpu-12g`를 두 번 돌려 결과가 같고 매니페스트의 프롬프트 해시가 `lora_a.system.txt`와 일치함을 확인. GPU 서버·실제 LLM 모드는 확인하지 않았다.
+- 남은 것: 단계 2 BLOCKED(G02), 5d 직원 알림 화면 SKIPPED(G01)는 그대로. push·태그는 하지 않았다.

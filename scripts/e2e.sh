@@ -48,7 +48,7 @@ cat <<BANNER
  !! 시험 대역 사용 표시 !!
    - 승인자: 사람 대신 이 스크립트가 시험용 승인자 토큰(release-approver)으로 POST /v1/approvals 를 호출한다. 시험용 정책·실행기는 없다(게이트에서 삭제됨)
    - 단계 3 모델: GPU 없이 시험용 어댑터(test/fixtures/e2e-test-adapter)와 시험용 EvaluationReport(고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시한다(E2E_GPU=1이면 gpu-dev 경로, 기본 끔)
-   - 단계 5 모델: model-serving 컨테이너(CPU)의 가짜 백엔드. A 출력은 입력 문항 기준으로 유효한 ActionExtraction(NEXT, 다음 문항, values 비어 있음), B 출력은 문장 "(가짜 응답)"이다(test/fake-model/fake_server.py: model-runtime 서버 그대로, 고정 출력만 시험용). 시험용 번들의 serving_config는 서버 /v1/info 기대값으로 만든다(TEST-SUB)
+   - 단계 5 모델: model-serving 컨테이너(CPU)의 가짜 백엔드. A 출력은 입력 문항 기준으로 유효한 ActionExtraction(NEXT, 다음 문항, values 비어 있음), B 출력은 문장 "(가짜 응답)"이다(표준 서버 + MODEL_RUNTIME_FAKE_FLOW_FILE=test/fake-model/question_flow.json, model-runtime v0.6.2). 시험용 번들의 serving_config는 서버 /v1/info 기대값으로 만든다(TEST-SUB)
    - 직원 콘솔 접근: 개발/E2E용 기본 인증(운영 방식은 미정). 실제 브라우저·STT·웹 푸시 수신은 E2E에서 볼 수 없다(BLOCKED, VAPID 키 없이 SSE만)
    - 단계 6 TraceEnvelope와 단계 7 reviewed_input·검토 확인은 이 스크립트가 만든 시험 자료/행위다
    - 시험 자료는 운영 설정(compose.yaml, config/)에 들어가지 않는다

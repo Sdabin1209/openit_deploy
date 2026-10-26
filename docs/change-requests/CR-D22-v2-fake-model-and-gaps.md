@@ -1,5 +1,6 @@
 # CR-D22: 계약 2.0.0 구조에서 E2E가 부딪힌 점 (model-runtime fake 출력, synthetic-data, survey-service 시험 입력원)
 
+- 갱신(model-runtime v0.6.2): 1항과 4항은 v0.6.2에서 해소되어 deploy의 대응(fake_server.py, apply_system_prompts.py)을 지웠다. 아래는 당시 기록이다.
 - 상태: 제안 (헤드에게). deploy는 아래 대응을 시험 자료 쪽에서 했고 다른 영역은 고치지 않았다.
 
 ## 1. model-runtime v0.6.1: fake 백엔드의 고정 출력이 v2 흐름에서 모든 턴을 반려시킨다 (확인함)

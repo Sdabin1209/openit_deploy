@@ -31,8 +31,7 @@ if [ ! -f "$CFG" ]; then
 fi
 [ "$(sha256sum "$CFG" | cut -d' ' -f1)" = "$HF_SHA" ] || die "$CFG 의 sha256 이 기록된 값($HF_SHA)과 다르다. 지우고 다시 받거나 기록을 확인하라"
 rm -rf "$OUT"; mkdir -p "$OUT"
-"$VENV/bin/python" "$SRC/scripts/make_neutral_package.py" "$OUT" --profile "$SRC/profiles/$NAME.json" --model-config "$CFG" >/dev/null
+"$VENV/bin/python" "$SRC/scripts/make_neutral_package.py" "$OUT" --profile "$SRC/profiles/$NAME.json" --model-config "$CFG" \
+  --system-prompt-a "$DEPLOY_ROOT/test/llm-demo/lora_a.system.txt" --system-prompt-b "$DEPLOY_ROOT/test/llm-demo/lora_b.system.txt" >/dev/null
 [ -f "$OUT/SUMMARY.json" ] || die "패키지 생성 실패 (SUMMARY.json 없음)"
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/apply_system_prompts.py" "$OUT" "$DEPLOY_ROOT/test/llm-demo/lora_a.system.txt" "$DEPLOY_ROOT/test/llm-demo/lora_b.system.txt" \
-  --turn-engine-version "${DEPLOY_TE_TAG#v}" >/dev/null
 echo "중립 LoRA 패키지: $OUT (프로파일 $NAME, 기반 모델 $BASE, model-runtime $DEPLOY_MR_TAG, 시스템 프롬프트 = 데모 입력 파일)"

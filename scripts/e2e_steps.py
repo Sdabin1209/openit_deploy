@@ -239,7 +239,7 @@ def make_packages():
             ref = json.loads(docker_py(IMAGES["survey-service"], probe))
             STATE["fake_cfg_vs_survey_image"] = sorted(k for k in cfgs["LORA_A"] if ref.get(k) != cfgs["LORA_A"][k])
         except Exception as e:
-            STATE["fake_cfg_vs_survey_image"] = "대조 불가(v0.6.1 survey 이미지에 fake_serving_configs 가 없을 수 있다) " + str(e)[-80:]
+            STATE["fake_cfg_vs_survey_image"] = "대조 불가(survey 이미지에 fake_serving_configs 가 없을 수 있다) " + str(e)[-80:]
         sp = {r: {"path": "system_prompt.txt", "sha256": canonical.file_hash(fx / r / "system_prompt.txt")} for r in ("LORA_A", "LORA_B")}
         d = {"cfgs": cfgs, "hashes": {r: canonical.sha256_hash(cfgs[r]) for r in cfgs},
              "adapter_hash": {r: canonical.directory_hash(fx / r) for r in ("LORA_A", "LORA_B")}, "runtime": info["runtime_version"], "system_prompt": sp}
@@ -448,8 +448,8 @@ def ms_call(path, body, token):
         with urllib.request.urlopen(req, timeout=30) as r: return r.status, r.read().decode(), {k.lower(): v for k, v in r.headers.items()}
     except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="replace"), {k.lower(): v for k, v in e.headers.items()}
 
-# 가짜 백엔드의 고정 출력(test/fake-model/fake_server.py): A 는 입력 문항의 다음 문항으로 가는 유효한 ActionExtraction(값 없음), B 는 문장.
-# model-runtime v0.6.1 의 기본 고정 출력(next_item=END)은 첫 문항에서도 END 라 서비스의 검증(validate_extraction)이 모든 턴을 반려한다.
+# 가짜 백엔드의 출력(표준 서버 + MODEL_RUNTIME_FAKE_FLOW_FILE=test/fake-model/question_flow.json): A 는 입력 문항의 다음 문항으로 가는 유효한 ActionExtraction(값 없음), B 는 문장.
+# FLOW_FILE 이 없으면 기본 고정 출력(next_item=END)은 첫 문항에서도 END 라 서비스의 검증(validate_extraction)이 모든 턴을 반려한다. 문항 순서 사본이 survey-service 와 다르면 여기서 실패한다.
 FAKE_EXTRACTION = {"action": "NEXT", "next_item": "Q1.D04", "values": []}   # 아래 직접 호출의 입력 question_id 가 Q1.D03 이다
 FAKE_RESPONSE_TEXT = "(가짜 응답)"
 
