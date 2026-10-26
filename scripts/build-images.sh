@@ -159,4 +159,9 @@ if want_gpu; then
     --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$MSG" >/dev/null
   record model-serving-gpu "$img" "$c"
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
+  OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)
+  if [ -n "$OLD" ]; then
+    echo "!! 이전 GPU 이미지가 태그를 가진 채 남아 있다(커밋이 다르면 태그도 다르다). 디스크 회수는 사용자가 판단해 지운다:"
+    printf '%s\n' "$OLD" | sed 's/^/     docker rmi /'
+  fi
 fi

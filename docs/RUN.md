@@ -171,7 +171,7 @@ bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모�
 
 ```
 bash scripts/doctor.sh --up --llm               # GPU 컨테이너 접근, 프로파일 대 GPU 메모리, 도커 디스크, huggingface.co 도달
-bash scripts/build-images.sh --gpu              # GPU 변형만 빌드(model-runtime v0.5.2, 문진 스키마 내장). 빌드 전 docker system df 와 약 13GB 안내.
+bash scripts/build-images.sh --gpu              # GPU 변형만 빌드(model-runtime `DEPLOY_MR_TAG`, 현재 v0.5.3, 문진 스키마 내장). 빌드 전 docker system df 와 약 13GB 안내.
                                                 #   비대화형이면 --yes-large 를 명시해야 진행한다
 bash scripts/publish-images.sh model-serving-gpu   # 레지스트리에 올리고 잠금에 MODEL_SERVING_GPU_DIGEST 기록
 ```
@@ -195,18 +195,23 @@ bash scripts/demo.sh status                                          # model-ser
 - **모델은 학습하지 않은 Qwen/Qwen2.5-1.5B-Instruct + 시스템 프롬프트(prompt-2) + 효과 없는 LoRA(lora_B=0)이다. 시험용 대체다.** 작은 모델이라 응답이 거칠 수 있고, 출력 보호가 규칙 기반 대체 문장으로 바꾸기도 한다.
 - **진단.** 릴리스 준비가 실패하면(`데모 릴리스 준비 실패`) `bash scripts/demo.sh diag`: release-gate의 모든 제출(status)과 각 GateDecision의 checks(kind, result, detail)·reject_codes, 활성 포인터, 후보 수집기 다시 실행(멱등) 결과, model-registry 패키지 요약, model-serving `/v1/info`(vllm 백엔드는 모델을 올리기 전에는 `serving_config_expectation`이 비어 있어 서빙 설정을 서버 값에서 맞출 수 없다: 그래서 패키지의 설정을 쓴다)를 읽기 전용으로 보여 준다. 자동 검사에서 반려되면 데모 실행도 60초를 기다리지 않고 같은 사유를 바로 출력한다.
 - **재실행.** 이미 있는 이미지는 다시 빌드하지 않는다: 기본 8개는 `build/images.env`의 기록과 로컬 이미지가 모두 있으면 건너뛰고, GPU 이미지(13GB)는 기록과 이미지가 있으면 건너뛴다(8개를 다시 빌드해도 GPU 기록은 지우지 않는다). 강제: `--rebuild`(8개), `--rebuild-gpu`(GPU). 실패한 뒤에는 `demo.sh down`으로 상태(`state/demo`)를 지우고 다시 `up --llm`을 한다(로컬 이미지와 HF 캐시는 남는다).
-- **중립 LoRA 패키지.** `scripts/make-llm-package.sh <프로파일> <폴더>`가 model-runtime 태그(v0.5.2)의 `git archive`에서 `make_neutral_package.py`와 `profiles/<이름>.json`을 꺼내 deploy의 `.venv`로 만든다. Docker 없이 실행되고 같은 입력이면 같은 바이트다(이 PC에서 실행해 `SUMMARY.json`과 결정성을 확인했다). 데모의 단계 3이 이 패키지를 model-registry에 게시한다. 서빙 설정은 fake의 `/v1/info` 기대값이 아니라 패키지의 vllm 설정이고, 서버가 적재할 때 같은 설정인지 스스로 검사한다. 평가 보고서는 이전처럼 **시험용 고정 지표**(TEST-SUB)다.
+- **중립 LoRA 패키지.** `scripts/make-llm-package.sh <프로파일> <폴더>`가 model-runtime 태그(`DEPLOY_MR_TAG`, 현재 v0.5.3)의 `git archive`에서 `make_neutral_package.py`와 `profiles/<이름>.json`을 꺼내 deploy의 `.venv`로 만든다. Docker 없이 실행되고 같은 입력이면 같은 바이트다(이 PC에서 실행해 `SUMMARY.json`과 결정성을 확인했다). 데모의 단계 3이 이 패키지를 model-registry에 게시한다. 서빙 설정은 fake의 `/v1/info` 기대값이 아니라 패키지의 vllm 설정이고, 서버가 적재할 때 같은 설정인지 스스로 검사한다. 평가 보고서는 이전처럼 **시험용 고정 지표**(TEST-SUB)다.
 - **시험 위험 문구.** vllm 백엔드는 `MODEL_RUNTIME_FAKE_RISK_PHRASE`가 있으면 시작을 거부하므로 `test/compose.llm-demo.yaml`이 그 값을 비운다. 그래서 `TEST-RISK`는 이 모드에서 동작하지 않을 수 있다(위험 정지는 모델 출력에 달려 있다).
 - **기다림.** 첫 기동은 모델 내려받기(약 3GB)와 적재로 오래 걸린다. `up`은 최대 20분(`DEMO_LLM_WAIT_MIN`) 30초마다 model-serving과 survey-service의 `/readyz`를 보여 준다. 시간이 지나도 **실패로 끝내지 않고** "아직 적재 중"이라 안내하고 끝낸다. `status`로 확인한다. **모델 캐시는 기본적으로 남는다**: `deploy-llm-hf-cache`는 프로젝트 밖 이름 있는 볼륨(없으면 `up --llm`이 만든다)이라 `demo.sh down/reset`, `down.sh --remove/--purge`가 지우지 않고, 다음 `up --llm`이 모델(약 3GB)을 다시 받지 않는다. 지우기: `bash scripts/demo.sh down --purge-cache` 또는 `bash scripts/down.sh --purge-hf-cache` (볼륨 이름을 직접 입력, 비대화형은 `--yes-purge-deploy-llm-hf-cache`). `status.sh`가 이 볼륨의 존재와 크기(`docker system df -v` 표를 읽음, 형식이 다르면 '알 수 없음')를 보여 준다. 로컬 GPU 이미지(`deploy-build/model-serving-gpu`)도 `down`이 지우지 않는다(`docker rmi`는 사용자가 판단).
 - **미확인(서버에서 확인 필요).** 이 PC에서는 Docker가 꺼져 있어 이 흐름을 실행하지 못했다. 확인한 것은 `bash -n`, 인자 검사, `py_compile`, 중립 패키지 생성기 실행(`SUMMARY.json`)과 패키지 매니페스트의 `ModelPackageManifest` 스키마 통과다. 후보 수집·자동 검사(문항-모델 호환)가 vllm 설정에서 통과하는지, 서버의 실제 적재 시간, 위험 정지 동작은 확인하지 않았다.
 - **조합 규칙.** `--llm`은 `--external-inference`와 함께 쓰지 않는다. 다른 GPU 서버에 두려면 7-1절을 따른다.
 
-- **읽기 전용 루트에서의 캐시·홈·원격 측정.** model-serving은 `read_only` 루트(보안 설정 유지)라서 vLLM·torch·triton의 기본 캐시 위치(`~/.cache(컨테이너 HOME 아래)`)에 쓰면 `OSError: [Errno 30] Read-only file system`으로 적재가 실패한다(`/readyz` 503 사유 `RuntimeError`). `compose.llm.yaml`이 `HOME`, `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT`, `TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `TORCH_HOME`을 쓰기 가능한 serving-data 볼륨(`/var/lib/model-runtime/…`, uid 10001 소유, 재시작해도 컴파일 캐시 유지)로 돌린다. `VLLM_NO_USAGE_STATS=1`, `DO_NOT_TRACK=1`, `HF_HUB_DISABLE_TELEMETRY=1`로 원격 측정을 끈다(의료 시스템). `TMPDIR`는 돌리지 않았다: `/tmp`는 noexec tmpfs이고 컴파일 산출물은 위 캐시 경로에 쓰이며, tmpfs의 exec 허용은 보안 설정을 약화하므로 택하지 않았다. 이 수정은 GPU 서버에서 확인 전이다. 장기적으로는 이 환경 변수가 model-runtime 이미지의 기본값이어야 한다(v0.5.3 후보, STATUS.md).
+- **읽기 전용 루트에서의 캐시·홈·원격 측정.** model-serving은 `read_only` 루트(보안 설정 유지)라서 캐시·홈이 쓰기 가능한 serving-data 볼륨(`/var/lib/model-runtime/…`)을 가리켜야 한다(안 그러면 ~/.cache(컨테이너 HOME 아래)에서 `OSError: [Errno 30] Read-only file system`으로 적재 실패, `/readyz` 503 `RuntimeError`). 이 환경 변수(`HOME`, `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT`, `TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `TORCH_HOME`)와 원격 측정 차단(`VLLM_NO_USAGE_STATS`, `DO_NOT_TRACK`, `HF_HUB_DISABLE_TELEMETRY`)은 **model-runtime v0.5.3부터 이미지의 ENV 기본값**이라 `compose.llm.yaml`은 다시 정하지 않는다(두 곳에서 어긋나는 것을 막으려는 것). 서버는 시작 때 캐시 디렉터리를 만들고 쓸 수 없으면 `/readyz`에 분명한 사유를 낸다. `compose.llm.yaml`에는 백엔드·프로파일·오프라인 같은 배포마다 달라지는 값만 있다. `TMPDIR`는 돌리지 않는다(`/tmp`는 noexec tmpfs, tmpfs exec 허용은 보안 설정 약화). 이 구성은 GPU 서버에서 확인 전이다.
 
 **모델 캐시가 쓰기 불가일 때** (`/readyz` 503 사유 `OSError`, `status.sh`/`diag`에 "모델 캐시 쓰기 불가 가능성" 안내).
 - 원인: model-serving은 uid 10001로 도는데, HF 캐시 볼륨이 이미지가 준비하지 않은 경로에 마운트되었거나(예: 옛 설정의 `/var/lib/hf-cache`) root 소유로 초기화되어 쓸 수 없다. 이미지는 `/var/lib/model-runtime/hf`와 `bundles`를 uid 10001 소유로 만들어 두므로 `compose.llm.yaml`은 그 경로에 마운트한다. 빈 새 볼륨은 처음 마운트될 때 그 경로의 소유자로 초기화된다.
 - 확인(읽기만): `bash scripts/demo.sh diag`가 컨테이너 안의 실행 uid, HF 경로 소유자, 쓰기 가능 여부(`test -w`)를 보여 준다. 직접: `docker exec <프로젝트>-model-serving-1 sh -c 'id -u; stat -c %U /var/lib/model-runtime/hf; test -w /var/lib/model-runtime/hf && echo writable'`.
 - 이미 root 소유로 만들어진 **빈** 볼륨이면 한 번 지우고 다시 만든다(내려받은 모델이 없는 볼륨이다. 모델이 들어 있다면 지우지 않는다): `bash scripts/demo.sh down` 뒤 `docker volume rm deploy-llm-hf-cache`(또는 `bash scripts/down.sh --purge-hf-cache`), 비어 있는지는 `docker system df -v`의 SIZE로 본다(`0B`). 그다음 `demo.sh up --llm`이 새로 만든다. 이미지 재빌드는 필요 없다.
+
+**v0.5.2 -> v0.5.3 전환 시 서버 재실행과 용량 계획(이번 한 번).** `demo.sh up --llm`은 기본 8개 이미지의 `io.openit.model-runtime` 라벨이 현재 태그와 다르면 다시 빌드하고(약 3분, 1.7GB 안팎), **GPU 이미지도 라벨이 다르면 다시 빌드한다**(자동. 비대화형은 `--yes-large` 필요; 안내 문구에 이유를 출력한다).
+- 서버의 빌드 캐시는 LABEL이 앞에 있던 이전 Dockerfile로 만든 것이라, 새 층 구조(LABEL을 맨 뒤로)에서는 첫 빌드가 pip 층부터 다시 이뤄진다: 약 9분, 새 층 약 13GB(측정 전 추정).
+- **옛 이미지는 자동으로 지워지지 않는다.** 이미지 태그에 model-runtime 커밋이 들어 있어 새 빌드의 태그가 달라서, 옛 GPU 이미지(v0.5.2, 13.1GB)는 dangling이 아니라 **옛 태그를 가진 채** 남는다. 빌드 끝에 `docker rmi <옛 태그>` 목록을 출력한다. 회수 절차(사용자가 판단): ① `docker system df`를 기록 ② 새 이미지로 `demo.sh up --llm`이 성공하는 것을 확인 ③ `docker image ls deploy-build/model-serving-gpu`에서 옛 태그를 `docker rmi` (기본 8개의 옛 태그도 마찬가지) ④ `docker image prune -f`(dangling)와 `docker builder prune -f`(옛 빌드 캐시) ⑤ `docker system df`를 다시 기록해 전후를 비교. Docker Desktop(WSL2)은 지워도 호스트 디스크 파일이 줄지 않을 수 있다.
+- 이후 빌드부터는 REVISION이 바뀌어도 무거운 층이 재사용된다(LABEL이 뒤라서).
 
 **용량과 정리.**
 - 확인: `docker system df`(이미지·볼륨·빌드 캐시의 크기와 회수 가능량). Docker Engine(리눅스)은 보통 `/var/lib/docker`(`docker info --format '{{.DockerRootDir}}'`), Docker Desktop은 VM 디스크 안이라 이 셸의 `df`로 보이지 않는다(설정의 Resources > Disk image 위치).
@@ -222,7 +227,7 @@ bash scripts/demo.sh status                                          # model-ser
 | 형제 리포 또는 태그가 없다 | `head/setup.sh`로 받는다. 태그가 없으면 doctor가 어떤 리포의 어떤 태그인지 알린다([SETUP.md](SETUP.md) C절) |
 | survey-service `/readyz` 503 `no_active_release`, 키오스크가 직원 호출 화면 | 상시 구성에서는 정상(활성 릴리스 없음). 눌러 보려면 데모 |
 | 게이트웨이 401 | 인증 없이 직원·승인 경로를 부른 것. 계정과 `secrets/tokens/*-password` 파일의 암호로 로그인. 역할이 다르면 403 |
-| 제출이 `REJECTED_AUTO`, `CONTRACT_COMPAT` FAIL (model-runtime 버전이 게이트 기준과 다르다) | 이미지마다 model-runtime 태그가 다르다. 모든 이미지는 같은 태그(`lib.sh`의 `DEPLOY_MR_TAG`, 현재 v0.5.2)로 빌드해야 한다 | 이미지를 다시 빌드(`demo.sh up`은 라벨이 다르면 기본 8개를 자동 재빌드, GPU 이미지는 라벨이 같으면 건너뜀). `demo.sh diag`로 확인 |
+| 제출이 `REJECTED_AUTO`, `CONTRACT_COMPAT` FAIL (model-runtime 버전이 게이트 기준과 다르다) | 이미지마다 model-runtime 태그가 다르다. 모든 이미지는 같은 태그(`lib.sh`의 `DEPLOY_MR_TAG`, 현재 v0.5.3)로 빌드해야 한다 | 이미지를 다시 빌드(`demo.sh up`은 라벨이 다르면 기본 8개를 자동 재빌드, GPU 이미지는 라벨이 같으면 건너뜀). `demo.sh diag`로 확인 |
 | `up --llm` 뒤 model-serving `/readyz`가 503 `OSError`로 계속 | HF 캐시 경로가 uid 10001이 쓰지 못하는 곳(root 소유 볼륨/이미지에 없는 경로) | 7-2절 '모델 캐시가 쓰기 불가일 때' (`demo.sh diag`로 확인, 빈 볼륨이면 `down` 뒤 `docker volume rm deploy-llm-hf-cache`) |
 | model-serving `/readyz` 503 사유 `RuntimeError`, 로그에 `OSError: [Errno 30] Read-only file system: '~/.cache(컨테이너 HOME 아래)'` | 읽기 전용 루트에서 vLLM·torch 캐시가 홈 아래를 쓰려 한다 | `compose.llm.yaml`의 캐시·홈 환경 변수가 있는지 확인(`demo.sh config --llm`). 7-2절 '읽기 전용 루트에서의 캐시·홈·원격 측정' |
 | 포트 충돌 | 컨테이너 호스트 포트는 Docker가 배정하므로 드물다. 레지스트리는 `REGISTRY_HOST_PORT=`(빈 값)으로 빈 포트를 고른다 |

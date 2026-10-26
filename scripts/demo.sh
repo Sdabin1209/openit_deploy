@@ -174,7 +174,10 @@ case "$CMD" in
     bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels || die "호스트 클라이언트 준비 실패"
     if [ $LLM = 1 ]; then
       have_gpu() { local img; img=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null); [ -n "$img" ] && "$DOCKER" image inspect "$img" >/dev/null 2>&1 && mr_label_ok "$img"; }
-      if [ $REBUILD_GPU = 1 ] || ! have_gpu; then echo "== GPU 이미지 빌드(model-serving-gpu, 약 13GB)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" --gpu $( [ $YES_LARGE = 1 ] && echo --yes-large ) || die "GPU 이미지 빌드 실패 (비대화형이면 --yes-large)"; fi
+      if [ $REBUILD_GPU = 1 ] || ! have_gpu; then
+        old=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null)
+        if [ -n "$old" ] && "$DOCKER" image inspect "$old" >/dev/null 2>&1; then echo "== GPU 이미지($old)가 현재 model-runtime 태그($DEPLOY_MR_TAG)과 맞지 않거나 --rebuild-gpu 라서 다시 빌드한다 (옛 이미지는 지우지 않는다; 비대화형은 --yes-large 필요)"; fi
+        echo "== GPU 이미지 빌드(model-serving-gpu, 약 13GB)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" --gpu $( [ $YES_LARGE = 1 ] && echo --yes-large ) || die "GPU 이미지 빌드 실패 (비대화형이면 --yes-large)"; fi
       set_llm_image   # 빌드로 images.env 가 바뀌었을 수 있다
       echo "== 중립 LoRA 패키지(학습하지 않은 시험용 대체) 생성: 프로파일 $LLM_PROFILE_NAME"
       bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "$LLM_PROFILE_NAME" "$W/llm-package" || die "중립 LoRA 패키지 생성 실패"

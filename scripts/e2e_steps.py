@@ -196,7 +196,7 @@ def step2():
 def make_packages():
     """시험용 어댑터 + model-runtime FakeBackend 적재 + ModelPackageManifest 2건을 만든다."""
     if a.llm_package:
-        # 실제 LLM(vllm) 데모: 서빙 설정은 fake 기대값이 아니라 패키지(model-runtime v0.5.2 make_neutral_package.py)의 vllm 설정을 쓴다.
+        # 실제 LLM(vllm) 데모: 서빙 설정은 fake 기대값이 아니라 패키지(model-runtime make_neutral_package.py, 태그는 lib.sh 의 DEPLOY_MR_TAG)의 vllm 설정을 쓴다.
         # 서버가 적재할 때 같은 설정인지 스스로 검사한다(ServingConfigMismatch). 여기서는 서버 /v1/info 와 대조해 STATE 에 남기기만 한다(적재 중일 수 있어 실패해도 계속).
         root = pathlib.Path(a.llm_package); gm = {r: json.loads((root / r / "manifest.json").read_text()) for r in ("LORA_A", "LORA_B")}
         adir = {r: root / r / "adapter" for r in gm}

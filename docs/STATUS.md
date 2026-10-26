@@ -147,3 +147,5 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 - 원격 측정 기본 차단(의료 시스템): `VLLM_NO_USAGE_STATS=1`, `DO_NOT_TRACK=1`, `HF_HUB_DISABLE_TELEMETRY=1`.
 - 앞선 확인: HF 캐시는 이미지가 준비한 `/var/lib/model-runtime/hf`를 쓴다(HF_HOME 덮어쓰기 불필요).
 - 미정: `/tmp`(tmpfs, noexec)에서 실행이 필요한 산출물이 있는지(GPU 서버에서 확인 전). 있다면 `TMPDIR`를 이미지가 준비한 볼륨 경로로 돌리는 편이 tmpfs exec 허용보다 낫다.
+
+- v0.5.3 채택: `DEPLOY_MR_TAG` 기본을 v0.5.3으로 올렸다(통일 태그 정책 유지). v0.5.3 이미지가 캐시·홈·원격 측정 차단 ENV를 기본값으로 갖고 서버가 캐시 디렉터리를 만들므로 `compose.llm.yaml`의 중복 환경 변수를 제거했다(위 후보 항목 해소). GPU 서버 확인 전.
