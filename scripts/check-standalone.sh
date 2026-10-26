@@ -27,6 +27,6 @@ git clone -q --no-hardlinks "$DEPLOY_ROOT" "$T/deploy" && ok "clone ($T/deploy)"
 echo "== 3) 사본에서 비밀 생성 -> up.sh (compose.yaml만, 시험 덮어쓰기 없음)"
 ( cd "$T/deploy" && bash scripts/gen-secrets.sh "$SECRETS_DIR" >/dev/null 2>&1 ) && ok "gen-secrets.sh" || { ng "gen-secrets.sh"; exit 1; }
 ( cd "$T/deploy" && bash scripts/up.sh "$P" > "$T/up.log" 2>&1 ) && ok "up.sh: 모든 서비스 healthy (워크스페이스 없이)" || { ng "up.sh"; tail -5 "$T/up.log"; }
-( cd "$T/deploy" && dc "$P" ps --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -v -c healthy ) | grep -qx 0 && ok "실행 중 컨테이너가 모두 healthy" || ng "healthy 가 아닌 컨테이너가 있다"
+BAD=$( cd "$T/deploy" && dc "$P" ps -a --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -v -E 'healthy|Exited \(0\)' ); [ -z "$BAD" ] && ok "컨테이너가 모두 healthy (일회성 작업은 Exited 0)" || { ng "healthy 가 아닌 컨테이너: $BAD"; }
 echo; [ "$FAILS" = 0 ] && echo "check-standalone: 전부 통과" || echo "check-standalone: 실패 $FAILS건"
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)
