@@ -143,7 +143,7 @@ admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-appr
 
 model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.yaml`이 환경 변수로 돌리는 것이며, 장기적으로는 이미지(Dockerfile ENV)의 기본값이어야 한다.
 
-- 읽기 전용 루트에서 쓰기 가능한 경로로 돌리는 캐시·홈: `HOME=/var/lib/model-runtime/home`, `XDG_CACHE_HOME=/var/lib/model-runtime/cache`, `VLLM_CACHE_ROOT=…/cache/vllm`, `TORCHINDUCTOR_CACHE_DIR=…/cache/torchinductor`, `TRITON_CACHE_DIR=…/cache/triton`, `TORCH_HOME=…/cache/torch`. 안 돌리면 vLLM 적재가 `/home/runtime/.cache`에서 `OSError: [Errno 30]`(GPU 서버에서 확인)로 실패한다. 이미지가 이 하위 디렉터리를 uid 10001 소유로 미리 만들어 두면 더 좋다.
+- 읽기 전용 루트에서 쓰기 가능한 경로로 돌리는 캐시·홈: `HOME=/var/lib/model-runtime/home`, `XDG_CACHE_HOME=/var/lib/model-runtime/cache`, `VLLM_CACHE_ROOT=…/cache/vllm`, `TORCHINDUCTOR_CACHE_DIR=…/cache/torchinductor`, `TRITON_CACHE_DIR=…/cache/triton`, `TORCH_HOME=…/cache/torch`. 안 돌리면 vLLM 적재가 `~/.cache(컨테이너 HOME 아래)`에서 `OSError: [Errno 30]`(GPU 서버에서 확인)로 실패한다. 이미지가 이 하위 디렉터리를 uid 10001 소유로 미리 만들어 두면 더 좋다.
 - 원격 측정 기본 차단(의료 시스템): `VLLM_NO_USAGE_STATS=1`, `DO_NOT_TRACK=1`, `HF_HUB_DISABLE_TELEMETRY=1`.
 - 앞선 확인: HF 캐시는 이미지가 준비한 `/var/lib/model-runtime/hf`를 쓴다(HF_HOME 덮어쓰기 불필요).
 - 미정: `/tmp`(tmpfs, noexec)에서 실행이 필요한 산출물이 있는지(GPU 서버에서 확인 전). 있다면 `TMPDIR`를 이미지가 준비한 볼륨 경로로 돌리는 편이 tmpfs exec 허용보다 낫다.

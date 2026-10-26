@@ -37,7 +37,7 @@ services:
     environment:
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}
       MODEL_RUNTIME_RELEASE_URL: ${RELEASE_URL:?RELEASE_URL(release-gate 주소)이 필요하다}
-    # GPU 변형(예시, 주석): 읽기 전용 루트에서 vLLM·torch·triton 이 쓰는 캐시·홈을 serving-data 볼륨 안으로 돌린다(안 돌리면 /home/runtime/.cache 에서 EROFS 로 적재 실패).
+    # GPU 변형(예시, 주석): 읽기 전용 루트에서 vLLM·torch·triton 이 쓰는 캐시·홈을 serving-data 볼륨 안으로 돌린다(안 돌리면 ~/.cache(컨테이너 HOME 아래) 에서 EROFS 로 적재 실패).
     #   그리고 원격 측정을 끈다. 전체 목록과 이유는 compose.llm.yaml 의 environment 주석:
     # HOME: /var/lib/model-runtime/home
     # XDG_CACHE_HOME: /var/lib/model-runtime/cache
