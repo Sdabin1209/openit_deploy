@@ -181,6 +181,22 @@ bash scripts/publish-images.sh model-serving-gpu   # 레지스트리에 올리�
 - **인터넷.** 첫 기동은 huggingface.co에서 모델을 받는다. 오프라인이면 `hf-cache` 볼륨을 미리 채우고 `HF_HUB_OFFLINE=1`을 준다(이 볼륨 채우는 절차는 정리하지 않았다).
 - 읽기 전용 루트에서 vLLM이 쓸 캐시 위치가 더 필요한지는 GPU 서버에서 확인 전이다(`XDG_CACHE_HOME`을 볼륨 안으로 두었다).
 
+### 7-2-1. 데모를 실제 LLM으로 (`demo.sh up --llm`)
+
+```
+bash scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]     # reset --llm 도 같은 옵션
+bash scripts/demo.sh status                                          # model-serving 의 /readyz 사유(적재 중인지)와 survey-service 의 inference 요약
+```
+
+`up --llm`이 하는 일(순서): (1) `doctor.sh --up --llm` (2) 기본 8개 이미지 빌드(없을 때) (3) `model-serving-gpu`가 없으면 `build-images.sh --gpu`(용량 안내, 비대화형이면 `--yes-large`) (4) `make-llm-package.sh`로 중립 LoRA 패키지 생성 (5) 임시 레지스트리에 게시(**GPU 이미지도 올라가므로 도커 디스크에 이미지가 데몬과 레지스트리 볼륨에 두 벌 생긴다: 약 26GB, 측정 전**) (6) `compose.yaml` + `compose.test.yaml` + `compose.llm.yaml` + `test/compose.llm-demo.yaml`로 기동 (7) E2E 단계 1~3·데모 단계를 돌려 릴리스를 만들고 활성화 (8) 적재가 끝날 때까지 기다린다.
+
+- **모델은 학습하지 않은 Qwen/Qwen2.5-1.5B-Instruct + 시스템 프롬프트(prompt-2) + 효과 없는 LoRA(lora_B=0)이다. 시험용 대체다.** 작은 모델이라 응답이 거칠 수 있고, 출력 보호가 규칙 기반 대체 문장으로 바꾸기도 한다.
+- **중립 LoRA 패키지.** `scripts/make-llm-package.sh <프로파일> <폴더>`가 model-runtime 태그(v0.5.2)의 `git archive`에서 `make_neutral_package.py`와 `profiles/<이름>.json`을 꺼내 deploy의 `.venv`로 만든다. Docker 없이 실행되고 같은 입력이면 같은 바이트다(이 PC에서 실행해 `SUMMARY.json`과 결정성을 확인했다). 데모의 단계 3이 이 패키지를 model-registry에 게시한다. 서빙 설정은 fake의 `/v1/info` 기대값이 아니라 패키지의 vllm 설정이고, 서버가 적재할 때 같은 설정인지 스스로 검사한다. 평가 보고서는 이전처럼 **시험용 고정 지표**(TEST-SUB)다.
+- **시험 위험 문구.** vllm 백엔드는 `MODEL_RUNTIME_FAKE_RISK_PHRASE`가 있으면 시작을 거부하므로 `test/compose.llm-demo.yaml`이 그 값을 비운다. 그래서 `TEST-RISK`는 이 모드에서 동작하지 않을 수 있다(위험 정지는 모델 출력에 달려 있다).
+- **기다림.** 첫 기동은 모델 내려받기(약 3GB)와 적재로 오래 걸린다. `up`은 최대 20분(`DEMO_LLM_WAIT_MIN`) 30초마다 model-serving과 survey-service의 `/readyz`를 보여 준다. 시간이 지나도 **실패로 끝내지 않고** "아직 적재 중"이라 안내하고 끝낸다. `status`로 확인한다. 모델 캐시(`hf-cache`)는 데모 `down`이 지우므로 다음 `up`에서 다시 받는다.
+- **미확인(서버에서 확인 필요).** 이 PC에서는 Docker가 꺼져 있어 이 흐름을 실행하지 못했다. 확인한 것은 `bash -n`, 인자 검사, `py_compile`, 중립 패키지 생성기 실행(`SUMMARY.json`)과 패키지 매니페스트의 `ModelPackageManifest` 스키마 통과다. 후보 수집·자동 검사(문항-모델 호환)가 vllm 설정에서 통과하는지, 서버의 실제 적재 시간, 위험 정지 동작은 확인하지 않았다.
+- **조합 규칙.** `--llm`은 `--external-inference`와 함께 쓰지 않는다. 다른 GPU 서버에 두려면 7-1절을 따른다.
+
 **용량과 정리.**
 - 확인: `docker system df`(이미지·볼륨·빌드 캐시의 크기와 회수 가능량). Docker Engine(리눅스)은 보통 `/var/lib/docker`(`docker info --format '{{.DockerRootDir}}'`), Docker Desktop은 VM 디스크 안이라 이 셸의 `df`로 보이지 않는다(설정의 Resources > Disk image 위치).
 - 지울지는 사용자가 판단한다. GPU 이미지: `docker image ls 'deploy-build/model-serving-gpu'`로 보고 필요 없으면 `docker rmi <이미지>`(레지스트리에 올렸다면 레지스트리 볼륨에도 있다: `scripts/down.sh <레지스트리 프로젝트> --registry --purge`는 레지스트리 볼륨까지 지운다). HF 캐시: 프로젝트를 `--purge`로 내리면 `<프로젝트>_hf-cache` 볼륨도 지워지고 다음 기동에서 다시 받는다. 빌드 캐시: `docker builder prune`.

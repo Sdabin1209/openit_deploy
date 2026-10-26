@@ -1,0 +1,7 @@
+# 시험 전용(실제 LLM 데모): compose.test.yaml 이 model-serving 에 넣은 가짜 백엔드용 위험 문구 스위치를 비운다.
+# model-runtime 서버는 vllm 백엔드에서 MODEL_RUNTIME_FAKE_RISK_PHRASE 가 설정되어 있으면 시작을 거부한다(server.py).
+# 빈 문자열은 "꺼짐"이다. 반드시 compose.test.yaml 과 compose.llm.yaml 뒤에 둔다(-f 순서).
+services:
+  model-serving:
+    environment:
+      MODEL_RUNTIME_FAKE_RISK_PHRASE: ""

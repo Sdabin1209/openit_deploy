@@ -23,6 +23,7 @@ ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2)
 ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: http://gpu-host:8080). 비우면 이 프로젝트의 model-serving 컨테이너")
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(EXTERNAL_INFERENCE_TOKEN=... 한 줄). 비우면 이 구성이 만든 토큰")
+ap.add_argument("--llm-package", default="", help="실제 LLM 데모: make_neutral_package.py 가 만든 폴더(LORA_A, LORA_B). 단계 3이 시험용 fake 어댑터 대신 이 중립 LoRA 패키지(vllm 서빙 설정)를 게시한다")
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
 PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(a.root); WORK = pathlib.Path(a.work)
@@ -161,22 +162,40 @@ def step2():
 
 def make_packages():
     """시험용 어댑터 + model-runtime FakeBackend 적재 + ModelPackageManifest 2건을 만든다."""
-    fx = ROOT / "test/fixtures/e2e-test-adapter"
-    # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다(v0.5.1)
-    c, info = http("GET", "ms", "/v1/info", INF_TOK()); assert c == 200, (c, info)
-    ex = info["serving_config_expectation"]
-    cfg = {"prompt_template_version": ex["prompt_template_versions"][0],
-           "decoding": {"constraint_mode": "constrained", "temperature": 0, "seed": 1000, "max_tokens": 512}, "max_attempts": 3,
-           "constraint": ex["constraint"], "output_contract": ex["output_contract"], "protection_policy_version": ex["protection_policy_versions"][0]}
-    # 대조: survey 이미지(model-runtime)의 fake_serving_configs 와 일치하는지
-    probe = "import json, model_runtime as m\nprint(json.dumps(m.fake_serving_configs()['LORA_A']))\n"
-    try:
-        ref = json.loads(docker_py(IMAGES["survey-service"], probe))
-        STATE["fake_cfg_vs_survey_image"] = sorted(k for k in cfg if ref.get(k) != cfg[k])
-    except Exception as e:
-        STATE["fake_cfg_vs_survey_image"] = "대조 실패 " + str(e)[:80]
-    d = {"cfgs": {r: cfg for r in ("LORA_A", "LORA_B")}, "hashes": {r: canonical.sha256_hash(cfg) for r in ("LORA_A", "LORA_B")},
-         "adapter_hash": {r: canonical.directory_hash(fx / r) for r in ("LORA_A", "LORA_B")}, "runtime": info["runtime_version"]}
+    if a.llm_package:
+        # 실제 LLM(vllm) 데모: 서빙 설정은 fake 기대값이 아니라 패키지(model-runtime v0.5.2 make_neutral_package.py)의 vllm 설정을 쓴다.
+        # 서버가 적재할 때 같은 설정인지 스스로 검사한다(ServingConfigMismatch). 여기서는 서버 /v1/info 와 대조해 STATE 에 남기기만 한다(적재 중일 수 있어 실패해도 계속).
+        root = pathlib.Path(a.llm_package); gm = {r: json.loads((root / r / "manifest.json").read_text()) for r in ("LORA_A", "LORA_B")}
+        adir = {r: root / r / "adapter" for r in gm}
+        for r in gm: assert canonical.directory_hash(adir[r]) == gm[r]["adapter_hash"], f"{r} 어댑터 해시가 패키지 매니페스트와 다르다"
+        try:
+            c, info = http("GET", "ms", "/v1/info", INF_TOK()); ex = info.get("serving_config_expectation") or {}
+            sc = gm["LORA_A"]["serving_config"]
+            STATE["llm_cfg_vs_server"] = {"backend": info.get("backend"), "constraint_backend": [sc["constraint"].get("backend"), (ex.get("constraint") or {}).get("backend")],
+                                          "template_ok": sc["prompt_template_version"] in ex.get("prompt_template_versions", [sc["prompt_template_version"]])}
+        except Exception as e:
+            STATE["llm_cfg_vs_server"] = "서버 대조 건너뜀(적재 중일 수 있다): " + str(e)[:80]
+        d = {"cfgs": {r: gm[r]["serving_config"] for r in gm}, "hashes": {r: gm[r]["serving_config_hash"] for r in gm},
+             "adapter_hash": {r: gm[r]["adapter_hash"] for r in gm}, "runtime": gm["LORA_A"]["lineage"]["model_runtime_version"]}
+        for r in gm: assert canonical.sha256_hash(d["cfgs"][r]) == d["hashes"][r], f"{r} 서빙 설정 해시가 패키지와 다르다"
+    else:
+        fx = ROOT / "test/fixtures/e2e-test-adapter"
+        # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다(v0.5.1)
+        c, info = http("GET", "ms", "/v1/info", INF_TOK()); assert c == 200, (c, info)
+        ex = info["serving_config_expectation"]
+        cfg = {"prompt_template_version": ex["prompt_template_versions"][0],
+               "decoding": {"constraint_mode": "constrained", "temperature": 0, "seed": 1000, "max_tokens": 512}, "max_attempts": 3,
+               "constraint": ex["constraint"], "output_contract": ex["output_contract"], "protection_policy_version": ex["protection_policy_versions"][0]}
+        # 대조: survey 이미지(model-runtime)의 fake_serving_configs 와 일치하는지
+        probe = "import json, model_runtime as m\nprint(json.dumps(m.fake_serving_configs()['LORA_A']))\n"
+        try:
+            ref = json.loads(docker_py(IMAGES["survey-service"], probe))
+            STATE["fake_cfg_vs_survey_image"] = sorted(k for k in cfg if ref.get(k) != cfg[k])
+        except Exception as e:
+            STATE["fake_cfg_vs_survey_image"] = "대조 실패 " + str(e)[:80]
+        d = {"cfgs": {r: cfg for r in ("LORA_A", "LORA_B")}, "hashes": {r: canonical.sha256_hash(cfg) for r in ("LORA_A", "LORA_B")},
+             "adapter_hash": {r: canonical.directory_hash(fx / r) for r in ("LORA_A", "LORA_B")}, "runtime": info["runtime_version"]}
+        adir = {r: fx / r for r in ("LORA_A", "LORA_B")}
     pk = {}
     for role in ("LORA_A", "LORA_B"):
         mf = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "package_id": f"pkg-{RID}-{role.lower().replace('_', '-')}", "version": "1", "role": role,
@@ -186,6 +205,7 @@ def make_packages():
               "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "turn_engine_version": "0.2.0",
                           "model_runtime_version": d["runtime"], "question_sets": STATE["qs"][-1:]},
               "eval_report_ref": f"eval-{RID}-{role.lower().replace('_', '-')}"}
+        if a.llm_package: mf["ext"] = gm[role].get("ext", {})   # 중립(학습하지 않은) 패키지 표시
         mf["content_hash"] = canonical.content_hash(mf); validate("ModelPackageManifest", mf)
         ref = {"id": mf["package_id"], "version": mf["version"], "content_hash": mf["content_hash"]}
         # 시험용 EvaluationReport: 지표 값은 고정된 시험 값이다(실제 평가가 아니다). METRICS.md의 이름을 쓴다
@@ -199,7 +219,7 @@ def make_packages():
                "metrics": [{"name": n, "group": g, "value": v, "n": 40, "higher_is_better": h, "unit": "ratio", "slice": {"kind": "ALL", "value": "ALL"}} for n, g, v, h in (A if role == "LORA_A" else B)],
                "notes": ["TEST: 시험용 고정 지표. 실제 평가가 아니다(E2E 단계 3 대역)"]}
         rep["content_hash"] = canonical.content_hash(rep); validate("EvaluationReport", rep)
-        pk[role] = (mf, fx / role, rep)
+        pk[role] = (mf, adir[role], rep)
     return pk
 
 def step3():
@@ -226,7 +246,9 @@ def step3():
         reg_ro = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); reg_ro.publish(pk["LORA_A"][0], pk["LORA_A"][1], b"{}"); raise AssertionError("읽기 토큰으로 게시됨")
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
     STATE["lora"] = refs; save()
-    rec(3, "TEST-SUB", f"학습 대신 시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct)와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(survey 이미지 fake_serving_configs와 다른 키: {STATE.get('fake_cfg_vs_survey_image')}). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2의 실제 데이터셋. model-lab 파이프라인은 실행하지 않음")
+    src_desc = ("학습하지 않은 중립 LoRA(model-runtime make_neutral_package.py, vllm 서빙 설정, lora_B=0이라 출력은 기반 모델과 같다)" if a.llm_package
+                else "시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct)")
+    rec(3, "TEST-SUB", f"학습 대신 {src_desc}와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(survey 이미지 fake_serving_configs와 다른 키: {STATE.get('fake_cfg_vs_survey_image')}). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2의 실제 데이터셋. model-lab 파이프라인은 실행하지 않음")
 
 def decisions_for(gate_read, subj):
     return gate_read.find_decisions(question_set=subj["question_set"], lora_a=subj["lora_a"], lora_b=subj["lora_b"])[0]

@@ -38,6 +38,8 @@ for name in ("survey-service", "release-gate", "question-authoring", "ops-feedba
     extra = ""
     if name == "survey-service": extra = f": ready={d.get('ready')} active_release={d.get('active_release')} problems={d.get('problems')}"
     if name == "release-gate": extra = f": judging={d.get('judging')} awaiting_approval={d.get('awaiting_approval')}"
+    if name == "survey-service" and d.get("inference"): extra += f" inference={json.dumps(d.get('inference'), ensure_ascii=False)[:160]}"
+    if name == "model-serving": extra = f": {d.get('status')} 사유={d.get('reason') or '-'} (not ready + 사유 '백엔드를 올리는 중' 이면 모델 내려받기·적재 중)"
     if c == 0: extra = f" ({d.get('error')})"
     print(f"  {name:20} /readyz {c}{extra}")
 PY
