@@ -17,7 +17,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" GATEWAY_PORT=
-export SURVEY_SCHEMA_DIR="$DEPLOY_ROOT/build/survey-schema" OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
+export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
 SEC_NAMES=(); SEC_SECS=(); SEC_CUR=""; SEC_T0=$SECONDS

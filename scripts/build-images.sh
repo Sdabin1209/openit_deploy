@@ -96,9 +96,6 @@ if want model-serving; then
     --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$(hostpath "$MS")" >/dev/null
   record model-serving "$img" "$c"
 fi
-# 추론 서버가 읽는 문진 스키마(이미지에 없다): survey-service 사본의 schema/ 를 읽기 전용으로 마운트한다
-rm -rf "$DEPLOY_ROOT/build/survey-schema"; mkdir -p "$DEPLOY_ROOT/build/survey-schema"
-cp -r "$CTX/survey-service/schema/CONTRACT_VERSION" "$CTX/survey-service/schema/schemas" "$DEPLOY_ROOT/build/survey-schema/"
 
 if want kiosk-frontend; then
   # 키오스크 앱+직원 콘솔 정적 이미지(태그 없음 = main). 빌드 컨텍스트는 git archive 사본

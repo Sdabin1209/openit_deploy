@@ -31,6 +31,7 @@ volumes:          # 저장소마다 볼륨 하나, 쓰기는 소유 서비스만
   qa-data:        # 문항 저장소 questions.sqlite3
   ops-data:       # log.db(원본 Trace), failures.db(실패 사례)
   gate-data:      # 릴리스 레지스트리 registry.sqlite3 + releases/
+  schema-data:    # 문진 스키마 사본(survey-service 이미지의 패키지에서 model-serving-schema가 꺼낸다). 워크스페이스 없이 뜨게 하려는 것
   serving-data:   # model-serving: 게이트에서 받은 번들 캐시(다시 받을 수 있어 백업 대상 아님)
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
 
@@ -129,6 +130,17 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
+  model-serving-schema: # 추론 서버가 읽는 문진 스키마(이미지에 없음)를 survey-service 이미지(digest 고정)의 openit-survey-schema 패키지에서 꺼내 놓는 일회성 작업
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
+    user: "0:0"
+    command: ["python", "-c", "import shutil, survey_schema; shutil.copytree(str(survey_schema.contract_version_dir(1)), '/out', dirs_exist_ok=True)"]
+    cap_drop: ["ALL"]
+    cap_add: ["DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    volumes: [schema-data:/out]
+    restart: "no"
+
   model-serving:        # 추론 서버(model-runtime, CPU/fake 변형). survey-service가 I9(HTTP)로 부른다
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving@${MODEL_SERVING_DIGEST:?locks/images.lock}
@@ -137,8 +149,10 @@ services:
       - ${SECRETS_DIR:-./secrets}/model-serving.env             # MODEL_RUNTIME_TOKENS, MODEL_RUNTIME_RELEASE_TOKEN (비밀)
     volumes:
       - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다, v0.5.1)
-      - ${SURVEY_SCHEMA_DIR:-./build/survey-schema}:/opt/survey-schema:ro   # 문진 스키마(이미지에 없음). build-images.sh가 survey-service 사본에서 만든다
+      - schema-data:/opt/survey-schema:ro      # 문진 스키마(이미지에 없음): model-serving-schema가 채운다
     networks: [serving]
+    depends_on:
+      model-serving-schema: {condition: service_completed_successfully}
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
