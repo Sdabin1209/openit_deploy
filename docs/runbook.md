@@ -2,20 +2,33 @@
 
 경로는 모두 이 리포지토리 기준이다. WSL에서는 데몬에 닿는 `docker`(통합)를 쓰고, 안 되면 `docker.exe`를 쓴다(`scripts/lib.sh`가 고른다).
 
-## 1. 처음 설치 (서버)
+## 1. 설치: 두 가지 경우
+
+유일한 전제는 **형제 폴더 배치**다: deploy의 상위 폴더에 리포들이 나란히 있고 폴더 이름이 `head/workspace.yaml`과 같다. 루트 폴더 이름과 위치는 자유다(절대 경로는 어디에도 박혀 있지 않다). 확인: `bash scripts/check-relocatable.sh`(정적 검사 + 다른 루트 이름에 clone해 `e2e.sh --fast`).
+
+### (A) 개발·CI 워크스페이스 (소스가 있고 빌드·E2E를 한다)
 
 ```
+git clone git@github.com:Sdabin1209/openit_head.git <루트>/head     # 루트 폴더 이름은 자유
+bash <루트>/head/setup.sh                                            # workspace.yaml 의 형제 리포를 모두 clone
+cd <루트>/deploy
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-bash scripts/lock-third-party.sh          # gateway, registry, 유틸 이미지를 받아 digest 고정
-bash scripts/registry.sh up               # 로컬 레지스트리 (운영 127.0.0.1:5000)
-bash scripts/build-images.sh              # 영역 이미지 빌드 (build/ctx 사본에서)
-bash scripts/publish-images.sh            # push + digest 잠금 갱신 (locks/images.lock, 이전 것은 locks/history)
-bash scripts/gen-secrets.sh               # secrets/ (gitignore) 에 토큰 생성
-cp .env.example .env                      # DEPLOY_REGISTRY 등 확인
-bash scripts/up.sh deploy                 # 운영 구성. 주의: 아래 "알려진 한계"
+bash scripts/lock-third-party.sh          # gateway, registry, 유틸 이미지를 받아 digest 고정 (이미 고정돼 있으면 건너뜀)
+bash scripts/e2e.sh                       # 빌드 + 임시 레지스트리 + 전체 E2E (인도 전 필수). 개발 중에는 --fast --reuse-build
 ```
 
-운영 구성(`compose.yaml`만)의 상태: 모든 영역 사이 호출이 HTTP로 연결되어 5개 서비스가 뜬다. 다만 (1) release-gate는 통과 기준(O11)이 없어 `can_pass:false`(정상)이고, (2) survey-service는 활성 릴리스가 없는 동안 `/readyz` 503 `no_active_release`, (3) 모델 백엔드는 `fake`뿐이다(CR-D08), (4) 출고는 사람 승인이다(D53): 자동 검사를 통과한 제출은 `AWAITING_APPROVAL`에서 기다리고(`/readyz`의 `awaiting_approval`), 승인자(역할 release-approver)가 `GET /v1/submissions/{id}/review-report`를 보고 `POST /v1/approvals`로 결정한다. 승인 전에는 PASS가 없다. ops-feedback 잡은 설정 파일(`OPS_JOB_CONFIG`, 사용자 결정 값)이 있어야 돈다.
+수동 순서: `registry.sh up` -> `build-images.sh` -> `publish-images.sh`(잠금 `locks/images.lock` 갱신) -> `gen-secrets.sh` -> `.env.example`을 `.env`로 복사해 `DEPLOY_REGISTRY` 확인 -> `up.sh deploy`.
+
+### (B) 운영·테스트 서버 (소스 없이 deploy 리포 + 레지스트리의 digest 이미지로 띄우는 것이 장기 형태)
+
+현재 구현 상태(실제로 확인함: `bash scripts/check-standalone.sh`):
+- **되는 것**: 형제 리포·`build/`·`.venv`가 없는 deploy 리포 사본 하나와, 잠금(`locks/images.lock`)의 digest 이미지를 가진 레지스트리만으로 `gen-secrets.sh` -> `up.sh`가 운영 구성(compose.yaml만)을 끝까지 띄운다(모든 컨테이너 healthy). `up.sh`/`check-compose.sh`/`compose.yaml`은 워크스페이스나 `build/`를 읽지 않는다(문진 스키마는 survey-service 이미지의 패키지에서 `model-serving-schema`가 꺼내 `schema-data` 볼륨에 둔다). 롤백(`rollback.sh`)과 백업·복구도 deploy 리포 안의 파일만 쓴다.
+- **서버에서 해야 하는 일**: `python3`, `docker compose`, 외부 이미지(gateway, registry, 유틸) 받기(`lock-third-party.sh`가 digest를 이미 고정했으면 digest로 pull), `scripts/gen-secrets.sh`로 비밀 생성(`secrets/`), `.env`에 `DEPLOY_REGISTRY` 지정, 로컬 레지스트리 기동(`registry.sh up`, 운영 `127.0.0.1:5000`).
+- **아직 안 되는 것(미정)**: (1) 영역 이미지가 서버의 레지스트리에 **들어가는 길**. 목표는 영역 CI가 `publish-image.sh`로 올리는 것([ci.md](ci.md))인데 CI가 서버 레지스트리에 닿는 방법(self-hosted runner, VPN, 터널)과 레지스트리 TLS·인증·도메인이 정해지지 않았다. 지금 레지스트리에 이미지를 채우는 방법은 (A)의 `publish-images.sh`뿐이다. 레지스트리 볼륨을 다른 서버로 옮기는 절차(이관)도 정하지 않았다. (2) 잠금 파일(`locks/images.lock`)을 서버가 받는 방법(deploy 리포 pull인지)이 정해지지 않았다. (3) 운영 도메인·TLS, 사람 계정 인증 방식, 백업 설정(O16)은 사용자 결정 전이다.
+
+### 운영 구성에서 알려진 상태
+
+운영 구성(`compose.yaml`만)에서는 모든 영역 사이 호출이 HTTP로 연결되어 서비스가 뜬다. 다만 (1) 출고는 사람 승인이다(D53): 자동 검사를 통과한 제출은 `AWAITING_APPROVAL`에서 기다리고(`/readyz`의 `awaiting_approval`), 승인자(역할 release-approver)가 `GET /v1/submissions/{id}/review-report`를 보고 `POST /v1/approvals`로 결정한다(게이트웨이 `/admin/`). 승인 전에는 PASS가 없다. (2) survey-service는 활성 릴리스가 없는 동안 `/readyz` 503 `no_active_release`다(정상). (3) 모델 백엔드는 `fake`뿐이다(CR-D08, GPU 변형은 서빙 서버 밖). (4) ops-feedback 잡은 설정 파일(`OPS_JOB_CONFIG`, 사용자 결정 값)이 있어야 돈다. (5) HTTPS와 사람 계정 인증 방식은 미정이다(개발·E2E는 기본 인증).
 
 ## 2. 적용과 롤백 (코드 축)
 

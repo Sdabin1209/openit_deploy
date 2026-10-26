@@ -116,3 +116,9 @@
 admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-approver / reviewer) 매핑, 승인 경로와 검토 경로를 역할로 분리(다른 역할은 403, 인증 없음은 401), 검토 경로는 ops-feedback 읽기/reviewer 쓰기 토큰. E2E 7g 추가. `--fast` 59 PASS / 0 FAIL, 전체 모드 87 PASS / 0 FAIL. 미확인: 응답 reviewed_by(ops-feedback 작업 대기), 화면 렌더링. CR-D20.
 
 열째 구간 보충: ops-feedback bf210fe 재빌드·잠금 갱신, E2E 7h를 REAL로(검토 응답·I7 조회의 reviewed_by가 인증 계정, 위조 X-Openit-User 무시; 승인 쪽 approver_id도 4g에서 REAL). `--fast` 59 PASS / 0 FAIL, 전체 모드 87 PASS / 0 FAIL.
+
+## 열한째 구간: 다른 서버·PC에서도 도는지 (경로 고정 금지)
+
+- `scripts/check-relocatable.sh`: (a) 형제 리포 13개의 git 추적 파일에 절대 경로·워크스페이스 이름·호스트 이름이 없음(허용 목록 `relocatable-allow.txt`, 지금 0건, 검사 정규식은 양성 시료로 확인), (b) 임시 `ws-relocate-XXXX/`에 13개 리포를 로컬 clone한 뒤 그 안의 deploy에서 `e2e.sh --fast` 통과(60 PASS / 0 FAIL), 끝나면 임시 폴더 삭제.
+- `scripts/check-standalone.sh`: 형제 리포·`build/`·`.venv` 없는 deploy 리포 사본 + 임시 레지스트리의 digest 이미지만으로 `gen-secrets.sh` -> `up.sh`가 운영 구성을 띄운다(통과). 이를 위해 추론 서버의 문진 스키마를 워크스페이스의 `build/survey-schema` 대신 survey-service 이미지의 패키지에서 꺼내는 일회성 작업(`model-serving-schema`)으로 바꿨다.
+- runbook 1절을 (A) 개발·CI 워크스페이스, (B) 운영·테스트 서버로 나눠 현재 사실로 고쳤다. (B)에서 아직 안 되는 것: 영역 이미지가 서버 레지스트리에 들어가는 길(CI 접근 방식, TLS·인증), 잠금 파일 전달, 레지스트리 이관 절차 -- 모두 미정.
