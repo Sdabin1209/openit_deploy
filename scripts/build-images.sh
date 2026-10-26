@@ -5,13 +5,37 @@
 #    읽으므로 build/ctx/<이름>/ 에 bare 사본을 둔다(태그 시점 소스만 쓰인다). 태그는 각 영역 스크립트의 기본값을 따른다.
 # 이미지 이름: survey-service question-authoring ops-feedback release-gate model-registry(소스는 model-lab 리포지토리)
 # 결과: build/images.env (영역 로컬이름 커밋). 레지스트리에 올리고 digest 잠금을 만드는 일은 publish-images.sh.
-# 사용: build-images.sh [이름 ...]   (비우면 전부)
+# 사용: build-images.sh [--gpu [--yes-large]] [이름 ...]   (이름이 없으면 기본 8개 전부)
+#  --gpu        model-serving 의 GPU 변형을 별도 이미지 model-serving-gpu 로 빌드한다(약 13GB, 기본 빌드에는 넣지 않는다).
+#               --gpu 만 주면 GPU 이미지만 빌드한다(다른 빌드 결과를 지우지 않는다). 빌드 전에 docker system df 로 사용량과 추가 용량을 안내한다.
+#  --yes-large  비대화형(터미널이 아닐 때)에서 큰 빌드를 진행한다는 확인. 없으면 비대화형은 멈춘다
 #  BUILD_SUFFIX: 시험 전용. COMMIT 라벨 뒤에 붙여 다른 digest를 만든다(롤백 시험). 운영에는 쓰지 않는다.
 set -euo pipefail
+DEPLOY_NO_DOCKER=1   # 옵션·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
 source "$(dirname "$0")/lib.sh"
 CTX="$DEPLOY_ROOT/build/ctx"
-ONLY=" $* "
+GPU=0; YES_LARGE=0; NAMES=()
+for a in "$@"; do case "$a" in
+  --gpu) GPU=1;; --yes-large) YES_LARGE=1;;
+  -h|--help) sed -n '8,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+  -*) die "알 수 없는 옵션: $a (사용: build-images.sh [--gpu [--yes-large]] [이름 ...])";;
+  *) NAMES+=("$a");; esac; done
+detect_docker
+if [ $GPU = 1 ]; then
+  [ ${#NAMES[@]} -gt 0 ] || NAMES=(model-serving-gpu)   # --gpu 단독: GPU 이미지만
+  case " ${NAMES[*]} " in *" model-serving-gpu "*) ;; *) NAMES+=(model-serving-gpu);; esac
+fi
+ONLY=" ${NAMES[*]:-} "
 want() { [ "$ONLY" = "  " ] || [[ "$ONLY" == *" $1 "* ]]; }
+want_gpu() { [[ "$ONLY" == *" model-serving-gpu "* ]]; }   # 기본(전부) 빌드에는 들어가지 않는다
+if want_gpu; then
+  echo "== GPU 이미지(model-serving-gpu) 빌드 전 도커 디스크 사용량"
+  "$DOCKER" system df || true
+  echo "!! 이 빌드는 이미지 약 13GB(측정 전, model-runtime 안내값)를 추가한다. 도커 디스크 위치의 여유를 먼저 확인하라 (docs/RUN.md)."
+  if [ $YES_LARGE = 1 ]; then :
+  elif [ -t 0 ]; then printf '계속하려면 y: '; read -r ans; [ "$ans" = y ] || { echo "취소했다." >&2; exit 1; }
+  else die "비대화형이다. 약 13GB 빌드를 진행하려면 --yes-large 를 명시하라"; fi
+fi
 SUFFIX=${BUILD_SUFFIX:-}
 if [ "$ONLY" = "  " ]; then rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"; fi
 mkdir -p "$CTX"
@@ -115,4 +139,19 @@ if want admin-console; then
   c=$(commit_of admin-console); img="deploy-build/admin-console:$c"
   "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACTS="$BC" --build-arg SURVEY_SCHEMA=n/a "$CTX/admin-console" >/dev/null
   record admin-console "$img" "$c"
+fi
+
+if want_gpu; then
+  # 추론 서버 GPU 변형(D72/D73): 같은 Dockerfile 의 VARIANT=gpu. 문진 스키마 내장. 프로파일은 이미지 안 /app/profiles/ (model-runtime $DEPLOY_MR_TAG_GPU).
+  MSG="$CTX/model-serving-gpu"; rm -rf "$MSG" "$CTX/bc-folder-gpu" "$CTX/ms-schema-gpu"; mkdir -p "$MSG" "$CTX/bc-folder-gpu" "$CTX/ms-schema-gpu"
+  git -C "$WORKSPACE/model-runtime" archive "$DEPLOY_MR_TAG_GPU" | tar -x -C "$MSG"
+  git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder-gpu"
+  git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema-gpu"
+  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$DEPLOY_MR_TAG_GPU^{commit}")$SUFFIX; img="deploy-build/model-serving-gpu:$c"
+  echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG_GPU)"
+  "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
+    --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION=v0.2.0 "$MSG" >/dev/null
+  record model-serving-gpu "$img" "$c"
+  echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
 fi

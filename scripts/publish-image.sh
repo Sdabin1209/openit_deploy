@@ -17,7 +17,7 @@ usage() {
 영역 CI가 이미지 하나를 올릴 때 쓴다. 로컬에서 build-images.sh 로 만든 이미지 전체를 올리려면 publish-images.sh(복수)를 쓴다.
 
 사용: scripts/publish-image.sh <서비스 이름> <이미지 ID|이미지 이름|tar 파일> [--registry host:port]
-  서비스 이름: $SERVICES
+  서비스 이름: $SERVICES (선택: $SERVICES_OPTIONAL)
   레지스트리: --registry, 없으면 환경 변수 DEPLOY_REGISTRY, 없으면 state/registry.env
   환경: DEPLOY_LOCK (기본 locks/images.lock)
 종료 코드: 0 성공(또는 이미 같은 digest), 2 사용법/서비스 이름이 목록에 없음, 3 필수 라벨 누락, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패, 1 Docker 실행 파일/데몬에 닿지 않음
@@ -29,7 +29,7 @@ SVC="${1:-}"; SRC="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift $#; fi
 REG="${DEPLOY_REGISTRY:-}"
 while [ $# -gt 0 ]; do case "$1" in --registry) REG="${2:-}"; shift 2;; -h|--help) usage; exit 0;; *) echo "알 수 없는 인자: $1" >&2; usage >&2; exit 2;; esac; done
 [ -n "$SVC" ] && [ -n "$SRC" ] || { usage >&2; exit 2; }
-case " $SERVICES " in *" $SVC "*) ;; *) echo "거부: 서비스 이름 '$SVC' 이(가) 목록에 없다 ($SERVICES)" >&2; exit 2;; esac
+case " $SERVICES $SERVICES_OPTIONAL " in *" $SVC "*) ;; *) echo "거부: 서비스 이름 '$SVC' 이(가) 목록에 없다 ($SERVICES)" >&2; exit 2;; esac
 if [ -z "$REG" ]; then
   RF="${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"
   [ -f "$RF" ] && REG=$(sed -n 's/^DEPLOY_REGISTRY=//p' "$RF")

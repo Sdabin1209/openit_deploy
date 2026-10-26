@@ -35,6 +35,7 @@ describe() { # 볼륨 이름(프로젝트 접두 제거) -> 들어 있는 것
     survey-data) echo "문진 세션 DB, 발신함, 릴리스 작업 폴더";;
     qa-data) echo "문항 저장소(questions.sqlite3)";;
     ops-data) echo "원본 Trace 로그, 실패 사례 DB";;
+    hf-cache) echo "Hugging Face 모델 캐시(다시 받을 수 있음, 약 3GB 측정 전)";;
     gate-data) echo "릴리스 이력(registry.sqlite3)과 번들(releases/), 승인 기록";;
     models-data) echo "모델 패키지(어댑터)";;
     serving-data) echo "추론 서버 번들 캐시(다시 받을 수 있음)";;

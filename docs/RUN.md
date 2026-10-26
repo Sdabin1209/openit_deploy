@@ -155,6 +155,36 @@ bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모�
 
 **위치 독립 시험.** `bash scripts/test-inference-location.sh` : 추론 서버(CPU/fake)를 별도 컴포즈 프로젝트(`deploy-e2e-loc-inf`)로 띄우고, 본 구성이 `--external-inference`로 그 서버를 불러 E2E 단계 1~5를 통과하는지 본다(서버 중단·복구는 건너뛴다: Docker 배정 포트가 재시작 뒤 바뀔 수 있다). 호스트 포트는 모두 Docker가 배정하고, 먼저 127.0.0.1 게시로 시도하며 컨테이너가 닿지 못할 때만 시험 동안 0.0.0.0으로 올린다. 자원은 `deploy-e2e-loc*` 접두사이며 끝나면 지운다(`--keep`, `--clean`). 이 PC에서는 실행하지 못했다(미확인). 서버에서 한 번 돌려 확인해야 한다.
 
+## 7-2. GPU로 실제 LLM 쓰기 준비 (D72/D73)
+
+이 절은 **준비 단계**(이미지 빌드, compose override, 점검)다. 릴리스에 연결해 데모에서 실제 LLM으로 문진하는 것(`demo.sh --llm`)은 다음 단위이며 아직 없다. 이 PC에서는 Docker가 꺼져 있어 아래 명령을 **실행해 확인하지 못했다**(미확인). 서버(GPU)에서 확인해야 한다.
+
+| 항목 | 값 | 상태 |
+| --- | --- | --- |
+| GPU 이미지(`model-serving-gpu`) 용량 | 약 13GB | model-runtime의 안내값. 서버에서 측정 전 |
+| HF 캐시 볼륨(`hf-cache`) 용량 | 약 3GB (기반 모델 Qwen/Qwen2.5-1.5B-Instruct) | 측정 전 |
+| 첫 기동 시간(모델 내려받기+적재) | 모름 | 측정 전. 헬스체크 start_period를 900초로 넉넉히 잡았다(잠정) |
+| 프로파일 | `/app/profiles/gpu-12g.json`(12GB급, 기본), `rtx4090-24g.json`(24GB) | 이미지 안. `DEMO_LLM_PROFILE`로 고른다 |
+
+순서:
+
+```
+bash scripts/doctor.sh --up --llm               # GPU 컨테이너 접근, 프로파일 대 GPU 메모리, 도커 디스크, huggingface.co 도달
+bash scripts/build-images.sh --gpu              # GPU 변형만 빌드(model-runtime v0.5.2, 문진 스키마 내장). 빌드 전 docker system df 와 약 13GB 안내.
+                                                #   비대화형이면 --yes-large 를 명시해야 진행한다
+bash scripts/publish-images.sh model-serving-gpu   # 레지스트리에 올리고 잠금에 MODEL_SERVING_GPU_DIGEST 기록
+```
+
+- 기본 빌드(`build-images.sh`, 옵션 없음)에는 GPU 이미지가 들어가지 않는다. 기존 8개 서비스 흐름은 그대로다. 옵션 없이 `publish-images.sh`를 부르면 `build/images.env`에 GPU 이미지가 있을 때 그것도 올라가므로(약 13GB) 이름을 지정하는 편이 안전하다.
+- `compose.llm.yaml`: model-serving을 GPU 이미지·`MODEL_RUNTIME_BACKEND=vllm`·`MODEL_RUNTIME_PROFILE`로 바꾸고, GPU 장치 1개 예약(`deploy.resources.reservations.devices`), 이름 있는 볼륨 `hf-cache`(`HF_HOME`)를 붙인다. 쓰는 법(릴리스 연결 전의 수동 확인용): `docker compose -p <프로젝트> -f compose.yaml -f compose.llm.yaml --env-file locks/images.lock --env-file state/registry.env up -d`. 기본 `compose.yaml`은 바뀌지 않았다.
+- **조합 규칙.** `compose.llm.yaml`은 `compose.external-inference.yaml`과 함께 쓰지 않는다(그쪽은 이 구성의 model-serving을 끈다). 다른 GPU 서버에 두려면 그 서버에서 `compose.inference.yaml`에 `INFERENCE_IMAGE=<GPU 이미지>`, `INFERENCE_BACKEND=vllm`과 프로파일을 준다. `compose.test.yaml`(가짜 백엔드)과 같이 쓰면 `-f` 순서에서 `compose.llm.yaml`이 뒤에 와야 한다.
+- **인터넷.** 첫 기동은 huggingface.co에서 모델을 받는다. 오프라인이면 `hf-cache` 볼륨을 미리 채우고 `HF_HUB_OFFLINE=1`을 준다(이 볼륨 채우는 절차는 정리하지 않았다).
+- 읽기 전용 루트에서 vLLM이 쓸 캐시 위치가 더 필요한지는 GPU 서버에서 확인 전이다(`XDG_CACHE_HOME`을 볼륨 안으로 두었다).
+
+**용량과 정리.**
+- 확인: `docker system df`(이미지·볼륨·빌드 캐시의 크기와 회수 가능량). Docker Engine(리눅스)은 보통 `/var/lib/docker`(`docker info --format '{{.DockerRootDir}}'`), Docker Desktop은 VM 디스크 안이라 이 셸의 `df`로 보이지 않는다(설정의 Resources > Disk image 위치).
+- 지울지는 사용자가 판단한다. GPU 이미지: `docker image ls 'deploy-build/model-serving-gpu'`로 보고 필요 없으면 `docker rmi <이미지>`(레지스트리에 올렸다면 레지스트리 볼륨에도 있다: `scripts/down.sh <레지스트리 프로젝트> --registry --purge`는 레지스트리 볼륨까지 지운다). HF 캐시: 프로젝트를 `--purge`로 내리면 `<프로젝트>_hf-cache` 볼륨도 지워지고 다음 기동에서 다시 받는다. 빌드 캐시: `docker builder prune`.
+
 ## 8. 흔한 문제
 
 | 증상 | 원인·조치 |

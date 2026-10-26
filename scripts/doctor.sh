@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 사전 점검(읽기 전용, 비밀 값을 출력하지 않는다). 깨끗한 머신에서 e2e.sh / up.sh 전에 돈다. 항목마다 OK/WARN/FAIL 과 해결 방법 한 줄을 낸다.
 # 사용: scripts/doctor.sh [--up] [--inference <URL>]
+#   --llm              실제 LLM(GPU) 준비: GPU 컨테이너 접근, 프로파일 VRAM 대 GPU VRAM, 도커 디스크, huggingface.co 도달 (환경 변수 DEMO_LLM_PROFILE)
 #   --inference <URL>  외부 추론 서버(D72)에 이 호스트에서 닿는지: /healthz, /readyz, 토큰이 있으면 /v1/info (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE, 값은 출력하지 않는다)
 #   기본: 빌드·E2E 에 필요한 전부(소스 워크스페이스 포함).  --up: 서버에서 띄우기만 할 때(git·형제 리포·태그·빌드 의존 점검을 건너뛴다)
 # e2e.sh / up.sh 는 시작에서 이것을 부르고 FAIL 이 있으면 멈춘다. 건너뛰기: DEPLOY_SKIP_DOCTOR=1
@@ -8,13 +9,14 @@
 set -uo pipefail
 DEPLOY_NO_DOCKER=1
 source "$(dirname "$0")/lib.sh"
-UP_ONLY=0; INF_URL=""
+UP_ONLY=0; INF_URL=""; LLM=0
 while [ $# -gt 0 ]; do case "$1" in
   --up) UP_ONLY=1; shift;;
+  --llm) LLM=1; shift;;
   --inference) [ $# -ge 2 ] || { echo "--inference 에는 URL이 필요하다" >&2; exit 2; }; INF_URL=$2; shift 2;;
   --inference=*) INF_URL=${1#*=}; shift;;
-  -h|--help) sed -n '3,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--inference <URL>])" >&2; exit 2;; esac; done
+  -h|--help) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
 case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
 FAILS=0; WARNS=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
@@ -113,6 +115,46 @@ if [ $UP_ONLY = 0 ]; then
   # --- 고정 포트 금지
   if grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT/compose.test.yaml" >/dev/null 2>&1; then fail "compose.test.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
 fi
+# --- 실제 LLM(GPU) 준비(D72/D73): 읽기 전용 점검. 컨테이너에서 GPU가 보여야 하고, 프로파일이 GPU 메모리에 맞아야 한다
+if [ $LLM = 1 ]; then
+  echo "== 실제 LLM(GPU) 준비"
+  CUDA_IMG="nvidia/cuda:12.4.1-base-ubuntu22.04"
+  PROFILE="${DEMO_LLM_PROFILE:-/app/profiles/gpu-12g.json}"
+  if [ -z "$D" ]; then fail "docker 데몬을 쓸 수 없어 GPU 점검을 건너뛴다" "위의 docker 항목을 먼저 해결"
+  else
+    GPU_OUT=$("$D" run --rm --gpus all "$CUDA_IMG" nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>&1); GRC=$?
+    if [ $GRC = 0 ] && [ -n "$GPU_OUT" ]; then
+      ok "GPU 컨테이너 접근: $(echo "$GPU_OUT" | head -1 | tr -d '\r') MiB$( [ "$(echo "$GPU_OUT" | wc -l)" -gt 1 ] && echo " 외 $(( $(echo "$GPU_OUT" | wc -l) - 1 ))장")"
+      MAXMIB=$(echo "$GPU_OUT" | tr -d '\r' | awk -F', *' '{gsub(/[^0-9]/,"",$NF); if($NF+0>m)m=$NF+0} END{print m+0}')
+      NEEDG=$(basename "$PROFILE" | sed -n 's/.*-\([0-9][0-9]*\)g\.json$/\1/p')
+      if [ -z "$NEEDG" ]; then warn "프로파일 이름($PROFILE)에서 필요한 VRAM(예: -12g)을 읽지 못해 GPU 메모리 비교를 건너뛴다" "DEMO_LLM_PROFILE 을 gpu-12g.json 처럼 크기가 이름에 든 프로파일로 지정하거나, 프로파일의 gpu_memory_utilization 으로 직접 판단"
+      elif [ "$MAXMIB" -lt $(( NEEDG * 1024 * 95 / 100 )) ]; then fail "프로파일 $(basename "$PROFILE") 는 ${NEEDG}GB급인데 GPU 메모리는 ${MAXMIB}MiB" "더 작은 GPU용 프로파일을 DEMO_LLM_PROFILE 로 지정(model-runtime 의 profiles/ 안내)하거나 더 큰 GPU 사용"
+      else ok "프로파일 $(basename "$PROFILE") (${NEEDG}GB급) <= GPU 메모리 ${MAXMIB}MiB (프로파일 이름의 크기 기준, 실제 사용량은 측정 전)"; fi
+    else
+      if echo "$GPU_OUT" | grep -qi "pull access denied\|manifest unknown\|no such host\|timeout\|TLS\|dial tcp"; then
+        fail "GPU 점검용 이미지 $CUDA_IMG 를 받지 못했다" "인터넷(Docker Hub) 접근을 확인하거나 이 이미지를 미리 받아 둔다: docker pull $CUDA_IMG"
+      elif [ $WSL = 1 ]; then
+        fail "GPU 컨테이너를 실행하지 못했다 (docker run --gpus all $CUDA_IMG nvidia-smi)" "Windows에 WSL을 지원하는 NVIDIA 드라이버를 설치하고, Docker Desktop의 WSL2 백엔드에서 GPU 지원이 켜져 있는지 확인(Docker Desktop 문서의 GPU support)"
+      else
+        fail "GPU 컨테이너를 실행하지 못했다 (docker run --gpus all $CUDA_IMG nvidia-smi)" "리눅스: NVIDIA 드라이버와 nvidia-container-toolkit 설치 후 sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+      fi
+    fi
+    # 도커 디스크: GPU 이미지 약 13GB + HF 캐시 약 3GB (서버에서 측정 전). 회수 가능량을 함께 보인다
+    DF=$("$D" system df --format '{{.Type}}: {{.Size}} (회수 가능 {{.Reclaimable}})' 2>/dev/null | tr '\n' ';')
+    [ -n "$DF" ] && echo "  [정보] docker system df -- $DF"
+    ROOT=$("$D" info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '\r')
+    AV=""; [ -n "$ROOT" ] && [ -d "$ROOT" ] && AV=$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')
+    if [ -z "$AV" ]; then warn "도커 저장 위치의 여유 디스크를 이 셸에서 읽지 못했다 (Docker Desktop은 VM/윈도 드라이브 안)" "GPU 이미지 약 13GB + HF 캐시 약 3GB(측정 전)가 들어갈 여유를 도커 디스크 위치에서 직접 확인(docs/RUN.md). 줄이기: docker system df 로 회수 가능량 확인 후 사용자가 판단해 정리"
+    elif [ "$AV" -lt 25 ]; then warn "도커 저장 위치 ($ROOT) 여유 약 ${AV}GB (권장 25GB 이상)" "공간 확보: docker system df 로 회수 가능량을 보고 사용자가 판단해 정리 (docs/RUN.md)"
+    else ok "도커 저장 위치 ($ROOT) 여유 약 ${AV}GB"; fi
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    HC=$(curl -s -o /dev/null -m 8 -w '%{http_code}' https://huggingface.co 2>/dev/null || true)
+    if [ -n "$HC" ] && [ "$HC" != 000 ]; then ok "huggingface.co 도달 (HTTP $HC): 첫 기동의 모델 내려받기(약 3GB)에 필요"
+    else warn "huggingface.co 에 닿지 않는다" "인터넷/프록시를 확인하거나, 오프라인이면 hf-cache 볼륨을 미리 채우고 HF_HUB_OFFLINE=1 (docs/RUN.md)"; fi
+  else warn "curl 이 없어 huggingface.co 도달을 확인하지 못했다" "curl 설치(선택)"; fi
+fi
+
 # --- 외부 추론 서버 도달성(D72): 호출자(이 호스트)에서 본다. 서버가 release-gate 에 닿는 것은 서버 쪽 조건이라 여기서 대신 확인하지 못한다.
 if [ -n "$INF_URL" ]; then
   echo "== 외부 추론 서버 $INF_URL"
