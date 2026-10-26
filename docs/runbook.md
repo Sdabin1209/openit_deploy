@@ -35,7 +35,19 @@
 
 `bash scripts/demo.sh up`(승인을 사람이 해 보려면 `--stop-before-approval`, 이후 `demo.sh activate`), `status`, `down`, `reset`. 상시 구성과 따로 `deploy-demo` 프로젝트로 뜬다. 자세한 안내와 한계는 [SETUP.md](SETUP.md) "데모" 절.
 
-## 3. 상태 보기
+## 3. 상태 보기와 내리기
+
+수명주기는 한 세트다: 올리기 `up.sh` / 상태 `status.sh` / 내리기 `down.sh`. `dc` 는 `scripts/lib.sh` 안의 셸 함수라 터미널에서 직접 칠 수 없다. 아래 스크립트를 쓴다.
+
+```
+bash scripts/status.sh                          # deploy, deploy-demo, deploy-registry 의 컨테이너·gateway 주소·/readyz 요약
+bash scripts/down.sh deploy --stop              # 멈추기만(이어 가기: docker compose -p deploy start)
+bash scripts/down.sh deploy                     # 컨테이너·네트워크 제거, 데이터 볼륨 유지(= --remove)
+bash scripts/down.sh deploy --purge             # 볼륨까지 삭제(되돌릴 수 없음): 목록을 보이고 프로젝트 이름을 쳐야 진행
+bash scripts/down.sh deploy --registry          # 로컬 레지스트리도 내림(이미지는 볼륨에 남음)
+```
+
+허용 프로젝트 이름은 `deploy`·`deploy-*` 뿐이다. 비대화형 삭제는 `--purge --yes-purge-<프로젝트>` 를 명시해야 한다. 직접 확인하려면:
 
 ```
 docker compose -p deploy ps                                     # healthy 여부

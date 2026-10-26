@@ -95,24 +95,7 @@ case "$CMD" in
     guide ;;
   status)
     [ -f "$W/registry.env" ] || { echo "데모가 떠 있지 않다."; exit 0; }
-    env_demo; dc "$P" ps --format 'table {{.Name}}\t{{.Status}}'
-    pj=$(ports_json)
-    "$VENV/bin/python" - "$pj" <<'PY'
-import json, sys, urllib.request
-p = json.loads(sys.argv[1])
-def get(k, path):
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{p[k]}{path}", timeout=5) as r: return r.status, json.loads(r.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        try: return e.code, json.loads(e.read() or b"{}")
-        except Exception: return e.code, {}
-    except Exception as e: return 0, {"error": str(e)[:60]}
-c, d = get("survey", "/readyz"); print(f"survey-service  /readyz {c}: ready={d.get('ready')} active_release={d.get('active_release')} problems={d.get('problems')}")
-c, d = get("gate", "/readyz"); print(f"release-gate    /readyz {c}: judging={d.get('judging')} awaiting_approval={d.get('awaiting_approval')}")
-for k, n in (("qa", "question-authoring"), ("ops", "ops-feedback"), ("mr", "model-registry"), ("ms", "model-serving"), ("gw", "gateway")):
-    c, d = get(k, "/readyz"); print(f"{n:15} /readyz {c}")
-PY
-    ;;
+    exec bash "$DEPLOY_ROOT/scripts/status.sh" "$P" "$P-reg" ;;
   down)
     env_demo
     echo "== 데모 프로젝트 $P 제거 (컨테이너·네트워크·볼륨)"
