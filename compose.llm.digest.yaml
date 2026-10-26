@@ -1,0 +1,4 @@
+# 실제 LLM override의 이미지 선택 (운영/CI): 레지스트리에 게시된 digest. compose.llm.yaml 과 함께 -f 로 더한다. compose.llm.local.yaml 과 함께 쓰지 않는다.
+services:
+  model-serving:
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving-gpu@${MODEL_SERVING_GPU_DIGEST:?locks/images.lock (build-images.sh --gpu 후 publish-images.sh model-serving-gpu)}

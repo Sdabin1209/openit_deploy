@@ -37,7 +37,12 @@ if want_gpu; then
   else die "비대화형이다. 약 13GB 빌드를 진행하려면 --yes-large 를 명시하라"; fi
 fi
 SUFFIX=${BUILD_SUFFIX:-}
-if [ "$ONLY" = "  " ]; then rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"; fi
+if [ "$ONLY" = "  " ]; then
+  # 기본(전부) 빌드는 8개 기록을 새로 쓴다. 따로 빌드한 GPU 이미지 기록(model-serving-gpu)은 지우지 않는다(13GB를 다시 빌드하지 않게)
+  GPU_KEEP=$(grep '^model-serving-gpu ' "$DEPLOY_ROOT/build/images.env" 2>/dev/null || true)
+  rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"
+  if [ -n "$GPU_KEEP" ]; then mkdir -p "$DEPLOY_ROOT/build"; printf '%s\n' "$GPU_KEEP" > "$DEPLOY_ROOT/build/images.env"; fi
+fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
 # 경계 계약 태그(D53 이후 v1.3.1). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다

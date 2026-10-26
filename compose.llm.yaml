@@ -6,22 +6,20 @@
 #  - compose.test.yaml(가짜 백엔드 고정, 위험 문구 스위치)과 함께 쓰면 -f 순서로 이 파일이 뒤에 와야 BACKEND=vllm 이 이긴다.
 #    (시험용 위험 문구 스위치는 vllm 백엔드에서 의미가 없다)
 # 필요한 것:
-#  - 이미지(둘 중 하나. 변수로 고른다):
-#      운영/CI : build-images.sh --gpu 로 만들고 publish-images.sh model-serving-gpu 로 게시해 잠금에 MODEL_SERVING_GPU_DIGEST 가 있다(digest 고정). 기본.
-#      데모    : MODEL_SERVING_GPU_IMAGE=deploy-build/model-serving-gpu:<커밋> 로 방금 빌드한 로컬 이미지를 태그로 직접 참조하고
-#                MODEL_SERVING_GPU_PULL=never 로 레지스트리에서 받지 않는다(13GB 이미지를 레지스트리에 두 벌로 두지 않으려는 것; demo.sh up --llm 이 이렇게 한다).
-#                digest 고정은 이 경로에서 하지 않는다.
+#  - 이미지는 이 파일에 없다. 중첩 기본값(`${A:-${B:?}}`)은 compose 가 안쪽 필수 변수를 미리 평가해 로컬 태그를 줘도 실패하는 것으로 보인다
+#    (추정: 서버 시험의 오류 메시지에서. demo.sh config --llm 으로 확인한다). 그래서 선택을 파일로 나눴다. 아래 둘 중 하나를 -f 로 더한다:
+#      compose.llm.digest.yaml  운영/CI: build-images.sh --gpu 후 publish-images.sh model-serving-gpu 로 게시한 digest(잠금의 MODEL_SERVING_GPU_DIGEST)
+#      compose.llm.local.yaml   데모: MODEL_SERVING_GPU_IMAGE=deploy-build/model-serving-gpu:<커밋> 로컬 이미지를 태그로 직접 참조, pull_policy: never
+#                               (13GB 이미지를 레지스트리에 두 벌로 두지 않으려는 것; demo.sh up --llm 이 이렇게 한다). 이 경로는 digest 고정을 하지 않는다.
 #  - GPU 컨테이너 접근: bash scripts/doctor.sh --llm
 #  - 첫 기동은 huggingface.co 에서 모델(약 3GB)을 hf-cache 볼륨으로 받는다(인터넷 필요). 오프라인이면 볼륨을 미리 채우고 HF_HUB_OFFLINE=1.
-# 변수: MODEL_SERVING_GPU_IMAGE / MODEL_SERVING_GPU_PULL(위), HF_CACHE_VOLUME(기본 deploy-llm-hf-cache), DEMO_LLM_PROFILE(프로파일 경로, 이미지 안 /app/profiles/ 아래. 기본 gpu-12g.json), HF_HUB_OFFLINE(기본 0)
+# 변수: HF_CACHE_VOLUME(기본 deploy-llm-hf-cache), DEMO_LLM_PROFILE(프로파일 경로, 이미지 안 /app/profiles/ 아래. 기본 gpu-12g.json), HF_HUB_OFFLINE(기본 0)
 volumes:
   hf-cache:        # Hugging Face 모델 캐시(HF_HOME). 다시 받을 수 있어 백업 대상이 아니다.
     external: true   # 프로젝트 밖 이름 있는 볼륨: down -v / --purge 가 지우지 않는다(다음 기동에서 약 3GB를 다시 받지 않게). 없으면 만들어 둔다:
     name: ${HF_CACHE_VOLUME:-deploy-llm-hf-cache}   #   docker volume create deploy-llm-hf-cache   (demo.sh up --llm 이 만든다). 지우기: down.sh --purge-hf-cache
 services:
   model-serving:
-    image: ${MODEL_SERVING_GPU_IMAGE:-${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving-gpu@${MODEL_SERVING_GPU_DIGEST:?locks/images.lock (build-images.sh --gpu 후 publish-images.sh model-serving-gpu)}}
-    pull_policy: ${MODEL_SERVING_GPU_PULL:-missing}
     environment:
       MODEL_RUNTIME_BACKEND: vllm
       MODEL_RUNTIME_PROFILE: ${DEMO_LLM_PROFILE:-/app/profiles/gpu-12g.json}

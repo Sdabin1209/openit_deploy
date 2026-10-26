@@ -4,11 +4,11 @@ set -euo pipefail
 DEPLOY_NO_DOCKER=1   # 파일만 검사한다
 source "$(dirname "$0")/lib.sh"
 bad=0
-for f in compose.yaml compose.registry.yaml compose.test.yaml compose.external-inference.yaml compose.inference.yaml compose.llm.yaml; do
+for f in compose.yaml compose.registry.yaml compose.test.yaml compose.external-inference.yaml compose.inference.yaml compose.llm.yaml compose.llm.digest.yaml compose.llm.local.yaml; do
   while IFS= read -r line; do
     ref=$(echo "$line" | sed 's/^[[:space:]]*image:[[:space:]]*//')
     # 허용: ${VAR} 로 시작하는 참조(잠금 파일이 digest를 채운다). 그 변수는 아래에서 잠금 파일이 digest인지 검사한다.
-    case "$ref" in *'@${'*|'${'*) ;; *) echo "digest가 아닌 이미지 참조: $f: $line"; bad=1;; esac
+    case "$ref" in *'@${'*|'${'*|'"${'*) ;; *) echo "digest가 아닌 이미지 참조: $f: $line"; bad=1;; esac
   done < <(grep -E '^[[:space:]]*image:' "$DEPLOY_ROOT/$f" || true)
 done
 LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}

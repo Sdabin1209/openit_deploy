@@ -1,0 +1,7 @@
+# 실제 LLM override의 이미지 선택 (데모): 방금 빌드한 로컬 이미지를 태그로 직접 참조한다(레지스트리에 올리지 않는다). digest 고정은 하지 않는다.
+# compose.llm.yaml 과 함께 -f 로 더한다. compose.llm.digest.yaml 과 함께 쓰지 않는다.
+#   MODEL_SERVING_GPU_IMAGE=deploy-build/model-serving-gpu:<커밋>   (build/images.env 의 model-serving-gpu 항목; demo.sh 가 채운다)
+services:
+  model-serving:
+    image: "${MODEL_SERVING_GPU_IMAGE:?MODEL_SERVING_GPU_IMAGE(로컬 GPU 이미지 태그)가 필요하다: build-images.sh --gpu 후 build/images.env 의 model-serving-gpu 항목}"
+    pull_policy: never
