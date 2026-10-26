@@ -20,15 +20,25 @@ ap.add_argument("--work", required=True, help="이번 실행의 임시 작업 �
 ap.add_argument("--run-id", default="e2e-test")
 ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기까지만 만든다(사람이 /admin/ 에서 승인)")
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
+ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: http://gpu-host:8080). 비우면 이 프로젝트의 model-serving 컨테이너")
+ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
+ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(EXTERNAL_INFERENCE_TOKEN=... 한 줄). 비우면 이 구성이 만든 토큰")
 a = ap.parse_args()
 PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(a.root); WORK = pathlib.Path(a.work)
 WORK.mkdir(parents=True, exist_ok=True)
 RID = a.run_id
 TOK = lambda n: (pathlib.Path(a.secrets) / "tokens" / n).read_text().strip()
+def INF_TOK():   # 추론 서버가 호출자(survey-service)에게 기대하는 토큰
+    if a.ms_token_file:
+        for ln in pathlib.Path(a.ms_token_file).read_text().splitlines():
+            if ln.startswith("EXTERNAL_INFERENCE_TOKEN="): return ln.split("=", 1)[1].strip()
+        raise SystemExit("--ms-token-file 에 EXTERNAL_INFERENCE_TOKEN= 줄이 없다")
+    return TOK("inference-survey-service")
+MS_CONTAINER = a.ms_container or f"{a.project}-model-serving-1"
 def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가 바뀔 수 있어 매번 Docker에게 묻는다
-    out = subprocess.run([a.docker, "port", f"{a.project}-model-serving-1", "8080/tcp"], capture_output=True, text=True).stdout
+    out = subprocess.run([a.docker, "port", MS_CONTAINER, "8080/tcp"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
-URL = lambda k: f"http://127.0.0.1:{_ms_port() if k == 'ms' else PORTS[k]}"
+URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"http://127.0.0.1:{_ms_port() if k == 'ms' else PORTS[k]}"
 RESULTS = []; STATE_FILE = WORK / "state.json"
 STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
@@ -152,7 +162,7 @@ def make_packages():
     """시험용 어댑터 + model-runtime FakeBackend 적재 + ModelPackageManifest 2건을 만든다."""
     fx = ROOT / "test/fixtures/e2e-test-adapter"
     # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다(v0.5.1)
-    c, info = http("GET", "ms", "/v1/info", TOK("inference-survey-service")); assert c == 200, (c, info)
+    c, info = http("GET", "ms", "/v1/info", INF_TOK()); assert c == 200, (c, info)
     ex = info["serving_config_expectation"]
     cfg = {"prompt_template_version": ex["prompt_template_versions"][0],
            "decoding": {"constraint_mode": "constrained", "temperature": 0, "seed": 1000, "max_tokens": 512}, "max_attempts": 3,
@@ -374,14 +384,14 @@ def step5():
     # 한 턴이 추론 서버(model-serving)를 거쳤다: 서버의 가짜 백엔드는 출력이 고정이라 생성기 문장이 "(가짜 응답)" 이다
     texts = " ".join(str(x.get("response_text")) for x in (t1, t2))
     assert "(가짜 응답)" in texts, f"model-serving의 고정 출력이 아니다(서비스 내부 가짜?): {texts[:200]}"
-    ms_tok = TOK("inference-survey-service")
+    ms_tok = INF_TOK()
     c, info = http("GET", "ms", "/v1/info", ms_tok); assert c == 200 and new in info.get("loaded", []), (c, info)
     assert info["backend"] == "fake", info
     assert http("GET", "ms", "/v1/info", None)[0] in (401, 403), "토큰 없이 추론 서버 /v1/가 열림"
     c, st_ = http("GET", "ms", f"/v1/releases/{new}", ms_tok); assert c == 200 and st_["state"] == "LOADED", (c, st_)
     rd = survey_ready()[1]; inf = rd.get("inference") or {}
     # 추론 서버를 멈췄다 다시 띄운다: 그 턴만 실패하고 서비스는 산다, 다시 띄우면 복구(404 -> PUT 재적재)
-    mname = f"{a.project}-model-serving-1"
+    mname = MS_CONTAINER
     sidc = f"sess-{RID}-c"; assert kiosk("/v1/sessions", {"session_id": sidc, "kind": "SESSION_START"})[0] == 200
     sh([a.docker, "stop", "-t", "3", mname])
     try:
@@ -436,7 +446,7 @@ def step5f():
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
     # (d) 위험 정지 -> 알림(OPEN) + SSE -> 직원 RESUME -> state ACTIVE+resume_text -> 알림 RESOLVED. 추론 서버의 fake 파서가 시험 문구(TEST-RISK)로 위험 신호를 낸다
-    c, info2 = http("GET", "ms", "/v1/info", TOK("inference-survey-service")); assert info2.get("test_hooks", {}).get("fake_risk_phrase"), "시험용 위험 문구 스위치가 꺼져 있다"
+    c, info2 = http("GET", "ms", "/v1/info", INF_TOK()); assert info2.get("test_hooks", {}).get("fake_risk_phrase"), "시험용 위험 문구 스위치가 꺼져 있다"
     # 구독자가 없을 때의 위험 정지: 전달 경로가 없어 DELIVERY_FAILED 신호가 나오지만 알림은 저장되어 목록에 OPEN으로 보인다
     s0 = f"sess-{RID}-risk0"; assert kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
     c, r0 = public_turn(s0, "r1", "TEST-RISK 가슴이 아파요"); assert c == 200 and r0["turn_failure_signal"] and r0["turn_failure_signal"]["staff_alert"] == "DELIVERY_FAILED", (c, r0)

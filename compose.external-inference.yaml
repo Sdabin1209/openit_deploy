@@ -1,0 +1,20 @@
+# 외부 추론 서버 모드(D72): 이 구성의 model-serving 을 끄고, survey-service 가 다른 곳(다른 GPU 서버 등)의 추론 서버를 부른다.
+# compose.yaml 에 겹쳐 쓴다(기본 구성의 동작은 바꾸지 않는다). scripts/up.sh <프로젝트> --external-inference <URL> 이 이 파일을 붙인다.
+#   INFERENCE_URL         외부 추론 서버 주소 (예: http://gpu-host:8080). 환경 변수
+#   INFERENCE_TOKEN_FILE  토큰이 든 env 파일의 경로(값이 아니다). 그 파일에 EXTERNAL_INFERENCE_TOKEN=<토큰> 한 줄. 권한 600, 저장소 밖/secrets/
+# 서버는 같은 계약(I9)을 지키면 어디에 있든 기능 차이가 없어야 한다. 서버 쪽 구성은 compose.inference.yaml.
+# 서버는 release-gate(I4)에 닿을 수 있어야 한다(양방향 도달성). 닿는 방법은 docs/RUN.md "추론 서버를 다른 곳에 두는 법".
+services:
+  model-serving:
+    profiles: ["local-inference"]          # 프로필로 비활성: 기본으로는 뜨지 않는다
+  model-serving-schema:
+    profiles: ["local-inference"]
+  survey-service:
+    environment:
+      SURVEY_INFERENCE_URL: ${INFERENCE_URL:?외부 추론 서버 주소(INFERENCE_URL)가 필요하다}
+      SURVEY_INFERENCE_TOKEN_ENV: EXTERNAL_INFERENCE_TOKEN
+    env_file:
+      - ${INFERENCE_TOKEN_FILE:?토큰 env 파일 경로(INFERENCE_TOKEN_FILE)가 필요하다}   # EXTERNAL_INFERENCE_TOKEN=...
+    extra_hosts: ["host.docker.internal:host-gateway"]   # 같은 호스트의 다른 컴포즈 프로젝트에 있는 서버를 host.docker.internal 로 부를 때(시험·단일 서버)
+    depends_on:
+      model-serving: {condition: service_healthy, required: false}   # 로컬 서버를 끈 상태이므로 기다리지 않는다(compose 2.20+)

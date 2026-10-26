@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # 사전 점검(읽기 전용, 비밀 값을 출력하지 않는다). 깨끗한 머신에서 e2e.sh / up.sh 전에 돈다. 항목마다 OK/WARN/FAIL 과 해결 방법 한 줄을 낸다.
-# 사용: scripts/doctor.sh [--up]
+# 사용: scripts/doctor.sh [--up] [--inference <URL>]
+#   --inference <URL>  외부 추론 서버(D72)에 이 호스트에서 닿는지: /healthz, /readyz, 토큰이 있으면 /v1/info (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE, 값은 출력하지 않는다)
 #   기본: 빌드·E2E 에 필요한 전부(소스 워크스페이스 포함).  --up: 서버에서 띄우기만 할 때(git·형제 리포·태그·빌드 의존 점검을 건너뛴다)
 # e2e.sh / up.sh 는 시작에서 이것을 부르고 FAIL 이 있으면 멈춘다. 건너뛰기: DEPLOY_SKIP_DOCTOR=1
 # 환경 문제를 코드로 숨기지 않는다: 진단하고 고치는 법을 안내할 뿐 아무것도 바꾸지 않는다.
 set -uo pipefail
 DEPLOY_NO_DOCKER=1
 source "$(dirname "$0")/lib.sh"
-UP_ONLY=0; [ "${1:-}" = --up ] && UP_ONLY=1
+UP_ONLY=0; INF_URL=""
+while [ $# -gt 0 ]; do case "$1" in
+  --up) UP_ONLY=1; shift;;
+  --inference) [ $# -ge 2 ] || { echo "--inference 에는 URL이 필요하다" >&2; exit 2; }; INF_URL=$2; shift 2;;
+  --inference=*) INF_URL=${1#*=}; shift;;
+  -h|--help) sed -n '3,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--inference <URL>])" >&2; exit 2;; esac; done
+case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
 FAILS=0; WARNS=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
 warn() { printf '  [WARN] %s\n         -> %s\n' "$1" "$2"; WARNS=$((WARNS+1)); }
@@ -105,5 +113,35 @@ if [ $UP_ONLY = 0 ]; then
   # --- 고정 포트 금지
   if grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT/compose.test.yaml" >/dev/null 2>&1; then fail "compose.test.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
 fi
+# --- 외부 추론 서버 도달성(D72): 호출자(이 호스트)에서 본다. 서버가 release-gate 에 닿는 것은 서버 쪽 조건이라 여기서 대신 확인하지 못한다.
+if [ -n "$INF_URL" ]; then
+  echo "== 외부 추론 서버 $INF_URL"
+  INF_URL=${INF_URL%/}
+  if ! command -v curl >/dev/null 2>&1; then fail "curl 이 없어 추론 서버 도달을 확인하지 못했다" "curl 설치"
+  else
+    HINT="주소·포트가 맞는지, 서버가 떠 있는지(서버 호스트에서 docker compose -p deploy-inference ps), 방화벽·보안 그룹이 호출자 -> 서버 포트를 허용하는지, 서버의 INFERENCE_BIND 가 외부에서 닿는 주소인지 확인"
+    hc=$(curl -s -o /dev/null -m 6 -w '%{http_code}' "$INF_URL/healthz" 2>/dev/null || true)
+    if [ "$hc" = 200 ]; then ok "추론 서버 /healthz 200"; else fail "추론 서버 /healthz 에 닿지 못했다 (응답 ${hc:-없음})" "$HINT"; fi
+    if [ "$hc" = 200 ]; then
+      rc=$(curl -s -o /dev/null -m 6 -w '%{http_code}' "$INF_URL/readyz" 2>/dev/null || true)
+      if [ "$rc" = 200 ]; then ok "추론 서버 /readyz 200"
+      else warn "추론 서버 /readyz 응답 ${rc:-없음} (살아 있으나 준비되지 않음)" "양방향 도달성: 서버가 release-gate 에 닿아야 한다. 서버 호스트에서 RELEASE_URL 로 닿는지, MODEL_RUNTIME_RELEASE_TOKEN 이 게이트 읽기 토큰인지 확인 (서버 로그: docker compose -p deploy-inference logs model-serving)"; fi
+    fi
+    TOKF="${INFERENCE_TOKEN_FILE:-}"; T=""
+    if [ -n "$TOKF" ] && [ -r "$TOKF" ]; then T=$(sed -n 's/^EXTERNAL_INFERENCE_TOKEN=//p' "$TOKF" | head -1)
+    elif [ -n "${INFERENCE_TOKEN:-}" ]; then T=$INFERENCE_TOKEN; fi
+    if [ -z "$T" ]; then warn "추론 서버 토큰이 없어 /v1/info 확인을 건너뛴다" "INFERENCE_TOKEN 환경 변수 또는 INFERENCE_TOKEN_FILE(EXTERNAL_INFERENCE_TOKEN=... 한 줄)을 주고 다시 실행"
+    elif [ "$hc" = 200 ]; then
+      ic=$(printf 'header = "Authorization: Bearer %s"\n' "$T" | curl -s -o /dev/null -m 8 -w '%{http_code}' -K - "$INF_URL/v1/info" 2>/dev/null || true)
+      case "$ic" in
+        200) ok "추론 서버 /v1/info 200 (토큰 통과)";;
+        401|403) fail "추론 서버가 토큰을 거부했다 (/v1/info $ic)" "서버의 MODEL_RUNTIME_TOKENS 에 이 호출자 토큰이 등록되어 있는지, 호출자 토큰 파일이 같은 값인지 확인 (값은 출력하지 않는다)";;
+        *) fail "추론 서버 /v1/info 응답 이상 (${ic:-없음})" "서버 로그 확인: docker compose -p deploy-inference logs model-serving";; esac
+    fi
+    T=""
+    echo "  [안내] 양방향 도달성: 호출자 -> 추론 서버(위 점검)와 추론 서버 -> release-gate(RELEASE_URL)가 모두 열려야 한다. 후자는 서버 호스트에서 확인한다."
+  fi
+fi
+
 echo; if [ $FAILS = 0 ]; then echo "doctor: 통과 (WARN $WARNS)"; else echo "doctor: FAIL $FAILS건 (WARN $WARNS) -- 위 해결 방법을 따른 뒤 다시 실행. 건너뛰기: DEPLOY_SKIP_DOCTOR=1"; fi
 exit $([ $FAILS = 0 ] && echo 0 || echo 1)

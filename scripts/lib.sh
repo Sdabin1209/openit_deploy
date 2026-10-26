@@ -35,6 +35,30 @@ dc() { # dc <project> <compose args...>
   env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u DEPLOY_REGISTRY \
     "$DOCKER" compose -p "$project" --project-directory "$DEPLOY_ROOT" "${files[@]}" "${envs[@]}" "$@"
 }
+# 외부 추론 서버 모드(D72): external_inference_setup <URL>. INFERENCE_URL / INFERENCE_TOKEN_FILE 을 내보내고 COMPOSE_EXTRA 에 override 를 붙인다.
+# 토큰은 값을 인자로 받지 않는다: 환경 변수 INFERENCE_TOKEN(여기서 600 파일로 옮긴다) 또는 INFERENCE_TOKEN_FILE(경로, 파일에 EXTERNAL_INFERENCE_TOKEN=...)
+# 또는 이미 있는 $SECRETS_DIR/external-inference.env. 값은 출력하지 않는다.
+external_inference_setup() {
+  local url=${1:-} sd=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
+  case "$url" in http://*|https://*) ;; *) die "--external-inference 에는 http:// 또는 https:// 로 시작하는 주소가 필요하다: '$url'";; esac
+  case "${url#*://}" in *@*) die "주소에 계정·암호를 넣지 않는다 (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE 로)";; esac
+  if [ -n "${INFERENCE_TOKEN_FILE:-}" ]; then
+    case "$INFERENCE_TOKEN_FILE" in /*) ;; *) INFERENCE_TOKEN_FILE="$PWD/$INFERENCE_TOKEN_FILE";; esac
+    [ -s "$INFERENCE_TOKEN_FILE" ] || die "INFERENCE_TOKEN_FILE 이 없거나 비었다: $INFERENCE_TOKEN_FILE"
+  elif [ -n "${INFERENCE_TOKEN:-}" ]; then
+    mkdir -p "$sd"; chmod 700 "$sd" 2>/dev/null || true
+    INFERENCE_TOKEN_FILE="$sd/external-inference.env"
+    ( umask 077; printf 'EXTERNAL_INFERENCE_TOKEN=%s\n' "$INFERENCE_TOKEN" > "$INFERENCE_TOKEN_FILE" )
+  elif [ -s "$sd/external-inference.env" ]; then
+    INFERENCE_TOKEN_FILE="$sd/external-inference.env"
+  else
+    die "외부 추론 서버의 토큰이 필요하다: 환경 변수 INFERENCE_TOKEN 을 두거나, EXTERNAL_INFERENCE_TOKEN=<토큰> 한 줄이 든 파일 경로를 INFERENCE_TOKEN_FILE 로 준다 (값을 인자로 넘기지 않는다)"
+  fi
+  export INFERENCE_URL="$url" INFERENCE_TOKEN_FILE
+  unset INFERENCE_TOKEN
+  case " ${COMPOSE_EXTRA:-} " in *compose.external-inference.yaml*) ;; *) COMPOSE_EXTRA="${COMPOSE_EXTRA:+$COMPOSE_EXTRA }$DEPLOY_ROOT/compose.external-inference.yaml";; esac
+  export COMPOSE_EXTRA
+}
 # 컨테이너 포트가 Docker가 배정한 호스트 포트를 읽는다. port_of <컨테이너> <내부포트>
 port_of() { "$DOCKER" port "$1" "$2/tcp" | head -1 | tr -d '\r' | sed 's/.*://'; }
 # 빈 포트를 하나 고른다. 임시 레지스트리가 push 대상 포트를 명시적으로 쓰려고 쓴다(컨테이너의 호스트 포트는 Docker가 배정한다).

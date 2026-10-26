@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 사람이 화면을 직접 눌러 볼 수 있는 데모 환경. 상시 구성(`deploy` 프로젝트)과 따로, 같은 서버에서 함께 돌 수 있다.
-#   scripts/demo.sh up [--stop-before-approval] [--rebuild]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
+#   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
 #   scripts/demo.sh status | down | reset [--stop-before-approval]
 # 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 시험 구성(compose.test.yaml)을 쓴다.
@@ -11,8 +11,12 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1   # 사용법·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
 source "$(dirname "$0")/lib.sh"
 CMD=${1:-}; shift || true
-STOP=0; REBUILD=0
-for x in "$@"; do case "$x" in --stop-before-approval) STOP=1;; --rebuild) REBUILD=1;; *) die "알 수 없는 인자: $x";; esac; done
+STOP=0; REBUILD=0; EXT=""
+while [ $# -gt 0 ]; do case "$1" in
+  --stop-before-approval) STOP=1; shift;; --rebuild) REBUILD=1; shift;;
+  --external-inference) [ $# -ge 2 ] || die "--external-inference 에는 URL이 필요하다"; EXT=$2; shift 2;;
+  --external-inference=*) EXT=${1#*=}; shift;;
+  *) die "알 수 없는 인자: $1";; esac; done
 P=${DEMO_PROJECT:-deploy-demo}
 case "$P" in deploy-demo*) ;; *) die "DEMO_PROJECT 는 deploy-demo 로 시작해야 한다 (상시 구성과 섞이지 않게)";; esac
 W="$DEPLOY_ROOT/state/demo"
@@ -23,17 +27,25 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   export REGISTRY_PROJECT="$P-reg" REGISTRY_HOST_BIND="${DEMO_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
   export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
+  # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
+  if [ -n "$EXT" ]; then external_inference_setup "$EXT"; printf '%s\n%s\n' "$EXT" "$INFERENCE_TOKEN_FILE" > "$W/external-inference"
+  elif [ -f "$W/external-inference" ]; then
+    EXT=$(sed -n 1p "$W/external-inference"); export INFERENCE_TOKEN_FILE; INFERENCE_TOKEN_FILE=$(sed -n 2p "$W/external-inference"); external_inference_setup "$EXT"
+  fi
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
-  echo "{\"qa\":$(pp question-authoring),\"gate\":$(pp release-gate),\"ops\":$(pp ops-feedback-ingest),\"survey\":$(pp survey-service),\"mr\":$(pp model-registry),\"gw\":$(pp gateway),\"ms\":$(pp model-serving)}"
+  local ms; if [ -n "$EXT" ]; then ms=0; else ms=$(pp model-serving); fi
+  echo "{\"qa\":$(pp question-authoring),\"gate\":$(pp release-gate),\"ops\":$(pp ops-feedback-ingest),\"survey\":$(pp survey-service),\"mr\":$(pp model-registry),\"gw\":$(pp gateway),\"ms\":$ms}"
 }
 run_steps() { # run_steps <--only 목록> [추가 인자]
   local only=$1; shift
+  local msx=(); [ -z "$EXT" ] || msx=(--ms-url "$EXT" --ms-token-file "$INFERENCE_TOKEN_FILE")
   local img; img=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     echo "{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}" )
   "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$P" --secrets "$SECRETS_DIR" --ports "$(ports_json)" --images "$img" \
-    --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id demo-test --only "$only" "$@"
+    --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id demo-test --only "$only" \
+    "${msx[@]}" "$@"
 }
 risk_phrase() { sed -n "s/^[[:space:]]*MODEL_RUNTIME_FAKE_RISK_PHRASE:[[:space:]]*['\"]\{0,1\}\([^'\"#]*\)['\"]\{0,1\}.*/\1/p" "$DEPLOY_ROOT/compose.test.yaml" | head -1 | sed 's/[[:space:]]*$//'; }
 
@@ -57,6 +69,7 @@ guide() {
    reviewer-e2e     $W/secrets/tokens/reviewer-console-password
    예: cat $W/secrets/tokens/staff-console-password
 
+ $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다. 아래 위험 문구는 그 서버가 시험 스위치(MODEL_RUNTIME_FAKE_RISK_PHRASE)로 떠 있을 때만 듣는다" )
  키오스크에서 위험 정지를 시험하려면 이 문구를 말하거나(입력) 한다:  $(risk_phrase)
    (시험 구성의 가짜 모델에만 있는 문구다. 정지되면 직원 콘솔(/staff/)에 알림이 뜨고 RESUME/END 로 풀 수 있다)
  승인 화면: 승인 대기 시험 제출이 있다$( [ $STOP = 1 ] && echo " (--stop-before-approval: 문항 세트 v1·v2 모두 대기. 승인한 뒤 scripts/demo.sh activate)" || echo " (보지 못한 문항 세트 제출 1건. v1·v2는 스크립트가 시험용 승인자로 이미 승인·활성화)")
@@ -73,6 +86,7 @@ case "$CMD" in
     [ -d "$W" ] && [ -f "$W/registry.env" ] && die "이미 데모 상태가 있다 ($W). scripts/demo.sh down 또는 reset"
     bash "$DEPLOY_ROOT/scripts/doctor.sh" || exit 1
     mkdir -p "$W"; env_demo
+    [ -z "$EXT" ] || bash "$DEPLOY_ROOT/scripts/doctor.sh" --up --inference "$EXT" || { rm -f "$W/external-inference"; exit 1; }
     bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || die "호스트 가상환경 준비 실패"
     have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 8 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
     if [ $REBUILD = 1 ] || ! have_images; then echo "== 이미지 빌드(현재 HEAD)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" || die "이미지 빌드 실패"; fi

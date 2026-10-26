@@ -114,6 +114,39 @@ HTTP·기본 인증이라 시험용이다. `DEMO_BIND=0.0.0.0`으로 열어 두�
 
 디스크 정리: 먼저 `docker system df`로 크기를 확인한다. 지울지는 사용자가 판단한다. 대상은 `deploy-build/*` 이미지와 빌드 캐시, 데모·E2E가 남긴 `deploy-*` 자원 위주다. 예: `docker image ls 'deploy-build/*'`로 보고 필요 없으면 `docker rmi`, 빌드 캐시는 `docker builder prune`. 다른 이름의 자원은 건드리지 않는다.
 
+## 7-1. 추론 서버를 다른 곳에 두는 법 (D72)
+
+추론 서버(model-serving)는 컨테이너이고 어디에 두든(같은 컴포즈, 다른 GPU 서버) 기능 차이가 없어야 한다. 호출하는 survey-service는 주소(`SURVEY_INFERENCE_URL`)와 토큰만 알고, 서버는 release-gate 주소·토큰·프로파일을 환경 변수로만 받는다. **이 절의 구성은 파일과 스크립트를 만든 단계이며, 이 PC에서는 Docker 데몬이 꺼져 있어 컨테이너로 실행해 확인하지 못했다(미확인).** 확인된 것은 `bash -n`, 인자 검사, doctor 점검의 가짜 서버 시험, YAML 문법뿐이다. 실제 GPU 이미지는 이 단위에서 빌드·내려받지 않았다.
+
+**(a) 추론 서버를 둘 호스트에서** (`compose.inference.yaml` 하나 + 잠금 파일 + 토큰 env 파일)
+
+```
+export RELEASE_URL=http://<release-gate 주소>:<포트>        # 이 호스트에서 닿아야 한다
+export INFERENCE_ENV_FILE=/안전한/경로/inference.env          # MODEL_RUNTIME_TOKENS=survey-service=<호출자 토큰>
+                                                              # MODEL_RUNTIME_RELEASE_TOKEN=<게이트 읽기 토큰>  (프로파일 등 모델 설정도 여기)
+# GPU 변형 이미지는 INFERENCE_IMAGE=<레지스트리>/...@sha256:... 와 INFERENCE_BACKEND=<model-runtime이 정한 값>
+docker compose -p deploy-inference -f compose.inference.yaml --env-file locks/images.lock --env-file state/registry.env up -d --wait
+```
+
+- 포트는 `INFERENCE_PORT`(기본 8080)와 `INFERENCE_BIND`(기본 0.0.0.0). GPU 예약과 HF 캐시 볼륨은 파일 안에 주석 처리된 예시가 있다(GPU 이미지의 캐시 폴더 쓰기 권한은 확인 안 함).
+- 문진 스키마는 이미지에 없어서 `inference-schema`(일회성)가 survey-service 이미지에서 꺼내 놓는다. 그래서 서버 호스트가 레지스트리의 survey-service 이미지도 받을 수 있어야 한다.
+- 토큰 값을 파일·인자로 저장소에 넣지 않는다.
+
+**(b) 본 구성(호출자) 쪽에서**
+
+```
+export INFERENCE_TOKEN=<서버의 MODEL_RUNTIME_TOKENS 에 등록한 이 호출자 토큰>   # 또는 INFERENCE_TOKEN_FILE=<EXTERNAL_INFERENCE_TOKEN=... 한 줄이 든 파일 경로>
+bash scripts/doctor.sh --up --inference http://<서버>:8080        # 닿는지, 토큰이 통과하는지
+bash scripts/up.sh deploy --external-inference http://<서버>:8080   # 이 구성의 model-serving 은 프로필로 꺼진다
+bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모도 같은 옵션
+```
+
+토큰 값은 인자로 받지 않고 출력하지 않는다(`INFERENCE_TOKEN`이면 `secrets/external-inference.env`로 600 권한 파일을 만든다).
+
+**양방향 도달성.** 호출자 -> 서버(위 doctor가 확인)와 서버 -> release-gate가 모두 열려야 한다. 후자는 서버 호스트에서 `RELEASE_URL`이 닿는지 직접 확인한다(doctor가 대신 확인하지 못한다). 상시 구성에서 release-gate는 호스트 포트를 열지 않으므로, 다른 호스트의 서버가 읽게 하려면 게이트를 노출하는 방법(운영 결정: 사설 네트워크·TLS·접근 제한)을 정해야 한다. 이 결정은 아직 없다(미정). 시험은 임시로 게이트를 0.0.0.0의 빈 포트에 한 번 더 노출한다.
+
+**위치 독립 시험.** `bash scripts/test-inference-location.sh` : 추론 서버(CPU/fake)를 별도 컴포즈 프로젝트(`deploy-e2e-loc-inf`)로 띄우고, 본 구성이 `--external-inference`로 그 서버를 불러 E2E 단계 1~5(서버 중단·복구 포함)를 통과하는지 본다. 자원은 `deploy-e2e-loc*` 접두사이며 끝나면 지운다(`--keep`, `--clean`). 이 PC에서는 실행하지 못했다(미확인). 서버에서 한 번 돌려 확인해야 한다.
+
 ## 8. 흔한 문제
 
 | 증상 | 원인·조치 |
