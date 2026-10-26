@@ -3,6 +3,7 @@
 #   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
 #   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen2.5-1.5B + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
 #   scripts/demo.sh config --llm [--profile gpu-12g]            컨테이너를 띄우지 않고 실제 LLM 구성의 병합(docker compose config)만 검증한다(이미지 참조가 로컬 태그인지)
+#   scripts/demo.sh diag                                        켜져 있는 데모의 release-gate 제출·판정(checks)·수집기·모델 패키지 요약(읽기 전용)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
 #   scripts/demo.sh status | reset [--stop-before-approval] | down [--purge-cache]   (모델 캐시 볼륨은 down 해도 남는다. --purge-cache 로 명시적으로 지운다)
 # 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 시험 구성(compose.test.yaml)을 쓴다.
@@ -31,7 +32,7 @@ while [ $# -gt 0 ]; do case "$1" in
 P=${DEMO_PROJECT:-deploy-demo}
 case "$P" in deploy-demo*) ;; *) die "DEMO_PROJECT 는 deploy-demo 로 시작해야 한다 (상시 구성과 섞이지 않게)";; esac
 W="$DEPLOY_ROOT/state/demo"
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
 
 set_llm_image() { # 데모는 방금 빌드한 로컬 GPU 이미지를 태그로 직접 쓴다(레지스트리에 올리지 않는다: 13GB 이중 보관 방지). digest 고정은 데모에서 하지 않는다
   MODEL_SERVING_GPU_IMAGE=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null || true)
@@ -142,7 +143,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 survey-service /readyz 가 200 이 된다."
   return 0
 }
-case "$CMD" in up|activate|status|down|reset|config) detect_docker;; esac
+case "$CMD" in up|activate|status|down|reset|config|diag) detect_docker;; esac
 case "$CMD" in
   up)
     [ -d "$W" ] && [ -f "$W/registry.env" ] && die "이미 데모 상태가 있다 ($W). scripts/demo.sh down 또는 reset"
@@ -183,8 +184,8 @@ case "$CMD" in
     echo "== 데모 프로젝트 $P 기동 (compose.yaml + compose.test.yaml, 호스트 포트는 Docker 배정)"
     bash "$DEPLOY_ROOT/scripts/up.sh" "$P" || die "기동 실패. 원인: docker compose -p $P logs"
     echo "== 시험용 릴리스 만들기(E2E 단계 코드 재사용): 문항 세트 등록 -> 데이터셋 -> 시험용 어댑터·평가 보고서 -> 후보 수집·자동 검사 $( [ $STOP = 1 ] && echo '(승인 전에 멈춤)' || echo '-> 시험용 승인자 승인 -> 활성화 -> 실패 사례')"
-    if [ $STOP = 1 ]; then run_steps "1,2,3,demo4" --demo-stop || die "데모 릴리스 준비 실패"
-    else run_steps "1,2,3,demo4,6" || die "데모 릴리스 준비 실패"; fi
+    if [ $STOP = 1 ]; then run_steps "1,2,3,demo4" --demo-stop || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"
+    else run_steps "1,2,3,demo4,6" || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"; fi
     guide
     [ $LLM = 0 ] || wait_llm ;;
   config)
@@ -196,6 +197,9 @@ case "$CMD" in
     if [ -n "$cur" ] && "$DOCKER" image inspect "$cur" >/dev/null 2>&1; then echo "  로컬 GPU 이미지: $cur (있음: up --llm 이 다시 빌드하지 않는다)"
     else echo "  로컬 GPU 이미지: ${cur:-없음} (up --llm 이 build-images.sh --gpu 로 빌드한다, 약 13GB)"; fi
     echo "병합 검증 통과: model-serving 은 로컬 태그를 참조하고 pull_policy: never 이다" ;;
+  diag)
+    [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    env_demo; run_steps "diag" || true ;;
   activate)
     [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
     env_demo; run_steps "demo_activate,6" || die "활성화 실패(/admin/ 에서 먼저 승인했는지 확인)"

@@ -83,6 +83,39 @@ def wait(fn, timeout, what, every=2):
         time.sleep(every)
     raise AssertionError(f"시간 초과({timeout}s): {what}")
 
+def decision_text(dec):
+    """GateDecision 요약: 결과, reject_codes, checks 각 항목(kind, result, detail), reject_reasons. 토큰·비밀은 없다."""
+    out = [f"결과 {dec.get('result')} reject_codes={dec.get('reject_codes')}"]
+    for c in dec.get("checks", []):
+        d = c.get("detail"); out.append(f"  - {c.get('kind')}: {c.get('result')}" + (f" -- {str(d)[:400]}" if d else ""))
+    for r in dec.get("reject_reasons") or []: out.append(f"  * 사유: {str(r)[:400]}")
+    return "\n".join(out)
+
+def gate_diag_clients():   # 읽기 전용(승인자 읽기 토큰, 게이트 읽기 토큰)
+    return HttpGateService(URL("gate"), TOK("gate-read-release-approver")), HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service"))
+
+def explain_submission(sid):
+    """(상태, 설명 문자열). 상태를 못 읽으면 (None, 이유)."""
+    try:
+        gs, rd = gate_diag_clients(); v = dict(gs.get_submission(sid)); st = v.get("status"); txt = f"제출 {sid} 상태 {st}"
+        if v.get("decision_id"):
+            txt += "\n" + decision_text(dict(rd.get_decision(v["decision_id"])))
+        return st, txt
+    except Exception as e:
+        return None, f"제출 {sid} 상태를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}"
+
+def wait_review_report(get_report, sid, label, timeout=60):
+    """자동 검사 후 승인 요청 보고서를 기다린다. 제출이 반려(REJECTED_*)되면 시간 초과를 기다리지 않고 바로 GateDecision의 checks 를 보여 주며 실패한다."""
+    t = time.time(); st = None
+    while time.time() - t < timeout:
+        r = get_report(sid)
+        if r: return r
+        st, txt = explain_submission(sid)
+        if st in ("REJECTED_AUTO", "REJECTED_HUMAN"):
+            raise AssertionError(f"제출 {label} 이(가) 반려되어 승인 요청 보고서가 생기지 않는다.\n{txt}")
+        time.sleep(2)
+    raise AssertionError(f"시간 초과({timeout}s): 자동 검사 후 승인 요청 보고서 {label}.\n{explain_submission(sid)[1]}")
+
 qa_reader = lambda role="synthetic-data": HttpQuestionReader(URL("qa"), TOK(f"qa-read-{role}"))
 SD = {"venv": ROOT / "build/venv-sd/bin/python", "src": ROOT / "build/ctx/synthetic-data", "schema": ROOT / "build/ctx/survey-service/schema"}
 QS, QSU = f"qs-{RID}", f"qs-{RID}-unseen"
@@ -320,7 +353,7 @@ def step4():
         except bc.BoundaryError: return None
     reps = {}
     for k, sub in list(subs.items()) + [("u", sub_u)]:
-        reps[k] = wait(lambda sid=sub["submission_id"]: report_of(sid), 60, f"자동 검사 후 승인 요청 보고서 {k}")
+        reps[k] = wait_review_report(report_of, sub["submission_id"], k)
         validate("ReviewReport", reps[k])
     assert all(c["result"] in ("PASS", "SKIPPED") for c in reps["1"]["checks"]), reps["1"]["checks"]
     # 승인 전에는 PASS가 없다
@@ -664,7 +697,7 @@ def demo4():
         try: return dict(gate_rep.get_review_report(sid))
         except bc.BoundaryError: return None
     for k, sub in list(subs.items()) + [("u", sub_u)]:
-        wait(lambda sid=sub["submission_id"]: report_of(sid), 60, f"자동 검사 후 승인 요청 보고서 {k}")
+        wait_review_report(report_of, sub["submission_id"], k)
     STATE["demo_subs"] = {**{k: v["submission_id"] for k, v in subs.items()}, "u": sub_u["submission_id"]}; save()
     if a.demo_stop:
         rec("demo4", "REAL", f"후보 수집·자동 검사까지 완료. 승인 대기 제출: " + ", ".join(f"문항 세트 v{k}={v['submission_id']}" for k, v in subs.items()) + f", 보지 못한 문항 세트={sub_u['submission_id']}. 사람이 /admin/ 에서 승인한 뒤 demo.sh activate")
@@ -695,7 +728,45 @@ def demo_activate():
     STATE["releases"] = rels; save()
     rec("demo_activate", "REAL", f"승인된 릴리스 활성화: {rels}, 현재 활성 {dict(cur)['release_id']}")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate)]
+def diag():
+    """demo.sh diag: 켜져 있는 데모의 게이트·레지스트리 상태를 읽기 전용으로 요약한다(HTTP만, 토큰·비밀 값은 출력하지 않는다)."""
+    title("diag", "진단: 제출·판정·수집기·모델 패키지")
+    gs, rd = gate_diag_clients()
+    try:
+        items, _ = gs.list_submissions(limit=100)
+        print(f"-- release-gate 제출 {len(items)}건")
+        for v in items:
+            subj = v.get("subject", {}); qs = subj.get("question_set", {}); la = subj.get("lora_a", {}); lb = subj.get("lora_b", {})
+            print(f"  [{v.get('status')}] {v['submission_id']} 문항 세트 {qs.get('id')}@{qs.get('version')} LoRA_A {la.get('id')}@{la.get('version')} LoRA_B {lb.get('id')}@{lb.get('version')} decision={v.get('decision_id')} release={v.get('release_id')}")
+            if v.get("decision_id"):
+                print("\n".join("      " + l for l in decision_text(dict(rd.get_decision(v["decision_id"]))).splitlines()))
+    except Exception as e:
+        print(f"-- 제출 목록을 읽지 못했다: {type(e).__name__}: {str(e)[:200]}")
+    try:
+        ap = rd.get_active_pointer(); print(f"-- 활성 릴리스 포인터: {ap}")
+    except Exception as e:
+        print(f"-- 활성 포인터를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}")
+    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
+    print(f"-- 후보 수집기 run-once 다시 실행(멱등) 종료 코드 {r.returncode}; 마지막 출력: {(r.stdout.strip().splitlines() or ['(없음)'])[-1][:300]}")
+    try:
+        mr = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); ids = mr.list_ids()
+        print(f"-- model-registry 패키지 {len(ids)}개")
+        for i in ids:
+            vs = mr.list_versions(i); print(f"  {i}: 버전 {vs}")
+            for v in vs[-1:]:
+                m = mr.get_manifest(i, v); sc = m.get("serving_config", {}); print(f"      role={m.get('role')} base={m.get('base_model')} constraint.backend={sc.get('constraint', {}).get('backend')}@{sc.get('constraint', {}).get('backend_version')} prompt={sc.get('prompt_template_version')} runtime={m.get('lineage', {}).get('model_runtime_version')}")
+    except Exception as e:
+        print(f"-- model-registry 패키지를 읽지 못했다: {type(e).__name__}: {str(e)[:200]}")
+    try:
+        c, info = http("GET", "ms", "/v1/info", INF_TOK())
+        ex = (info.get("serving_config_expectation") or {}) if c == 200 else {}
+        print(f"-- model-serving /v1/info: HTTP {c} backend={info.get('backend') if c == 200 else '-'} 기대 constraint={ex.get('constraint')} prompt={ex.get('prompt_template_versions')} loaded={info.get('loaded') if c == 200 else '-'}")
+    except Exception as e:
+        print(f"-- model-serving /v1/info 를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}")
+    print(f"-- 상태 파일 요약: 릴리스 {STATE.get('releases')}, 제출 {STATE.get('demo_subs')}, llm 대조 {STATE.get('llm_cfg_vs_server')}")
+    rec("diag", "REAL", "진단 출력만 했다(변경 없음)")
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:
