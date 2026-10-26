@@ -36,7 +36,7 @@ static_check() {
 }
 
 relocate_check() {
-  detect_docker   # 데몬에 못 닿으면 여기서 명확한 오류로 멈춘다
+  detect_docker; check_docker_creds   # 데몬에 못 닿으면 여기서 명확한 오류로 멈춘다
   echo "== (b) 이동 시험: 다른 루트 이름(ws-relocate-XXXX)에 clone 해 deploy 의 e2e --fast"
   local T; T=$(mktemp -d "${TMPDIR:-/tmp}/ws-relocate-XXXX")
   # shellcheck disable=SC2064

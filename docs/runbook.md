@@ -104,4 +104,5 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 | 새 잠금을 적용해도 컨테이너가 안 바뀜 | 셸에 같은 이름의 `*_DIGEST` 변수가 남아 있나 | `dc`가 지우지만 compose를 직접 부를 때는 `env -u`로 지운다 |
 | 컨테이너가 `operation not permitted`로 안 뜸 | `cap_drop: ALL`과 파일 권한이 있는 바이너리 | 필요한 capability만 `cap_add` (gateway의 `NET_BIND_SERVICE`) |
 | SQLite `unable to open database file` (백업·읽기) | WAL 모드 DB를 읽기 전용 마운트로 연 것 | 백업 도구처럼 쓰기 가능 마운트로 읽기 전용 연결을 쓰고 만든 `-wal/-shm`을 지운다 |
+| 빌드가 `error getting credentials … docker-credential-desktop.exe: exec format error` 로 실패 | interop이 꺼진 WSL에서 `~/.docker/config.json`의 `credsStore`가 윈도 도우미(desktop.exe)를 가리킨다 | `scripts/lib.sh`가 자동으로 `state/docker-config`(빈 설정, gitignore)로 `DOCKER_CONFIG`를 돌린다(안내 한 줄). 사용자 설정은 건드리지 않고 내용을 출력하지도 않는다. 정상 도우미면 건드리지 않는다 |
 | docker.exe로 compose 환경 변수가 안 보임 | 윈도 프로그램은 WSL 환경 변수를 받지 못한다 | `--env-file`로 넘긴다(`lib.sh`의 `envfile`) |

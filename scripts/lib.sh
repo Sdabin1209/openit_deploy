@@ -25,7 +25,54 @@ detect_docker() {
   fi
   die "Docker 데몬에 닿지 않는다: 데몬이 떠 있는지(리눅스: systemctl start docker, WSL: Docker Desktop 실행) 확인하고, 현재 사용자가 docker 그룹에 속하는지(권한)도 확인하라."
 }
-[ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
+# docker 설정(~/.docker/config.json)의 자격증명 도우미(credsStore/credHelpers)가 실행 불가일 때(예: interop이 꺼진 WSL의 docker-credential-desktop.exe,
+# `exec format error`) 이미지 빌드·pull 이 실패한다. 그러면 사용자 설정은 건드리지 않고(읽기만, 내용은 출력하지 않는다) deploy 전용 설정 폴더로 우회한다.
+# 도우미가 정상이면 아무것도 하지 않는다. docker.exe(윈도 쪽 설정)는 점검하지 않는다.
+check_docker_creds() {
+  [ "${DOCKER:-}" = docker ] || return 0
+  local cfgdir="${DOCKER_CONFIG:-$HOME/.docker}" cfg ours="$DEPLOY_ROOT/state/docker-config"
+  [ "$cfgdir" = "$ours" ] && return 0
+  cfg="$cfgdir/config.json"; [ -f "$cfg" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local helpers h bin rc broken=0
+  helpers=$(python3 - "$cfg" <<'PY' 2>/dev/null
+import json, sys
+try: c = json.load(open(sys.argv[1]))
+except Exception: sys.exit(0)
+names = set()
+if isinstance(c.get("credsStore"), str) and c["credsStore"]: names.add(c["credsStore"])
+if isinstance(c.get("credHelpers"), dict): names.update(v for v in c["credHelpers"].values() if isinstance(v, str) and v)
+print("\n".join(sorted(names)))
+PY
+)
+  for h in $helpers; do
+    bin="docker-credential-$h"
+    if ! command -v "$bin" >/dev/null 2>&1; then broken=1; break; fi
+    "$bin" version >/dev/null 2>&1 </dev/null; rc=$?
+    if [ $rc = 126 ] || [ $rc = 127 ]; then broken=1; break; fi   # 실행 형식 오류·없음. 그 밖의 실패는 도우미가 동작하는 것으로 본다
+  done
+  [ $broken = 1 ] || return 0
+  mkdir -p "$ours"
+  # 새 설정은 빈 설정이다. 현재 컨텍스트 이름만 옮긴다(자격증명·인증 정보는 옮기지 않는다)
+  python3 - "$cfg" "$ours/config.json" <<'PY' 2>/dev/null || echo '{}' > "$ours/config.json"
+import json, sys
+out = {}
+try:
+    c = json.load(open(sys.argv[1]))
+    if isinstance(c.get("currentContext"), str): out["currentContext"] = c["currentContext"]
+except Exception: pass
+json.dump(out, open(sys.argv[2], "w"))
+PY
+  # CLI 플러그인(compose, buildx)과 컨텍스트 정의는 원래 폴더의 것을 심볼릭 링크로 보이게 한다(시스템 경로의 플러그인은 그대로 보인다)
+  [ -d "$cfgdir/cli-plugins" ] && ln -sfn "$cfgdir/cli-plugins" "$ours/cli-plugins"
+  [ -d "$cfgdir/contexts" ] && ln -sfn "$cfgdir/contexts" "$ours/contexts"
+  export DOCKER_CONFIG="$ours"
+  [ -n "${DEPLOY_QUIET_CREDS:-}" ] || echo "안내: docker 자격증명 도우미를 실행할 수 없어 deploy 전용 docker 설정($ours)을 쓴다. 사용자 설정(~/.docker/config.json)은 건드리지 않았다." >&2
+}
+if [ "${DEPLOY_NO_DOCKER:-0}" != 1 ]; then
+  detect_docker
+  check_docker_creds
+fi
 # docker.exe에는 윈도 경로를 넘겨야 한다.
 hostpath() { if [ "$DOCKER" = docker.exe ] && command -v wslpath >/dev/null 2>&1; then wslpath -w "$1"; else echo "$1"; fi; }
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름
