@@ -75,6 +75,12 @@ if [ "${DEPLOY_NO_DOCKER:-0}" != 1 ]; then
 fi
 # docker.exe에는 윈도 경로를 넘겨야 한다.
 hostpath() { if [ "$DOCKER" = docker.exe ] && command -v wslpath >/dev/null 2>&1; then wslpath -w "$1"; else echo "$1"; fi; }
+# 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v1.3.3}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
+DEPLOY_BC_TAG_SD="v1.2.0"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용)
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.5.1}"     # model-runtime (survey-service·release-gate 이미지, 추론 서버)
+DEPLOY_TE_TAG="v0.2.0"                               # turn-engine (영역 빌드 스크립트의 기본 태그)
+DEPLOY_SS_TAG="survey-schema-v1.0.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름
 SERVICES="survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console"
 # 이미지 이름은 영역 이름과 같다. 로컬 레지스트리 안의 저장소 이름은 openit/<영역>.

@@ -8,6 +8,9 @@
 #    옵션 없이 돌리는 전체 모드가 인도 전 필수다. 종료 코드는 돌린 검사 기준이다.
 # 사용: scripts/e2e.sh [--fast] [--keep] [--keep-images] [--reuse-build]
 set -o pipefail
+# 사전 점검: 실패하면 바로 멈춘다(건너뛰기 DEPLOY_SKIP_DOCTOR=1). 하위 up.sh 가 다시 점검하지 않게 export 한다
+[ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" || exit 1
+export DEPLOY_SKIP_DOCTOR=1
 source "$(dirname "$0")/lib.sh"
 KEEP=0; REUSE=0; KEEPIMG=0; FAST=0
 for x in "$@"; do case "$x" in --fast) FAST=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;; esac; done

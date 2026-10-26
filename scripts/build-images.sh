@@ -17,7 +17,7 @@ if [ "$ONLY" = "  " ]; then rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"; fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
 # 경계 계약 태그(D53 이후 v1.3.1). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
-export BC="${BOUNDARY_TAG_ALL:-v1.3.3}" MR="${MODEL_RUNTIME_TAG_ALL:-v0.5.1}"
+export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG"   # 태그는 lib.sh 한 곳에서 정한다
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
@@ -82,7 +82,7 @@ fi
 
 # 호스트에서 쓰는 wheel: E2E 클라이언트·검증기(v1.3.1)와 synthetic-data용(그 영역이 고정한 태그 v1.2.0)
 mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
-for tag in "$BC" v1.2.0; do
+for tag in "$BC" "$DEPLOY_BC_TAG_SD"; do
   d="$DEPLOY_ROOT/build/hostsrc-$tag"; rm -rf "$d"; mkdir -p "$d"; git -C "$CTX/boundary-contracts" archive "$tag" | tar -x -C "$d"
   mkdir -p "$DEPLOY_ROOT/build/hostwheels/$tag"; "$PIP" wheel -q --no-deps -w "$DEPLOY_ROOT/build/hostwheels/$tag" "$d" >/dev/null 2>&1
 done
