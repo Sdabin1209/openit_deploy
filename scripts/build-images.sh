@@ -60,21 +60,10 @@ if want ops-feedback; then
   record ops-feedback "$img" "$c"
 fi
 if want release-gate; then
-  # release-gate 의 scripts/build_image.sh 는 컨텍스트 경로를 `wslpath -w`(있으면)로 바꾼다. WSL에서 표준 리눅스 docker 와는 맞지 않아(CR-D21)
-  # 같은 일을 여기서 한다: 영역의 stage_context.sh 로 컨텍스트를 만들고 영역의 Dockerfile 로 표준 `docker build`.
-  # turn-engine/model-runtime wheel 은 형제 리포의 태그 시점 소스(git archive, 사본 기준)에서 만든다.
-  RGD="$CTX/release-gate"; libs="$RGD/.build/libwheels"; rm -rf "$libs" "$RGD/.build/lib-src"; mkdir -p "$libs"
-  for spec in "turn-engine:$DEPLOY_TE_TAG" "model-runtime:$MR"; do
-    repo="${spec%%:*}"; rtag="${spec##*:}"; src="$RGD/.build/lib-src/$repo"; mkdir -p "$src"
-    git -C "$CTX/$repo" archive "$rtag" | tar -x -C "$src"
-    "$PY" -m pip wheel -q --no-deps -w "$libs" "$src" >&2
-  done
-  ctx="$( cd "$RGD" && GATE_LIB_WHEELS_DIR="$libs" BOUNDARY_CONTRACTS_TAG="$BC" PYTHON="$PY" bash scripts/stage_context.sh 2>/dev/null )"
-  ver() { ls "$ctx/wheels" | sed -n "s/^$1-\([^-]*\)-.*/\1/p" | head -1; }
+  # 영역의 build_image.sh 를 표준 `docker` 와 일반 경로로 부른다(turn-engine/model-runtime 는 형제 리포의 태그 시점 소스, 사본 기준).
+  # 전제: release-gate 의 build_image.sh 가 docker.exe·wslpath 를 가정하지 않는 버전이다(CR-D21). 그 전 버전은 WSL 에서 UNC 경로를 만들어 실패한다.
   c=$(commit_of release-gate); img="deploy-build/release-gate:$c"
-  "$DOCKER" build -q -t "$img" -f "$RGD/Dockerfile" --build-arg COMMIT="$c" --build-arg BOUNDARY_VERSION="$(ver boundary_contracts)" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(cat "$ctx/survey-schema/CONTRACT_VERSION")" \
-    --build-arg TURN_ENGINE_VERSION="$(ver turn_engine)" --build-arg MODEL_RUNTIME_VERSION="$(ver model_runtime)" "$ctx" >/dev/null
+  ( cd "$CTX/release-gate" && DOCKER="$DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
   record release-gate "$img" "$c"
 fi
 if want model-registry; then

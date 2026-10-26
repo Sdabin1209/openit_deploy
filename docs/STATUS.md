@@ -129,4 +129,4 @@ admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-appr
 
 ## 열셋째 구간: 표준 docker 경로 하나로 (WSL 분기·우회 제거)
 
-사용자 지시: 꼼수·우회 없이 표준 방법. `lib.sh`에서 docker.exe 폴백, wslpath/hostpath 변환, `/proc/version` 판정, 자격증명 우회(`check_docker_creds`, 82911c1), `--env-file`을 통한 환경 전달(envfile)을 모두 없앴다. 남은 것은 `DOCKER` 변수로 실행 파일 지정과 `docker info` 실패 시 명확한 오류 중단뿐이다. `doctor.sh`는 우회 대신 진단과 고치는 법을 낸다(데몬 꺼짐·소켓 없음·권한·compose/buildx 없음·자격증명 도우미 실행 불가). release-gate의 `build_image.sh`가 `wslpath -w`를 쓰는 점은 `build-images.sh`가 같은 일을 표준 docker build로 하는 것으로 비켰고 CR-D21로 올렸다. SETUP.md B절을 "표준 docker가 데몬에 닿는 상태가 전제 + 환경 설정 절차"로 고쳤다.
+사용자 지시: 꼼수·우회 없이 표준 방법. `lib.sh`에서 docker.exe 폴백, wslpath/hostpath 변환, `/proc/version` 판정, 자격증명 우회(`check_docker_creds`, 82911c1), `--env-file`을 통한 환경 전달(envfile)을 모두 없앴다. 남은 것은 `DOCKER` 변수로 실행 파일 지정과 `docker info` 실패 시 명확한 오류 중단뿐이다. `doctor.sh`는 우회 대신 진단과 고치는 법을 낸다(데몬 꺼짐·소켓 없음·권한·compose/buildx 없음·자격증명 도우미 실행 불가). release-gate의 `build_image.sh`가 `wslpath -w`/`docker.exe`를 가정하는 점은 CR-D21로 올렸고, `build-images.sh`는 표준 `DOCKER`로 그 스크립트를 그대로 부른다(release-gate가 고친 버전이 push되기 전에는 WSL에서 release-gate 이미지 빌드가 실패한다). SETUP.md B절을 "표준 docker가 데몬에 닿는 상태가 전제 + 환경 설정 절차"로 고쳤다.
