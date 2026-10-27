@@ -12,11 +12,11 @@
 #      compose.llm.local.yaml   데모: MODEL_SERVING_GPU_IMAGE=deploy-build/model-serving-gpu:<커밋> 로컬 이미지를 태그로 직접 참조, pull_policy: never
 #                               (13GB 이미지를 레지스트리에 두 벌로 두지 않으려는 것; demo.sh up --llm 이 이렇게 한다). 이 경로는 digest 고정을 하지 않는다.
 #  - GPU 컨테이너 접근: bash scripts/doctor.sh --llm
-#  - 첫 기동은 huggingface.co 에서 모델(약 8GB(Qwen3-4B 추정))을 hf-cache 볼륨(/var/lib/model-runtime/hf)으로 받는다(인터넷 필요). 오프라인이면 볼륨을 미리 채우고 HF_HUB_OFFLINE=1.
+#  - 첫 기동은 huggingface.co 에서 모델(약 4GB(Qwen3-1.7B 추정))을 hf-cache 볼륨(/var/lib/model-runtime/hf)으로 받는다(인터넷 필요). 오프라인이면 볼륨을 미리 채우고 HF_HUB_OFFLINE=1.
 # 변수: HF_CACHE_VOLUME(기본 deploy-llm-hf-cache), DEMO_LLM_PROFILE(프로파일 경로, 이미지 안 /app/profiles/ 아래. 기본 gpu-12g.json), HF_HUB_OFFLINE(기본 0)
 volumes:
   hf-cache:        # Hugging Face 모델 캐시(HF_HOME). 다시 받을 수 있어 백업 대상이 아니다.
-    external: true   # 프로젝트 밖 이름 있는 볼륨: down -v / --purge 가 지우지 않는다(다음 기동에서 약 8GB(Qwen3-4B 추정)를 다시 받지 않게). 없으면 만들어 둔다:
+    external: true   # 프로젝트 밖 이름 있는 볼륨: down -v / --purge 가 지우지 않는다(다음 기동에서 약 4GB(Qwen3-1.7B 추정)를 다시 받지 않게). 없으면 만들어 둔다:
     name: ${HF_CACHE_VOLUME:-deploy-llm-hf-cache}   #   docker volume create deploy-llm-hf-cache   (demo.sh up --llm 이 만든다). 지우기: down.sh --purge-hf-cache
 services:
   model-serving:
@@ -40,7 +40,7 @@ services:
           devices:
             - {driver: nvidia, count: 1, capabilities: [gpu]}
     healthcheck:
-      start_period: 900s   # 잠정: 첫 기동의 모델 내려받기(약 8GB(Qwen3-4B 추정))와 적재 시간은 측정 전이라 넉넉히 잡았다. 측정 후 줄인다
+      start_period: 900s   # 잠정: 첫 기동의 모델 내려받기(약 4GB(Qwen3-1.7B 추정))와 적재 시간은 측정 전이라 넉넉히 잡았다. 측정 후 줄인다
       interval: 15s
       timeout: 3s
       retries: 10

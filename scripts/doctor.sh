@@ -139,18 +139,18 @@ if [ $LLM = 1 ]; then
         fail "GPU 컨테이너를 실행하지 못했다 (docker run --gpus all $CUDA_IMG nvidia-smi)" "리눅스: NVIDIA 드라이버와 nvidia-container-toolkit 설치 후 sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
       fi
     fi
-    # 도커 디스크: GPU 이미지 약 13GB + HF 캐시 약 8GB(Qwen3-4B 추정) (서버에서 측정 전). 회수 가능량을 함께 보인다
+    # 도커 디스크: GPU 이미지 약 13GB + HF 캐시 약 4GB(Qwen3-1.7B 추정) (서버에서 측정 전). 회수 가능량을 함께 보인다
     DF=$("$D" system df --format '{{.Type}}: {{.Size}} (회수 가능 {{.Reclaimable}})' 2>/dev/null | tr '\n' ';')
     [ -n "$DF" ] && echo "  [정보] docker system df -- $DF"
     ROOT=$("$D" info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '\r')
     AV=""; [ -n "$ROOT" ] && [ -d "$ROOT" ] && AV=$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')
-    if [ -z "$AV" ]; then warn "도커 저장 위치의 여유 디스크를 이 셸에서 읽지 못했다 (Docker Desktop은 VM/윈도 드라이브 안)" "GPU 이미지 약 13GB + HF 캐시 약 8GB(Qwen3-4B 추정)(측정 전)가 들어갈 여유를 도커 디스크 위치에서 직접 확인(docs/RUN.md). 줄이기: docker system df 로 회수 가능량 확인 후 사용자가 판단해 정리"
+    if [ -z "$AV" ]; then warn "도커 저장 위치의 여유 디스크를 이 셸에서 읽지 못했다 (Docker Desktop은 VM/윈도 드라이브 안)" "GPU 이미지 약 13GB + HF 캐시 약 4GB(Qwen3-1.7B 추정)(측정 전)가 들어갈 여유를 도커 디스크 위치에서 직접 확인(docs/RUN.md). 줄이기: docker system df 로 회수 가능량 확인 후 사용자가 판단해 정리"
     elif [ "$AV" -lt 25 ]; then warn "도커 저장 위치 ($ROOT) 여유 약 ${AV}GB (권장 25GB 이상)" "공간 확보: docker system df 로 회수 가능량을 보고 사용자가 판단해 정리 (docs/RUN.md)"
     else ok "도커 저장 위치 ($ROOT) 여유 약 ${AV}GB"; fi
   fi
   if command -v curl >/dev/null 2>&1; then
     HC=$(curl -s -o /dev/null -m 8 -w '%{http_code}' https://huggingface.co 2>/dev/null || true)
-    if [ -n "$HC" ] && [ "$HC" != 000 ]; then ok "huggingface.co 도달 (HTTP $HC): 첫 기동의 모델 내려받기(약 8GB(Qwen3-4B 추정))에 필요"
+    if [ -n "$HC" ] && [ "$HC" != 000 ]; then ok "huggingface.co 도달 (HTTP $HC): 첫 기동의 모델 내려받기(약 4GB(Qwen3-1.7B 추정))에 필요"
     else warn "huggingface.co 에 닿지 않는다" "인터넷/프록시를 확인하거나, 오프라인이면 hf-cache 볼륨을 미리 채우고 HF_HUB_OFFLINE=1 (docs/RUN.md)"; fi
   else warn "curl 이 없어 huggingface.co 도달을 확인하지 못했다" "curl 설치(선택)"; fi
 fi

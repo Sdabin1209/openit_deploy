@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 사람이 화면을 직접 눌러 볼 수 있는 데모 환경. 상시 구성(`deploy` 프로젝트)과 따로, 같은 서버에서 함께 돌 수 있다.
 #   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
-#   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen3-4B(프로파일 gpu-12g) + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
+#   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen3-1.7B(프로파일 gpu-12g, 파이프라인 데모) + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
 #   scripts/demo.sh config --llm [--profile gpu-12g]            컨테이너를 띄우지 않고 실제 LLM 구성의 병합(docker compose config)만 검증한다(이미지 참조가 로컬 태그인지)
 #   scripts/demo.sh diag                                        켜져 있는 데모의 release-gate 제출·판정(checks)·수집기·모델 패키지 요약(읽기 전용)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
@@ -97,7 +97,7 @@ guide() {
    예: cat $W/secrets/tokens/staff-console-password
 
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )
- $( [ $LLM = 1 ] && printf '%s' " 실제 LLM: 학습하지 않은 기반 모델(프로파일 $LLM_PROFILE_NAME, gpu-12g 는 Qwen/Qwen3-4B) + 학습 데이터의 시스템 프롬프트(prompt-4 조립) + 효과 없는 LoRA(lora_B=0, 시험용 대체). 학습된 모델이 아니라서 A 출력이 형식을 못 지키면 그 턴은 실패 신호로 처리된다(503 OUTPUT_INVALID, 값을 지어내지 않는다, D75). 12GB GPU에서 적재되는지는 서버 미검증이다. 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다." )
+ $( [ $LLM = 1 ] && printf '%s' " 실제 LLM: 학습하지 않은 기반 모델(프로파일 $LLM_PROFILE_NAME, gpu-12g 는 Qwen/Qwen3-1.7B) + 학습 데이터의 시스템 프롬프트(prompt-4 조립) + 효과 없는 LoRA(lora_B=0, 시험용 대체). 학습된 모델이 아니라서 A 출력이 형식을 못 지키면 그 턴은 실패 신호로 처리된다(503 OUTPUT_INVALID, 값을 지어내지 않는다, D75). 12GB GPU에서 적재되는지는 서버 미검증이다. 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다." )
  직원 알림: 지금은 입력원이 없다(OPEN_GAPS G01). 직원 콘솔(/staff/)에 알림이 뜨지 않는 것이 정상이며 survey-service /readyz 의 staff_alert_source.active=false 로 드러난다.
  승인 화면: 승인 대기 시험 제출이 있다$( [ $STOP = 1 ] && echo " (--stop-before-approval: 문항 세트 v1·v2 모두 대기. 승인한 뒤 scripts/demo.sh activate)" || echo " (보지 못한 문항 세트 제출 1건. v1·v2는 스크립트가 시험용 승인자로 이미 승인·활성화)")
  실패 사례 검토 화면: 시험 사례 1건(PENDING). /admin/ 의 검토 메뉴(검토자 계정)
@@ -130,7 +130,7 @@ llm_config_check() { # llm_config_check sentinel|real : 병합된 compose 설정
 wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 시간 상한 후에도 실패시키지 않고 안내하고 끝낸다
   local mins=${DEMO_LLM_WAIT_MIN:-20} t0=$SECONDS mp sp sc ms
   mp=$(port_of "$P-model-serving-1" 8080); sp=$(port_of "$P-survey-service-1" 8080)
-  echo "== 실제 LLM 적재 대기 (최대 ${mins}분, 환경 변수 DEMO_LLM_WAIT_MIN 로 바꾼다). 첫 기동은 huggingface.co 에서 모델(약 8GB(Qwen3-4B 추정))을 받고 적재한다"
+  echo "== 실제 LLM 적재 대기 (최대 ${mins}분, 환경 변수 DEMO_LLM_WAIT_MIN 로 바꾼다). 첫 기동은 huggingface.co 에서 모델(약 4GB(Qwen3-1.7B 추정))을 받고 적재한다"
   while [ $((SECONDS - t0)) -lt $((mins * 60)) ]; do
     sc=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$sp/readyz" 2>/dev/null || true)
     if [ "$sc" = 200 ]; then echo "survey-service 준비됨: 활성 릴리스 적재를 마쳤다. 위 주소에서 키오스크를 눌러 본다"; return 0; fi

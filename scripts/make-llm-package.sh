@@ -20,7 +20,7 @@ git -C "$WORKSPACE/model-runtime" archive "$DEPLOY_MR_TAG" scripts src profiles 
 # 기반 모델의 config.json: 확인한 것만 쓴다(리비전과 sha256 고정). 표에 없는 모델은 "미확인"으로 중단한다.
 BASE=$("$VENV/bin/python" -c 'import json,sys;print(json.load(open(sys.argv[1]))["base_model"])' "$SRC/profiles/$NAME.json")
 case "$BASE" in
-  Qwen/Qwen3-4B) HF_REV=1cfa9a7208912126459214e8b04321603b3df60c; HF_SHA=8ba006f74fecfaaeb392872a60f4a480e7ec9860153d2e1b769ec81f9a147f8a;;   # 2026-10-27 에 받아 sha256 을 기록한 값
+  Qwen/Qwen3-1.7B) HF_REV=70d244cc86ccca08cf5af4e1e306ecf908b1ad5e; HF_SHA=1ddb5b89ebc90dcb417a45c213d818577e65976454d29385c8f6140771d95197;;   # 2026-10-27 에 받아 sha256 을 기록한 값
   *) die "기반 모델 $BASE 의 config.json 리비전·sha256 이 이 스크립트에 기록되지 않았다(미확인). 받아서 확인한 뒤 case 에 추가하라";;
 esac
 CFG="$DEPLOY_ROOT/build/hf-config/${BASE//\//__}.config.json"

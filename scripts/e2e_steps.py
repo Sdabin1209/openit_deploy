@@ -248,7 +248,7 @@ def make_packages():
     for role in ("LORA_A", "LORA_B"):
         mf = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "package_id": f"pkg-{RID}-{role.lower().replace('_', '-')}", "version": "1", "role": role,
               "created_at": "2026-10-15T00:00:00Z", "runtime_contract_version": 1,
-              "base_model": (gm[role]["base_model"] if a.llm_package else {"id": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "main"}),   # 실제 LLM 데모는 패키지(프로파일)의 기반 모델(gpu-12g = Qwen3-4B)
+              "base_model": (gm[role]["base_model"] if a.llm_package else {"id": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "main"}),   # 실제 LLM 데모는 패키지(프로파일)의 기반 모델(gpu-12g = Qwen3-1.7B)
               "adapter_hash": d["adapter_hash"][role], "serving_config": d["cfgs"][role], "serving_config_hash": d["hashes"][role],
               "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "turn_engine_version": a.turn_engine_version,
                           "model_runtime_version": d["runtime"], "question_sets": STATE["qs"][-1:]},
