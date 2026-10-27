@@ -16,7 +16,7 @@ detect_docker() {
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
 DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v2.0.2}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
 DEPLOY_BC_TAG_SD="v2.0.2"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용, requirements.lock)
-DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.7.0}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.7.1}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.4.0}"          # turn-engine (survey-service·release-gate 빌드와 model-serving 이미지 라벨)
 export DEPLOY_TE_TAG
 DEPLOY_SS_TAG="survey-schema-v1.0.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)

@@ -90,6 +90,8 @@ def load_pipe_file(path: Path):
 
 
 ALLOW = [(p[0], p[1]) for _, p in load_pipe_file(ALLOW_FILE) if len(p) >= 2]
+ORDERED_FILE = Path(os.environ.get("CHECK_ALL_ORDERED") or HERE / "check-all-ordered-schemas.txt")
+ORDERED = [(n, p[0], p[1] if len(p) > 1 else "") for n, p in load_pipe_file(ORDERED_FILE)]   # (줄, 스키마 이름, 이유)
 EXCLUDE = [(n, p[0], p[1] if len(p) > 1 else "") for n, p in load_pipe_file(EXCLUDE_FILE)]   # (줄, 종류:이름, 이유)
 
 
@@ -337,6 +339,13 @@ def rule_key_order() -> R:
         return r
     rs = Resolver()
     have_example = set()
+    for n, nm, why in ORDERED:
+        if not why:
+            r.fail(f"ordered:{nm}", f"deploy/scripts/check-all-ordered-schemas.txt:{n}: 대상 스키마 '{nm}' 에 이유가 없다")
+        elif find_schema_file(nm) is None:
+            r.fail(f"ordered:{nm}", f"deploy/scripts/check-all-ordered-schemas.txt:{n}: 스키마 '{nm}' 가 boundary-contracts 에 없다")
+    ordered = {nm for _, nm, why in ORDERED if why}
+    r.info.append("키 순서 대상 스키마(scripts/check-all-ordered-schemas.txt): " + (", ".join(f"{nm} ({why})" for _, nm, why in ORDERED) or "비어 있음"))
     for ex in exs:
         name = ex.name.split(".")[0]
         have_example.add(name)
@@ -347,6 +356,9 @@ def rule_key_order() -> R:
         sp = find_schema_file(name)
         if sp is None:
             r.fail(ex.name, f"모르는 대상: boundary-contracts/examples/{ex.name}:1: 짝이 되는 스키마가 없다")
+            continue
+        if name not in ordered:
+            r.na.append((ex.name, "모델 생성 출력이 아님(키 순서가 의미 없다)"))
             continue
         try:
             text = ex.read_text(encoding="utf-8")
@@ -694,12 +706,15 @@ def rule_collect() -> R:
 
 
 # ---------- 규칙 9 ----------
+# 규칙 9의 '필수 절 7개': 리포에 정의가 없어 이 점검이 다음 7개로 해석한다(미정, 헤드가 확정한다). 소개 = 제목 다음의 설명 문단 또는 '## 소개' 절,
+# 나머지 6개는 '## [번호.] [이 영역의 ]<이름>' 제목이다.
 README_SECTIONS = [("소개(제목 다음의 설명)", None), ("전체 속의 위치", r"전체 속의 위치"), ("구조", r"구조"), ("실행 방법", r"실행 방법"),
                    ("현재 상태", r"현재 상태"), ("열린 항목", r"열린 항목"), ("더 자세한 문서", r"더 자세한 문서")]
 
 
 def rule_readme() -> R:
     r = R()
+    r.info.append("필수 절 7개(헤드 확정 전의 해석): " + ", ".join(n for n, _ in README_SECTIONS) + " (앞의 '소개'는 제목 다음의 설명 문단 또는 '## 소개' 절)")
     for repo in known_areas():
         if AREA_KIND[repo] == "docs":
             r.na.append((repo, "설계 문서 영역이라 영역 README 형식이 아니다"))

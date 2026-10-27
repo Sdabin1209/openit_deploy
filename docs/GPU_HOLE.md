@@ -28,7 +28,7 @@ mkdir -p ~/openit && cd ~/openit
 for b in ~/openit-bundles/*.bundle; do n=$(basename "$b" .bundle)
   if [ -d "$n/.git" ]; then git -C "$n" fetch "$b" 'refs/heads/main:refs/remotes/bundle/main' --tags && git -C "$n" merge --ff-only bundle/main
   else git clone "$b" "$n"; fi; done
-git -C model-runtime tag | tail -3      # v0.7.0 이 있어야 한다 (기준은 deploy/scripts/lib.sh 의 태그 표)
+git -C model-runtime tag | tail -3      # v0.7.1 이 있어야 한다 (기준은 deploy/scripts/lib.sh 의 태그 표)
 ```
 
 ### 서버 점검

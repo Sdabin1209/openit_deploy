@@ -22,7 +22,7 @@ README='# 영역
 # mk <이름>... : 임시 워크스페이스 $W 에 영역(.git 과 올바른 README 포함)을 만든다
 mk() { W="$(mktemp -d -p "$T")"; for a in "$@"; do mkdir -p "$W/$a/.git"; printf '%s' "$README" > "$W/$a/README.md"; done; }
 # run <규칙번호> [환경...] : 출력을 $OUT, 종료 코드를 $RC 에
-run() { local r=$1; shift; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_ALLOW=/dev/null CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
+run() { local r=$1; shift; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_ALLOW=/dev/null CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
 expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   N=$((N+1)); local ok=1
   grep -q ": $2\$" <<<"$OUT" || ok=0
@@ -31,7 +31,7 @@ expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   if [ $ok = 1 ]; then echo "  ok   $1"; else echo "  FAIL $1 (기대 $2 ${3:-})"; echo "$OUT" | sed 's/^/       /' | head -12; FAILS=$((FAILS+1)); fi
 }
 BC=boundary-contracts
-mkschema() { mkdir -p "$W/$BC/schemas" "$W/$BC/examples"; cat > "$W/$BC/schemas/Foo.schema.json" <<'J'
+mkschema() { echo "Foo | 시험용 모델 출력" > "$W/ordered.txt"; mkdir -p "$W/$BC/schemas" "$W/$BC/examples"; cat > "$W/$BC/schemas/Foo.schema.json" <<'J'
 {"type":"object","properties":{"a":{"type":"string"},"b":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"}}}}}}
 J
 }
@@ -52,6 +52,10 @@ echo "== 2 예시 키 순서"
 mk $BC; mkschema; echo '{"a":"1","b":[{"x":1,"y":2}]}' > "$W/$BC/examples/Foo.json"; run 2; expect "올바른 순서는 PASS" PASS "검증됨 1/1"
 echo '{"b":[{"x":1,"y":2}],"a":"1"}' > "$W/$BC/examples/Foo.json"; run 2; expect "최상위 순서가 다르면 FAIL" FAIL "Foo.json"
 printf '{\n  "a": "1",\n  "b": [\n    {\n      "y": 2,\n      "x": 1\n    }\n  ]\n}\n' > "$W/$BC/examples/Foo.json"; run 2; expect "중첩 객체 순서가 다르면 FAIL(줄 번호)" FAIL "Foo.json:5"
+
+echo '{"b":[],"a":"1"}' > "$W/$BC/examples/Foo.json"; printf '' > "$W/ordered.txt"; run 2; expect "목록에 없는 스키마의 예시는 대상 아님(FAIL 아님)" PASS "모델 생성 출력이 아님"
+printf 'Foo\n' > "$W/ordered.txt"; run 2; expect "대상 목록 항목에 이유가 없으면 FAIL" FAIL "이유가 없다"
+echo "Nope | x" > "$W/ordered.txt"; run 2; expect "목록의 스키마가 없으면 FAIL" FAIL "가 boundary-contracts 에 없다"
 
 echo "== 3 완화 정책"
 mk deploy
