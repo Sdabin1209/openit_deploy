@@ -18,6 +18,7 @@ x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 c
   timeout: 3s
   retries: 5
   start_period: 20s
+  start_interval: 1s   # 왜: start_period 동안만 1초 간격으로 확인한다(기본 5초). 뜬 직후 healthy가 되어 depends_on 사슬과 `up --wait`가 빨라진다. 평시 간격(interval)은 그대로. Docker 엔진 25 이상 필요(doctor.sh가 확인)
 
 networks:
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
@@ -172,6 +173,7 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
+      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
 
   gateway:
     <<: *hardening
@@ -198,7 +200,7 @@ services:
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"
     networks: [edge, ui, serving]   # ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     <<: *hardening
@@ -215,7 +217,7 @@ services:
     pids_limit: ${LIMIT_ADMIN_CONSOLE_PIDS:-100}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
     networks: [ui]
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   survey-service:
     <<: *hardening

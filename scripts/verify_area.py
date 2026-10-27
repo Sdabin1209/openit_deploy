@@ -10,8 +10,8 @@ from pathlib import Path
 
 try:
     import yaml
-except ImportError:  # check-all.sh 와 같은 방식: 시스템 python 에 없으면 deploy 가상환경을 쓴다
-    sys.exit("PyYAML 이 필요하다 (deploy/.venv 의 python 으로 실행하라: scripts/verify-area.sh 가 고른다)")
+except ImportError:  # --stale-images 는 yaml 없이도 돈다. 대응표를 읽는 쪽에서 필요하면 알린다
+    yaml = None
 
 HERE = Path(__file__).resolve().parent
 DEPLOY_ROOT = HERE.parent
@@ -22,7 +22,6 @@ AREAS = ["survey-service", "release-gate", "ops-feedback", "question-authoring",
 IMAGE_SRC = {"survey-service": "survey-service", "question-authoring": "question-authoring", "ops-feedback": "ops-feedback",
              "release-gate": "release-gate", "model-registry": "model-lab", "model-serving": "model-runtime",
              "kiosk-frontend": "kiosk-frontend", "admin-console": "admin-console"}
-TAG_LABELS = {"io.openit.contracts.boundary": "DEPLOY_BC_TAG", "io.openit.turn-engine": "DEPLOY_TE_TAG", "io.openit.model-runtime": "DEPLOY_MR_TAG"}
 
 
 class ConfigError(Exception):
@@ -39,6 +38,8 @@ def step_order(steps_py=None):
 
 
 def load_config(path=CONFIG, order=None):
+    if yaml is None:
+        raise ConfigError("PyYAML 이 필요하다 (deploy/.venv 의 python 으로 실행하라: scripts/verify-area.sh 가 고른다)")
     cfg = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     order = order if order is not None else step_order()
     errs = []
@@ -112,16 +113,12 @@ def skippable(files, globs):
     return all(any(fnmatch.fnmatch(f, g) or (g.endswith("/**") and f.startswith(g[:-2])) for g in globs) for f in files)
 
 
-def is_stale(labels, expected_rev, expected_tags):
-    """이미지 라벨이 현재 소스·의존 태그와 다르면 낡았다. 라벨이 없거나(이미지 없음) 커밋 뒤 접미사(-test2)가 있으면 낡았다."""
-    if not labels:
+def is_stale(record, image_exists, expected_rev, expected_stamp):
+    """build/images.env 의 한 줄(이름 이미지 커밋 [도장])이 현재 소스·의존 태그와 다르면 낡았다.
+    기록이 없거나 이미지가 로컬에 없거나, 커밋이 다르거나(접미사 -test2 포함), 도장(bc=,te=,mr=)이 없거나 다르면 낡았다(모르면 다시 빌드한다)."""
+    if not record or not image_exists:
         return True
-    if labels.get("io.openit.revision") != expected_rev:
-        return True
-    for k, want in expected_tags.items():
-        if k in labels and labels[k] != want:
-            return True
-    return False
+    return record.get("commit") != expected_rev or record.get("stamp") != expected_stamp
 
 
 def test_command(spec, ws, area):
@@ -180,26 +177,22 @@ def lib_tags():
 
 
 def stale_images(images, ws):
-    import json
     tags = lib_tags()
+    stamp = f"bc={tags['DEPLOY_BC_TAG']},te={tags['DEPLOY_TE_TAG']},mr={tags['DEPLOY_MR_TAG']}"   # build-images.sh 의 record 가 쓰는 도장과 같은 모양
     rec = {}
     env = DEPLOY_ROOT / "build" / "images.env"
     if env.exists():
         for line in env.read_text().splitlines():
             f = line.split()
-            if len(f) >= 2:
-                rec[f[0]] = f[1]
+            if len(f) >= 3:
+                rec[f[0]] = {"image": f[1], "commit": f[2], "stamp": f[3] if len(f) > 3 else None}
     out = []
     for img in images:
         src = IMAGE_SRC[img]
         ref = f"{tags['DEPLOY_MR_TAG']}^{{commit}}" if img == "model-serving" else "HEAD"   # build-images.sh: model-serving 은 model-runtime 태그 시점
         rev = _run(["git", "-C", str(ws / src), "rev-parse", "--short", ref]).stdout.strip()
-        labels = None
-        if img in rec:
-            p = _run(["docker", "image", "inspect", rec[img], "--format", "{{json .Config.Labels}}"])
-            if p.returncode == 0:
-                labels = json.loads(p.stdout or "null")
-        if is_stale(labels, rev, {k: tags[v] for k, v in TAG_LABELS.items()}):
+        exists = img in rec and _run(["docker", "image", "inspect", rec[img]["image"]]).returncode == 0
+        if not rev or is_stale(rec.get(img), exists, rev, stamp):
             out.append(img)
     return out
 
@@ -217,6 +210,11 @@ def changed_files(ws, area, since):
 
 
 def main(argv=None):
+    if "--stale-images" in (argv if argv is not None else sys.argv[1:]):
+        # e2e.sh --reuse-build 가 쓴다: 소스 커밋·의존 태그가 이미지 라벨과 다른(낡은) 이미지 이름을 공백으로 구분해 낸다. 판정이 안 되면 0이 아닌 코드(호출자가 전부 다시 빌드한다)
+        ws = Path(os.environ.get("VERIFY_WORKSPACE") or DEPLOY_ROOT.parent)
+        print(" ".join(stale_images(list(IMAGE_SRC), ws)))
+        return 0
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("area", nargs="?", choices=AREAS)
     ap.add_argument("--list", action="store_true", help="영역별 대응(E2E 단계와 근거)을 보여 주고 끝낸다")

@@ -63,6 +63,9 @@ else
 fi
 if [ -n "$D" ]; then
   if "$D" compose version >/dev/null 2>&1; then ok "docker compose $("$D" compose version --short 2>/dev/null)"; else fail "docker compose 플러그인이 없다" "리눅스: sudo apt-get install -y docker-compose-plugin. WSL: Docker Desktop 통합을 켠다 (docs/SETUP.md)"; fi
+  # compose.yaml 의 healthcheck start_interval(기동 직후 1초 간격 확인)은 Docker 엔진 25 이상이 필요하다
+  EV=$("$D" version --format '{{.Server.Version}}' 2>/dev/null | tr -d '\r'); EVM=${EV%%.*}
+  if [ -n "$EVM" ] && [ "$EVM" -ge 25 ] 2>/dev/null; then ok "docker 엔진 $EV (healthcheck start_interval 지원)"; else fail "docker 엔진 버전 $EV 은(는) 25 미만이거나 읽지 못했다" "compose.yaml 의 healthcheck start_interval 은 엔진 25 이상이 필요하다. Docker를 25 이상으로 올린다 (docs/SETUP.md)"; fi
   if [ $UP_ONLY = 0 ]; then
     if "$D" buildx version >/dev/null 2>&1; then ok "docker buildx"; else fail "docker buildx 플러그인이 없다" "이미지 빌드(--build-context)에 필요: sudo apt-get install -y docker-buildx-plugin (WSL은 Docker Desktop 통합)"; fi
   fi

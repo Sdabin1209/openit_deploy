@@ -94,14 +94,37 @@ class T(unittest.TestCase):
         self.assertNotIn("--only", plan[-1][1])
 
     def test_is_stale(self):
-        tags = {"io.openit.contracts.boundary": "v2.0.2", "io.openit.model-runtime": "v0.7.3"}
-        ok = {"io.openit.revision": "abc", "io.openit.contracts.boundary": "v2.0.2", "io.openit.model-runtime": "v0.7.3"}
-        self.assertFalse(v.is_stale(ok, "abc", tags))
-        self.assertTrue(v.is_stale(None, "abc", tags))                                   # 이미지 없음
-        self.assertTrue(v.is_stale(ok, "abd", tags))                                     # 소스 커밋이 다름
-        self.assertTrue(v.is_stale({**ok, "io.openit.revision": "abc-test2"}, "abc", tags))   # 시험 접미사
-        self.assertTrue(v.is_stale({**ok, "io.openit.contracts.boundary": "v2.0.1"}, "abc", tags))   # 의존 태그가 올랐다
-        self.assertFalse(v.is_stale({"io.openit.revision": "abc"}, "abc", tags))          # 그 라벨이 없는 이미지(kiosk)는 태그 비교 대상 아님
+        rec = {"commit": "abc", "stamp": "bc=v2,te=v4,mr=v7"}
+        self.assertFalse(v.is_stale(rec, True, "abc", "bc=v2,te=v4,mr=v7"))
+        self.assertTrue(v.is_stale(None, True, "abc", "bc=v2,te=v4,mr=v7"))              # 기록 없음
+        self.assertTrue(v.is_stale(rec, False, "abc", "bc=v2,te=v4,mr=v7"))              # 이미지가 로컬에 없다
+        self.assertTrue(v.is_stale(rec, True, "abd", "bc=v2,te=v4,mr=v7"))               # 소스 커밋이 다름
+        self.assertTrue(v.is_stale({**rec, "commit": "abc-test2"}, True, "abc", rec["stamp"]))   # 시험 접미사
+        self.assertTrue(v.is_stale(rec, True, "abc", "bc=v3,te=v4,mr=v7"))               # 의존 태그가 올랐다
+        self.assertTrue(v.is_stale({"commit": "abc", "stamp": None}, True, "abc", rec["stamp"]))   # 옛 기록(도장 없음)은 한 번 다시 빌드
+
+    def test_build_images_record_writes_stamp(self):
+        s = (HERE / "build-images.sh").read_text(encoding="utf-8")
+        self.assertIn('bc=$BC,te=$TE,mr=$MR', s)
+
+    def test_stale_images_with_fake_git_and_docker(self):
+        import json, tempfile
+        tags = {"DEPLOY_BC_TAG": "v2.0.2", "DEPLOY_TE_TAG": "v0.4.0", "DEPLOY_MR_TAG": "v0.7.3"}
+        class P:  # subprocess.CompletedProcess 대용
+            def __init__(s, out="", rc=0): s.stdout, s.returncode = out, rc
+        def fake_run(argv, cwd=None):
+            if argv[0] == "git":
+                return P("bbb2222\n" if "model-lab" in argv[2] else "aaa1111\n")   # model-lab 만 소스가 바뀌었다
+            return P("{}")   # docker image inspect 성공
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / "build"; env.mkdir(); (env / "images.env").write_text("survey-service img:1 aaa1111 bc=v2.0.2,te=v0.4.0,mr=v0.7.3\nmodel-registry img:2 aaa1111 bc=v2.0.2,te=v0.4.0,mr=v0.7.3\n")
+            old = (v._run, v.lib_tags, v.DEPLOY_ROOT)
+            v._run, v.lib_tags, v.DEPLOY_ROOT = fake_run, lambda: tags, Path(d)
+            try:
+                got = v.stale_images(["survey-service", "model-registry", "release-gate"], Path("/ws"))
+            finally:
+                v._run, v.lib_tags, v.DEPLOY_ROOT = old
+        self.assertEqual(got, ["model-registry", "release-gate"])   # 바뀐 소스, 기록 없는 이미지는 낡음. survey-service 는 재사용
 
     def test_image_src_matches_build_images_sh(self):
         src = (HERE / "build-images.sh").read_text(encoding="utf-8")
