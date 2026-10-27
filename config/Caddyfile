@@ -190,15 +190,16 @@ import /etc/caddy/devices.caddy
 	@kioskapi path /v1/sessions /v1/sessions/*
 	handle @kioskapi {
 		handle @device_ok {
-			# 마감: 서버 턴 총 마감(FAULT_POLICY 3, 기본 8초)보다 길고 키오스크 대기(10초)보다 짧은 9초까지 응답 헤더를 기다린다. 연결은 2초 안에 맺어야 한다.
-			# 재시도 없음(lb_try_duration 0): 같은 요청을 게이트웨이가 다시 보내지 않는다. 키오스크가 같은 turn_id 로 다시 보낸다.
+			# 마감: 환자 요청이 gateway 에서 쓰는 시간의 상한은 dial_timeout + response_header_timeout 이다(Go 의 두 타이머는 순차: 연결을 맺은 뒤 요청을 다 쓴 시점부터 응답 헤더를 기다린다).
+			# 이 합이 키오스크 대기(10초)보다 짧아야 하고(여기 1s + 8.5s = 9.5s), 서버 턴 총 마감(8초)보다는 길어야 서버의 실패 응답이 gateway 의 504 보다 먼저 온다(여유 0.5s).
+			# 연결 거부·이름 해석 실패는 dial 단계에서 끝나 1초대에 502->503 이 된다. 재시도 없음(lb_try_duration 0): 같은 요청을 게이트웨이가 다시 보내지 않는다. 키오스크가 같은 turn_id 로 다시 보낸다.
 			reverse_proxy survey-service:8080 {
 				header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"
 				header_up -X-Openit-User
 				lb_try_duration 0
 				transport http {
-					dial_timeout 2s
-					response_header_timeout 9s
+					dial_timeout 1s
+					response_header_timeout 8500ms
 				}
 			}
 		}

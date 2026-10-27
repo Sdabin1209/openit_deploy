@@ -734,7 +734,8 @@ def step5w():
     try:
         c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=30); obs["turn"] = (c, round(el, 1))
         assert c == 504 and b == {"code": "UPSTREAM_UNAVAILABLE"} and h.get("retry-after"), f"무응답 상류: 504 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
-        assert 8.0 <= el <= 10.5, f"게이트웨이 마감이 설정(응답 헤더 9s)과 다르다: {el:.1f}s"
+        # 불변식: 서버 턴 총 마감(8s)보다 길고 키오스크 대기(10s)보다 짧다. 설정은 연결 1s + 응답 헤더 8.5s(합 9.5s 상한, config/Caddyfile)
+        assert 8.0 <= el < 10.0, f"게이트웨이 마감이 서버 총 마감(8s)~키오스크 대기(10s) 사이가 아니다: {el:.1f}s"
         rc, rb_, rh, rel = gwk("GET", "/readyz", auth=False); obs["readyz"] = (rc, round(rel, 1))
         assert rc == 504 and rel < 4, f"gateway /readyz 가 무응답 상류에서 504 를 2초대 마감으로 주지 않았다: {rc} {rel:.1f}s"
         hc = gwk("GET", "/healthz", auth=False); obs["healthz"] = hc[0]; assert hc[0] == 200
@@ -747,7 +748,7 @@ def step5w():
     print(f"  관찰: 504 를 받은 턴 w-1 이 unpause 뒤 서비스에서 처리된 횟수 {n_after_unpause}, 같은 turn_id 재전송 뒤 기록 {n_final}회")
     policy("5w", "survey-service 의 turn_id 멱등(처리 중·확정 재전송은 새로 처리하지 않음)", "504 로 끝난 턴을 같은 turn_id 로 재전송해도 발화는 한 번만 기록된다", lambda: (_ for _ in ()).throw(AssertionError(f"기록 {n_final}회")) if n_final != 1 else None)
     kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
-    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 {obs['turn'][1]}s (설정: 연결 2s, 응답 헤더 9s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
+    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 {obs['turn'][1]}s (설정: 연결 1s + 응답 헤더 8.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
 
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")

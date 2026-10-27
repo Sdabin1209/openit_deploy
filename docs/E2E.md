@@ -32,7 +32,7 @@
 
 ## gateway(Caddy)의 상류 장애 응답과 /readyz (FAULT_POLICY 5·6, deploy 소유)
 
-`config/Caddyfile`. Caddy v2.11.7(`locks/images.lock`의 digest 이미지, `caddy validate`는 `scripts/test-gateway-auth.sh`가 돌린다). 설정에 명시한 것: 상류 연결 2초(`dial_timeout`), 응답 헤더 대기(환자 API 9초: 서버 턴 총 마감 8초보다 길고 키오스크 대기 10초보다 짧게 / 직원·정적 화면 10초 / `/readyz` 2초), 재시도 없음(`lb_try_duration 0`). `handle_errors`가 Caddy의 502·503을 `503`, 504를 `504`로 바꾸고 둘 다 본문 `{"code":"UPSTREAM_UNAVAILABLE"}`, `Content-Type: application/json`, `Retry-After: 2`, `Cache-Control: no-store`를 준다. Caddy의 `{http.error.*}`를 쓰지 않으므로 본문에 상류 주소·오류 문구가 없다. gateway `/healthz`는 상류와 무관한 정적 200이고, `/readyz`는 survey-service `/readyz`를 프록시해 2xx면 `ok` 200, 아니면 서비스의 상태 코드와 `{"ready":false}`(서비스의 내부 문제 목록은 밖에 내지 않는다)를 준다.
+`config/Caddyfile`. Caddy v2.11.7(`locks/images.lock`의 digest 이미지, `caddy validate`는 `scripts/test-gateway-auth.sh`가 돌린다). 설정에 명시한 것: 상류 연결(`dial_timeout`)과 응답 헤더 대기(`response_header_timeout`; 환자 API는 연결 1초 + 응답 헤더 8.5초 = 합 9.5초 상한으로, 서버 턴 총 마감 8초보다 길고 키오스크 대기 10초보다 짧게 / 직원·정적 화면은 연결 2초 + 10초 / `/readyz`는 연결 1초 + 2초). 두 타이머는 순차라 합이 상한이다, 재시도 없음(`lb_try_duration 0`). `handle_errors`가 Caddy의 502·503을 `503`, 504를 `504`로 바꾸고 둘 다 본문 `{"code":"UPSTREAM_UNAVAILABLE"}`, `Content-Type: application/json`, `Retry-After: 2`, `Cache-Control: no-store`를 준다. Caddy의 `{http.error.*}`를 쓰지 않으므로 본문에 상류 주소·오류 문구가 없다. gateway `/healthz`는 상류와 무관한 정적 200이고, `/readyz`는 survey-service `/readyz`를 프록시해 2xx면 `ok` 200, 아니면 서비스의 상태 코드와 `{"ready":false}`(서비스의 내부 문제 목록은 밖에 내지 않는다)를 준다.
 
 **Caddy 기본 동작의 관찰(추정이 아니라 설정 없이 돌려 본 값, 이 PC, 같은 이미지, `docker stop`/`pause` 한 python 서버 앞에서).** 설정 없는 `reverse_proxy`: 이름 해석 실패 502(3.0초 뒤), 상류 컨테이너 중지 502(3.1초 뒤), 상류 무응답(pause)은 60초를 기다려도 응답이 없었다(시간 제한 없음, 호출자가 먼저 끊음). 위 설정을 단 같은 구성: 중지 503(2.0초 뒤), 무응답 504(응답 헤더 대기를 3초로 둔 시험에서 3.0초 뒤). 즉 기본 상태에서는 "연결 거부는 503, 시간 초과는 504"가 저절로 되지 않고 무응답에는 마감이 없어서 명시 설정이 필요하다.
 
@@ -41,6 +41,22 @@
 모두 `scripts/e2e_steps.py`. 단독 실행은 활성 릴리스가 필요해 `bash scripts/e2e.sh --only 1,2,3,4,5q,5w,5p`처럼 단계 1~4를 함께 준다(`--only`는 전체 합격이 아니고 정본에 기록하지 않는다). 상태 `POLICY-PENDING`은 실패가 아니다: FAULT_POLICY가 정한 기대인데 현재 영역 코드로는 통과하지 않는 정책 단언이며, 약화하지 않고 어떤 변경을 기다리는지와 지금 값을 단계 출력에 남긴다(통과하면 같은 줄이 REAL로 나온다).
 
 - **5q**: survey-service `docker stop` 동안 gateway 경유 환자 턴이 `503 {"code":"UPSTREAM_UNAVAILABLE"}`(+`Retry-After`, JSON, 내부 주소 없음), gateway `/readyz` 비정상, `/healthz` 200. `docker start` 뒤 `/readyz` 200, 이전 값 보존, 상류에 닿지 못한 턴은 기록 없음, 같은 `turn_id` 재전송이 200으로 확정. 정책 단언: 재시작 뒤 이미 확정된 `turn_id` 재전송이 저장된 응답과 같고 한 번만 기록된다.
-- **5w**: survey-service `docker pause`(연결은 되나 무응답) 동안 gateway 경유 환자 요청이 응답 헤더 마감(9초) 근처에서 `504 UPSTREAM_UNAVAILABLE`(단언 범위 8.0~10.5초), gateway `/readyz`는 2초대에 504, `/healthz` 200. `unpause` 뒤 복구. 관찰: 504를 받은 턴을 서비스가 `unpause` 뒤에 처리했는지(횟수 출력)와 같은 `turn_id` 재전송 뒤 발화 기록이 한 번인지(정책 단언).
+- **5w**: survey-service `docker pause`(연결은 되나 무응답) 동안 gateway 경유 환자 요청이 응답 헤더 마감 근처에서 `504 UPSTREAM_UNAVAILABLE`(단언: 서버 총 마감 8초 이상, 키오스크 대기 10초 미만), gateway `/readyz`는 2초대에 504, `/healthz` 200. `unpause` 뒤 복구. 관찰: 504를 받은 턴을 서비스가 `unpause` 뒤에 처리했는지(횟수 출력)와 같은 `turn_id` 재전송 뒤 발화 기록이 한 번인지(정책 단언).
 - **5p 확장**(활성 릴리스가 있을 때): PostgreSQL 중지 중 환자 턴을 gateway 경유로 보내 실패 응답이 오는지(성공으로 답하면 FAIL), 값이 저장되지 않는지(부분 저장 없음), 복구 뒤 같은 `turn_id` 재전송이 확정되고 값이 한 번 저장되는지 본다. 정책 단언: 총 마감(8.5초 이내), 실패 응답에 `write_committed=NOT_COMMITTED` 표시, 재전송 뒤 발화 기록 한 번.
 - 정정 신호로 쓰는 읽기 경로는 직원 세션 조회(`GET /v1/staff/sessions/{id}`)다(단계 5c와 같다). 이 조회는 survey-service 서버 상태를 읽을 뿐 gateway 경유 직원 계정으로 부르므로 survey-service가 멈춰 있는 동안은 부르지 않는다.
+
+### 지연 측정: 환자 요청의 gateway 마감 (이 PC 대 gpu-dev, 같은 스크립트)
+
+`curl -w`로 잰 값(`time_namelookup`/`time_connect`/`time_starttransfer`/`time_total`; 호스트에서 gateway의 게시 포트로 호출, 상류는 `caddy file-server` 컨테이너를 `docker pause`). 각 3회의 범위, 초 단위. 환경: 이 PC는 Docker Desktop 4.60.1(엔진 29.2.0), gpu-dev는 Docker Desktop 4.50.0(엔진 28.5.1), 둘 다 WSL2.
+
+| 상황 (설정) | 이 PC | gpu-dev |
+|---|---|---|
+| 정상 상류: lookup / connect | 0.00002 / 0.0001 | 0.00002 / 0.0001 |
+| paused, 연결 2s + 헤더 9s (이전 설정): starttransfer = total | 9.00~9.02 | 9.54~9.61 |
+| paused, 연결 2s + 헤더 1s | 1.00 | 1.06 |
+| paused, 연결 0.3s + 헤더 9s | 8.99~9.02 | 9.55~9.59 |
+| paused, 연결 1s + 헤더 8.5s (새 설정) | 8.50~8.52 | 9.02~9.04 |
+| 상류 stopped, 연결 2s (이전) → 502 | 2.00 | 2.12 |
+| 상류 stopped, 연결 1s (새) → 502 | (미측정) | 1.06 |
+
+읽는 법. 확인한 것: (1) 두 환경 모두 `time_connect`는 0.1ms대라 paused 상류로의 연결 수립에 2초가 걸리지 않는다(paused 컨테이너는 커널이 연결을 받는다). 즉 "연결 2초 + 헤더 9초"가 합쳐지는 일은 이 측정에서 일어나지 않았다. (2) gpu-dev의 Caddy 타이머 결과가 설정값의 약 1.065배로 일정하다(1초 → 1.06, 8.5초 → 9.03, 9초 → 9.57, 연결 2초 → 2.12). 같은 호스트에서 파이썬 `time.sleep(9)` 8회는 모두 9.00이었으므로 호스트 시계 문제는 아니고 Caddy(Go 타이머)·Docker Desktop 4.50 쪽의 일정한 배율로 보이지만 원인은 확인하지 못했다. (3) 새 설정의 상한은 gpu-dev에서도 9.04초로 키오스크 대기 10초 안이다. 이전 설정은 gpu-dev에서 9.6초였다. 확인하지 못한 것/추정: gpu-dev 전체 E2E에서 5w가 10.9초를 기록했다. 위 측정으로는 재현되지 않았고(paused 측정은 전부 9.61초 이하), 같은 gpu-dev에서 호스트 `sleep 9`가 한 번 10.93초 걸린 관찰이 있었으므로(다른 8회는 9.00) WSL2 VM의 일시 정지·지연으로 약 1.3초가 더해졌을 가능성이 있다. 이는 추정이다. Go의 두 타이머가 순차(연결 뒤 요청을 다 쓴 시점부터 헤더 대기)라는 점은 문서에 근거한 것이고 느린 연결을 만들어 합이 되는 것을 직접 재지는 않았다.
