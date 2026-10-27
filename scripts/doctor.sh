@@ -18,9 +18,11 @@ while [ $# -gt 0 ]; do case "$1" in
   -h|--help) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
   *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
 case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
-FAILS=0; WARNS=0
+FAILS=0; WARNS=0; UNABLES=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
 warn() { printf '  [WARN] %s\n         -> %s\n' "$1" "$2"; WARNS=$((WARNS+1)); }
+# unable: 이 호스트에서 어떤 시험을 돌릴 수 없다는 표시. WARN 보다 강한 문구(이유와 해결)를 내지만 E2E·기동을 막지는 않는다(이미지 빌드는 컨테이너 안의 도구를 쓴다). 종료 코드에 영향 없음
+unable() { printf '  [불가] %s\n         -> 해결: %s\n' "$1" "$2"; UNABLES=$((UNABLES+1)); }
 fail() { printf '  [FAIL] %s\n         -> 해결: %s\n' "$1" "$2"; FAILS=$((FAILS+1)); }
 WSL=0; grep -qi microsoft /proc/version 2>/dev/null && WSL=1   # 진단 문구를 고르는 데만 쓴다(동작 분기가 아니다)
 echo "== deploy doctor ($([ $UP_ONLY = 1 ] && echo '서버 기동용 --up' || echo '빌드·E2E 전체')) -- 환경: $([ $WSL = 1 ] && echo WSL || echo 리눅스/기타)"
@@ -94,9 +96,22 @@ if [ $UP_ONLY = 0 ]; then
   MISSING=""; for r in $NEED; do [ -e "$WORKSPACE/$r/.git" ] || MISSING="$MISSING $r"; done
   if [ -z "$MISSING" ]; then ok "형제 리포 $(echo $NEED | wc -w)개가 $WORKSPACE 옆에 있다"; else fail "형제 리포가 없다:$MISSING" "docs/SETUP.md C절: head 를 clone 한 뒤 bash <루트>/head/setup.sh (폴더 이름은 head/workspace.yaml 과 같아야 한다)"; fi
   # --- 영역 시험 환경(check-all 의 SKIP 원인). 없으면 WARN: 점검 항목이 검증되지 않는다
-  NOENV=""; for r in boundary-contracts turn-engine model-runtime survey-service question-authoring ops-feedback release-gate model-lab synthetic-data; do [ -e "$WORKSPACE/$r/.git" ] && [ ! -x "$WORKSPACE/$r/.venv/bin/python" ] && NOENV="$NOENV $r"; done
-  for r in kiosk-frontend admin-console; do [ -e "$WORKSPACE/$r/.git" ] && [ ! -d "$WORKSPACE/$r/node_modules" ] && NOENV="$NOENV $r"; done
-  if [ -z "$NOENV" ]; then ok "영역 시험 환경(.venv, node_modules)이 있다: check-all 이 영역을 검증할 수 있다"; else warn "영역 시험 환경이 없다:$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "각 영역 README 실행 방법의 설치 줄(파이썬: .venv + pip install, 노드: npm ci). docs/SETUP.md F절"; fi
+  NOENV=""; for r in boundary-contracts turn-engine model-runtime survey-service question-authoring ops-feedback release-gate model-lab synthetic-data; do
+    [ -e "$WORKSPACE/$r/.git" ] || continue
+    { [ -x "$WORKSPACE/$r/.venv/bin/python" ] && "$WORKSPACE/$r/.venv/bin/python" -c 'import pytest' >/dev/null 2>&1; } || NOENV="$NOENV $r"; done
+  if [ -z "$NOENV" ]; then ok "파이썬 영역 시험 환경(.venv와 pytest)이 있다"; else warn "파이썬 영역 시험 환경이 없다(.venv 또는 그 안의 pytest):$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "각 영역 README 실행 방법의 설치 줄(.venv + pip install). 그 줄에 pytest 가 없으면 .venv/bin/pip install pytest 를 더한다. docs/SETUP.md F절"; fi
+  # --- 노드 영역(admin-console, kiosk-frontend): 호스트에 node(>= $DEPLOY_NODE_MIN_MAJOR)와 npm 이 있어야 시험할 수 있다. 이미지 빌드는 컨테이너 안의 node 를 쓰므로 이 검사와 무관하다
+  NODEAREAS=""; for r in kiosk-frontend admin-console; do [ -e "$WORKSPACE/$r/.git" ] && NODEAREAS="$NODEAREAS $r"; done
+  if [ -n "$NODEAREAS" ]; then
+    NV=$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')
+    if [ -z "$NV" ] || ! command -v npm >/dev/null 2>&1; then
+      unable "노드 영역 시험 불가:$NODEAREAS 의 시험(npm test)을 이 호스트에서 돌릴 수 없다 (node ${NV:+v$NV}${NV:-없음}, npm $(command -v npm >/dev/null 2>&1 && echo 있음 || echo 없음))" "node $DEPLOY_NODE_MIN_MAJOR 이상과 npm 설치. sudo 없이 홈에 설치하는 표준 경로는 docs/SETUP.md F절(nodejs.org 공식 tarball + SHASUMS256.txt 검증. 설치했는데도 안 보이면 PATH 에 ~/.local/bin 이 없는 비로그인 셸이다: bash -lc 로 감싼다)"
+    elif [ "$NV" -lt "$DEPLOY_NODE_MIN_MAJOR" ]; then
+      unable "노드 영역 시험 불가:$NODEAREAS 는 node >= $DEPLOY_NODE_MIN_MAJOR 이 필요한데 v$NV 이다 (package.json engines)" "node $DEPLOY_NODE_MIN_MAJOR 이상으로 올린다. docs/SETUP.md F절"
+    else ok "node v$NV(>= $DEPLOY_NODE_MIN_MAJOR), npm $(npm --version 2>/dev/null)"; fi
+    NONM=""; for r in $NODEAREAS; do [ -d "$WORKSPACE/$r/node_modules" ] || NONM="$NONM $r"; done
+    [ -z "$NONM" ] && ok "노드 영역 node_modules 가 있다" || warn "노드 영역 node_modules 가 없다:$NONM -> check-all 의 해당 규칙이 SKIP(통과 아님)" "그 영역에서 npm ci. docs/SETUP.md F절"
+  fi
   tagchk() { # tagchk <리포> <태그>
     [ -e "$WORKSPACE/$1/.git" ] || return 0
     if git -C "$WORKSPACE/$1" rev-parse -q --verify "refs/tags/$2" >/dev/null 2>&1; then ok "태그 $1 $2"; else fail "태그가 없다: $1 $2" "git -C ../$1 fetch --tags (그래도 없으면 원격에 태그가 없다: head 에 알린다)"; fi
@@ -189,5 +204,5 @@ if [ -n "$INF_URL" ]; then
   fi
 fi
 
-echo; if [ $FAILS = 0 ]; then echo "doctor: 통과 (WARN $WARNS)"; else echo "doctor: FAIL $FAILS건 (WARN $WARNS) -- 위 해결 방법을 따른 뒤 다시 실행. 건너뛰기: DEPLOY_SKIP_DOCTOR=1"; fi
+echo; if [ $FAILS = 0 ]; then echo "doctor: 통과 (WARN $WARNS, 시험 불가 $UNABLES)"; else echo "doctor: FAIL $FAILS건 (WARN $WARNS, 시험 불가 $UNABLES) -- 위 해결 방법을 따른 뒤 다시 실행. 건너뛰기: DEPLOY_SKIP_DOCTOR=1"; fi
 exit $([ $FAILS = 0 ] && echo 0 || echo 1)

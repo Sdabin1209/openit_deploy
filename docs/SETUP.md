@@ -10,7 +10,7 @@
 | python3 (3.10+)와 venv 모듈 | E2E·스크립트가 `.venv` 가상환경을 만든다 | A절 |
 | Docker (데몬 + compose + buildx 플러그인) | 모든 서비스·이미지 | A절(리눅스) 또는 B절(WSL2) |
 | 형제 리포 11~13개 | 이미지는 각 영역 리포의 소스로 빌드한다 | C절 |
-| 영역별 `.venv`/`node_modules` | check-all이 영역 시험 수집·완화 정책을 실제로 확인한다(없으면 SKIP) | F절 |
+| 영역별 `.venv`(와 pytest)/`node_modules`, 노드 영역은 호스트 node·npm | check-all이 영역 시험 수집·완화 정책을 실제로 확인한다(없으면 SKIP) | F절 |
 | 인터넷(빌드할 때만) | 베이스 이미지, pip, npm | 이미 만든 이미지로 `--reuse-build`만 할 때는 불필요 |
 | curl | 점검·스모크(선택) | 패키지 관리자 |
 
@@ -111,3 +111,23 @@ bash scripts/demo.sh status | down | reset
 `scripts/check-all.sh`의 규칙 3(완화 정책)과 규칙 8(영역별 시험 수집)은 형제 영역의 가상환경을 실제로 불러서 확인한다. 영역에 `.venv`(파이썬 영역) 또는 `node_modules`(admin-console, kiosk-frontend)가 없으면 그 영역은 **검증 안 함**이 되고 규칙은 SKIP이다. SKIP은 통과가 아니다. `e2e.sh`는 영역 소스로 이미지를 빌드할 뿐 영역의 개발용 가상환경을 만들지 않으므로, 새 머신에서 C절만 하고 check-all을 돌리면 SKIP이 나온다.
 
 해결: 영역마다 그 영역 README의 "실행 방법"에 적힌 설치 줄을 한 번 실행한다(영역마다 설치 줄이 달라 여기에 옮기지 않는다. 이 리포는 형제 폴더를 만들지 않는다). 요약하면 파이썬 영역은 `python3 -m venv .venv` 뒤 README의 `pip install ...`(pytest 포함), 노드 영역은 `npm ci`다. 규칙 3은 `model-runtime/.venv`를 쓴다. 확인: `bash scripts/check-all.sh`가 `SKIP 0`으로 끝나야 한다. `bash scripts/doctor.sh`는 빠진 영역을 WARN으로 알려 준다.
+
+**전제와 예외.**
+- **노드 영역은 node/npm이 먼저 필요하다.** admin-console, kiosk-frontend는 `npm ci`로 `node_modules`를 만들고 `npm test`로 수집한다. 필요한 node 주 버전 하한은 두 영역의 `package.json` `engines`(`>=24`)와 Dockerfile(`node:24`)에서 읽어 `scripts/lib.sh`의 `DEPLOY_NODE_MIN_MAJOR`에 한 곳으로 두었다(영역 파일이 바뀌면 거기를 따라 고친다). `doctor.sh`는 호스트의 node 버전과 npm을 검사하고, 없거나 낮으면 `[불가] 노드 영역 시험 불가`와 해결을 낸다(E2E를 막지는 않는다: 이미지 빌드는 컨테이너 안의 node를 쓴다). check-all의 규칙 8은 `node_modules`가 있을 때만 `npm test`를 부르므로, node가 PATH에 없는 호스트는 doctor가 알려 준다.
+- **파이썬 영역 모두에 pytest가 있어야 한다.** 규칙 8은 `.venv`에 pytest가 없으면 그 영역을 검증 안 함으로 둔다. 영역 README의 설치 줄은 pytest를 포함하는 것(`'.[dev]'`, `pytest` 인자 등)과 포함하지 않는 것이 섞여 있다. 작성 시점에 boundary-contracts README의 줄(`pip install -e .`)에는 pytest가 없다. 줄에 pytest가 없는 영역은 그 줄을 실행한 뒤 `.venv/bin/pip install pytest`를 더한다. doctor가 `.venv`는 있는데 pytest가 없는 영역도 짚는다. 이웃 README는 이 리포가 고치지 않는다([CR-D24](change-requests/CR-D24-boundary-contracts-readme-pytest.md)).
+
+**sudo 없이 홈에 node를 설치하는 표준 경로.** 공식 배포본을 받아 해시를 검증하고 홈에 푼다.
+
+```
+V=v24.14.0      # 하한(engines >=24)을 만족하는 한 버전의 예. 다른 24 이상 버전도 된다
+cd "$(mktemp -d)"
+curl -fsSLO https://nodejs.org/dist/$V/node-$V-linux-x64.tar.xz
+curl -fsSLO https://nodejs.org/dist/$V/SHASUMS256.txt
+grep " node-$V-linux-x64.tar.xz\$" SHASUMS256.txt | sha256sum -c -     # OK 가 나와야 한다
+mkdir -p ~/.local && tar -xJf node-$V-linux-x64.tar.xz -C ~/.local && rm -rf ~/.local/node && mv ~/.local/node-$V-linux-x64 ~/.local/node
+mkdir -p ~/.local/bin && for b in node npm npx; do ln -sf ~/.local/node/bin/$b ~/.local/bin/$b; done
+```
+
+그다음 `~/.local/bin`이 PATH에 있어야 한다(로그인 셸은 보통 `~/.profile`이 넣는다). **비로그인 `ssh host 'cmd'`는 PATH에 `~/.local/bin`이 없어 node를 못 찾는다. `ssh host "bash -lc 'cmd'"`처럼 로그인 셸로 감싼다.**
+
+실측 기록(영구 기준이 아니다): 2026-10-28, gpu-dev(리눅스 x64)에서 위 방식으로 node v24.14.0을 설치했다. 그때 `SHASUMS256.txt`의 `node-v24.14.0-linux-x64.tar.xz` sha256은 `41cd79bb7877c81605a9e68ec4c91547774f46a40c67a17e34d7179ef11729df`였고 `sha256sum -c`가 OK였다(보고된 값이며 이 리포가 다시 내려받아 확인한 것은 아니다). 해시는 버전마다 다르므로 항상 같은 버전의 `SHASUMS256.txt`로 검증한다. 필요한 버전 범위는 영역의 `engines`가 정본이다.
