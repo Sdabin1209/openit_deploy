@@ -5,7 +5,9 @@
 set -euo pipefail
 if [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0; fi
 # 서버 기동용 사전 점검(docker·compose·데몬·자격증명). 건너뛰기: DEPLOY_SKIP_DOCTOR=1
-[ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" --up || exit 1
+# 운영 기본 프로젝트(deploy)를 띄울 때는 백업 설정을 필수로 본다(D88/U6). 시험·데모 프로젝트(deploy-*)는 아니다.
+REQ=""; case "${1:-}" in ""|-*) REQ=--require-backup;; deploy) REQ=--require-backup;; esac
+[ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" --up $REQ || exit 1
 source "$(dirname "$0")/lib.sh"
 P=deploy; case "${1:-}" in ""|-*) ;; *) P=$1; shift;; esac
 ARGS=(); EXT=""

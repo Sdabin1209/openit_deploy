@@ -9,14 +9,15 @@
 set -uo pipefail
 DEPLOY_NO_DOCKER=1
 source "$(dirname "$0")/lib.sh"
-UP_ONLY=0; INF_URL=""; LLM=0
+UP_ONLY=0; INF_URL=""; LLM=0; REQ_BACKUP=0
 while [ $# -gt 0 ]; do case "$1" in
   --up) UP_ONLY=1; shift;;
   --llm) LLM=1; shift;;
+  --require-backup) REQ_BACKUP=1; shift;;
   --inference) [ $# -ge 2 ] || { echo "--inference 에는 URL이 필요하다" >&2; exit 2; }; INF_URL=$2; shift 2;;
   --inference=*) INF_URL=${1#*=}; shift;;
   -h|--help) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
+  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--require-backup] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
 case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
 FAILS=0; WARNS=0; UNABLES=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
@@ -133,6 +134,23 @@ if [ $UP_ONLY = 0 ]; then
   fi
   # --- 고정 포트 금지
   if grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT/compose.test.yaml" >/dev/null 2>&1; then fail "compose.test.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
+fi
+# --- 비밀 폴더 권한(secrets/ 가 있을 때)과 운영 백업 설정(D88/U6, --require-backup: 운영 up.sh 가 준다)
+if [ -d "$DEPLOY_ROOT/secrets" ]; then
+  if out=$(bash "$DEPLOY_ROOT/scripts/check-secrets-perms.sh" "$DEPLOY_ROOT/secrets" 2>&1); then ok "$out"; else fail "비밀 폴더 권한 위반: $(echo "$out" | sed -n 2p)" "chmod 700 secrets secrets/tokens (scripts/check-secrets-perms.sh 가 모두 보여 준다)"; fi
+fi
+if [ $REQ_BACKUP = 1 ]; then
+  BC=${BACKUP_CONFIG:-$DEPLOY_ROOT/config/backup.env}
+  if [ ! -f "$BC" ]; then fail "백업 설정이 없다: $BC (D88/U6: 백업은 필수, 없으면 기동하지 않는다)" "cp config/backup.env.example config/backup.env 후 BACKUP_DIR(서버 밖 대상), BACKUP_RETENTION_DAYS, BACKUP_ENCRYPT/BACKUP_RECIPIENT_FILE 을 적는다. docs/runbook.md 4절"
+  else
+    BD=$(sed -n 's/^BACKUP_DIR=//p' "$BC" | tr -d '"'"'" | head -1); BE=$(sed -n 's/^BACKUP_ENCRYPT=//p' "$BC" | tr -d '"'"'" | head -1)
+    if [ -z "$BD" ]; then fail "BACKUP_DIR 이 비어 있다 ($BC)" "서버 밖 대상(별도 장치·원격 마운트)의 경로를 적는다. docs/runbook.md 4절"
+    else
+      ok "백업 대상 BACKUP_DIR 설정됨"
+      if [ -d "$BD" ] && [ "$(stat -c %d "$BD")" = "$(stat -c %d "$DEPLOY_ROOT")" ]; then warn "BACKUP_DIR($BD)이 이 리포와 같은 파일시스템이다: 서버 밖 사본이 아니다" "별도 장치나 원격 마운트를 쓴다(디스크 고장이 원본과 백업을 함께 잃게 한다)"; fi
+    fi
+    case "$BE" in gpg|age) ok "백업 암호화 $BE";; *) fail "BACKUP_ENCRYPT 가 none 이거나 비어 있다: 덤프(개인정보)가 평문이다" "BACKUP_ENCRYPT=gpg(또는 age)와 BACKUP_RECIPIENT_FILE(공개키 파일). 복호화 키는 서버 밖에 둔다. docs/runbook.md 4절";; esac
+  fi
 fi
 # --- 실제 LLM(GPU) 준비(D72/D73): 읽기 전용 점검. 컨테이너에서 GPU가 보여야 하고, 프로파일이 GPU 메모리에 맞아야 한다
 if [ $LLM = 1 ]; then

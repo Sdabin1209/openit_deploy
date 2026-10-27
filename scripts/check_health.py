@@ -20,6 +20,9 @@ ap.add_argument("--readyz", action="append", default=[], metavar="release-gate=U
 ap.add_argument("--project", default="", help="compose 프로젝트 이름(예: deploy). 있으면 그 프로젝트의 release-gate·model-serving 컨테이너 호스트 포트를 docker port 로 찾아 --readyz 로 쓴다(컨테이너나 게시 포트가 없으면 SKIP)")
 ap.add_argument("--judging-failures-warn", type=int, default=1); ap.add_argument("--judging-failures-crit", type=int, default=3)
 ap.add_argument("--judging-stale-seconds", type=int, default=900, help="release-gate 판정 루프의 last_run_at 이 이보다 오래되면 WARN")
+ap.add_argument("--backup-config", default=os.path.join(ROOT, "config/backup.env"), help="백업 설정(D88/U6: 필수). 없거나 BACKUP_DIR 이 비면 CRIT")
+ap.add_argument("--skip-backup", action="store_true", help="백업 점검을 건너뛴다(시험·개발 구성 전용. 건너뛴 사실을 SKIP 으로 낸다)")
+ap.add_argument("--backup-max-age-seconds", type=int, default=172800, help="가장 최근 백업이 이보다 오래되면 CRIT(일일 백업의 2배)")
 ap.add_argument("--now", type=float, default=None)
 a = ap.parse_args()
 NOW = a.now or time.time()
@@ -117,6 +120,33 @@ for svc, u in readyz.items():
         elif lr is None: add("WARN", "release-gate 판정 루프", "아직 한 번도 돌지 않았다(last_run_at 없음)")
         elif NOW - lr > a.judging_stale_seconds: add("WARN", "release-gate 판정 루프", f"마지막 실행이 {int(NOW-lr)}초 전이다(기준 {a.judging_stale_seconds}초)")
         else: add("OK", "release-gate 판정 루프", f"연속 실패 0, 마지막 실행 {int(NOW-lr)}초 전")
+
+# 5) 백업(D88/U6): 설정 필수, 최신 백업의 나이, 암호화 설정
+if a.skip_backup: add("SKIP", "백업", "--skip-backup: 점검하지 않았다(시험·개발 구성 전용)")
+else:
+    cfg = {}
+    try:
+        for ln in open(a.backup_config, encoding="utf-8"):
+            ln = ln.strip()
+            if ln and not ln.startswith("#") and "=" in ln:
+                k, v = ln.split("=", 1); cfg[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError: pass
+    if not cfg.get("BACKUP_DIR"): add("CRIT", "백업 설정", f"{os.path.relpath(a.backup_config, ROOT) if a.backup_config.startswith(ROOT) else a.backup_config} 가 없거나 BACKUP_DIR 이 비어 있다: 백업이 돌지 않는다(D88/U6: 서버 밖 대상 필수, config/backup.env.example)")
+    else:
+        bd = cfg["BACKUP_DIR"]; snaps = []
+        for pat in ("pg-",):
+            try:
+                for d in os.listdir(bd):
+                    if d.startswith(pat):
+                        sub = [os.path.join(bd, d, x) for x in os.listdir(os.path.join(bd, d)) if x.startswith("2")]
+                        if sub: snaps.append(max(os.path.getmtime(x) for x in sub))
+            except OSError: pass
+        if not snaps: add("CRIT", "백업", f"{bd} 에 PostgreSQL 백업이 하나도 없다")
+        else:
+            age = NOW - min(snaps)
+            add("CRIT" if age > a.backup_max_age_seconds else "OK", "백업", f"가장 오래된 데이터베이스의 최신 백업이 {int(age)}초 전 (기준 {a.backup_max_age_seconds}초, 데이터베이스 {len(snaps)}개)")
+        if cfg.get("BACKUP_ENCRYPT", "none") in ("", "none"): add("WARN", "백업 암호화", "BACKUP_ENCRYPT=none: 개인정보가 든 덤프가 평문이다(D88/U6: gpg 또는 age 공개키 암호화)")
+        else: add("OK", "백업 암호화", f"{cfg['BACKUP_ENCRYPT']} (수신자 공개키만 서버에 둔다)")
 
 for s, n, d in R: print(f"{s:4} {n}: {d}")
 c = {k: sum(1 for r in R if r[0] == k) for k in ("OK", "WARN", "CRIT", "SKIP")}

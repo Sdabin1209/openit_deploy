@@ -115,3 +115,20 @@ pg_container() {
   "$DOCKER" ps -q --filter "label=com.docker.compose.project=$1" --filter "label=com.docker.compose.service=postgres" --filter status=running | head -1 | tr -d '\r'
 }
 PG_DBS="survey qa ops_log ops_failure gate"   # 데이터베이스 = 계정 이름(config/postgres/initdb/10-roles.sh 의 기본값과 같다)
+
+# ---- 백업 암호화 훅 (D88/U6): 표준 도구 gpg 또는 age 의 **공개키(수신자)만** 서버에 둔다. 복호화 키는 서버 밖(사람이 보관)이다.
+# backup_encrypt: stdin -> stdout. BACKUP_ENCRYPT=none|gpg|age (backup.env, 기본 none: 시험·개발용; 운영은 doctor --require-backup 이 none 을 거부한다), BACKUP_RECIPIENT_FILE=공개키 파일.
+backup_encrypt() {
+  case "${BACKUP_ENCRYPT:-none}" in
+    none|"") cat;;
+    gpg) [ -s "${BACKUP_RECIPIENT_FILE:-}" ] || die "BACKUP_RECIPIENT_FILE(gpg 공개키 파일)이 없다"
+         local h fpr rc; h=$(mktemp -d); chmod 700 "$h"
+         gpg --homedir "$h" --batch --quiet --import "$BACKUP_RECIPIENT_FILE" 2>/dev/null || { rm -rf "$h"; die "gpg 공개키를 읽지 못했다"; }
+         fpr=$(gpg --homedir "$h" --batch --list-keys --with-colons 2>/dev/null | awk -F: '/^fpr/{print $10; exit}')
+         gpg --homedir "$h" --batch --quiet --yes --trust-model always -e -r "$fpr"; rc=$?; rm -rf "$h"; return $rc;;
+    age) command -v age >/dev/null 2>&1 || die "age 가 설치되어 있지 않다"; [ -s "${BACKUP_RECIPIENT_FILE:-}" ] || die "BACKUP_RECIPIENT_FILE(age 수신자 파일)이 없다"; age -R "$BACKUP_RECIPIENT_FILE";;
+    *) die "BACKUP_ENCRYPT 는 none, gpg, age 중 하나: ${BACKUP_ENCRYPT}";;
+  esac
+}
+# backup_decrypt: stdin -> stdout. 복호화 명령은 비밀키를 가진 쪽이 BACKUP_DECRYPT_CMD 로 준다(예: gpg --batch --decrypt, age -d -i 키파일). 서버에는 비밀키를 두지 않는다.
+backup_decrypt() { [ -n "${BACKUP_DECRYPT_CMD:-}" ] || die "암호화된 백업이다: BACKUP_DECRYPT_CMD(복호화 명령, 비밀키는 서버 밖)가 필요하다"; bash -c "$BACKUP_DECRYPT_CMD"; }
