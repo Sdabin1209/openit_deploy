@@ -31,13 +31,15 @@ gw_write_accounts() {
   local D=$1 acc rs f GW_IMG list; list=$(gw_parse_accounts) || exit 1
   local body="" roles_body="" r ids
   while read -r acc rs; do
-    [ -s "$D/tokens/account-$acc-password" ] || gw_rnd > "$D/tokens/account-$acc-password"; chmod 644 "$D/tokens/account-$acc-password"
+    # 평문 암호는 해시가 아직 없을 때만 만든다(이미 해시가 있고 평문을 지웠다면 되살리지 않는다: 평문이 디스크에 남는 것을 최소화). 호스트 전용이라 600
+    [ -s "$D/tokens/account-$acc-hash" ] || { [ -s "$D/tokens/account-$acc-password" ] || ( umask 077; gw_rnd > "$D/tokens/account-$acc-password" ); chmod 600 "$D/tokens/account-$acc-password"; }
     if [ ! -s "$D/tokens/account-$acc-hash" ]; then
       GW_IMG=${GW_IMG:-$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")}
       "$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(cat "$D/tokens/account-$acc-password")" | tr -d '\r\n' > "$D/tokens/account-$acc-hash"
       [ -s "$D/tokens/account-$acc-hash" ] || { rm -f "$D/tokens/account-$acc-hash"; die "caddy hash-password 실패($acc)"; }
-      chmod 644 "$D/tokens/account-$acc-hash"
+      chmod 600 "$D/tokens/account-$acc-hash"
     fi
+    chmod 600 "$D/tokens/account-$acc-hash"; [ ! -e "$D/tokens/account-$acc-password" ] || chmod 600 "$D/tokens/account-$acc-password"   # 예전에 644 로 만든 것도 바로잡는다
     body+=$'\t\t'"$acc $(cat "$D/tokens/account-$acc-hash")"$'\n'
   done <<<"$list"
   for r in $GW_ROLES; do

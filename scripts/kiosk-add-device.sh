@@ -16,7 +16,7 @@ case "$CMD" in
   *) die "사용: kiosk-add-device.sh add|remove <기기 ID> | list | sync [--apply]";;
 esac
 case "$CMD" in
-  add) f="$D/tokens/kiosk-device-$ID"; [ -s "$f" ] && echo "이미 있다: $ID (토큰은 그대로)" >&2 || { gw_rnd > "$f"; echo "기기 토큰을 만들었다: $ID" >&2; }; chmod 644 "$f"; echo "토큰 파일: $f (값은 출력하지 않는다)" >&2;;
+  add) f="$D/tokens/kiosk-device-$ID"; [ -s "$f" ] && echo "이미 있다: $ID (토큰은 그대로)" >&2 || { ( umask 077; gw_rnd > "$f" ); echo "기기 토큰을 만들었다: $ID" >&2; }; chmod 600 "$f"; echo "토큰 파일: $f (값은 출력하지 않는다)" >&2;;
   remove) rm -f "$D/tokens/kiosk-device-$ID"; echo "폐기: $ID" >&2;;
   list) gw_devices "$D"; exit 0;;
 esac

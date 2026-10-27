@@ -7,16 +7,19 @@
 # PostgreSQL: tokens/postgres-password(슈퍼유저), tokens/db-<이름>-password(서비스 계정 암호), tokens/db-<이름>-dsn(접속 문자열 한 줄,
 #   postgresql://<계정>:<암호>@postgres:5432/<데이터베이스>). 이름 규칙은 docs/RUN.md 4-1-1. DSN 은 암호가 바뀌면 같이 갱신된다.
 #   --db-only : PostgreSQL 비밀만 만든다(caddy 이미지가 필요 없다. 시험·개발용).  사용: gen-secrets.sh [--db-only] [디렉터리]
-# 권한: 디렉터리 700(호스트 다른 사용자 차단), 파일 644. 컨테이너는 uid 10001 로 실행되는데 compose 의 파일 secrets 는 호스트 소유자·모드를
-#   그대로 마운트하므로(uid/gid/mode 옵션은 swarm 전용) 600 이면 서비스가 읽지 못한다.
+# 권한: 디렉터리 700(호스트 다른 사용자 차단). 파일은 secret_mode(lib.sh): 컨테이너가 읽는 것은 644, 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본)은 600.
+#   컨테이너가 읽는 파일을 600 으로 만들지 못하는 이유: compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않아(측정함),
+#   uid 10001 인 컨테이너가 호스트 사용자 소유 600 파일을 읽지 못한다. docs/adr/0003. 이미 있는 파일의 모드도 실행할 때마다 바로잡는다.
+#   --drop-plaintext : 해시가 있는 계정의 평문 암호 파일(account-<id>-password)을 지운다(운영: 전달한 뒤 평문을 디스크에 남기지 않는다). 회전은 scripts/rotate-account.sh
 set -euo pipefail
-ONLY_DB=0; [ "${1:-}" = "--db-only" ] && { ONLY_DB=1; shift; }
+ONLY_DB=0; DROP_PLAIN=0
+while [ "${1:-}" = "--db-only" ] || [ "${1:-}" = "--drop-plaintext" ]; do case "$1" in --db-only) ONLY_DB=1;; --drop-plaintext) DROP_PLAIN=1;; esac; shift; done
 [ "$ONLY_DB" = 1 ] && DEPLOY_NO_DOCKER=1   # --db-only 는 docker 를 쓰지 않는다
 source "$(dirname "$0")/lib.sh"
 D=${1:-$DEPLOY_ROOT/secrets}; mkdir -p "$D/tokens"; chmod 700 "$D" "$D/tokens"
 rnd() { python3 -c 'import secrets;print(secrets.token_hex(24))'; }
-tok() { [ -s "$D/tokens/$1" ] || rnd > "$D/tokens/$1"; chmod 644 "$D/tokens/$1"; cat "$D/tokens/$1"; }
-putlist() { local f="$D/tokens/$1"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || printf '%s\n' "$2" > "$f"; chmod 644 "$f"; }
+tok() { [ -s "$D/tokens/$1" ] || ( umask 077; rnd > "$D/tokens/$1" ); chmod "$(secret_mode "$1")" "$D/tokens/$1"; cat "$D/tokens/$1"; }
+putlist() { local f="$D/tokens/$1"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || ( umask 077; printf '%s\n' "$2" > "$f" ); chmod "$(secret_mode "$1")" "$f"; }
 roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="${out:+,}$r=$(tok "$srv-$kind-$r")"; done; echo "$out"; }
 
 # PostgreSQL 계정: 이름 = 데이터베이스 = 계정. 환경 변수 이름은 docs/RUN.md 4-1-1 표(SURVEY_DATABASE_URL 등)
@@ -67,4 +70,7 @@ tok kiosk-device-e2e >/dev/null
 gw_write_devices "$D"
 old=$(cd "$D" && ls *.env 2>/dev/null | tr '\n' ' ') || true
 [ -z "$old" ] || echo "알림: 예전 방식의 비밀 env 파일이 남아 있다($old). 더는 쓰지 않는다(환경 변수로 평문이 노출됐다). 지워도 된다: (cd $D && rm -f $old)" >&2
+if [ $DROP_PLAIN = 1 ]; then
+  for f in "$D"/tokens/account-*-password; do [ -e "$f" ] || continue; h="${f%-password}-hash"; [ -s "$h" ] && rm -f "$f" && echo "평문 암호 파일을 지웠다(해시만 남김): $(basename "$f")" >&2; done
+fi
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

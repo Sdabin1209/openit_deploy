@@ -64,7 +64,7 @@ bash scripts/demo.sh reset                       # down 후 up
 
 **방식.** 토큰·salt는 환경 변수가 아니라 파일이다. `scripts/gen-secrets.sh`가 `secrets/tokens/<이름>`에 값 하나짜리 파일을 만든다(개별 토큰, 서버가 받는 목록 값 `역할=토큰,...`, salt, 콘솔 암호). `compose.yaml`의 최상위 `secrets:`가 서비스마다 필요한 것만 `/run/secrets/<이름>`에 읽기 전용으로 마운트하고, 서비스에는 `NAME_FILE=/run/secrets/<이름>` 환경 변수(경로, 비밀 아님)만 준다. 서비스 코드는 `boundary_contracts.read_secret(NAME)`으로 읽는다. 예전처럼 `env_file`로 토큰을 넣으면 `docker inspect`, `docker exec <c> env`로 평문이 읽힌다(근본 원인).
 
-**권한.** 비밀 폴더 700, 파일 644. 컨테이너가 uid 10001로 실행되는데 compose의 파일 secrets는 호스트의 소유자·모드를 그대로 마운트하고(`uid/gid/mode` 옵션은 swarm 전용) 호스트 소유자가 달라서, 600이면 서비스가 읽지 못한다. 폴더가 700이라 호스트의 다른 사용자는 파일에 닿지 못한다.
+**권한.** 비밀 폴더 700. 파일은 두 종류다: 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본, 컨테이너에 마운트하지 않는 클라이언트 토큰)은 **600**, 컨테이너가 읽는 것은 644(폴더 700 안). 어느 쪽인지는 `lib.sh`의 `secret_mode`가 `compose.yaml`의 secrets를 읽어 정하고 `scripts/check-secret-perms.sh`(doctor --up이 부른다)가 어긋남을 잡는다. 근거와 한계: [adr/0003](adr/0003-secret-file-permissions.md). 컨테이너가 읽는 파일을 600으로 못 만드는 이유: 컨테이너가 uid 10001로 실행되는데 compose의 파일 secrets는 호스트의 소유자·모드를 그대로 마운트하고(`uid/gid/mode` 옵션은 swarm 전용) 호스트 소유자가 달라서, 600이면 서비스가 읽지 못한다. 폴더가 700이라 호스트의 다른 사용자는 파일에 닿지 못한다.
 
 **게이트웨이(Caddy).** 환경 변수 대신 Caddy의 표준 파일 치환 `{file./run/secrets/<이름>}`을 Caddyfile에서 쓴다(`header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"`). 이유: Caddy는 `NAME_FILE` 규칙을 모르고, `{$ENV}`는 환경 변수를 요구하며, 파일 치환은 Caddy가 공식으로 지원하는 방법이라 래퍼 스크립트나 이미지 수정이 필요 없다. 값은 컨테이너 환경에 없고, 끝의 줄바꿈은 Caddy가 지운다(`caddy` 컨테이너에서 확인).
 
