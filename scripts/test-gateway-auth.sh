@@ -39,6 +39,11 @@ csrf_case "Sec-Fetch-Site: none(주소창 직접 입력 등)은 막지 않는다
 csrf_case "같은 출처 Origin 은 막지 않는다" 401 no POST /v1/activate -H "Origin: https://127.0.0.1:$CP"
 csrf_case "헤더가 없는 요청(curl·서비스 간 호출·E2E)은 막지 않는다" 401 no POST /v1/activate
 csrf_case "GET 은 교차 출처여도 이 규칙의 대상이 아니다" 200 no GET /healthz -H "Sec-Fetch-Site: cross-site"
+# 기본 443(Host 에 포트 없음)과 명시 포트에서 브라우저의 Origin 이 규칙과 맞는지(점검 L6): 같은 출처면 막지 않고(인증 없어 401), 다른 호스트의 Origin 은 403
+csrf_case "Host 에 포트가 없고 Origin 도 포트가 없으면(기본 443 형태: Host 127.0.0.1) 같은 출처" 401 no POST /v1/activate -H "Host: 127.0.0.1" -H "Origin: https://127.0.0.1"
+csrf_case "Host 에 :8443 이 있고 Origin 도 :8443 이면 같은 출처" 401 no POST /v1/activate -H "Host: 127.0.0.1:8443" -H "Origin: https://127.0.0.1:8443"
+csrf_case "Host 에 포트가 없는데 Origin 에 포트가 붙으면 다른 출처로 본다" 403 yes POST /v1/activate -H "Host: 127.0.0.1" -H "Origin: https://127.0.0.1:8443"
+csrf_case "http:// 출처의 Origin 은 다른 출처" 403 yes POST /v1/activate -H "Host: 127.0.0.1" -H "Origin: http://127.0.0.1"
 # 우회 시도 회귀(요청 바이트 그대로 보내려고 --path-as-is): 인증 없이 보호 경로에 닿으면 안 된다. 상류가 없는 시험이므로 401/403/404 가 아니라 502/503/504(상류로 넘어감)나 200 이면 **우회**다
 byp() { # byp <설명> <허용 코드들> <경로> [curl 인자...]
   local name=$1 allow=$2 path=$3; shift 3; local code; code=$(curl -sk -m 5 --path-as-is -o "$T/by.out" -w '%{http_code}' "$@" "https://127.0.0.1:$CP$path")
