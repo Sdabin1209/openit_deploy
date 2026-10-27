@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib.sh"
 ID=$$; W="$DEPLOY_ROOT/state/pubtest-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" REGISTRY_PROJECT="deploy-pubtest-$ID" REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+grep -E '^[A-Z0-9_]+_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 FAILS=0; ok() { echo "  [PASS] $1"; }; ng() { echo "  [FAIL] $1"; FAILS=$((FAILS+1)); }
 check() { local n=$1; shift; if "$@" >/dev/null 2>&1; then ok "$n"; else ng "$n"; fi; }
 expect_rc() { local want=$1 n=$2; shift 2; "$@" >"$W/out.txt" 2>&1; local rc=$?; if [ $rc = "$want" ]; then ok "$n (종료 코드 $rc)"; else ng "$n: 종료 코드 $rc (기대 $want): $(tail -2 "$W/out.txt" | tr '\n' ' ')"; fi; }

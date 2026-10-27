@@ -17,7 +17,7 @@ cleanup() {
 }
 trap cleanup EXIT
 [ -f "$DEPLOY_ROOT/build/images.env" ] || { echo "build/images.env 가 없다: 먼저 scripts/build-images.sh"; exit 2; }
-grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+grep -E '^[A-Z0-9_]+_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 echo "== 1) 임시 레지스트리에 올려 digest 잠금을 만든다"
 bash "$DEPLOY_ROOT/scripts/registry.sh" up >/dev/null 2>&1 && ok "레지스트리 기동" || { ng "레지스트리 기동"; exit 1; }
 bash "$DEPLOY_ROOT/scripts/publish-images.sh" >/dev/null 2>&1 && ok "publish-images.sh (잠금 생성)" || { ng "publish-images.sh"; exit 1; }

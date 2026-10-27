@@ -53,7 +53,7 @@ bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || bail "호스트 가상환경
 have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(grep -vc '^model-serving-gpu ' "$DEPLOY_ROOT/build/images.env")" -ge 8 ] && while read -r n img _; do [ "$n" = model-serving-gpu ] && continue; "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
 if [ $REBUILD = 1 ] || ! have_images; then echo "== 이미지 빌드(현재 HEAD)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" || bail "이미지 빌드 실패"; fi
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels || bail "호스트 클라이언트 준비 실패"
-grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+grep -E '^[A-Z0-9_]+_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 echo "== 임시 레지스트리·게시·비밀"
 bash "$DEPLOY_ROOT/scripts/registry.sh" up || bail "레지스트리 기동 실패 (데몬이 닿지 못하면 LOC_REGISTRY_BIND=0.0.0.0 으로 다시)"
 bash "$DEPLOY_ROOT/scripts/publish-images.sh" || bail "게시 실패"
