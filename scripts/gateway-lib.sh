@@ -31,12 +31,16 @@ gw_write_accounts() {
   local D=$1 acc rs f GW_IMG list; list=$(gw_parse_accounts) || exit 1
   local body="" roles_body="" r ids
   while read -r acc rs; do
-    [ -s "$D/tokens/account-$acc-password" ] || gw_rnd > "$D/tokens/account-$acc-password"; chmod 644 "$D/tokens/account-$acc-password"
     if [ ! -s "$D/tokens/account-$acc-hash" ]; then
+      [ -s "$D/tokens/account-$acc-password" ] || { gw_rnd > "$D/tokens/account-$acc-password"; chmod 644 "$D/tokens/account-$acc-password"; }
       GW_IMG=${GW_IMG:-$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")}
       "$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(cat "$D/tokens/account-$acc-password")" | tr -d '\r\n' > "$D/tokens/account-$acc-hash"
       [ -s "$D/tokens/account-$acc-hash" ] || { rm -f "$D/tokens/account-$acc-hash"; die "caddy hash-password 실패($acc)"; }
       chmod 644 "$D/tokens/account-$acc-hash"
+      # GEN_ACCOUNT_PASSWORDS=handout (운영 권장): 평문 암호를 서버에 두지 않고 handout/ 에 0600 으로 내놓는다. 사람이 계정 주인에게 전하고 지운다(점검 B3·F5). 기본(keep)은 개발·E2E 용으로 tokens/ 에 남긴다.
+      if [ "${GEN_ACCOUNT_PASSWORDS:-keep}" = handout ]; then
+        mkdir -p "$D/handout"; chmod 700 "$D/handout"; mv "$D/tokens/account-$acc-password" "$D/handout/account-$acc-password"; chmod 600 "$D/handout/account-$acc-password"
+      fi
     fi
     body+=$'\t\t'"$acc $(cat "$D/tokens/account-$acc-hash")"$'\n'
   done <<<"$list"
