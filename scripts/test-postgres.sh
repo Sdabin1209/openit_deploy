@@ -30,6 +30,7 @@ ok "비루트(uid 999)로 실행" bash -c "[ \"\$('$DOCKER' exec '$(C)' id -u | 
 ok "환경 변수에 POSTGRES_PASSWORD 평문 없음, *_FILE 만" bash -c "e=\$('$DOCKER' inspect '$(C)' --format '{{range .Config.Env}}{{println .}}{{end}}'); echo \"\$e\" | grep -q '^POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password\$' && ! echo \"\$e\" | grep -q '^POSTGRES_PASSWORD='"
 ok "초기화 로그에 암호 값이 없음" bash -c "! '$DOCKER' logs '$(C)' 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/postgres-password)\" && ! '$DOCKER' logs '$(C)' 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/db-survey-password)\""
 ok "check-secrets-hidden 정적+동적 검사" bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" "$P"
+ok "check-containers.sh: 떠 있는 postgres 가 실제로 비root·읽기 전용·cap_drop ALL·한도 있음" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$P"
 echo "== 최소 권한"
 for a in $PG_DBS; do
   ok "$a 계정이 자기 데이터베이스에 접속·쓰기" sql "$a" "$a" "CREATE TABLE items(id int PRIMARY KEY, v text); INSERT INTO items SELECT g, md5(g::text) FROM generate_series(1,2000) g"

@@ -56,6 +56,8 @@ docker compose -p deploy logs -f survey-service                 # 로그는 표�
 curl -s http://127.0.0.1:$(docker port deploy-gateway-1 8080/tcp | sed 's/.*://')/healthz
 ```
 
+컨테이너가 **실제로** 비root·읽기 전용·cap_drop ALL·자원 한도를 갖는지는 `bash scripts/check-containers.sh [프로젝트...]`(기본 deploy, deploy-registry)가 `docker inspect`로 읽어 FAIL/WARN으로 알린다(읽기 전용). compose 파일에 적은 것이 아니라 떠 있는 컨테이너를 본다. 자체 시험 `bash scripts/test-check-containers.sh`. 자원 한도 변수는 `config/resource-limits.env.example`(값은 측정 안 함, [adr/0004](adr/0004-compose-resource-limits.md)).
+
 각 서비스의 `/readyz` 해석은 영역 런북을 본다(survey: `problems`, gate: `can_pass`·`judging`).
 
 ## 4. 백업과 복구 (PostgreSQL 기준)
