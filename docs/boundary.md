@@ -12,12 +12,12 @@
 | --- | --- |
 | 각 영역 이미지 | 영역 리포지토리 HEAD를 `git archive`로 꺼내 deploy가 빌드하고 digest를 잠근다(CI가 생기면 영역 CI가 digest를 제출, D24) |
 | 영역의 환경 변수·포트·볼륨·헬스체크 | 아래 3절. 각 영역 boundary/runbook/Dockerfile이 출처 |
-| boundary-contracts | E2E의 검증기로만(`boundary_contracts.validator`, v1.1.0 태그 wheel). 이미지 안의 버전은 영역이 정한다 |
+| boundary-contracts | E2E의 검증기로만(`boundary_contracts.validator`, `scripts/lib.sh`의 `DEPLOY_BC_TAG`가 정한 태그, 현재 v2.0.2). 이미지 안의 버전은 영역이 정한다 |
 | 문진 스키마 | E2E의 QuestionBank 검증(`openit-survey-schema` wheel, 정수 버전 1) |
 
-## 3. 서비스 6개(표는 5개 + 아래 model-serving): 환경 변수, 포트, 볼륨, 헬스체크
+## 3. 서비스 9개와 잡 2개(아래 표는 영역 서비스 5개, 그 뒤에 model-serving·게이트웨이·정적 화면 2개): 환경 변수, 포트, 볼륨, 헬스체크
 
-출처는 각 영역 런북·Dockerfile이고 확인은 Compose에서 실제로 띄운 것이다. 모두 컨테이너 포트 8080, uid 10001, `/healthz`·`/readyz`, 라벨 `io.openit.*` 6개.
+출처는 각 영역 런북·Dockerfile이고 확인은 Compose에서 실제로 띄운 것이다. 영역 서비스는 모두 컨테이너 포트 8080, uid 10001, `/healthz`·`/readyz`, 라벨 `io.openit.*` 6개(키 목록은 루트 CLAUDE.md). 게이트웨이(Caddy)는 8080을 열고 `/healthz`를 점검한다(compose의 healthcheck).
 
 | | survey-service | question-authoring | ops-feedback (ingest-api) | release-gate (gate-service) | model-registry (model-lab 소스) |
 | --- | --- | --- | --- | --- | --- |
@@ -30,6 +30,8 @@
 | 확인 | healthy, 활성 릴리스 전 `/readyz` 503 `no_active_release`, 적재 후 200 | healthy, I1 읽기 면 | healthy, 수집·I7 읽기 | healthy, `can_pass:false`(운영), 시험용 정책으로 true | healthy, 게시·조회 |
 
 model-serving(model-runtime CPU/fake 변형): 포트 8080, uid 10001, `/healthz`·`/readyz`; 환경 `MODEL_RUNTIME_BACKEND`(fake), 문진 스키마는 이미지에 내장(`/opt/survey-schema`, D72; 마운트·`MODEL_RUNTIME_SCHEMA_DIR` 불필요), `MODEL_RUNTIME_RELEASE_URL`/`_TOKEN`(게이트 I4 읽기), `MODEL_RUNTIME_TOKENS`, 번들 캐시 기본 경로 `/var/lib/model-runtime/bundles`(볼륨 `serving-data`); 네트워크 serving. GPU 변형(VARIANT=gpu)은 GPU 서버 전용이라 이 Compose에 없다.
+
+정적 화면 2개(compose.yaml 확인): `kiosk-frontend`(키오스크 앱 + 직원 콘솔, 네트워크 edge, digest `KIOSK_FRONTEND_DIGEST`)와 `admin-console`(출고 승인 화면, edge, `ADMIN_CONSOLE_DIGEST`, `ADMIN_DEV_APPROVER_ID`는 설정하지 않음). 둘 다 포트 8080에 `/healthz`·`/readyz`를 두고 `/v1`은 처리하지 않으며, 게이트웨이가 경로로 나눠 전달한다. 게이트웨이는 `edge`·`serving` 네트워크에 걸쳐 있고 위 화면 둘과 survey-service, release-gate(승인 경로 네 개), ops-feedback-ingest가 healthy여야 뜬다.
 
 주기 잡: `job-ops-feedback`(`python -m ops_feedback.job --config`, `OPS_DEID_SALT`), `job-release-gate-collect`(`python -m release_gate collect`). GPU 서버 몫(Compose에 없음): model-lab `run-once`, release-gate `gate-worker`(승인 평가), synthetic-data의 LLM 생성. synthetic-data의 규칙 기반 run-once는 CPU만 쓰므로 어디서든 돌 수 있다(E2E는 호스트).
 

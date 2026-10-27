@@ -168,3 +168,21 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 - 한 일: `DEPLOY_MR_TAG` v0.6.2(이미지 라벨 기대값 포함). 우회 제거: `test/fake-model/fake_server.py`, `scripts/apply_system_prompts.py` 삭제. fake 모델은 표준 서버 + `MODEL_RUNTIME_FAKE_FLOW_FILE=test/fake-model/question_flow.json`(survey-service `question_flow`의 31개 순서 사본). `make-llm-package.sh`는 `make_neutral_package.py --system-prompt-a/-b`를 쓴다. CR-D22 v2 1·4항은 해소.
 - 시험(실제로 돌린 것, 깨끗한 두 번째 환경은 확인하지 못했다): `doctor.sh` 통과(WARN 0), `build-images.sh` exit=0(model-serving·survey-service·release-gate 이미지 라벨 `io.openit.model-runtime`=0.6.2 확인), `e2e.sh --reuse-build`(새 이미지를 빌드한 뒤, 전체 모드) 87 PASS / 0 FAIL 246초. `make-llm-package.sh gpu-12g`를 두 번 돌려 결과가 같고 매니페스트의 프롬프트 해시가 `lora_a.system.txt`와 일치함을 확인. GPU 서버·실제 LLM 모드는 확인하지 않았다.
 - 남은 것: 단계 2 BLOCKED(G02), 5d 직원 알림 화면 SKIPPED(G01)는 그대로. push·태그는 하지 않았다.
+
+## 열일곱째 구간: 태그 정렬(bc v2.0.2, te v0.4.0, mr v0.7.0), 비밀 파일화(D84), 점검 스크립트 (커밋 37117d2 -> 85e2d27, 이 PC 한 환경)
+
+근거는 CHANGELOG.md와 커밋 메시지다. 이 구간의 E2E는 이 세션에서 다시 돌리지 않았다.
+- 기준 태그(`scripts/lib.sh`, 이 세션에서 읽어 확인): boundary-contracts v2.0.2(synthetic-data용도 v2.0.2), turn-engine v0.4.0, model-runtime v0.7.0. 위 열다섯째·열여섯째 구간의 태그는 그 시점 값이다.
+- 시험 결과: 커밋 85e2d27의 메시지가 `E2E: PASS 91 / FAIL 0 (직전 88/0, 새 단계 3개)`라고 적었다. 같은 이 PC 한 환경이며 깨끗한 두 번째 환경은 확인하지 못했다. 92 PASS라는 값은 리포지토리 안에서 근거를 찾지 못했다(미확인). 5728769 이후 E2E 재실행 기록도 없다(미확인).
+- 비밀 파일화(D84): compose의 `env_file` 토큰을 없애고 최상위 `secrets:`(`secrets/tokens/<이름>`)를 `/run/secrets`에 마운트하며 서비스는 `NAME_FILE` 경로만 받는다. `gen-secrets.sh`는 목록 값도 파일로 만든다. 게이트웨이는 Caddyfile의 `{file./run/secrets/<이름>}`로 읽는다. 원인은 환경 변수의 토큰이 `docker inspect`/`exec env`로 평문 노출된 것이다.
+- `scripts/check-secrets-hidden.sh`(정적+동적 노출 검사, 값은 출력하지 않음, E2E 단계). 5728769부터 인자 없이 부르면 데모(`state/demo`)도 점검하고 `--secrets-dir`를 받는다. `demo.sh check-secrets` 추가, `demo.sh up` 끝에서 자동 실행.
+- `scripts/check-versions.sh` + 자기 점검 `scripts/test-check-versions.sh`(E2E 단계): `lib.sh` 표와 형제 영역 파일의 태그 표기를 비교하고 어긋나면 `파일:줄`을 출력하며 실패한다.
+- GPU 구멍: `docs/GPU_HOLE.md`(H1~H4의 순서·명령·합격 기준·진단·OPEN_GAPS에 적을 항목). 진짜 어댑터 얹기: `demo.sh up --llm --adapter-a/-b DIR --prompt-a/-b FILE`(네 개 모두 필요, `--llm`과 함께만). `make-llm-package.sh`가 `llm_attach_package.py`로 패키지를 만들고, 기반 모델 불일치·순위 초과·파일 누락은 이미지 빌드 전에 거부한다(`--check-only`). `demo.sh config --llm`도 같은 검사를 한다. GPU 서버가 없어 진짜 어댑터로 한 턴은 돌려 보지 못했다(미확인).
+- `test-inference-location.sh`: 별도 추론 서버에 시험용 fake 문항 순서 파일(`test/compose.fake-model.yaml`)을 붙였다(없어서 단계 5가 실패했다).
+
+## 점검 대상에 kiosk-frontend·admin-console 추가 (이 세션, 이 PC 한 환경)
+
+- `scripts/check-versions.sh`의 대상 영역을 8개에서 10개로 늘렸다. 두 영역은 `Dockerfile`의 `ARG BOUNDARY_CONTRACT(S)=vX.Y.Z`로 태그를 적는데 기존 정규식이 이 표기(`BOUNDARY_TAG`, `boundary-contracts@v…`만 봤다)를 못 읽어서 `_TAG` 외에 `_CONTRACT`·`_CONTRACTS`도 읽게 했다. 두 영역 파일은 읽기만 했고 수정하지 않았다.
+- 현재 결과(읽기만으로 확인): kiosk-frontend(32f3dff)와 admin-console(f62869c)의 `Dockerfile`은 이미 v2.0.2여서 `bash scripts/check-versions.sh`가 통과한다(태그 표기 28건, 영역 10개). 두 영역의 작업 트리가 계약 정렬 중이면 값은 바뀔 수 있다.
+- 두 영역이 v1.3.x이면 이 점검은 실패하는 것이 올바른 출력이다. `scripts/test-check-versions.sh`가 두 영역에 v1.3.3을 넣은 임시 워크스페이스로 `kiosk-frontend/Dockerfile:2`, `admin-console/Dockerfile:2`가 `파일:줄`로 출력되며 종료 코드 1이 되는 것을 확인한다. 정렬이 끝나기 전에는 이 점검(E2E 단계 포함)이 실패하고, 두 영역이 표와 같은 태그가 된 뒤 통과해야 한다.
+- 자체 시험 `bash scripts/test-check-versions.sh`: 3개 ok / 0 FAIL, 종료 코드 0.
