@@ -17,7 +17,5 @@ WANT=$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]+"/MANIFES
 [ "sha256:$(sha256sum "$F" | cut -d' ' -f1)" = "$WANT" ] || { echo "해시 불일치: $F" >&2; exit 3; }
 OTHERS=$("$DOCKER" exec "$C" psql -U postgres -d postgres -Atqc "SELECT count(*) FROM pg_stat_activity WHERE datname = '$DB' AND pid <> pg_backend_pid()" | tr -d '\r')
 [ "$OTHERS" = 0 ] || die "$DB 에 다른 접속이 $OTHERS 개 있다. 이 데이터베이스를 쓰는 서비스를 먼저 멈춘다"
-# 암호화된 백업은 BACKUP_DECRYPT_CMD(비밀키를 가진 쪽이 준다, 서버에는 키가 없다)로 풀어 pg_restore 에 넘긴다
-if [ $ENCRYPTED = 1 ]; then backup_decrypt < "$F" | "$DOCKER" exec -i "$C" pg_restore -U "$DB" -d "$DB" --clean --if-exists --no-owner --single-transaction --exit-on-error
-else "$DOCKER" exec -i "$C" pg_restore -U "$DB" -d "$DB" --clean --if-exists --no-owner --single-transaction --exit-on-error < "$F"; fi
+"$DOCKER" exec -i "$C" pg_restore -U "$DB" -d "$DB" --clean --if-exists --no-owner --single-transaction --exit-on-error < "$F"
 echo "복구: $DB <- $SNAP"

@@ -5,4 +5,5 @@ set -uo pipefail
 D="$(dirname "$0")"; rc=0
 bash "$D/backup.sh" || rc=$?
 bash "$D/pg-backup.sh" || { r=$?; [ $rc != 0 ] || rc=$r; }
+bash "$D/backup-secrets.sh" || { r=$?; [ $rc != 0 ] || rc=$r; }   # secrets/ 는 별도 산출물(암호화, 비식별 salt 연속성)
 exit $rc
