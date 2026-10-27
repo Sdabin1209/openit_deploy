@@ -221,11 +221,17 @@ printf 'targets:\n  - {name: gateway-healthz-plain, url: "http://127.0.0.1:%s/he
 chk "check-health: 스케줄러 상태 파일·디스크·외부 감시 대상(gateway /healthz 평문·HTTPS)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --jobs "$W/sched/jobs.yaml" --scheduler-state "$W/sched/st.json" --monitor "$W/sched/monitor.yaml" --disk-path "$W" --skip-backup
 chk "config/jobs.yaml: GPU 잡 3개는 gpu-external(이 Compose에 없음)" bash -c "[ \$(grep -c 'where: gpu-external' $DEPLOY_ROOT/config/jobs.yaml) = 3 ] && ! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
-sect "단계 9: 백업과 복구 (평문 모드 BACKUP_ALLOW_PLAINTEXT=1 은 **시험 전용**이다. 암호화 경로(gpg 공개키)는 scripts/test-backup.sh 가 시험한다. age 분기는 age 가 없어 미실행)"
+sect "단계 9: 백업과 복구 (gpg 공개키 암호화 경로를 실제로 실행: 시험 폴더 안의 임시 키쌍, 복호는 서버 밖 사람 몫을 모사)"
 chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.env"
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
-printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_ALLOW_PLAINTEXT=1\n' "$W/backups" > "$W/backup-test.env"
+# 시험용 gpg 키쌍: 시험 폴더($W/gnupg, 모드 700) 안에서만 만들고 출력·로그에 내지 않는다. 서버가 쓰는 것은 공개키 파일뿐이고 개인키는 아래 복호 단계(서버 밖 사람 몫 모사)에서만 쓴다. 시험이 끝나면 $W 째로 지워진다
+GPGH="$W/gnupg"; mkdir -m 700 "$GPGH"
+gpg --homedir "$GPGH" --batch --quiet --passphrase '' --quick-generate-key "openit-e2e-backup-test" default default never >/dev/null 2>&1
+gpg --homedir "$GPGH" --batch --armor --export > "$W/backup-recipient.pub" 2>/dev/null
+[ -s "$W/backup-recipient.pub" ] || { echo "시험용 gpg 공개키를 만들지 못했다(gpg 필요)"; exit 1; }
+printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_ENCRYPT_RECIPIENTS=%s\nBACKUP_ENCRYPT_TOOL=gpg\n' "$W/backups" "$W/backup-recipient.pub" > "$W/backup-test.env"
+if command -v age >/dev/null 2>&1; then echo "  [참고] age 가 있으나 이 단계는 gpg 로 돈다. age 분기는 scripts/test-backup.sh 의 몫"; else echo "  [미실행] age 분기: 이 호스트에 age 바이너리가 없어 실행하지 않았다(gpg 경로만 실행)"; fi
 export BACKUP_CONFIG="$W/backup-test.env"
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data), 데이터베이스는 PostgreSQL(D85)
 dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx postgres | tr '\n' ' ') >/dev/null 2>&1
@@ -235,11 +241,19 @@ for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-be
 mkdir -p "$W/backups/gate-data/20200101T000000Z"; touch -d '2020-01-01' "$W/backups/gate-data/20200101T000000Z"
 chk "백업(파일 저장소 2개, SQLite backup API + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
 chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
+enc_clean() { local x; for x in $STORES; do d=$(ls -d $W/backups/$x/2* | tail -1); ls $d/*.gpg >/dev/null 2>&1 || { echo "$x: 암호문(.gpg)이 없다"; return 1; }; ls $d/*.tar $d/*.dump >/dev/null 2>&1 && { echo "$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d)" = 700 ] || { echo "$x: 폴더 모드"; return 1; }; done
+  for x in $PGDBS; do d=$(ls -d $W/backups/pg-$x/2* | tail -1); ls $d/$x.dump.gpg >/dev/null 2>&1 || { echo "pg-$x: 암호문이 없다"; return 1; }; [ ! -e $d/$x.dump ] || { echo "pg-$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d/$x.dump.gpg)" = 600 ] || { echo "pg-$x: 파일 모드"; return 1; }; done
+  ls -a $W/backups/*/ 2>/dev/null | grep -qE '^\.(tar|partial)-' && { echo "임시 평문/partial 이 남았다"; return 1; }; echo "백업 전부 암호문(.gpg), 평문 .tar·.dump 없음, 폴더 700·파일 600, 임시 파일 없음"; return 0; }
+chk "백업 산출물은 암호문뿐이다(평문 없음, 권한 700/600)" enc_clean
 chk "보관 기간(7일)이 지난 스냅샷만 삭제" bash -c "[ ! -d $W/backups/gate-data/20200101T000000Z ] && [ \$(ls $W/backups/gate-data | wc -l) = 1 ]"
 dc "$PROJECT" down >/dev/null 2>&1
 chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_pg-data >/dev/null"
 dc "$PROJECT" up -d --wait --wait-timeout 120 postgres >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다
 chk "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
+# 서버 밖 사람 몫 모사: 개인키로 복호해 같은 폴더에 평문을 둔다(복구 뒤 지운다). 서버의 복구 스크립트는 복호 키를 갖지 않는다
+decrypt_all() { local x d; for x in $STORES; do d=$(ls -d $W/backups/$x/2* | tail -1); gpg --homedir "$GPGH" --batch --quiet --yes -o "$d/$x.tar" -d "$d/$x.tar.gpg" || return 1; done
+  for x in $PGDBS; do d=$(ls -d $W/backups/pg-$x/2* | tail -1); gpg --homedir "$GPGH" --batch --quiet --yes -o "$d/$x.dump" -d "$d/$x.dump.gpg" || return 1; done; echo "개인키(시험 폴더)로 복호 완료"; }
+chk "복호(서버 밖 사람 몫 모사: 개인키로 .tar·.dump 를 푼다)" decrypt_all
 for s in $STORES; do chk "복구 $s" bash -c "SN=\$(ls -d $W/backups/$s/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/restore.sh $s \"\$SN\" --yes"; done
 for d in $PGDBS; do chk "복구 pg-$d" bash -c "SN=\$(ls -d $W/backups/pg-$d/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/pg-restore.sh $d \"\$SN\" --yes"; done
 for s in $STORES; do chk "복구 후 지문 일치 $s" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh $s)\" = \"\$(cat $W/fp-before-$s.json)\" ]"; done
