@@ -70,6 +70,12 @@ http://:8080 {
 		Strict-Transport-Security "max-age=31536000"
 	}
 	# 기기 설정 파일(/config.json)은 기기마다 그 기기의 정적 서버가 낸다(scripts/kiosk-add-device.sh). 중앙 kiosk-frontend 에는 기기 토큰 파일을 마운트하지 않고, 인증 없는 경로로 새지 않게 여기서도 막는다.
+	# 교차 사이트 요청 방어(CSRF, 점검 M2): 상태를 바꾸는 메서드에서 브라우저가 보내는 Sec-Fetch-Site 가 same-origin·none 이 아니거나, Origin 이 이 사이트(https://호스트:포트)와 다르면 403.
+	# 브라우저만 이 헤더를 보내므로 curl·서비스 간 호출·E2E 에는 영향이 없다. 키오스크 앱은 같은 출처(gateway 가 낸 화면)라 통과한다. 헤더가 없는 요청은 막지 않는다(브라우저 밖 클라이언트).
+	@csrf expression `{http.request.method} in ["POST", "PUT", "PATCH", "DELETE"] && (({http.request.header.Sec-Fetch-Site} != "" && !({http.request.header.Sec-Fetch-Site} in ["same-origin", "none"])) || ({http.request.header.Origin} != "" && {http.request.header.Origin} != "https://" + {http.request.hostport}))`
+	handle @csrf {
+		respond "forbidden: 교차 출처 요청은 허용하지 않는다" 403
+	}
 	handle /config.json {
 		respond "not found" 404
 	}
