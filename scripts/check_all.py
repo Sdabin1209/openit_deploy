@@ -9,7 +9,7 @@
 규칙 결과: FAIL(어긋남이 하나라도), SKIP(어긋남은 없으나 검증 안 함이 있다), PASS(그 밖). 종료 코드는 FAIL 이 하나라도 있을 때만 1.
 '모르는 대상'(처리 방법을 모르는 영역·예시)은 FAIL 이다. 제외하려면 scripts/check-all.exclude 에 이유와 함께 적는다(목록은 출력한다).
 값(비밀·설정 값)은 출력하지 않는다. 키 경로와 파일:줄만 낸다.
-환경 변수(시험용): CHECK_ALL_WORKSPACE, CHECK_ALL_VERSIONS_CMD, CHECK_ALL_MR_PY, CHECK_ALL_ONLY(쉼표로 구분한 규칙 번호), CHECK_ALL_ALLOW, CHECK_ALL_EXCLUDE"""
+환경 변수(시험용): CHECK_ALL_WORKSPACE, CHECK_ALL_VERSIONS_CMD, CHECK_ALL_MR_PY, CHECK_ALL_ONLY(쉼표로 구분한 규칙 번호), CHECK_ALL_ALLOW, CHECK_ALL_EXCLUDE, CHECK_ALL_E2E_CLAIMS"""
 from __future__ import annotations
 
 import fnmatch
@@ -742,6 +742,58 @@ def rule_readme() -> R:
     return r
 
 
+# ---------- 규칙 10: E2E 통과 수의 정본 ----------
+E2E_CLAIMS_FILE = Path(os.environ.get("CHECK_ALL_E2E_CLAIMS") or HERE / "check-all-e2e-claims.txt")
+E2E_CANON = "deploy/docs/E2E_RESULTS.md"
+
+
+def rule_e2e_claims() -> R:
+    r = R()
+    kinds: dict[str, list[tuple[int, str]]] = {"claim": [], "context": [], "notcontext": [], "allowed": []}
+    for n, p in load_pipe_file(E2E_CLAIMS_FILE):
+        if p[0] in kinds and len(p) >= 2 and p[1]:
+            kinds[p[0]].append((n, p[1]))
+    if not E2E_CLAIMS_FILE.is_file() or not kinds["claim"] or not kinds["context"]:
+        r.fail("규칙", f"deploy/scripts/check-all-e2e-claims.txt:1: 판정 규칙 파일이 없거나 claim/context 가 비어 있다")
+        return r
+    try:
+        claim = [re.compile(x) for _, x in kinds["claim"]]
+        ctx = [re.compile(x, re.I) for _, x in kinds["context"]]
+        notctx = [re.compile(x, re.I) for _, x in kinds["notcontext"]]
+    except re.error as e:
+        r.fail("규칙", f"deploy/scripts/check-all-e2e-claims.txt:1: 정규식 오류 {e}")
+        return r
+    allowed_globs = [g for _, g in kinds["allowed"]]
+    r.info.append(f"판정 규칙(scripts/check-all-e2e-claims.txt): claim {len(claim)}, context {len(ctx)}, notcontext {len(notctx)}, 허용 파일 {len(allowed_globs)}. 정본: {E2E_CANON}")
+    for repo in known_areas():
+        bad = False
+        scanned = 0
+        for f in files(repo):
+            if not f.lower().endswith(".md"):
+                continue
+            path = f"{repo}/{f}"
+            if any(fnmatch.fnmatch(path, g) for g in allowed_globs):
+                r.na.append((path, "정본·변경 이력 파일"))
+                continue
+            if allowed("10", path):
+                r.na.append((path, "허용 목록(check-all-allow.txt)"))
+                continue
+            scanned += 1
+            for i, line in enumerate(read_lines(WS / repo / f), 1):
+                if not any(c.search(line) for c in ctx):
+                    continue
+                for cl in claim:
+                    for m in cl.finditer(line):
+                        before = line[max(0, m.start() - 80):m.start()]
+                        if any(nc.search(before) for nc in notctx):
+                            continue
+                        bad = True
+                        r.fail(repo, f"{path}:{i}: E2E 통과 수 표기 '{m.group(0)}' -- 정본은 {E2E_CANON}. 숫자를 옮겨 적지 말고 정본을 가리킨다")
+        if not bad:
+            r.ok.append(repo)
+    return r
+
+
 RULES = [
     ("0", "대상 열거(모르는 대상)", rule_enumerate),
     ("1", "버전표 일치", rule_versions),
@@ -753,6 +805,7 @@ RULES = [
     ("7", "compose 의 환경 변수 비밀", rule_compose_secrets),
     ("8", "영역별 시험 수집", rule_collect),
     ("9", "영역 README 필수 절", rule_readme),
+    ("10", "E2E 통과 수는 정본에만", rule_e2e_claims),
 ]
 
 

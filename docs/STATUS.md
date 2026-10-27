@@ -39,7 +39,7 @@
 
 ## 마무리 (체크포인트 이후)
 
-- images.env 복원 수정 후 `bash scripts/e2e.sh --reuse-build --keep` -> 73 PASS / 0 FAIL. `locks/images.lock`을 이 실행의 값(5개 서비스 digest, survey 롤백 복귀 상태)으로 갱신하고 `locks/history/`를 보관했다. 시험 자원은 모두 내렸다.
+- images.env 복원 수정 후 `bash scripts/e2e.sh --reuse-build --keep` -> 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록). `locks/images.lock`을 이 실행의 값(5개 서비스 digest, survey 롤백 복귀 상태)으로 갱신하고 `locks/history/`를 보관했다. 시험 자원은 모두 내렸다.
 - 7단계: synthetic-data가 I7(HTTP)로 읽는 것은 REAL, 검토 확인만 TEST-SUB(CR-D11). 8단계: REAL(요청 주체는 e2e의 ops-feedback 역할 토큰; ops 잡의 자동 롤백 평가는 설정하지 않았다). 남은 막힘은 위 표와 CR-D10..D12.
 - E2E_GPU=1 경로는 신호 전이라 돌리지 않았다.
 - 정리 명령: 시험이 끝나면 e2e.sh가 자동 정리한다(`--keep`일 때만 수동). 로컬 이미지 정리: `for i in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^deploy-build/'); do docker rmi -f $i; done`.
@@ -52,23 +52,23 @@
 
 ## 넷째 구간: 사람 승인(D53), 공개 API(D55), 계약 v1.3.1
 
-- 이미지 5개를 계약 v1.3.1 wheel로 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --reuse-build --keep`: 72 PASS / 0 FAIL.
+- 이미지 5개를 계약 v1.3.1 wheel로 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --reuse-build --keep`: 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록).
 - 4단계: 제출 -> 자동 검사 -> AWAITING_APPROVAL -> review-report -> `POST /v1/approvals`(시험용 release-approver 토큰, TEST-SUB). 승인 전 PASS 없음, operator 403, 낡은 report_hash 409, REJECT -> REJECT 판정, APPROVE 재전송 멱등·번복 409, 승인 뒤 PASS·릴리스·번들·활성화. 시험용 정책·실행기는 삭제.
 - 5단계: 게이트웨이 경유 공개 API 한 턴(Bearer 토큰, 같은 turn_id 멱등, 직원 개입 경로는 외부에 닫힘), 서비스가 Trace를 I6로 전송. 7단계: `reviewed_input` 포함 검토. 막힘은 CR-D16.
 
 ## 다섯째 구간: 추론 서버(model-serving, model-runtime v0.5.0), LangGraph survey-service
 
-- 이미지 6개(model-serving 추가; survey-service는 LangGraph 오케스트레이터 HEAD, 게이트·survey는 model-runtime v0.5.0 wheel)를 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --reuse-build --keep`: 80 PASS / 0 FAIL.
+- 이미지 6개(model-serving 추가; survey-service는 LangGraph 오케스트레이터 HEAD, 게이트·survey는 model-runtime v0.5.0 wheel)를 다시 빌드·게시하고 잠금을 갱신했다. `bash scripts/e2e.sh --reuse-build --keep`: 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록).
 - 5단계가 model-serving을 거친다: 서비스 -> PUT 적재(서버가 게이트 I4에서 번들 읽음) -> parse -> generate. 고정 출력 "(가짜 응답)"으로 서비스 내부 가짜가 아님을 확인했고 `/v1/info`·토큰 거부도 확인했다. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살며 다시 띄우면 다음 턴이 복구된다.
 - 위험 정지 -> 직원 RESUME은 fake 출력이 고정이라 여전히 못 한다: CR-D17(fake에 시험용 위험 스위치 요청). 번들 캐시 볼륨 소유자 문제는 `model-serving-init`으로 우회(CR-D17).
 
 ## 여섯째 구간: model-runtime v0.5.1
 
-- `model-serving`을 v0.5.1 태그로 다시 빌드(라벨 0.5.1), chown 초기화 컨테이너 제거(번들 캐시는 `serving-data:/var/lib/model-runtime`), serving_config를 `/v1/info`의 기대값으로 생성, 위험 문구 스위치는 `compose.test.yaml`에만. 5단계에 위험 정지 -> 직원 RESUME/END를 REAL로 추가. `bash scripts/e2e.sh --reuse-build --keep`: 80 PASS / 0 FAIL. CR-D18.
+- `model-serving`을 v0.5.1 태그로 다시 빌드(라벨 0.5.1), chown 초기화 컨테이너 제거(번들 캐시는 `serving-data:/var/lib/model-runtime`), serving_config를 `/v1/info`의 기대값으로 생성, 위험 문구 스위치는 `compose.test.yaml`에만. 5단계에 위험 정지 -> 직원 RESUME/END를 REAL로 추가. `bash scripts/e2e.sh --reuse-build --keep`: 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록). CR-D18.
 
 ## 일곱째 구간 (2026-10-15): kiosk-frontend, 게이트웨이 인증 프록시, 직원 알림 -- E2E 통과
 
-> 정정: 커밋 3f52a4d의 "진행 중, E2E 미통과" 표기는 오프라인 체크포인트 시점의 것이다. 이후 `bash scripts/e2e.sh --reuse-build --keep`을 처음부터 돌려 **84 PASS / 0 FAIL, 종료 코드 0**을 확인했다(헤드의 재실행도 같음). `state_of()`(0.7초 간격 재시도)로 state 조회의 429를 고친 것이 통과의 원인이다.
+> 정정: 커밋 3f52a4d의 "진행 중, E2E 미통과" 표기는 오프라인 체크포인트 시점의 것이다. 이후 `bash scripts/e2e.sh --reuse-build --keep`을 처음부터 돌려 **전체 통과, 종료 코드 0**을 확인했다(숫자는 `docs/E2E_RESULTS.md` 과거 기록)(헤드의 재실행도 같음). `state_of()`(0.7초 간격 재시도)로 state 조회의 429를 고친 것이 통과의 원인이다.
 
 ### 한 일
 - `kiosk-frontend`(키오스크+직원 콘솔 정적 이미지) 빌드·compose 추가(`KIOSK_FRONTEND_DIGEST`), 계약 기본 태그 v1.3.2, survey 이미지 `io.openit.langgraph` 라벨(잠금 파일의 langgraph 버전을 빌드 인자로, E2E가 unknown 여부 검사).
@@ -76,7 +76,7 @@
 - `locks/images.lock` 갱신(이 실행의 값, 이미지 7개: survey f52a8e0, qa f631b7d, ops 3ed586a, gate 135fbf7, model-registry e93e6b6, model-serving 0a87bb1, kiosk-frontend 13ee06b).
 - `e2e.sh`가 구간별 소요 시간(구간 끝에 `(소요 Ns)`, 요약에 표)을, `e2e_steps.py`가 단계 1~8별 소요 시간을 출력한다.
 
-### E2E 단계별 상태 (84 PASS / 0 FAIL)
+### E2E 단계별 상태 (당시 전체 통과, 숫자는 `docs/E2E_RESULTS.md`)
 | 단계 | 상태 | 내용 |
 | --- | --- | --- |
 | 1, 2 | REAL | 문항 등록·검수·I1 HTTP 읽기, synthetic-data run-once(호스트) |
@@ -101,9 +101,9 @@
 
 ## e2e.sh 빠른 모드 (--fast)
 
-`bash scripts/e2e.sh --fast --reuse-build`: 단계 1~8과 단계 9 앞부분(compose 기동 검사)만 돌린다. 스케줄러, 백업·복구, 코드 축 롤백은 생략하고 요약에 "생략한 구간 / 전체 합격 아님"을 표시한다. 종료 코드는 돌린 검사 기준이다. 확인: 56 PASS / 0 FAIL, 합계 119초(준비 10 + compose 기동 68 + 단계 1~8 41). **인도 전에는 옵션 없는 전체 모드가 필수**다(runbook 6절).
+`bash scripts/e2e.sh --fast --reuse-build`: 단계 1~8과 단계 9 앞부분(compose 기동 검사)만 돌린다. 스케줄러, 백업·복구, 코드 축 롤백은 생략하고 요약에 "생략한 구간 / 전체 합격 아님"을 표시한다. 종료 코드는 돌린 검사 기준이다. 확인: 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록), 합계 119초(준비 10 + compose 기동 68 + 단계 1~8 41). **인도 전에는 옵션 없는 전체 모드가 필수**다(runbook 6절).
 
-## 여덟째 구간: admin-console(출고 승인 화면) -- 전체 모드 87 PASS / 0 FAIL, --fast 59 PASS / 0 FAIL
+## 여덟째 구간: admin-console(출고 승인 화면) -- 전체 모드·--fast 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록)
 
 - 이미지 `admin-console`을 로컬 폴더에서 빌드해 compose에 추가, 게이트웨이에 `/admin/`과 승인 경로 네 개(인증 뒤, 읽기/쓰기 토큰 분리, `X-Openit-User`, 보고서 해시 헤더 통과)를 반영. 경계 계약 기본 태그 v1.3.3. E2E 4g(승인 화면 경로를 게이트웨이 경유로 한 번: 목록 -> 보고서 헤더 해시 -> 승인, 승인자 ID가 인증 계정으로 기록, 위조 헤더 무시, 닫은 경로 404, 인증 없이 401). 화면 렌더링은 BLOCKED. 확인된 어긋남은 CR-D19.
 
@@ -113,13 +113,13 @@
 
 ## 열째 구간: 게이트웨이 사람 계정 역할(D71), 실패 사례 검토 화면
 
-admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-approver / reviewer) 매핑, 승인 경로와 검토 경로를 역할로 분리(다른 역할은 403, 인증 없음은 401), 검토 경로는 ops-feedback 읽기/reviewer 쓰기 토큰. E2E 7g 추가. `--fast` 59 PASS / 0 FAIL, 전체 모드 87 PASS / 0 FAIL. 미확인: 응답 reviewed_by(ops-feedback 작업 대기), 화면 렌더링. CR-D20.
+admin-console(25263ef) 재빌드. 게이트웨이: 계정 -> 역할(release-approver / reviewer) 매핑, 승인 경로와 검토 경로를 역할로 분리(다른 역할은 403, 인증 없음은 401), 검토 경로는 ops-feedback 읽기/reviewer 쓰기 토큰. E2E 7g 추가. `--fast`·전체 모드 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록). 미확인: 응답 reviewed_by(ops-feedback 작업 대기), 화면 렌더링. CR-D20.
 
-열째 구간 보충: ops-feedback bf210fe 재빌드·잠금 갱신, E2E 7h를 REAL로(검토 응답·I7 조회의 reviewed_by가 인증 계정, 위조 X-Openit-User 무시; 승인 쪽 approver_id도 4g에서 REAL). `--fast` 59 PASS / 0 FAIL, 전체 모드 87 PASS / 0 FAIL.
+열째 구간 보충: ops-feedback bf210fe 재빌드·잠금 갱신, E2E 7h를 REAL로(검토 응답·I7 조회의 reviewed_by가 인증 계정, 위조 X-Openit-User 무시; 승인 쪽 approver_id도 4g에서 REAL). `--fast`·전체 모드 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록).
 
 ## 열한째 구간: 다른 서버·PC에서도 도는지 (경로 고정 금지)
 
-- `scripts/check-relocatable.sh`: (a) 형제 리포 13개의 git 추적 파일에 절대 경로·워크스페이스 이름·호스트 이름이 없음(허용 목록 `relocatable-allow.txt`, 지금 0건, 검사 정규식은 양성 시료로 확인), (b) 임시 `ws-relocate-XXXX/`에 13개 리포를 로컬 clone한 뒤 그 안의 deploy에서 `e2e.sh --fast` 통과(60 PASS / 0 FAIL), 끝나면 임시 폴더 삭제.
+- `scripts/check-relocatable.sh`: (a) 형제 리포 13개의 git 추적 파일에 절대 경로·워크스페이스 이름·호스트 이름이 없음(허용 목록 `relocatable-allow.txt`, 지금 0건, 검사 정규식은 양성 시료로 확인), (b) 임시 `ws-relocate-XXXX/`에 13개 리포를 로컬 clone한 뒤 그 안의 deploy에서 `e2e.sh --fast` 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록), 끝나면 임시 폴더 삭제.
 - `scripts/check-standalone.sh`: 형제 리포·`build/`·`.venv` 없는 deploy 리포 사본 + 임시 레지스트리의 digest 이미지만으로 `gen-secrets.sh` -> `up.sh`가 운영 구성을 띄운다(통과). 이를 위해 추론 서버의 문진 스키마를 워크스페이스의 `build/survey-schema` 대신 survey-service 이미지의 패키지에서 꺼내는 일회성 작업(`model-serving-schema`)으로 바꿨다.
 - runbook 1절을 (A) 개발·CI 워크스페이스, (B) 운영·테스트 서버로 나눠 현재 사실로 고쳤다. (B)에서 아직 안 되는 것: 영역 이미지가 서버 레지스트리에 들어가는 길(CI 접근 방식, TLS·인증), 잠금 파일 전달, 레지스트리 이관 절차 -- 모두 미정.
 
@@ -156,7 +156,7 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 
 ### 시험 결과 (실제로 돌린 것, 이 PC의 WSL2 + Docker Desktop 한 환경. 깨끗한 두 번째 환경 확인은 못 했다)
 - `bash scripts/doctor.sh`: 통과(WARN 0). `bash scripts/build-images.sh`: 8개 이미지 빌드 exit=0.
-- `bash scripts/e2e.sh --reuse-build`(전체 모드): **87 PASS / 0 FAIL**, 합계 247초. `--fast` 중간 실행에서는 단계 5의 기대값(fake 출력)만 실패해 고친 뒤 전체 모드로 다시 돌렸다. 전체 모드 이후에 `e2e_steps.py`의 실제 LLM 경로(`--llm-package`)의 기반 모델 표기를 패키지 값으로 고쳤고 이 경로는 실행해 보지 못했다(구문 검사만).
+- `bash scripts/e2e.sh --reuse-build`(전체 모드): **전체 통과**(숫자는 `docs/E2E_RESULTS.md` 과거 기록), 합계 247초. `--fast` 중간 실행에서는 단계 5의 기대값(fake 출력)만 실패해 고친 뒤 전체 모드로 다시 돌렸다. 전체 모드 이후에 `e2e_steps.py`의 실제 LLM 경로(`--llm-package`)의 기반 모델 표기를 패키지 값으로 고쳤고 이 경로는 실행해 보지 못했다(구문 검사만).
 - 단계 상태: 1 REAL(v2 문항 양식 31개 ID) / 2 **BLOCKED**(synthetic-data NOTHING_TO_DO, G02) / 3 TEST-SUB(시스템 프롬프트 포함 패키지) / 4 REAL+TEST-SUB(자동 검사·사람 승인·릴리스·번들) / 5 REAL(PUT -> extract -> respond, 서버 직접 호출 검사) / 5d REAL(알림이 나오지 않음, `staff_alert_source.active=false`) / 5d-skip **SKIPPED**(직원 콘솔 알림 화면: 시험용 입력원이 survey-service tests/ 에만 있음) / 6 TEST-SUB+REAL / 7 REAL(시드 인용 포함) / 8 REAL / 9 REAL.
 - 확인한 것과 못 한 것: `make-llm-package.sh gpu-12g`는 실행해 두 번 같은 바이트(결정성)와 `ModelPackageManifest` 스키마 통과를 확인했다. `demo.sh config --llm`(병합 검증)은 통과했다. **GPU가 필요한 실제 LLM 데모, GPU 이미지 빌드, Qwen3-1.7B 적재는 하지 않았다(서버 미검증, OPEN_GAPS U07/U01).** 서버 절차는 RUN.md 7-2-2.
 - 막힌 점은 CR-D22: (1) model-runtime fake 기본 출력(next_item=END)이 v2 흐름에서 모든 턴을 반려시켜 deploy가 시험 전용 진입점으로 고정 출력을 바꿨다, (2) synthetic-data G02, (3) 직원 알림 시험용 입력원, (4) `make_neutral_package.py`가 프롬프트 인자를 받지 않음.
@@ -166,14 +166,14 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 
 기준: boundary-contracts v2.0.0, turn-engine v0.3.0, model-runtime v0.6.2. 이웃 main: survey-service ef94945, release-gate 9f0ff9e, model-lab 3b3c812, ops-feedback acaf413 (모두 이 PC에서 확인).
 - 한 일: `DEPLOY_MR_TAG` v0.6.2(이미지 라벨 기대값 포함). 우회 제거: `test/fake-model/fake_server.py`, `scripts/apply_system_prompts.py` 삭제. fake 모델은 표준 서버 + `MODEL_RUNTIME_FAKE_FLOW_FILE=test/fake-model/question_flow.json`(survey-service `question_flow`의 31개 순서 사본). `make-llm-package.sh`는 `make_neutral_package.py --system-prompt-a/-b`를 쓴다. CR-D22 v2 1·4항은 해소.
-- 시험(실제로 돌린 것, 깨끗한 두 번째 환경은 확인하지 못했다): `doctor.sh` 통과(WARN 0), `build-images.sh` exit=0(model-serving·survey-service·release-gate 이미지 라벨 `io.openit.model-runtime`=0.6.2 확인), `e2e.sh --reuse-build`(새 이미지를 빌드한 뒤, 전체 모드) 87 PASS / 0 FAIL 246초. `make-llm-package.sh gpu-12g`를 두 번 돌려 결과가 같고 매니페스트의 프롬프트 해시가 `lora_a.system.txt`와 일치함을 확인. GPU 서버·실제 LLM 모드는 확인하지 않았다.
+- 시험(실제로 돌린 것, 깨끗한 두 번째 환경은 확인하지 못했다): `doctor.sh` 통과(WARN 0), `build-images.sh` exit=0(model-serving·survey-service·release-gate 이미지 라벨 `io.openit.model-runtime`=0.6.2 확인), `e2e.sh --reuse-build`(새 이미지를 빌드한 뒤, 전체 모드) 통과(숫자는 `docs/E2E_RESULTS.md` 과거 기록), 246초. `make-llm-package.sh gpu-12g`를 두 번 돌려 결과가 같고 매니페스트의 프롬프트 해시가 `lora_a.system.txt`와 일치함을 확인. GPU 서버·실제 LLM 모드는 확인하지 않았다.
 - 남은 것: 단계 2 BLOCKED(G02), 5d 직원 알림 화면 SKIPPED(G01)는 그대로. push·태그는 하지 않았다.
 
 ## 열일곱째 구간: 태그 정렬(bc v2.0.2, te v0.4.0, mr v0.7.0), 비밀 파일화(D84), 점검 스크립트 (커밋 37117d2 -> 85e2d27, 이 PC 한 환경)
 
 근거는 CHANGELOG.md와 커밋 메시지다. 이 구간의 E2E는 이 세션에서 다시 돌리지 않았다.
 - 기준 태그(`scripts/lib.sh`, 이 세션에서 읽어 확인): boundary-contracts v2.0.2(synthetic-data용도 v2.0.2), turn-engine v0.4.0, model-runtime v0.7.0. 위 열다섯째·열여섯째 구간의 태그는 그 시점 값이다.
-- 시험 결과: 커밋 85e2d27의 메시지가 `E2E: PASS 91 / FAIL 0 (직전 88/0, 새 단계 3개)`라고 적었다. 같은 이 PC 한 환경이며 깨끗한 두 번째 환경은 확인하지 못했다. 92 PASS라는 값은 리포지토리 안에서 근거를 찾지 못했다(미확인). 5728769 이후 E2E 재실행 기록도 없다(미확인).
+- 시험 결과: 커밋 85e2d27의 메시지가 E2E 통과를 적었다(숫자와 근거는 `docs/E2E_RESULTS.md` 과거 기록). 같은 이 PC 한 환경이며 깨끗한 두 번째 환경은 확인하지 못했다. 옮겨 적히던 다른 숫자 하나는 리포지토리 안에서 근거를 찾지 못했다(`docs/E2E_RESULTS.md`에 '근거 없음'으로 적음). 5728769 이후 E2E 재실행 기록도 없다(미확인).
 - 비밀 파일화(D84): compose의 `env_file` 토큰을 없애고 최상위 `secrets:`(`secrets/tokens/<이름>`)를 `/run/secrets`에 마운트하며 서비스는 `NAME_FILE` 경로만 받는다. `gen-secrets.sh`는 목록 값도 파일로 만든다. 게이트웨이는 Caddyfile의 `{file./run/secrets/<이름>}`로 읽는다. 원인은 환경 변수의 토큰이 `docker inspect`/`exec env`로 평문 노출된 것이다.
 - `scripts/check-secrets-hidden.sh`(정적+동적 노출 검사, 값은 출력하지 않음, E2E 단계). 5728769부터 인자 없이 부르면 데모(`state/demo`)도 점검하고 `--secrets-dir`를 받는다. `demo.sh check-secrets` 추가, `demo.sh up` 끝에서 자동 실행.
 - `scripts/check-versions.sh` + 자기 점검 `scripts/test-check-versions.sh`(E2E 단계): `lib.sh` 표와 형제 영역 파일의 태그 표기를 비교하고 어긋나면 `파일:줄`을 출력하며 실패한다.
@@ -188,5 +188,5 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 - 자체 시험 `bash scripts/test-check-versions.sh`: 3개 ok / 0 FAIL, 종료 코드 0.
 
 ## E2E 값 추출 경로 (U16)
-- 가짜 A 흐름 파일을 객체 형식(slots/skips)으로 확장하고 E2E에 단계 5g(값 추출·건너뛰기·서비스 경유 3턴)와 5s(어댑터 교체 시 다른 서비스 불변, 새 릴리스 LOADED)를 추가했다. 둘 다 REAL(모델은 가짜). 확인: `bash scripts/e2e.sh --fast --reuse-build` 65 PASS / 0 FAIL(전체 모드 아님), `scripts/test-check-all.sh` 통과.
+- 가짜 A 흐름 파일을 객체 형식(slots/skips)으로 확장하고 E2E에 단계 5g(값 추출·건너뛰기·서비스 경유 3턴)와 5s(어댑터 교체 시 다른 서비스 불변, 새 릴리스 LOADED)를 추가했다. 둘 다 REAL(모델은 가짜). 확인: `bash scripts/e2e.sh --fast --reuse-build` 통과(전체 모드 아님, 숫자는 `docs/E2E_RESULTS.md` 과거 기록), `scripts/test-check-all.sh` 통과.
 - 확인하지 못한 것: 저장된 값 내용(공개 읽기 경로 없음, ops-feedback은 실패 사례만 노출), CORRECT(가짜 A가 내지 않음), 전체 모드.

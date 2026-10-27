@@ -83,6 +83,7 @@ bash scripts/demo.sh reset                       # down 후 up
 영역 단위 시험은 영역 사이 어긋남을 못 본다. `bash scripts/check-all.sh`는 실행 없이 읽어서 아는 어긋남을 E2E(6분) 앞에서 잡는다. `e2e.sh`가 시작할 때 자동으로 부르고 FAIL이면 E2E를 시작하지 않는다(`DEPLOY_SKIP_CHECK_ALL=1`로 건너뛸 수 있으나 개발 중에만 쓴다).
 
 - 규칙: 0 대상 열거(처리 방법을 모르는 영역·예시는 `모르는 대상`으로 FAIL), 1 버전표, 2 계약 예시 키 순서(대상은 scripts/check-all-ordered-schemas.txt), 3 완화 정책이 규칙을 빼지 않는지, 4 삭제된 이름의 잔존, 5 박은 `pipeline_schema_version`, 6 설정의 인라인 비밀, 7 compose의 환경 변수 비밀, 8 영역별 시험 수집, 9 영역 README 필수 절(정의는 scripts/check_all.py 주석과 출력에 있다).
+- 규칙 10(E2E 통과 수는 정본에만): 모든 영역의 `*.md`에서 E2E 문맥의 통과 수 표기(`N PASS`, `PASS N`, `N 통과`)를 찾아 `docs/E2E_RESULTS.md`와 각 영역 `CHANGELOG.md` 밖에서 발견되면 FAIL. 문맥 판정은 `scripts/check-all-e2e-claims.txt`(claim/context/notcontext/allowed), 거짓 양성은 notcontext를 고치거나 `check-all-allow.txt`에 `10|경로|이유`로 적는다. 결과 줄은 e2e.sh가 끝에서 `scripts/record-e2e.sh`로 정본에 더한다.
 - 출력: 규칙마다 PASS/FAIL/SKIP과 `검증됨 N/M, 어긋남, 대상 아님(이유), 검증 안 함(이유)`. 검증에서 빠진 것을 통과로 세지 않는다. SKIP은 어긋남은 없지만 검증 안 함이 있다는 뜻이다. FAIL이면 종료 코드 1이고 `영역/파일:줄` 근거를 낸다. 값·비밀은 출력하지 않는다.
 - 예외: 정당한 언급은 `scripts/check-all-allow.txt`(규칙|경로 글롭|이유), 영역·예시를 점검에서 빼려면 `scripts/check-all.exclude`(`종류:이름 | 이유`, 이유 필수, 종류는 area/example/service). 두 목록은 출력에 그대로 나온다.
 - 자체 시험: `bash scripts/test-check-all.sh`(임시 폴더에 어긋난 예시를 만들어 규칙마다 FAIL/PASS 확인). 형제 영역은 읽기 전용으로만 본다.

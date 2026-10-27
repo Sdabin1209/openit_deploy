@@ -7,10 +7,15 @@
 #  - --fast: 단계 1~8과 단계 9 앞부분(compose 기동 검사)까지만. 스케줄러, 백업·복구, 코드 축 롤백은 생략한다. 개발 중 빠른 확인용이며 **전체 합격이 아니다**.
 #    옵션 없이 돌리는 전체 모드가 인도 전 필수다. 종료 코드는 돌린 검사 기준이다.
 # 시작 전에 scripts/check-all.sh(정적 점검)를 돌리고 FAIL 이면 멈춘다.
+# 끝에서 scripts/record-e2e.sh 가 결과 한 줄을 docs/E2E_RESULTS.md(E2E 통과 수의 정본)에 더한다(DEPLOY_NO_RECORD=1 이면 안 더함. 못 더하면 종료 코드 1).
 # 사용: scripts/e2e.sh [--fast] [--keep] [--keep-images] [--reuse-build]
 set -o pipefail
 # 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
-if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then bash "$(dirname "$0")/check-all.sh" || { echo "check-all.sh 가 FAIL 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }; fi
+CA_TXT=""
+if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
+  CA_TXT=$(bash "$(dirname "$0")/check-all.sh" 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
+  [ $CA_RC = 0 ] || { echo "check-all.sh 가 FAIL 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
+fi
 # 사전 점검: 실패하면 바로 멈춘다(건너뛰기 DEPLOY_SKIP_DOCTOR=1). 하위 up.sh 가 다시 점검하지 않게 export 한다
 [ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" || exit 1
 export DEPLOY_SKIP_DOCTOR=1
@@ -188,6 +193,7 @@ chk "롤백 뒤 survey-service /readyz 200 (복구한 포인터의 릴리스를 
 
 fi
 sect ""
+{
 echo; echo "============================ 요약 ============================"
 if [ -f "$W/steps.log" ]; then sed -n '/== 요약 (단계 1~8)/,$p' "$W/steps.log"; fi
 [ "$FAST" = 1 ] && echo "-- FAST 모드: 생략한 구간 = 단계 9 스케줄러(D39), 백업·복구, digest 잠금 코드 축 롤백. 전체 합격 아님"
@@ -202,4 +208,13 @@ echo "막힌 것(BLOCKED): 위 요약의 BLOCKED 행. docs/change-requests/ 참�
 if [ "$FAILS" != 0 ]; then echo "E2E 결과: 실패 있음"
 elif [ "$FAST" = 1 ]; then echo "E2E 결과(--fast): 실행한 검사 전부 통과. 생략한 구간이 있어 전체 합격이 아니다 -- 인도 전에는 옵션 없는 전체 모드를 돌릴 것"
 else echo "E2E 결과: 실행한 검사 전부 통과 (BLOCKED/TEST-SUB 단계가 있어 시나리오 전체 합격은 아니다)"; fi
-exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)
+} | tee "$W/summary.txt"
+# 결과 한 줄을 정본(docs/E2E_RESULTS.md)에 기록: 로그에서 숫자를 파싱하고, 못 하면 실패한다
+REC_RC=0
+if [ "${DEPLOY_NO_RECORD:-0}" = 1 ]; then echo "(DEPLOY_NO_RECORD=1: docs/E2E_RESULTS.md 에 기록하지 않음)"
+elif [ -z "$CA_TXT" ]; then echo "(check-all 을 건너뛰어 docs/E2E_RESULTS.md 에 기록하지 않음)"
+else
+  printf '%s\n' "$CA_TXT" > "$W/check-all.out"
+  bash "$DEPLOY_ROOT/scripts/record-e2e.sh" "$W/check-all.out" "$W/summary.txt" || { echo "record-e2e.sh 실패: 결과를 docs/E2E_RESULTS.md 에 적지 못했다"; REC_RC=1; }
+fi
+[ "$FAILS" = 0 ] && [ "$REC_RC" = 0 ]; exit $?

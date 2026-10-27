@@ -60,7 +60,7 @@ bash scripts/demo.sh up                # 3) 화면을 눌러 보는 데모(프�
 ## 4. 현재 상태
 
 확인된 것(모두 이 PC의 WSL2 + Docker Desktop 한 환경, docs/STATUS.md):
-- 가짜 모델 E2E `e2e.sh --reuse-build` 전체 모드 87 PASS / 0 FAIL, 246초(STATUS.md 열여섯째 구간, model-runtime v0.6.2 기준). 이후 태그 정렬 뒤 88 PASS / 0 FAIL(deploy 37117d2, OPEN_GAPS U07), 비밀 파일화 뒤 91 PASS / 0 FAIL(커밋 85e2d27 메시지, docs/STATUS.md 열일곱째 구간). 그 뒤 HEAD(5728769, 7260ad7)에서의 재실행은 미확인.
+- 가짜 모델 E2E(`scripts/e2e.sh`)의 통과 수는 `docs/E2E_RESULTS.md`가 정본이다(실행마다 e2e.sh가 한 줄을 자동으로 더하고, 과거 값은 근거와 함께 그 파일의 '과거 기록' 표에 있다). 이 문서에는 숫자를 옮겨 적지 않는다(check-all 규칙 10이 잡는다).
 - 단계 상태(STATUS.md 열다섯째 구간): 2단계 BLOCKED(G02), 직원 알림 화면 SKIPPED(G01), 3·6단계 일부 TEST-SUB(시험 대역). 즉 "전체 합격"이 아니라 "돌린 검사가 모두 통과"다.
 - 기준 태그: boundary-contracts v2.0.2, turn-engine v0.4.0, model-runtime v0.7.1 (`scripts/lib.sh`).
 - gpu-dev(12GB)에서 Qwen3-1.7B 적재와 형식 통과 확인, 단 키오스크 14턴은 학습 안 된 모델 탓에 모두 실패(OPEN_GAPS U01, U07. 이 세션은 확인하지 않고 대장을 옮겼다).
@@ -102,5 +102,6 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 | [GPU_HOLE.md](docs/GPU_HOLE.md) | GPU 서버가 열릴 때 할 일(H1~H4) |
 | [ci.md](docs/ci.md) | 영역 CI가 이미지를 게시하는 계약(D24) |
 | [STATUS.md](docs/STATUS.md) | 구간별 한 일과 시험 결과 |
+| [E2E_RESULTS.md](docs/E2E_RESULTS.md) | E2E 통과 수의 정본(실행 기록 + 과거 기록) |
 | `docs/change-requests/` | 헤드에게 보낸 변경 요청(CR-D01~D22) |
 | [CHANGELOG.md](CHANGELOG.md) (리포 루트) | 변경 이력 |

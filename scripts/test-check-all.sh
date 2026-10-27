@@ -111,5 +111,35 @@ mk deploy; run 9; expect "필수 절이 다 있으면 PASS" PASS
 printf '# x\n\n소개.\n\n## 1. 전체 속의 위치\n## 2. 구조\n' > "$W/deploy/README.md"; run 9; expect "필수 절이 빠지면 FAIL" FAIL "필수 절 없음: 실행 방법"
 rm "$W/deploy/README.md"; run 9; expect "README 가 없으면 FAIL" FAIL "README.md:1"
 
+echo "== 10 E2E 통과 수는 정본에만"
+# 규칙 10 은 실제 판정 규칙 파일(check-all-e2e-claims.txt)을 쓴다
+mk deploy head survey-service; mkdir -p "$W/deploy/docs" "$W/head/docs"
+printf '# 정본\n전체 모드 103 PASS / 0 FAIL\n' > "$W/deploy/docs/E2E_RESULTS.md"
+printf '# 상태\nE2E 결과는 deploy/docs/E2E_RESULTS.md 를 본다.\n' > "$W/head/docs/STATUS.md"
+run 10; expect "정본을 가리키기만 하면 PASS" PASS
+printf '# 상태\n서비스끼리 도는 E2E 전체 모드 88 PASS / 0 FAIL\n' > "$W/head/docs/STATUS.md"; run 10; expect "정본 밖에 옮겨 적은 PASS 수는 FAIL(파일:줄)" FAIL "head/docs/STATUS.md:2"
+printf '# 상태\ne2e.sh 로 PASS 91 / FAIL 0 이 나왔다\n' > "$W/head/docs/STATUS.md"; run 10; expect "PASS 뒤에 숫자를 쓴 표기도 FAIL" FAIL "head/docs/STATUS.md:2"
+printf '# 상태\n전체 E2E 에서 73개 통과, 이 값은 옛 기록\n' > "$W/head/docs/STATUS.md"; run 10; expect "'N개 통과' 표기도 FAIL" FAIL "head/docs/STATUS.md:2"
+printf '# 상태\npytest 403 통과, E2E 는 이번에 돌리지 않았다\n' > "$W/head/docs/STATUS.md"; run 10; expect "E2E 가 아닌 시험 개수(pytest)는 통과" PASS
+printf '# 상태\n시험 209 통과, 스모크 통과. E2E 는 돌리지 않았다\n' > "$W/head/docs/STATUS.md"; run 10; expect "'시험 N 통과'(영역 시험)는 통과" PASS
+printf '# 상태\n숫자 87 PASS 가 있지만 이 줄은 다른 얘기다\n' > "$W/head/docs/STATUS.md"; run 10; expect "E2E 문맥이 없는 줄은 대상 아님" PASS
+printf '# 변경\n전체 모드 87 PASS / 0 FAIL 당시 기록\n' > "$W/head/docs/CHANGELOG.md"; printf '# 상태\n' > "$W/head/docs/STATUS.md"; run 10; expect "각 영역 CHANGELOG.md 는 허용" PASS "정본·변경 이력 파일"
+printf '# 상태\nE2E 전체 모드 88 PASS\n' > "$W/head/docs/STATUS.md"; printf '10|head/docs/STATUS.md|시험용 허용\n' > "$W/allow.txt"
+OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=10 CHECK_ALL_ALLOW="$W/allow.txt" CHECK_ALL_EXCLUDE=/dev/null bash "$HERE/check-all.sh" 2>&1); RC=$?; expect "허용 목록(이유 포함)에 적은 파일은 통과하고 건너뛴 이유를 출력한다" PASS "허용 목록(check-all-allow.txt)"
+printf '' > "$W/empty-rules.txt"; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=10 CHECK_ALL_ALLOW=/dev/null CHECK_ALL_EXCLUDE=/dev/null CHECK_ALL_E2E_CLAIMS="$W/empty-rules.txt" bash "$HERE/check-all.sh" 2>&1); RC=$?; expect "판정 규칙 파일이 비면 조용히 통과하지 않고 FAIL" FAIL "판정 규칙 파일"
+
+echo "== record-e2e.sh (정본에 한 줄 더하기)"
+RF="$T/E2E_RESULTS.md"; cp "$ROOT/docs/E2E_RESULTS.md" "$RF"
+printf -- '-- 결과: FAIL 0, SKIP 0, PASS 11 / 규칙 11개, 소요 2.5s\n' > "$T/ca.out"
+printf '== 요약 (단계 1~8)\n     1 REAL      a\n     2 BLOCKED   b\n     3 TEST-SUB  c\n    4x BLOCKED   d\n\n-- 9단계 및 준비 검사\n   PASS 40 / FAIL 0\nE2E 결과: 실행한 검사 전부 통과 (x)\n' > "$T/sum.txt"
+rec() { N=$((N+1)); local want=$1 desc=$2; shift 2; OUT=$(bash "$HERE/record-e2e.sh" --file "$RF" "$@" 2>&1); RC=$?; local good=0; { [ "$want" = ok ] && [ $RC = 0 ]; } && good=1; { [ "$want" = fail ] && [ $RC != 0 ]; } && good=1; if [ $good = 1 ]; then echo "  ok   $desc"; else echo "  FAIL $desc (rc=$RC)"; echo "$OUT" | head -3 | sed 's/^/       /'; FAILS=$((FAILS+1)); fi; }
+rec ok "로그에서 숫자를 파싱해 한 줄을 더한다" --when "2026-01-01 00:00" "$T/ca.out" "$T/sum.txt"
+N=$((N+1)); if grep -qE '^\| 2026-01-01 00:00 \| [0-9a-f]+(\+dirty)? \| .* \| 전체 \| 40 \| 0 \| 0 \| 0/0/11 \| 2 \| 1 \|' "$RF"; then echo "  ok   더한 줄의 PASS/FAIL/check-all/BLOCKED/TEST-SUB 값이 로그와 같다"; else echo "  FAIL 더한 줄의 값이 로그와 다르다"; FAILS=$((FAILS+1)); fi
+B=$(md5sum < "$RF"); rec fail "check-all 요약이 없는 로그는 실패" "$T/sum.txt"; N=$((N+1)); [ "$B" = "$(md5sum < "$RF")" ] && echo "  ok   실패하면 파일을 바꾸지 않는다" || { echo "  FAIL 실패했는데 파일이 바뀌었다"; FAILS=$((FAILS+1)); }
+printf 'garbage\n' > "$T/bad.txt"; rec fail "PASS 줄을 파싱하지 못하면 실패" "$T/ca.out" "$T/bad.txt"
+rec fail "--manual 은 출처 없이는 실패" --manual --commit abc1234 --mode 전체 --pass 1 --fail 0 --exit 0 --ca-fail 0 --ca-skip 0 --ca-pass 1
+rec ok "--manual 은 출처를 '수동 입력'으로 표시해 더한다" --manual --source "시험" --commit abc1234 --mode 전체 --pass 1 --fail 0 --exit 0 --ca-fail 0 --ca-skip 0 --ca-pass 1 --when "2026-01-02 00:00"
+N=$((N+1)); grep -q '수동 입력: 시험' "$RF" && echo "  ok   수동 입력 표시" || { echo "  FAIL 수동 입력 표시가 없다"; FAILS=$((FAILS+1)); }
+
 echo
 [ $FAILS = 0 ] && echo "통과: 자체 시험 $N건 + 값 비출력 확인" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }
