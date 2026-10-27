@@ -42,7 +42,10 @@ MS_CONTAINER = a.ms_container or f"{a.project}-model-serving-1"
 def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가 바뀔 수 있어 매번 Docker에게 묻는다
     out = subprocess.run([a.docker, "port", MS_CONTAINER, "8080/tcp"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
-URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"http://127.0.0.1:{_ms_port() if k == 'ms' else PORTS[k]}"
+def _survey_port():   # survey-service 도 5q·5w 가 멈췄다 다시 띄우면 Docker 배정 호스트 포트가 바뀐다
+    out = subprocess.run([a.docker, "port", f"{a.project}-survey-service-1", "8080/tcp"], capture_output=True, text=True).stdout
+    return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["survey"]
+URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"http://127.0.0.1:{_ms_port() if k == 'ms' else _survey_port() if k == 'survey' else PORTS[k]}"
 RESULTS = []; STATE_FILE = WORK / "state.json"
 STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
@@ -657,6 +660,95 @@ def step5c():
     for s_ in (sid, sid2): kiosk(f"/v1/sessions/{s_}/end", {"session_id": s_, "kind": "SESSION_END"})
     rec("5c", "REAL", "정정 흐름(가짜 A corrections: '아까 말'+at Q1.D02, 키 Q1.D01.diagnosed). 추론 서버 직접: Q1.D02 에서 CORRECT(CORRECTION, 값 false, next_item Q1.D02), Q1.D03 에서는 NEXT. 서비스 경유: 'cor-1' 뒤 직원 세션 조회에서 Q1.D01.diagnosed=true ANSWERED -> 'cor-2' 뒤 턴 기록 action [NEXT, CORRECT], 값 false·status CORRECTION, 세션 IN_PROGRESS, 실패 신호 없음, Trace 전송. 대조 세션(Q1.D01 에서 같은 발화)은 NEXT·ANSWERED. 못 보는 것: 이력의 이전 값(NEW_REVISION)과 다음 질문 문항(공개 조회에 없음)")
 
+def gwk(method, path, body=None, timeout=30, auth=True):
+    """게이트웨이 경유 호출(키오스크 기기 토큰). (상태, 본문, 소문자 헤더, 걸린 초). 연결 오류는 상태 0."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(URL("gw") + path, data=data, method=method)
+    if auth: req.add_header("Authorization", "Bearer " + KDEV())
+    if data is not None: req.add_header("Content-Type", "application/json")
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r: code, raw, hd = r.status, r.read(), dict(r.headers)
+    except urllib.error.HTTPError as e: code, raw, hd = e.code, e.read(), dict(e.headers)
+    except Exception as e: return 0, type(e).__name__, {}, time.time() - t0
+    try: b = json.loads(raw or b"null")
+    except ValueError: b = raw.decode(errors="replace")
+    return code, b, {k.lower(): v for k, v in hd.items()}, time.time() - t0
+
+def gk_turn(sid, tid, text, timeout=30):
+    return gwk("POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": text, "turn_id": tid}, timeout)
+
+def staff_sv(sid):
+    c, sv = gws("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv); return sv
+
+def utt_count(sv, text): return sum(1 for t in sv["turns"] if t["utterance"] == text)
+
+def policy(step, waits, name, fn):
+    """정책 단언: FAULT_POLICY 가 정한 기대인데 지금 영역 코드로는 통과하지 않을 수 있는 것. 통과하면 REAL, 아니면 POLICY-PENDING(실패가 아니다, 기다리는 변경과 지금 값을 적는다). 약화하지 않는다."""
+    try: fn(); rec(f"{step}-policy", "REAL", f"정책 단언 통과: {name}")
+    except AssertionError as e: rec(f"{step}-policy", "POLICY-PENDING", f"{name} -- 기다리는 변경: {waits}. 지금 값: {e}")
+
+def wait_gw_ready(timeout):
+    wait(lambda: gwk("GET", "/readyz", auth=False)[0] == 200, timeout, "gateway /readyz 200(survey-service 가 활성 릴리스까지 적재)", every=2)
+
+def upstream_503_json(c, b, h, what):
+    assert c == 503 and b == {"code": "UPSTREAM_UNAVAILABLE"}, f"{what}: 503 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:120]}"
+    assert h.get("content-type", "").startswith("application/json") and h.get("retry-after"), f"{what}: Content-Type/Retry-After 헤더 {h.get('content-type')} {h.get('retry-after')}"
+    assert "survey" not in json.dumps(b) and ":8080" not in json.dumps(b), f"{what}: 본문에 내부 주소"
+
+def step5q():
+    title("5q", "survey-service 컨테이너 중지 -> gateway 경유 환자 API 503 UPSTREAM_UNAVAILABLE, gateway /readyz 비정상, /healthz 200 -> 기동 -> 복구, 세션 보존 (FAULT_POLICY 6)")
+    if "pointers" not in STATE: rec("5q", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    wait_gw_ready(300)
+    svc = f"{a.project}-survey-service-1"; sid = f"sess-{RID}-outq"
+    assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    c, r1 = public_turn(sid, "q-1", "네 있어요"); assert c == 200, (c, r1)
+    sh([a.docker, "stop", "-t", "3", svc]); obs = {}
+    try:
+        c, b, h, el = gk_turn(sid, "q-2", "아니요 없어요"); obs["turn"] = (c, round(el, 2)); upstream_503_json(c, b, h, "환자 턴")
+        rc, rb_, rh, rel = gwk("GET", "/readyz", auth=False); obs["readyz"] = (rc, round(rel, 2)); assert rc != 200, "survey-service 가 없는데 gateway /readyz 가 200"
+        assert "survey" not in json.dumps(rb_) and ":8080" not in json.dumps(rb_), f"gateway /readyz 본문에 내부 정보: {rb_}"
+        hc = gwk("GET", "/healthz", auth=False); obs["healthz"] = hc[0]; assert hc[0] == 200, hc[:2]
+    finally: sh([a.docker, "start", svc])
+    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", svc]).stdout.strip() == "healthy", 120, "survey-service healthy", every=2)
+    t0 = time.time(); wait_gw_ready(300); t_rec = time.time() - t0
+    sv = staff_sv(sid); vals = {v["key"]: v for v in sv["values"]}
+    assert vals["Q1.D01.diagnosed"]["value"] is True, ("재시작 뒤 이전 값이 사라졌다", vals)
+    assert utt_count(sv, "아니요 없어요") == 0 and "Q1.D02.diagnosed" not in vals, "상류에 닿지 못한 턴이 기록됐다"
+    c, r2 = public_turn(sid, "q-2", "아니요 없어요"); assert c == 200, ("복구 뒤 같은 turn_id 재전송이 200이 아니다", c, r2)
+    assert {v["key"]: v for v in staff_sv(sid)["values"]}["Q1.D02.diagnosed"]["value"] is False
+    def idem():
+        c, again = public_turn(sid, "q-1", "네 있어요"); assert c == 200 and again == r1, ("재시작 뒤 이미 확정된 turn_id 재전송이 저장된 응답과 다르다", c, str(again)[:100])
+        assert utt_count(staff_sv(sid), "네 있어요") == 1, "같은 turn_id 가 두 번 기록됐다"
+    policy("5q", "survey-service 의 turn_id 멱등(저장된 결과 재생)", "재시작 뒤 확정된 turn_id 재전송은 같은 응답이고 한 번만 기록된다", idem)
+    kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
+    rec("5q", "REAL", f"survey-service stop 중 gateway 경유: 환자 턴 {obs['turn'][0]}({obs['turn'][1]}s) {{\"code\":\"UPSTREAM_UNAVAILABLE\"}} + Retry-After + JSON(본문에 내부 주소 없음), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s), /healthz {obs['healthz']}. start 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 세션 보존(Q1.D01 값 유지, 상류에 닿지 못한 턴은 기록 없음), 같은 turn_id 로 재전송하면 200 으로 확정")
+
+def step5w():
+    title("5w", "survey-service 무응답(docker pause) -> gateway 경유 환자 요청이 마감 안에 504 UPSTREAM_UNAVAILABLE -> unpause 후 복구 (FAULT_POLICY 6)")
+    if "pointers" not in STATE: rec("5w", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    wait_gw_ready(300)
+    svc = f"{a.project}-survey-service-1"; sid = f"sess-{RID}-outw"
+    assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    sh([a.docker, "pause", svc]); obs = {}
+    try:
+        c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=30); obs["turn"] = (c, round(el, 1))
+        assert c == 504 and b == {"code": "UPSTREAM_UNAVAILABLE"} and h.get("retry-after"), f"무응답 상류: 504 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
+        assert 8.0 <= el <= 10.5, f"게이트웨이 마감이 설정(응답 헤더 9s)과 다르다: {el:.1f}s"
+        rc, rb_, rh, rel = gwk("GET", "/readyz", auth=False); obs["readyz"] = (rc, round(rel, 1))
+        assert rc == 504 and rel < 4, f"gateway /readyz 가 무응답 상류에서 504 를 2초대 마감으로 주지 않았다: {rc} {rel:.1f}s"
+        hc = gwk("GET", "/healthz", auth=False); obs["healthz"] = hc[0]; assert hc[0] == 200
+    finally: sh([a.docker, "unpause", svc])
+    t0 = time.time(); wait_gw_ready(60); t_rec = time.time() - t0
+    time.sleep(3)   # 멈춘 사이 도착한 요청을 서비스가 풀린 뒤 처리했을 수 있다
+    sv = staff_sv(sid); n_after_unpause = utt_count(sv, "네 있어요")
+    c, r = public_turn(sid, "w-1", "네 있어요"); assert c == 200, ("복구 뒤 같은 turn_id 재전송이 200이 아니다", c, r)
+    n_final = utt_count(staff_sv(sid), "네 있어요")
+    print(f"  관찰: 504 를 받은 턴 w-1 이 unpause 뒤 서비스에서 처리된 횟수 {n_after_unpause}, 같은 turn_id 재전송 뒤 기록 {n_final}회")
+    policy("5w", "survey-service 의 turn_id 멱등(처리 중·확정 재전송은 새로 처리하지 않음)", "504 로 끝난 턴을 같은 turn_id 로 재전송해도 발화는 한 번만 기록된다", lambda: (_ for _ in ()).throw(AssertionError(f"기록 {n_final}회")) if n_final != 1 else None)
+    kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
+    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 {obs['turn'][1]}s (설정: 연결 2s, 응답 헤더 9s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
+
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1064,6 +1156,14 @@ def step5p():
     before_v = [dict(v) for v in qa_reader().list_versions(qset)[0]]
     assert len(before_v) == 1, before_v
     dbs = ["qa", "gate", "ops_log", "ops_failure"] + (["survey"] if has_release else [])
+    sidp = f"sess-{RID}-pgturn"
+    if has_release:
+        # 환자 세션: 값이 하나 확정된 상태에서 DB 를 멈춘다. Trace 전송이 끝나기를 기다려 행 지문이 흔들리지 않게 한다
+        rb0 = survey_ready()[1]
+        assert kiosk("/v1/sessions", {"session_id": sidp, "kind": "SESSION_START"})[0] == 200
+        c, _p1 = public_turn(sidp, "p-1", "네 있어요"); assert c == 200, (c, _p1)
+        wait(lambda: survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
+        time.sleep(3)
     fp0 = {d: pgfp(d) for d in dbs}
     for k, n in svcs: assert healthy(k), f"{n} /readyz 가 처음부터 200 이 아니다: {ready(k)}"
     # 2) 중지. /healthz(살아 있음)는 유지되고 /readyz 는 비정상이 되어야 한다
@@ -1078,6 +1178,10 @@ def step5p():
     wait(all_down, 90, "postgres 중지 뒤 모든 서비스의 /readyz 가 비정상(200 아님)", every=1)
     for k, n in svcs:
         sec, c, b = obs[k]; print(f"    {n:22} /readyz {c} ({sec:.0f}s 후) {b}")
+    out_turn = None
+    if has_release:
+        out_turn = gk_turn(sidp, "p-2", "아니요 없어요", timeout=30)   # DB 가 멈춘 동안 환자 턴
+        print(f"    환자 턴(DB 중지 중, gateway 경유): 상태 {out_turn[0]} {out_turn[3]:.1f}s 본문 {str(out_turn[1])[:160]}")
     for k, n in svcs:
         hc = http("GET", k, "/healthz")[0]
         assert hc == 200, f"{n} /healthz 가 DB 중지 중 {hc} (살아 있음 점검은 DB 와 무관해야 한다)"
@@ -1099,10 +1203,31 @@ def step5p():
     assert after_v == before_v, ("문항 버전이 달라졌다", before_v, after_v)
     upload(qset, form.replace("알려 주세요.", "들려 주세요."), "pg2.txt")
     assert len(qa_reader().list_versions(qset)[0]) == 2, "복구 뒤 새 쓰기(버전 2)가 반영되지 않았다"
+    turn_note = ""
+    if has_release:
+        c, b, h, el = out_turn
+        ok_fail = c != 200 or (isinstance(b, dict) and b.get("turn_failure_signal"))
+        assert ok_fail, ("DB 가 멈춘 동안 환자 턴이 성공으로 답했다", c, str(b)[:120])
+        sv = staff_sv(sidp); vals = {v["key"]: v for v in sv["values"]}
+        assert vals["Q1.D01.diagnosed"]["value"] is True, ("확정된 이전 값이 사라졌다", vals)
+        assert "Q1.D02.diagnosed" not in vals, "DB 중지 중 턴의 값이 저장됐다(부분 저장)"
+        n_logged = utt_count(sv, "아니요 없어요")
+        c2, r2 = public_turn(sidp, "p-2", "아니요 없어요"); assert c2 == 200 and not r2.get("turn_failure_signal"), ("복구 뒤 같은 turn_id 재전송이 확정되지 않았다", c2, str(r2)[:120])
+        sv2 = staff_sv(sidp); v2 = {v["key"]: v for v in sv2["values"]}
+        assert v2["Q1.D02.diagnosed"]["value"] is False, "재전송 뒤 값이 저장되지 않았다"
+        fb = b.get("turn_failure_signal") if isinstance(b, dict) else None
+        turn_note = f" 환자 턴(DB 중지 중): 상태 {c} {el:.1f}s, 응답 {json.dumps(b, ensure_ascii=False)[:110] if isinstance(b, dict) else str(b)[:60]}; 값 저장 없음, 중지 중 발화 기록 {n_logged}건; 복구 뒤 같은 turn_id 재전송은 200 으로 확정(값 1회)."
+        def pol_deadline(): assert el <= 8.5, f"{el:.1f}s (총 마감 8s 가 없으면 gateway 의 9s 에서 끊긴다)"
+        def pol_nc():
+            assert isinstance(fb, dict) and fb.get("write_committed") == "NOT_COMMITTED", f"실패 신호 {str(b)[:140]}"
+        def pol_once(): assert utt_count(sv2, "아니요 없어요") == 1, f"재전송 뒤 같은 발화 기록 {utt_count(sv2, '아니요 없어요')}건(중지 중 {n_logged}건)"
+        policy("5p", "survey-service 의 턴 총 마감 시간(8s)과 DB statement_timeout", "DB 중지 중 환자 턴이 총 마감(8.5s) 안에 끝난다", pol_deadline)
+        policy("5p", "survey-service 의 NOT_COMMITTED 응답 형식 확정", "DB 중지 중 환자 턴의 실패 응답에 write_committed=NOT_COMMITTED 가 표시된다(지금은 재시도 가능한 503 UNAVAILABLE 오류 본문)", pol_nc)
+        policy("5p", "survey-service 의 turn_id 멱등", "실패한 턴을 같은 turn_id 로 재전송하면 발화가 한 번만 기록된다", pol_once)
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
-    rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
+    rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5q", step5q), ("5w", step5w), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

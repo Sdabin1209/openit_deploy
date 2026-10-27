@@ -35,3 +35,12 @@
 `config/Caddyfile`. Caddy v2.11.7(`locks/images.lock`의 digest 이미지, `caddy validate`는 `scripts/test-gateway-auth.sh`가 돌린다). 설정에 명시한 것: 상류 연결 2초(`dial_timeout`), 응답 헤더 대기(환자 API 9초: 서버 턴 총 마감 8초보다 길고 키오스크 대기 10초보다 짧게 / 직원·정적 화면 10초 / `/readyz` 2초), 재시도 없음(`lb_try_duration 0`). `handle_errors`가 Caddy의 502·503을 `503`, 504를 `504`로 바꾸고 둘 다 본문 `{"code":"UPSTREAM_UNAVAILABLE"}`, `Content-Type: application/json`, `Retry-After: 2`, `Cache-Control: no-store`를 준다. Caddy의 `{http.error.*}`를 쓰지 않으므로 본문에 상류 주소·오류 문구가 없다. gateway `/healthz`는 상류와 무관한 정적 200이고, `/readyz`는 survey-service `/readyz`를 프록시해 2xx면 `ok` 200, 아니면 서비스의 상태 코드와 `{"ready":false}`(서비스의 내부 문제 목록은 밖에 내지 않는다)를 준다.
 
 **Caddy 기본 동작의 관찰(추정이 아니라 설정 없이 돌려 본 값, 이 PC, 같은 이미지, `docker stop`/`pause` 한 python 서버 앞에서).** 설정 없는 `reverse_proxy`: 이름 해석 실패 502(3.0초 뒤), 상류 컨테이너 중지 502(3.1초 뒤), 상류 무응답(pause)은 60초를 기다려도 응답이 없었다(시간 제한 없음, 호출자가 먼저 끊음). 위 설정을 단 같은 구성: 중지 503(2.0초 뒤), 무응답 504(응답 헤더 대기를 3초로 둔 시험에서 3.0초 뒤). 즉 기본 상태에서는 "연결 거부는 503, 시간 초과는 504"가 저절로 되지 않고 무응답에는 마감이 없어서 명시 설정이 필요하다.
+
+## 단계 5q, 5w, 5p 확장: 장애 주입 (FAULT_POLICY, deploy 소유)
+
+모두 `scripts/e2e_steps.py`. 단독 실행은 활성 릴리스가 필요해 `bash scripts/e2e.sh --only 1,2,3,4,5q,5w,5p`처럼 단계 1~4를 함께 준다(`--only`는 전체 합격이 아니고 정본에 기록하지 않는다). 상태 `POLICY-PENDING`은 실패가 아니다: FAULT_POLICY가 정한 기대인데 현재 영역 코드로는 통과하지 않는 정책 단언이며, 약화하지 않고 어떤 변경을 기다리는지와 지금 값을 단계 출력에 남긴다(통과하면 같은 줄이 REAL로 나온다).
+
+- **5q**: survey-service `docker stop` 동안 gateway 경유 환자 턴이 `503 {"code":"UPSTREAM_UNAVAILABLE"}`(+`Retry-After`, JSON, 내부 주소 없음), gateway `/readyz` 비정상, `/healthz` 200. `docker start` 뒤 `/readyz` 200, 이전 값 보존, 상류에 닿지 못한 턴은 기록 없음, 같은 `turn_id` 재전송이 200으로 확정. 정책 단언: 재시작 뒤 이미 확정된 `turn_id` 재전송이 저장된 응답과 같고 한 번만 기록된다.
+- **5w**: survey-service `docker pause`(연결은 되나 무응답) 동안 gateway 경유 환자 요청이 응답 헤더 마감(9초) 근처에서 `504 UPSTREAM_UNAVAILABLE`(단언 범위 8.0~10.5초), gateway `/readyz`는 2초대에 504, `/healthz` 200. `unpause` 뒤 복구. 관찰: 504를 받은 턴을 서비스가 `unpause` 뒤에 처리했는지(횟수 출력)와 같은 `turn_id` 재전송 뒤 발화 기록이 한 번인지(정책 단언).
+- **5p 확장**(활성 릴리스가 있을 때): PostgreSQL 중지 중 환자 턴을 gateway 경유로 보내 실패 응답이 오는지(성공으로 답하면 FAIL), 값이 저장되지 않는지(부분 저장 없음), 복구 뒤 같은 `turn_id` 재전송이 확정되고 값이 한 번 저장되는지 본다. 정책 단언: 총 마감(8.5초 이내), 실패 응답에 `write_committed=NOT_COMMITTED` 표시, 재전송 뒤 발화 기록 한 번.
+- 정정 신호로 쓰는 읽기 경로는 직원 세션 조회(`GET /v1/staff/sessions/{id}`)다(단계 5c와 같다). 이 조회는 survey-service 서버 상태를 읽을 뿐 gateway 경유 직원 계정으로 부르므로 survey-service가 멈춰 있는 동안은 부르지 않는다.
