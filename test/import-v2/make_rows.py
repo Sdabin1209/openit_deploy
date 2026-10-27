@@ -13,13 +13,15 @@ SYS = "시험용 시스템 프롬프트(실제 학습 프롬프트가 아님)"
 QS = [("Q1.D01", "Q1.D01.diagnosed", "Q1.D02"), ("Q1.D02", "Q1.D02.diagnosed", "Q1.D03"), ("Q1.D03", "Q1.D03.diagnosed", "Q1.D04"), ("Q1.D04", "Q1.D04.diagnosed", "Q1.D05")]
 UTT = [("네 있어요", True), ("아니요 없어요", False)]
 
-def a_pair(i, qid, key, nxt, utt, val):
+def a_pair(i, qid, key, nxt, utt, val, split="x"):
+    utt = f"{utt} ({split} {i})"   # 분할 사이에 같은 발화+맥락이 겹치면 synthetic-data 게시기가 거부한다(누수 방지): 분할·번호를 발화에 넣어 모두 다르게 한다
     inp = {"question_id": qid, "current_question": f"시험 문항 {qid}입니다.", "user_utterance": utt, "state": {}}
     out = {"values": [{"key": key, "value": val, "precision": "exact", "status": "ANSWERED", "save": True}], "action": "NEXT", "next_item": nxt}
     bc.validator("ActionExtractionInput").validate(inp); bc.validator("ActionExtraction").validate(out)
     return inp, json.dumps(out, ensure_ascii=False)
 
-def b_pair(i, qid, nxt, utt, val):
+def b_pair(i, qid, nxt, utt, val, split="x"):
+    utt = f"{utt} ({split} {i})"
     inp = {"action": "NEXT", "topic": f"시험 {qid}", "user_utterance": utt, "known": f"{qid} {'있음' if val else '없음'}",
            "next": {"type": "NEXT", "question_id": nxt, "text": f"시험 문항 {nxt}입니다."}}
     out = f"{'네' if val else '아니요'}, 알겠습니다. 시험 문항 {nxt}입니다."
@@ -35,10 +37,10 @@ for role in ("a", "b"):
         lines = []
         for i, (qid, key, nxt) in enumerate(QS):
             utt, val = UTT[i % 2]
-            inp, asst = (a_pair if role == "a" else b_pair)(i, *( (qid, key, nxt) if role == "a" else (qid, nxt) ), utt, val)
+            inp, asst = (a_pair if role == "a" else b_pair)(i, *( (qid, key, nxt) if role == "a" else (qid, nxt) ), utt, val, split)
             lines.append(json.dumps(row(split, f"sc-{split}-{i}", inp, asst), ensure_ascii=False))
         if (role, split) == ("a", "train"):
-            bad = row(split, "sc-train-bad", *a_pair(0, *QS[0], *UTT[0])[:1], json.dumps({"action": "NEXT"}))
+            bad = row(split, "sc-train-bad", *a_pair(0, *QS[0], *UTT[0], split="bad")[:1], json.dumps({"action": "NEXT"}))
             lines.append(json.dumps(bad, ensure_ascii=False))
         if (role, split) == ("b", "val"):
             lines.append("이 줄은 JSON이 아니다(시험용 위반)")

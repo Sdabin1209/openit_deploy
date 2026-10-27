@@ -75,6 +75,11 @@ def http(method, k, path, token=None, body=None, raw=None, ctype="application/js
         b = e.read()
         try: return e.code, json.loads(b)
         except Exception: return e.code, b.decode(errors="replace")
+def with_user(client, user):
+    """승인(POST /v1/approvals)은 X-Openit-User 가 없으면 401 이고 approver_id 는 이 헤더 값으로 기록된다(release-gate CR-0008). SDK 클라이언트는 헤더를 못 보내므로 opener 의 기본 헤더로 붙인다(gateway 가 붙이는 인증 사용자 흉내, TEST-SUB)."""
+    client._opener.addheaders = [h for h in client._opener.addheaders if h[0].lower() != "x-openit-user"] + [("X-Openit-User", user)]
+    return client
+
 RVH = {"X-Openit-User": "reviewer-direct-e2e"}   # 검토 게시는 X-Openit-User(gateway 가 붙이는 인증 사용자)가 없으면 403(ops-feedback D88/U7). gateway 를 거치지 않는 직접 호출에 시험용 값을 붙인다
 OPERATOR_ID = "operator-e2e-script"   # 시험용 운영자 ID: 게이트웨이가 계정 ID를 X-Openit-User 로 붙이는 것을 스크립트가 직접 흉내 낸다
 def gate_ops(path, body, user=OPERATOR_ID, token=None):
@@ -151,6 +156,8 @@ def upload(set_id, text, fname):
     assert c in (200, 201), f"자료 등록 {c} {d}"
     c, pv = http("GET", "qa", f"/v1/drafts/{d['draft_id']}/preview", t); assert c == 200 and pv["ready_to_confirm"], pv
     c, ref = http("POST", "qa", f"/v1/drafts/{d['draft_id']}/confirm", t, body={"preview_hash": pv["preview_hash"]}); assert c == 200, ref
+    # 4-eyes(question-authoring D88/U9): 저자의 확인은 clinical_basis_approved=false 이고, 임상 근거 승인은 clinical-reviewer 역할의 다른 주체가 덧붙여야 reviewed_only 에 나타난다
+    c, rv = http("POST", "qa", "/v1/reviews", TOK("qa-reviewer-e2e"), body={"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB: 스크립트가 검수자 역할을 대신한다)"}); assert c in (200, 201), ("임상 근거 승인 실패", c, rv)
     return ref, raw
 
 def step1():
@@ -159,6 +166,7 @@ def step1():
     r1, raw1 = upload(QS, form, "form1.txt")
     r2, _ = upload(QS, form.replace("시험 문항 Q1.D01입니다. 알려 주세요.", "시험 문항 Q1.D01입니다. 말씀해 주세요."), "form2.txt")
     ru, _ = upload(QSU, form.replace("알려 주세요.", "들려 주세요."), "unseen.txt")
+    c, e_ = http("POST", "qa", "/v1/reviews", TOK("qa-author-e2e"), body={"question_set": r1, "decision": "APPROVED", "clinical_basis_approved": True}); assert c == 403, ("저자가 자기 확인을 임상 승인했다(4-eyes)", c, e_)
     assert http("GET", "qa", "/v1/drafts")[0] == 403
     rd = qa_reader()   # HTTP I1, 읽기 토큰(synthetic-data 역할)
     assert http("GET", "qa", "/v1/drafts", TOK("qa-read-synthetic-data"))[0] == 403, "읽기 토큰으로 저작 경로가 열리면 안 된다"
@@ -169,8 +177,11 @@ def step1():
         bank = rd.get_question_bank(v)
         assert canonical.content_hash(bank) == v["content_hash"]; assert str(bank["version"]) == v["version"]
         validate_survey("QuestionBank", bank)
-        (rv,) = rd.get_reviews(v); validate("ReviewRecord", rv)
-        assert rv["decision"] == "APPROVED" and rv["clinical_basis_approved"] is True and rv["question_set"] == v
+        revs = list(rd.get_reviews(v)); assert len(revs) == 2, ("저자 확인 + 검수자 승인 두 검수여야 한다", len(revs))
+        for r_ in revs: validate("ReviewRecord", r_)
+        assert revs[0]["clinical_basis_approved"] is False, "저자의 확인이 임상 근거를 승인했다(4-eyes 위반)"
+        rv = revs[-1]
+        assert rv["decision"] == "APPROVED" and rv["clinical_basis_approved"] is True and rv["question_set"] == v and rv["reviewer_id"] != revs[0]["reviewer_id"], rv
     assert rd.get_reviews(vers[0])[0]["ext"]["question-authoring"]["source"]["source_hash"] == "sha256:" + hashlib.sha256(raw1).hexdigest()
     cc = rd.get_change(vers[1]); validate("ChangeClassification", cc); assert rd.get_change(vers[0]) is None
     STATE["qs"] = [dict(v) for v in vers]; STATE["qsu"] = dict(rd.latest(QSU, reviewed_only=True)); save()
@@ -380,6 +391,9 @@ def reject_via_gateway(sid):
     # 클라이언트가 보낸 X-Openit-User 와 본문 approver_id 는 무시되고 인증된 계정이 기록된다
     body = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "submission_id": sid, "decision": "REJECT", "approver_id": "body-claimed-id",
             "approver_role": "release-approver", "reason": "시험: 게이트웨이 경유 반려", "report_hash": rh}
+    # release-gate CR-0008: 본문의 approver_id 가 인증된 사용자(X-Openit-User)와 다르면 400 이다(본문 값을 조용히 무시하지 않는다). 위조 헤더는 gateway 가 인증 계정으로 덮어쓴다
+    c, bad_, _ = gw_raw("POST", "/v1/approvals", body, basic=ADMIN(), headers={"X-Openit-User": "spoofed-user"}); assert c == 400, ("본문 approver_id 가 인증 사용자와 달라도 받아들여졌다", c, bad_)
+    body = {**body, "approver_id": ADMIN()[0]}
     c, ap_, _ = gw_raw("POST", "/v1/approvals", body, basic=ADMIN(), headers={"X-Openit-User": "spoofed-user"})
     assert c == 201, (c, ap_)
     ap_ = ap_.get("approval", ap_) if isinstance(ap_, dict) else ap_   # 응답은 {"approval": GateApproval, ...} 로 한 겹 싸여 있을 수 있다
@@ -401,8 +415,8 @@ def step4():
     r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
     assert r.returncode in (0, 75), f"collect 종료 {r.returncode}: {(r.stderr + r.stdout)[-500:]}"
     collected = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
-    gate_r = HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")); gate_op = HttpGateService(URL("gate"), TOK("gate-write-operator"))
-    gate_rep = HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")); gate_ap = HttpGateService(URL("gate"), TOK("gate-write-release-approver"))
+    gate_r = HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")); gate_op = with_user(HttpGateService(URL("gate"), TOK("gate-write-operator")), "op-test")
+    gate_rep = HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")); gate_ap = with_user(HttpGateService(URL("gate"), TOK("gate-write-release-approver")), "trainer-test")
     A, B = STATE["lora"]["LORA_A"], STATE["lora"]["LORA_B"]
     subj = {v["version"]: {"question_set": v, "lora_a": A, "lora_b": B} for v in STATE["qs"]}
     subj_u = {"question_set": STATE["qsu"], "lora_a": A, "lora_b": B}
@@ -1095,8 +1109,8 @@ def step8():
     rec(8, "REAL", f"ops-feedback 토큰의 RollbackRequest -> RollbackReceipt APPLIED(멱등), 활성 포인터 {new}->{old}, 실제 survey-service가 /readyz에서 이전 릴리스로 복귀, 롤백 권한 없는 역할은 PERMISSION_DENIED, 롤백 뒤 공개 API로 새 세션 한 턴 처리(이전 릴리스). 롤백을 요청한 주체는 e2e(ops-feedback 역할 토큰)이고 ops-feedback 잡의 자동 롤백 평가는 아님")
 
 def _gate_clients():
-    return (HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")), HttpGateService(URL("gate"), TOK("gate-write-operator")),
-            HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")), HttpGateService(URL("gate"), TOK("gate-write-release-approver")))
+    return (HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")), with_user(HttpGateService(URL("gate"), TOK("gate-write-operator")), "op-test"),
+            HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")), with_user(HttpGateService(URL("gate"), TOK("gate-write-release-approver")), "trainer-test"))
 
 def demo4():
     """demo.sh 용: 후보 수집·자동 검사까지 하고, 승인은 --demo-stop 이면 사람에게 남긴다(아니면 시험용 승인자 토큰으로 대신: TEST-SUB). 승인 화면에 볼 제출 하나는 항상 대기로 둔다."""

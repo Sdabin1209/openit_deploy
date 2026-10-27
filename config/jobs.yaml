@@ -18,6 +18,14 @@ jobs:
     where: serving
     command: ["scripts/restore-test.sh"]
     interval_seconds: 604800
+  - name: question-authoring-purge    # 초안·고아 원본 자료 보존 정리(D88/U4, 멱등). 하루 1회(보존 단위가 일 단위)
+    where: serving
+    command: ["scripts/run-job.sh", "job-question-authoring-purge"]
+    interval_seconds: 86400
+  - name: release-gate-prune          # 오래된 접수·파일 정리(release-gate CR-0008, 멱등). 하루 1회: 정리 대상이 하루 단위 보존 정책이라 더 자주 돌릴 이유가 없다(근거 ADR 없음: 판단, 측정 안 함)
+    where: serving
+    command: ["scripts/run-job.sh", "job-release-gate-prune"]
+    interval_seconds: 86400
   - name: release-gate-collector      # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다(멱등)
     where: serving
     command: ["scripts/run-job.sh", "job-release-gate-collect"]

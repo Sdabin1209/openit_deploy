@@ -309,6 +309,7 @@ services:
     secrets: [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data]
     networks: [serving, release, db-gate]
+    stop_grace_period: 25s   # release-gate 종료 유예 GATE_SHUTDOWN_GRACE_SECONDS=20 + 여유 5초(처리 중 요청이 끝나기를 기다린 뒤 SIGKILL, release-gate CR-0008)
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
@@ -392,6 +393,45 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp", "/data"]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+  job-question-authoring-purge: # 보존 정리 run-once(question-authoring, D88/U4, 멱등): 처리되지 않은 초안과 고아 원본 자료를 보존 일수 뒤 지운다. 버전·검수는 지우지 않는다
+    mem_limit: ${LIMIT_JOB_QUESTION_AUTHORING_PURGE_MEM:-256m}
+    cpus: "${LIMIT_JOB_QUESTION_AUTHORING_PURGE_CPUS:-0.5}"
+    pids_limit: ${LIMIT_JOB_QUESTION_AUTHORING_PURGE_PIDS:-100}
+    profiles: ["jobs"]
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
+    command: ["python", "-m", "question_authoring", "purge"]
+    env_file:
+      - ${CONFIG_DIR:-./config}/question-authoring.env
+    environment:
+      QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn
+    secrets: [db-qa-dsn]
+    networks: [db-qa]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp", "/data"]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+
+  job-release-gate-prune:       # 보존 정리 run-once(release-gate CR-0008, 멱등). 번들 파일은 gate-data 에서 정리하므로 서버와 같은 볼륨을 쓴다. 미리 보려면 인자 --dry-run
+    mem_limit: ${LIMIT_JOB_RELEASE_GATE_PRUNE_MEM:-256m}
+    cpus: "${LIMIT_JOB_RELEASE_GATE_PRUNE_CPUS:-0.5}"
+    pids_limit: ${LIMIT_JOB_RELEASE_GATE_PRUNE_PIDS:-100}
+    profiles: ["jobs"]
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
+    command: ["python", "-m", "release_gate", "prune"]
+    env_file:
+      - ${CONFIG_DIR:-./config}/release-gate.env
+    environment:
+      GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn
+    secrets: [db-gate-dsn]
+    volumes: [gate-data:/data]
+    networks: [db-gate]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 
   job-release-gate-collect:     # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다
