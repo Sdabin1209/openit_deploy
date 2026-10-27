@@ -86,3 +86,9 @@
 못 보는 것: 의미 검사(targets, next_item, 건너뛰기 순서, save: 게시기가 아직 하지 않음, synthetic-data CR-006 2번), 실제 데이터 형식, 보지 못한 문항 세트(HELD_OUT) 평가 분리(이전 생성 경로가 확인하던 항목이었으나 이 입력에는 없다).
 
 CR-006의 미해결 항목을 deploy가 정하지 않고 임시로 채운 값: 문항 세트 출처는 단계 1이 만든 문항 세트 참조(id, version, content_hash)를 설정에 넣었고, `turn_engine_version`은 lib.sh의 기준 태그(e2e.sh가 넘기는 값)이며, `source_label`은 `deploy-e2e-test-data`, `generator_version`은 게시기가 정하는 값을 그대로 둔다. 미검수(`human_review: pending`) 행은 만들지 않았다(전부 `auto_only`).
+
+## 단계 5u: 사람이 쓰는 화면 경로의 gateway 상류 상한 (FAULT_MATRIX C7·C8·D6)
+
+`config/Caddyfile`의 `proxy_limits` 조각이 release-gate(승인·운영자 경로), ops-feedback-ingest(검토 경로), admin-console 정적 화면 프록시에 상류 연결 2초와 응답 헤더 상한(release-gate 15초, 나머지 10초), 재시도 없음을 건다. 환자 경로(연결 1초 + 헤더 8.5초)와 달리 키오스크의 10초 한도가 없어 더 길게 잡았고, 값은 **시작값이며 근거는 추정**이다(승인 결정·활성화·롤백이 DB 쓰기와 번들 검증을 거칠 수 있다는 가정, 실측 없음; 사용자 결정 아님). 상류 장애는 환자 경로와 같은 `handle_errors`가 503/504 `{"code":"UPSTREAM_UNAVAILABLE"}`로 바꾼다.
+
+`5u`(`--only 5u`로 단독 실행 가능, 활성 릴리스 불필요): (1) release-gate `docker stop` 중 승인 조회(`GET /v1/submissions`, release-approver 계정)와 운영자 읽기(`GET /v1/active-pointer`)가 503 JSON(4초 미만; 이 PC 관찰 3.5~3.8초), 시작 뒤 200 복구. (2) release-gate `docker pause` 중 승인 조회가 504 JSON이고 gateway 접근 로그 duration이 14.5~16초(관찰 15.0초). (3) ops-feedback-ingest `docker pause` 중 검토 목록(`GET /v1/cases`, reviewer 계정)이 504 JSON, duration 9.5~11초(관찰 10.87초: 설정 10초에 기본 인증 확인 시간 약 0.9초가 더해진다). 시험하지 않은 것: POST(결정·활성화·롤백) 경로의 상한 동작, admin-console·kiosk-frontend 정적 프록시(같은 조각이나 직접 확인 안 함).

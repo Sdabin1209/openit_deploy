@@ -42,10 +42,11 @@ MS_CONTAINER = a.ms_container or f"{a.project}-model-serving-1"
 def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가 바뀔 수 있어 매번 Docker에게 묻는다
     out = subprocess.run([a.docker, "port", MS_CONTAINER, "8080/tcp"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
-def _survey_port():   # survey-service 도 5q·5w 가 멈췄다 다시 띄우면 Docker 배정 호스트 포트가 바뀐다
-    out = subprocess.run([a.docker, "port", f"{a.project}-survey-service-1", "8080/tcp"], capture_output=True, text=True).stdout
-    return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["survey"]
-URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"http://127.0.0.1:{_ms_port() if k == 'ms' else _survey_port() if k == 'survey' else PORTS[k]}"
+def _dyn_port(svc, key):   # 멈췄다 다시 띄우는 단계(5q·5w·5u)가 있는 서비스는 Docker 배정 호스트 포트가 바뀔 수 있어 매번 묻는다
+    out = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1", "8080/tcp"], capture_output=True, text=True).stdout
+    return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS[key]
+DYN = {"survey": "survey-service", "gate": "release-gate", "ops": "ops-feedback-ingest"}
+URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"http://127.0.0.1:{_ms_port() if k == 'ms' else _dyn_port(DYN[k], k) if k in DYN else PORTS[k]}"
 RESULTS = []; STATE_FILE = WORK / "state.json"
 STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
@@ -783,6 +784,36 @@ def step5w():
     kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
     rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 클라이언트 {obs['turn'][1]}s / gateway 접근 로그 duration {obs['gw_duration']}s (설정: 연결 1s + 응답 헤더 8.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
 
+def step5u():
+    title("5u", "사람이 쓰는 화면 경로(승인·운영·검토)의 gateway 상류 상한: release-gate 중지/무응답, ops-feedback-ingest 무응답 (FAULT_POLICY 6, config/Caddyfile proxy_limits)")
+    gate, ops = f"{a.project}-release-gate-1", f"{a.project}-ops-feedback-ingest-1"
+    def call(path, acct, who):
+        t0 = time.time(); c, b, h = gw_raw("GET", path, basic=acct); return c, b, time.time() - t0, t0
+    def up503(c, b, what): assert c == 503 and b == {"code": "UPSTREAM_UNAVAILABLE"}, f"{what}: 503 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
+    obs = {}
+    # (1) release-gate 중지: 승인 조회(C7, release-approver)와 운영자 읽기(C8, operator)가 빨리 503 JSON
+    sh([a.docker, "stop", "-t", "3", gate])
+    try:
+        for lab, path, acct in (("승인 조회 C7", "/v1/submissions", ADMIN()), ("운영자 active-pointer C8", "/v1/active-pointer", OPERATOR())):
+            c, b, el, _ = call(path, acct, lab); up503(c, b, lab); assert el < 4.0, f"{lab}: 연결 거부인데 {el:.1f}s 걸렸다"; obs[lab] = (c, round(el, 2))
+    finally: sh([a.docker, "start", gate])
+    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", gate]).stdout.strip() == "healthy", 120, "release-gate healthy", every=2)
+    wait(lambda: gw_raw("GET", "/v1/submissions", basic=ADMIN())[0] == 200, 60, "승인 조회 복구(200)", every=2)
+    # (2) release-gate 무응답(pause): gateway 상한 15s(연결 2s + 헤더 15s 설정; 접근 로그 duration 으로 잰다)
+    def paused(svc, path, acct, lab, lo, hi):
+        sh([a.docker, "pause", svc])
+        try:
+            c, b, el, t0 = call(path, acct, lab); assert c == 504 and b == {"code": "UPSTREAM_UNAVAILABLE"}, f"{lab}: 504 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
+            gd = gw_log_duration(path, t0); assert gd and gd[1] == 504, f"{lab}: gateway 로그에서 못 찾았다 {gd}"
+            assert lo <= gd[0] < hi, f"{lab}: gateway 처리 시간 {gd[0]:.2f}s 가 설정 상한({lo}~{hi}s)과 다르다"
+            obs[lab] = (c, round(el, 1), round(gd[0], 2))
+        finally: sh([a.docker, "unpause", svc])
+    paused(gate, "/v1/submissions", ADMIN(), "승인 조회 pause", 14.5, 16.0)
+    wait(lambda: gw_raw("GET", "/v1/submissions", basic=ADMIN())[0] == 200, 60, "승인 조회 복구(200)", every=2)
+    paused(ops, "/v1/cases", REVIEWER(), "검토 목록 pause", 9.5, 11.0)
+    wait(lambda: gw_raw("GET", "/v1/cases", basic=REVIEWER())[0] == 200, 60, "검토 목록 복구(200)", every=2)
+    rec("5u", "REAL", "사람이 쓰는 화면 경로의 gateway 상류 상한: release-gate 중지 중 승인 조회 " + f"{obs['승인 조회 C7']}·운영자 읽기 {obs['운영자 active-pointer C8']}(코드, 초)가 503 {{\"code\":\"UPSTREAM_UNAVAILABLE\"}}; release-gate 무응답 중 승인 조회 {obs['승인 조회 pause']}(코드, 클라이언트 초, gateway duration 초; 설정 헤더 15s), ops-feedback-ingest 무응답 중 검토 목록 {obs['검토 목록 pause']}(설정 헤더 10s)이 504 UPSTREAM_UNAVAILABLE; 해제 뒤 모두 200 복구. 정적 화면(admin-console, kiosk-frontend) 프록시의 상한은 같은 설정이나 이 단계에서 시험하지 않았다")
+
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1257,7 +1288,7 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5q", step5q), ("5w", step5w), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

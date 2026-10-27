@@ -11,6 +11,16 @@
 import /etc/caddy/accounts.caddy
 # 키오스크 기기 인증(D85 F절): (kiosk_devices) 가 @device_ok 를 정의한다. 기기 토큰 목록은 secrets/gateway-devices.caddy (scripts/kiosk-add-device.sh).
 import /etc/caddy/devices.caddy
+# 사람이 쓰는 화면(승인·운영·검토)과 정적 화면의 상류 상한(FAULT_POLICY 4·6): 환자 경로(연결 1s + 헤더 8.5s, 키오스크 대기 10s 안)와 달리 키오스크의 10초 한도가 없다.
+# 대신 화면이 무한정 매달리지 않게 상한을 둔다. 연결 2s(같은 서버의 컨테이너라 거의 즉시, 느리면 장애), 응답 헤더는 인자로 받는다: release-gate 15s(승인 결정·활성화·롤백은 DB 쓰기와 번들 검증을
+# 거칠 수 있어 읽기보다 길게 잡은 시작값, 실측 근거 없음), ops-feedback·정적 화면 10s. 값은 시작값이며 사용자 결정이 아니다. 재시도 없음. 초과하면 아래 handle_errors 가 503/504 UPSTREAM_UNAVAILABLE 을 준다.
+(proxy_limits) {
+	lb_try_duration 0
+	transport http {
+		dial_timeout 2s
+		response_header_timeout {args[0]}
+	}
+}
 :8080 {
 	import role_matchers
 	import kiosk_devices
@@ -79,6 +89,7 @@ import /etc/caddy/devices.caddy
 		import authenticate
 		handle @role_approver {
 			reverse_proxy release-gate:8080 {
+				import proxy_limits 15s
 				header_up Authorization "Bearer {file./run/secrets/gate-read-release-approver}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
@@ -92,6 +103,7 @@ import /etc/caddy/devices.caddy
 		import authenticate
 		handle @role_approver {
 			reverse_proxy release-gate:8080 {
+				import proxy_limits 15s
 				header_up Authorization "Bearer {file./run/secrets/gate-write-release-approver}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
@@ -115,6 +127,7 @@ import /etc/caddy/devices.caddy
 		import authenticate
 		handle @role_reviewer {
 			reverse_proxy ops-feedback-ingest:8080 {
+				import proxy_limits 10s
 				header_up Authorization "Bearer {file./run/secrets/ops-read-reviewer}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
@@ -128,6 +141,7 @@ import /etc/caddy/devices.caddy
 		import authenticate
 		handle @role_reviewer {
 			reverse_proxy ops-feedback-ingest:8080 {
+				import proxy_limits 10s
 				header_up Authorization "Bearer {file./run/secrets/ops-review-reviewer}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
@@ -141,7 +155,9 @@ import /etc/caddy/devices.caddy
 	redir /admin /admin/ permanent
 	handle_path /admin/* {
 		import authenticate      # 화면은 어느 역할이든 열린다. API는 위에서 역할로 막힌다
-		reverse_proxy admin-console:8080
+		reverse_proxy admin-console:8080 {
+			import proxy_limits 10s
+		}
 	}
 	# 운영자 경로(D85 E절, admin-console CR-004): 릴리스 운영 화면이 부르는 게이트 경로 넷은 operator 역할 계정 뒤에서만 연다. 아니면 403(인증 없으면 401).
 	# 읽기(GET /v1/active-pointer, GET /v1/releases)는 operator **읽기** 토큰, 변경(POST /v1/activate, /v1/rollback)은 operator **쓰기** 토큰을 붙인다.
@@ -158,6 +174,7 @@ import /etc/caddy/devices.caddy
 		import authenticate
 		handle @role_operator {
 			reverse_proxy release-gate:8080 {
+				import proxy_limits 15s
 				header_up Authorization "Bearer {file./run/secrets/gate-read-operator}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
@@ -171,6 +188,7 @@ import /etc/caddy/devices.caddy
 		import authenticate
 		handle @role_operator {
 			reverse_proxy release-gate:8080 {
+				import proxy_limits 15s
 				header_up Authorization "Bearer {file./run/secrets/gate-write-operator}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
