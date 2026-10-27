@@ -10,6 +10,7 @@
 # 끝에서 scripts/record-e2e.sh 가 결과 한 줄을 docs/E2E_RESULTS.md(E2E 통과 수의 정본)에 더한다(DEPLOY_NO_RECORD=1 이면 안 더함. 못 더하면 종료 코드 1).
 #  - --only <단계,...>: 단계 일부만(예: --only 5p, PostgreSQL 컨테이너 재시작 시험). --fast 처럼 9단계 뒷구간을 생략하고 정본에 기록하지 않는다. 전체 합격이 아니다.
 # 사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--keep] [--keep-images] [--reuse-build]
+#  --reuse-build: 이미지가 있고 소스 커밋·의존 태그가 라벨과 같으면 다시 빌드하지 않는다(낡은 것만 빌드). 끝나도 이미지를 지우지 않는다.
 set -o pipefail
 # 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
 CA_TXT=""
@@ -75,7 +76,13 @@ BANNER
 sect "준비: 이미지 빌드, 임시 레지스트리, digest 잠금"
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv
 have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(grep -vc '^model-serving-gpu ' "$DEPLOY_ROOT/build/images.env")" -ge 8 ] && while read -r n img _; do [ "$n" = model-serving-gpu ] && continue; "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
-if [ $REUSE = 0 ] || ! have_images; then chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
+if [ $REUSE = 1 ] && have_images; then
+  # 재사용은 소스(커밋)와 의존 태그가 이미지 라벨과 같을 때만이다. 다른 이미지만 다시 빌드한다(판정 코드: verify_area.py stale_images). 판정이 안 되면 전부 다시 빌드한다
+  if STALE=$("$VENV/bin/python" "$DEPLOY_ROOT/scripts/verify_area.py" --stale-images 2>/dev/null); then
+    echo "  재사용: 낡은 이미지 = ${STALE:-없음}"
+    [ -z "$STALE" ] || chk "빌드: 낡은 이미지만 ($STALE)" bash "$DEPLOY_ROOT/scripts/build-images.sh" $STALE
+  else chk "빌드: 다섯 서비스 이미지 (낡은 이미지 판정 실패, 전부)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
+else chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
@@ -216,7 +223,7 @@ sect "단계 9: 백업과 복구 (O16 미정: 설정으로만)"
 chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.env"
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
-printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\n' "$W/backups" > "$W/backup-test.env"
+printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_ALLOW_PLAINTEXT=1\n' "$W/backups" > "$W/backup-test.env"
 export BACKUP_CONFIG="$W/backup-test.env"
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data), 데이터베이스는 PostgreSQL(D85)
 dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx postgres | tr '\n' ' ') >/dev/null 2>&1

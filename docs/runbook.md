@@ -26,6 +26,7 @@
 - 이름 구분: `publish-image.sh`(단수) = 영역 CI가 이미지 하나를 올릴 때, `publish-images.sh`(복수) = 로컬에서 `build-images.sh`로 만든 이미지 전체를 올릴 때.
 - 이미지 게시(D24): 영역 CI가 `scripts/publish-image.sh <서비스> <이미지> --registry <주소>`로 올리고 digest를 잠금에 기록한다. 계약과 실패 시 동작은 [ci.md](ci.md). 시험: `bash scripts/test-publish.sh`.
 
+- **적용 전에 백업한다(4-5절)**: `bash scripts/backup-all.sh`가 성공(종료 코드 0)한 것을 확인한 뒤에만 적용한다. DB 마이그레이션이 있는 버전은 롤백이 이미지만 되돌린다는 점(4-5절)을 먼저 읽는다.
 - 새 버전 적용: 영역 이미지를 빌드·게시 → `publish-images.sh <영역>`이 잠금을 갱신(이전 것은 `locks/history/`) → `up.sh deploy`(바뀐 서비스만 교체). 잠금 파일을 커밋한다.
 - 롤백: `bash scripts/rollback.sh [--to <잠금 파일>] [--no-apply] [프로젝트]`. 기본은 history에서 현재와 다른 가장 최근 잠금. 되돌린 뒤 `/readyz`를 본다. 롤백을 되돌리려면 같은 명령을 한 번 더(현재 잠금도 history에 남는다).
 - 내용 축(릴리스 활성 포인터) 되돌리기는 게이트의 몫이다(`POST /v1/rollback`). deploy가 하지 않는다.
@@ -55,25 +56,59 @@ docker compose -p deploy logs -f survey-service                 # 로그는 표�
 curl -s http://127.0.0.1:$(docker port deploy-gateway-1 8080/tcp | sed 's/.*://')/healthz
 ```
 
+컨테이너가 **실제로** 비root·읽기 전용·cap_drop ALL·자원 한도를 갖는지는 `bash scripts/check-containers.sh [프로젝트...]`(기본 deploy, deploy-registry)가 `docker inspect`로 읽어 FAIL/WARN으로 알린다(읽기 전용). compose 파일에 적은 것이 아니라 떠 있는 컨테이너를 본다. 자체 시험 `bash scripts/test-check-containers.sh`. 자원 한도 변수는 `config/resource-limits.env.example`(값은 측정 안 함, [adr/0023-compose-resource-limits.md](adr/0023-compose-resource-limits.md)).
+
 각 서비스의 `/readyz` 해석은 영역 런북을 본다(survey: `problems`, gate: `can_pass`·`judging`).
 
-## 4. 백업과 복구
+## 4. 백업과 복구 (PostgreSQL 기준)
 
-백업 설정이 정해지기 전에는 백업을 돌릴 수 없다. 이것은 의도다(O16).
+저장소는 PostgreSQL 한 서버(5개 데이터베이스: survey, qa, ops_log, ops_failure, gate)와 파일 볼륨(gate-data 번들, models-data 모델 패키지, 레지스트리 볼륨)이다. 근거와 한계: [adr/0020-backup-tool-and-encryption.md](adr/0020-backup-tool-and-encryption.md).
+
+### 4-1. 설정과 규칙 (백업 없이 운영하지 않는다, D88 U6)
 
 ```
-cp config/backup.env.example config/backup.env    # BACKUP_DIR, BACKUP_RETENTION_DAYS 를 사용자 결정대로 적는다
-bash scripts/backup.sh [저장소...]                  # survey-data qa-data ops-data gate-data. 서비스가 떠 있어도 된다
-# 복구: 해당 서비스를 먼저 멈춘다
-docker compose -p deploy stop survey-service        # 저장소를 쓰는 서비스
-bash scripts/restore.sh qa-data <BACKUP_DIR>/qa-data/<시각> --yes
-bash scripts/up.sh deploy
+cp config/backup.env.example config/backup.env    # BACKUP_DIR(서버 밖), BACKUP_RETENTION_DAYS(예시 14), BACKUP_ENCRYPT_RECIPIENTS(공개키 파일) 를 적는다
+bash scripts/backup-check.sh                       # 읽기 전용 점검. 문제가 있으면 CRIT 와 종료 코드 2
 ```
 
-- 설정이 없거나 비어 있으면 `backup.sh`는 종료 코드 2로 거부한다.
-- 복구는 해시 검증 후 볼륨을 비우고 채운다. 게이트는 `registry.sqlite3`와 `releases/`가 한 쌍이므로 같은 스냅샷에서 함께 복구한다(스크립트가 그렇게 한다).
-- 게이트 INTEGRITY_ERROR(릴리스 파일 변조): 해당 릴리스를 활성화하지 말고, 활성이면 롤백 요청 후 이 절차로 복구(게이트 런북).
-- 복구 시험: `scripts/e2e.sh`가 실제로 지웠다 복구하며 검증한다.
+- 설정이 없거나 불완전하면 `backup.sh`, `pg-backup.sh`, `backup-all.sh`가 "CRIT:" 한 줄과 종료 코드 2로 실패한다. 스케줄러가 이를 상태 파일에 남기고 `check-health.sh`가 CRIT로 읽는다. `doctor.sh --up --backup`과 운영 프로젝트(`deploy`)의 `up.sh`는 기동 전에 같은 점검을 하고 FAIL로 막는다.
+- 암호화는 수신자 **공개키만** 서버에 둔다(age 우선, 없으면 gpg). 복호 개인키는 서버 밖에서 사람이 2곳 이상에 보관한다. 서버에서 풀 수 없으므로 서버가 뚫려도 백업 내용은 읽히지 않는다. 개인키를 잃으면 백업을 못 푼다. 개인키가 수신자 파일에 들어 있으면 거부한다.
+- 파일 권한: 폴더 700, 파일 600. 평문 덤프는 암호화에 성공한 뒤 지운다.
+- 보관 14일(설정). 가장 최근 하나는 기간이 지나도 남는다.
+
+### 4-2. 무엇이 어떻게 백업되나
+
+| 대상 | 방법 | 위치 | 같은 시점 여부 |
+|---|---|---|---|
+| 5개 데이터베이스 | `pg-backup.sh`: 병렬로 동시에 시작한 `pg_dump -Fc`, 파일마다 암호화 | `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump.age`(또는 `.gpg`) + `MANIFEST.json` | 각 데이터베이스 안에서는 단일 스냅샷. **데이터베이스 사이는 같은 시점이 아니다**: 덤프 시작 시각 차이는 가장 오래 걸리는 덤프 하나의 시간 이하이고 `MANIFEST.json`의 `dump_started/dump_finished`에 남는다. PostgreSQL은 여러 데이터베이스에 걸친 스냅샷을 지원하지 않는다. 정확히 같은 시점이 필요하면 쓰기 서비스(survey-service, question-authoring, ops-feedback-ingest, release-gate)를 멈추고 백업한다 |
+| gate-data(번들), models-data(모델 패키지), registry-data(레지스트리 이미지, 프로젝트 `deploy-registry`) | `backup.sh`: 복사 후 tar, 암호화 | `$BACKUP_DIR/<저장소>/<UTC 시각>/<저장소>.tar.age` | 볼륨 단위 |
+
+**이 백업에 들어 있지 않은 것: `secrets/`**(DB 암호, 비식별 salt `deid-salt`, 서비스 토큰). 서버를 잃으면 비밀 폴더를 별도로 보관한 사본에서 되돌려야 한다(보관 방법은 미정, 사용자 결정). salt를 잃으면 이후 비식별 값이 이전과 이어지지 않는다.
+
+`backup-all.sh`(스케줄러의 backup 잡, 매일)가 둘을 모두 돌린다. 레지스트리 볼륨이 이 서버에 없으면 건너뛴다고 출력한다.
+
+### 4-3. 복구 절차 (사람이 한다: 개인키는 서버에 없다)
+
+1. 서비스 멈추기: 복구할 데이터베이스를 쓰는 서비스를 멈춘다(`docker compose -p deploy stop <서비스>`). 다른 접속이 있으면 `pg-restore.sh`가 거부한다.
+2. 볼륨을 잃은 경우: `docker compose -p deploy up -d --wait postgres`. 초기화 스크립트가 빈 데이터베이스와 계정을 만든다.
+3. 스냅샷 폴더(또는 사본)에서 개인키로 복호한다. 키 파일은 복호하는 동안만 그 기계에 두고 끝나면 지운다.
+   `age -d -i <개인키> -o <db>.dump <db>.dump.age` 또는 `gpg -d -o <db>.dump <db>.dump.gpg`. 파일 저장소는 `<저장소>.tar`.
+4. `bash scripts/pg-restore.sh <db> <스냅샷 폴더> --yes` (해시 검증, 불일치면 종료 코드 3). 파일 저장소는 `bash scripts/restore.sh <저장소> <스냅샷 폴더> --yes`(서비스 정지 필요, tar는 스크립트가 푼다).
+5. 복호한 평문(`<db>.dump`, `<저장소>.tar`)을 지운다. 데이터베이스 5개는 가능하면 **같은 백업 세트(같은 UTC 시각)**에서 복구한다.
+6. `bash scripts/up.sh deploy`, 그다음 gateway `/readyz`와 `bash scripts/check-health.sh`.
+7. 게이트 INTEGRITY_ERROR(릴리스 파일 변조): 해당 릴리스를 활성화하지 말고, 활성이면 롤백 요청 후 이 절차로 gate 데이터베이스와 gate-data를 같은 세트로 복구한다(게이트 런북).
+
+### 4-4. 복원 시험
+
+- 자동(주 1회, 스케줄러 잡 `backup-restore-test`): `bash scripts/backup-restore-test.sh`. 시험용 키쌍을 임시로 만들어 지금 운영 데이터를 암호화 백업하고, 복호해 임시 데이터베이스(`rt_*`)에 복원한 뒤 원본과 행 지문(스키마·행 집합 해시·행 수)을 대조한다. 실제 백업 파일의 해시도 MANIFEST와 대조한다. 실패는 종료 코드 1이고 `check-health.sh`가 CRIT로 읽는다. **서버에는 실제 개인키가 없으므로 이 시험은 도구 사슬과 파일 무결성만 보증한다.**
+- 사람(분기마다 1회 권장, 근거 없음: 시작값): 실제 개인키로 최신 스냅샷을 복호해 시험 서버나 임시 프로젝트에 4-3 절차대로 복구하고 서비스가 뜨는지 본다. 키를 잃지 않았다는 유일한 확인이다.
+- 전체: `scripts/e2e.sh`가 지웠다 복구하는 왕복을 한다(평문 모드, 시험 전용). 서버 단독 자체 시험: `bash scripts/test-backup.sh`(암호화·복원 시험), `bash scripts/test-postgres.sh`.
+
+### 4-5. 업그레이드·롤백과 백업
+
+- **업그레이드 전에 백업한다**: `bash scripts/backup-all.sh`를 먼저 돌려 성공(종료 코드 0)을 확인하고 `up.sh`로 새 이미지를 적용한다. 실패하면 적용하지 않는다.
+- `rollback.sh`는 이미지 digest만 되돌린다(DB는 되돌리지 않는다). 새 이미지가 DB 스키마를 올렸다면 이전 이미지가 그 스키마를 읽는지는 **각 영역의 마이그레이션 정책에 달려 있다. deploy는 이를 확인하지 못했다(확인 못 함)**. 안전한 순서: (1) 업그레이드 전 백업, (2) 문제가 생기면 이미지 롤백, (3) 이전 이미지가 스키마 때문에 못 뜨면 업그레이드 전 백업으로 해당 데이터베이스를 복구(그 뒤에 쌓인 데이터는 사라진다). 영역에 하위 호환 마이그레이션(확장 후 정리) 정책이 있는지 해당 영역 문서를 확인한다.
+- PostgreSQL 주 버전(16 고정)은 덤프·복원 방식으로만 올린다(새 버전 서버에 복원). 볼륨을 새 주 버전 이미지에 그대로 붙이지 않는다.
 
 ## 5. 주기 잡
 
@@ -83,7 +118,7 @@ bash scripts/up.sh deploy
 ```
 
 - cron 예: `* * * * * cd /srv/deploy && .venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json tick >> state/scheduler.log 2>&1`
-- 주기(D85, 표준): release-gate-collector 600초, ops-feedback-job 3600초, backup 86400초. `interval_seconds: null`은 "주기 미정"이라 실행하지 않는다. backup 잡은 `config/backup.env`(BACKUP_DIR, BACKUP_RETENTION_DAYS)가 없으면 거부(종료 코드 2)해 FAIL로 보고된다.
+- 주기(D85, 표준): release-gate-collector 600초, ops-feedback-job 3600초, backup 86400초, backup-restore-test 604800초(시작값, 근거 없음). `interval_seconds: null`은 "주기 미정"이라 실행하지 않는다. backup 잡은 `config/backup.env`(BACKUP_DIR, BACKUP_RETENTION_DAYS, 수신자 공개키)가 없거나 불완전하면 "CRIT:"와 종료 코드 2로 실패하고 check-health가 CRIT로 읽는다(4-1절).
 - 잡 하나를 지금 실행: `bash scripts/run-job.sh job-ops-feedback`(설정 파일 `OPS_JOB_CONFIG`가 있어야 한다. 없으면 거부).
 - `gpu-external` 잡은 GPU 서버에서 돈다(D40). 서빙 서버의 Compose·스케줄러가 실행하지 않는다.
 
@@ -153,7 +188,20 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 ## 7. 비밀 값
 
-`scripts/gen-secrets.sh`가 `secrets/`에 만든다(없는 것만). 이미지·리포지토리에 넣지 않는다. 서비스는 compose `secrets:`로 자기 파일만 `/run/secrets`에 받는다(D84, docs/RUN.md "비밀 파일"). 회전: 해당 토큰 파일을 지우고 `gen-secrets.sh`를 다시 실행한다(목록 값 파일도 새 값으로 다시 쓴다). 그 뒤 소유 서비스와 그 클라이언트를 다시 만든다(`up.sh`).
+`scripts/gen-secrets.sh`가 `secrets/`에 만든다(없는 것만). 이미지·리포지토리에 넣지 않는다. 서비스는 compose `secrets:`로 자기 파일만 `/run/secrets`에 받는다(D84, [RUN.md](RUN.md) "비밀 파일").
+
+**권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 644(폴더 700 안; compose가 파일 secrets의 모드를 바꾸지 못하기 때문, [adr/0022-secret-file-permissions.md](adr/0022-secret-file-permissions.md)). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
+
+**평문 암호 최소화.** 게이트웨이 계정은 bcrypt 해시만 Caddy 파일에 들어간다. 평문 암호 파일(`account-<id>-password`, 600)은 해시를 만들 때만 생기고 E2E 시험 계정이 쓴다. 운영에서는 계정 암호를 사람에게 전달한 뒤 `bash scripts/gen-secrets.sh --drop-plaintext`로 평문 파일을 지운다(해시가 남아 로그인은 그대로). 지운 평문은 되살리지 않는다. 운영 계정은 OIDC 도입 전까지 아래 회전 절차로 관리한다.
+
+**회전 절차.**
+1. 계정 암호 한 개: 사람이 터미널에서 `bash scripts/rotate-account.sh <계정 ID> --apply`. 새 암호가 표준 출력에 한 번 나온다(해시만 저장). 해당 직원에게 안전한 경로로 전달하고 터미널 기록을 지운다. `--apply`는 게이트웨이를 다시 시작한다.
+2. 서비스 토큰·DB 암호 한 개: 해당 파일을 지우고 `gen-secrets.sh`를 다시 실행(목록 값 파일도 새 값으로 다시 쓴다). DB 암호는 `bash scripts/pg-roles.sh sync`로 서버의 계정 암호를 맞춘다. 그다음 소유 서비스와 그 클라이언트를 다시 만든다(`up.sh deploy`).
+3. 기기 토큰: `bash scripts/kiosk-add-device.sh remove <ID> --apply` 후 `add <ID> --apply`, 새 토큰을 기기에 한 번 전한다.
+4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, 모든 계정 암호 재전달, 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
+5. 토큰에는 만료가 없다. 회전은 수동이며 주기는 정하지 않았다(근거 없음, 사용자 결정 대기: 이 저장소의 OPEN_GAPS).
+
+한계: 해시 생성 때 암호가 `docker run` 인자로 호스트 프로세스 목록에 잠깐 보인다(같은 호스트 사용자만). docker 그룹 사용자는 어차피 모든 비밀에 닿는다(docker 그룹은 root와 같다).
 
 ## 8. 흔한 문제
 
@@ -162,7 +210,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 | `push` 가 connection refused (Docker Desktop) | 데몬이 VM 안이라 `127.0.0.1` 게시 포트에 못 닿는다 | 시험에서는 `REGISTRY_HOST_BIND=0.0.0.0`, 지정 포트. 리눅스 서버는 해당 없음 |
 | 새 잠금을 적용해도 컨테이너가 안 바뀜 | 셸에 같은 이름의 `*_DIGEST` 변수가 남아 있나 | `dc`가 지우지만 compose를 직접 부를 때는 `env -u`로 지운다 |
 | 컨테이너가 `operation not permitted`로 안 뜸 | `cap_drop: ALL`과 파일 권한이 있는 바이너리 | 필요한 capability만 `cap_add` (gateway의 `NET_BIND_SERVICE`) |
-| SQLite `unable to open database file` (백업·읽기) | WAL 모드 DB를 읽기 전용 마운트로 연 것 | 백업 도구처럼 쓰기 가능 마운트로 읽기 전용 연결을 쓰고 만든 `-wal/-shm`을 지운다 |
+| `pg_dump`/`pg_restore` 실패, 접속 거부 | postgres 컨테이너가 떠 있나(`docker compose -p deploy ps postgres`), 복구 대상 DB에 다른 접속이 있나 | 서비스를 멈추고 다시. 복구는 4-3절. (SQLite는 개발·시험용이며 운영 저장소가 아니다: adr/0021-postgres-single-container-sqlite-dev-only.md) |
 | 빌드가 `error getting credentials … docker-credential-desktop.exe: exec format error` 로 실패 | interop이 꺼진 WSL에서 `~/.docker/config.json`의 `credsStore`가 윈도 도우미를 가리킨다 | 환경 설정 문제: `credsStore` 항목을 직접 지우거나 interop을 켠다(SETUP.md B절). doctor가 미리 FAIL로 알려 준다 |
 
 ## 9. gateway TLS, 로그인 시도, 기기 토큰 (D88/U5·U8, ADR 0005)

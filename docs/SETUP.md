@@ -131,3 +131,13 @@ mkdir -p ~/.local/bin && for b in node npm npx; do ln -sf ~/.local/node/bin/$b ~
 그다음 `~/.local/bin`이 PATH에 있어야 한다(로그인 셸은 보통 `~/.profile`이 넣는다). **비로그인 `ssh host 'cmd'`는 PATH에 `~/.local/bin`이 없어 node를 못 찾는다. `ssh host "bash -lc 'cmd'"`처럼 로그인 셸로 감싼다.**
 
 실측 기록(영구 기준이 아니다): 2026-10-28, gpu-dev(리눅스 x64)에서 위 방식으로 node v24.14.0을 설치했다. 그때 `SHASUMS256.txt`의 `node-v24.14.0-linux-x64.tar.xz` sha256은 `41cd79bb7877c81605a9e68ec4c91547774f46a40c67a17e34d7179ef11729df`였고 `sha256sum -c`가 OK였다(보고된 값이며 이 리포가 다시 내려받아 확인한 것은 아니다). 해시는 버전마다 다르므로 항상 같은 버전의 `SHASUMS256.txt`로 검증한다. 필요한 버전 범위는 영역의 `engines`가 정본이다.
+
+## 백업 설정 (운영 서버, 필수)
+
+백업 설정이 없으면 운영 프로젝트(`deploy`)의 `up.sh`가 doctor에서 멈추고 backup 잡은 CRIT로 실패한다(D88 U6).
+
+1. 암호화 도구: `sudo apt-get install -y age` (없으면 gpg가 쓰인다. `BACKUP_ENCRYPT_TOOL`로 고른다).
+2. **서버 밖의 기계에서** 키쌍을 만든다: `age-keygen -o openit-backup.key`. 출력된 `public key: age1...` 한 줄만 서버의 공개키 파일(예: `/etc/openit/backup-recipients.pub`)에 적는다. `openit-backup.key`(개인키)는 서버에 올리지 않고 사람이 2곳 이상에 보관한다.
+3. `cp config/backup.env.example config/backup.env` 후 `BACKUP_DIR`(서버 밖 디스크·마운트), `BACKUP_RETENTION_DAYS`(14), `BACKUP_ENCRYPT_RECIPIENTS`를 적는다.
+4. `bash scripts/backup-check.sh`(또는 `bash scripts/doctor.sh --up --backup`)가 통과하는지 본다. 스케줄러를 설치하면(runbook 5-1절) backup 잡(매일)과 backup-restore-test 잡(매주)이 돈다.
+5. 복구는 runbook 4절. 개인키 없이는 복구할 수 없으니 3개월마다 사람이 복구 시험을 한다(4-4절).

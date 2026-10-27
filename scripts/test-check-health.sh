@@ -64,7 +64,7 @@ bb=(--jobs $T/jobs.yaml --monitor $T/mon-empty.yaml --disk-path $T --now $NOW --
 t "백업 설정이 없으면 CRIT(U6)" 2 "백업이 돌지 않는다" "${bb[@]}" --backup-config $T/none.env
 printf 'BACKUP_DIR=\n' > $T/b0.env; t "BACKUP_DIR 이 비면 CRIT" 2 "BACKUP_DIR 이 비어" "${bb[@]}" --backup-config $T/b0.env
 mkdir -p $T/bk/pg-survey/20260101T000000Z $T/bk/pg-gate/20260101T000000Z; touch -d @999000 $T/bk/pg-survey/20260101T000000Z $T/bk/pg-gate/20260101T000000Z
-printf 'BACKUP_DIR=%s/bk\nBACKUP_ENCRYPT=gpg\n' $T > $T/b1.env; t "최신 백업이 신선하면 OK, 암호화 gpg 면 OK" 0 "암호화" "${bb[@]}" --backup-config $T/b1.env
+printf 'BACKUP_DIR=%s/bk\nBACKUP_ENCRYPT_RECIPIENTS=/x/pub\n' $T > $T/b1.env; t "최신 백업이 신선하면 OK, 암호화 gpg 면 OK" 0 "암호화" "${bb[@]}" --backup-config $T/b1.env
 t "최신 백업이 기준보다 오래되면 CRIT" 2 "초 전 (기준 100초" "${bb[@]}" --backup-config $T/b1.env --backup-max-age-seconds 100
 printf 'BACKUP_DIR=%s/bk\n' $T > $T/b2.env; t "암호화 none 은 WARN" 1 "평문" "${bb[@]}" --backup-config $T/b2.env
 mon0=(--monitor $T/mon.yaml); printf 'targets: []\n' > $T/mon.yaml

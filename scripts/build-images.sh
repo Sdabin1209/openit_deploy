@@ -61,7 +61,8 @@ for n in "${!SRC[@]}"; do
   rm -rf "$CTX/${SRC[$n]}"; mkdir -p "$CTX/${SRC[$n]}"; git -C "$WORKSPACE/${SRC[$n]}" archive HEAD | tar -x -C "$CTX/${SRC[$n]}"
 done
 touch "$DEPLOY_ROOT/build/images.env"
-record() { sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
+# 네 번째 열(의존 태그 도장)은 e2e.sh --reuse-build 가 이미지를 다시 써도 되는지 판정하는 데 쓴다(verify_area.py). 이미지 라벨은 영역마다 표기가 달라(v 접두, none, n/a) 비교에 쓸 수 없다
+record() { sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,te=$TE,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
 commit_of() { echo "$(git -C "$WORKSPACE/$1" rev-parse --short HEAD)$SUFFIX"; }
 
 if want survey-service; then

@@ -2,20 +2,39 @@
 # 이미지는 digest로 참조한다. 이름에 deploy를 접두어로 둔다(compose -p 가 프로젝트 이름을 정한다: 기본 deploy-registry).
 # 호스트 바인드는 REGISTRY_HOST_BIND(기본 127.0.0.1)와 REGISTRY_HOST_PORT(기본 5000), 운영 서버(리눅스)용. Docker Desktop(WSL)은 데몬이 VM 안에 있어
 # 127.0.0.1 게시 포트에 닿지 못하므로 시험에서만 REGISTRY_HOST_BIND=0.0.0.0, REGISTRY_HOST_PORT=(빈 값, Docker 배정)으로 띄우고 끝나면 내린다.
+# 강화(감사 F1·F6, docs/adr/0025-registry-hardening.md): 비root(65532), 읽기 전용 루트, cap_drop ALL, no-new-privileges, 로그 회전, 자원 한도(측정 안 함).
+#  registry-data 볼륨은 이미지가 root 소유로 만들므로 일회성 registry-perms 서비스(root, CHOWN 권한만)가 65532 로 소유자를 바꾼 뒤 registry 가 뜬다(멱등).
+#  인증·TLS 가 없다는 한계는 그대로다(그래서 127.0.0.1 바인드): 이 강화는 그 한계를 풀지 않는다.
+x-reglog: &reglog {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 services:
+  registry-perms:
+    image: ${REGISTRY_IMAGE:?locks/images.lock 의 REGISTRY_IMAGE}
+    user: "0:0"
+    entrypoint: ["chown", "-R", "65532:65532", "/var/lib/registry"]
+    restart: "no"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]          # 이 일회성 서비스만. DAC_OVERRIDE 는 필요 없다(root 소유 파일의 소유자를 바꾸는 것)
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    network_mode: none
+    logging: *reglog
+    volumes:
+      - registry-data:/var/lib/registry
   registry:
     image: ${REGISTRY_IMAGE:?locks/images.lock 의 REGISTRY_IMAGE}
     container_name: ${REGISTRY_PROJECT:-deploy-registry}
+    user: "65532:65532"
     restart: unless-stopped
-    # 강화(점검 F6·F1): 읽기 전용 루트, 모든 capability 제거, 권한 상승 금지, 자원 한도·로그 회전. registry:2 는 root 로 뜨고(볼륨 소유가 root 라 비루트 전환은 별도 작업) 인증·TLS 가 없어 127.0.0.1 에만 바인드한다.
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     tmpfs: ["/tmp"]
-    mem_limit: ${LIMIT_REGISTRY_MEM:-512m}
-    cpus: "${LIMIT_REGISTRY_CPUS:-1.0}"
-    pids_limit: ${LIMIT_REGISTRY_PIDS:-200}
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    logging: *reglog
+    mem_limit: ${REGISTRY_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). adr/0023-compose-resource-limits.md
+    cpus: ${REGISTRY_CPUS:-1.0}
+    pids_limit: ${REGISTRY_PIDS_LIMIT:-128}
+    depends_on:
+      registry-perms: {condition: service_completed_successfully}
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/"], interval: 15s, timeout: 3s, retries: 5}
     ports:
       - "${REGISTRY_HOST_BIND-127.0.0.1}:${REGISTRY_HOST_PORT-5000}:5000"

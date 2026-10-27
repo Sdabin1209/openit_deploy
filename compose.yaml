@@ -3,7 +3,7 @@
 # 이름: 프로젝트 이름(-p)이 컨테이너·네트워크·볼륨 접두어다(운영 기본 deploy, 시험 deploy-e2e-*).
 name: deploy
 
-# 자원 한도(FAULT 점검 A9·F3·G3): 서비스마다 mem_limit·cpus·pids_limit. 값은 **시작값이며 측정 근거가 없다**(사용자 결정 아님). 환경 변수 LIMIT_<서비스>_MEM/_CPUS/_PIDS 로 바꾼다(config/limits.env.example).
+# 자원 한도(FAULT 점검 A9·F3·G3): 서비스마다 mem_limit·cpus·pids_limit. 값은 **시작값이며 측정 근거가 없다**(사용자 결정 아님). 환경 변수 <서비스>_MEM_LIMIT/_CPUS/_PIDS_LIMIT 로 바꾼다(config/resource-limits.env.example, ADR 0023).
 # 한도가 너무 낮으면 OOM kill(컨테이너 재시작)으로 드러난다: docs/runbook.md 자원 한도 절.
 x-hardening: &hardening
   restart: unless-stopped
@@ -13,11 +13,14 @@ x-hardening: &hardening
   tmpfs: ["/tmp"]
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # 로그는 표준 출력. 회전만 여기서
 
+x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0023-compose-resource-limits.md)
+
 x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 curl 없음)
   interval: 15s
   timeout: 3s
   retries: 5
   start_period: 20s
+  start_interval: 1s   # 왜: start_period 동안만 1초 간격으로 확인한다(기본 5초). 뜬 직후 healthy가 되어 depends_on 사슬과 `up --wait`가 빨라진다. 평시 간격(interval)은 그대로. Docker 엔진 25 이상 필요(doctor.sh가 확인)
 
 networks:
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
@@ -146,16 +149,10 @@ secrets:
 services:
   postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
     <<: *hardening
-    mem_limit: ${LIMIT_POSTGRES_MEM:-1g}
-    cpus: "${LIMIT_POSTGRES_CPUS:-2.0}"
-    pids_limit: ${LIMIT_POSTGRES_PIDS:-300}
+    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${POSTGRES_CPUS:-2.0}
+    pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
     image: ${POSTGRES_IMAGE:?locks/images.lock}
-    # 서버 설정은 -c 인자로 준다(읽기 전용 루트라 설정 파일을 쓰지 않는다). 점검 C4·G2:
-    #  - log_min_error_statement=panic, log_error_verbosity=terse, log_parameter_max_length*=0: 오류 로그에 SQL 문장·바인드 값·DETAIL(키 값)이 남지 않게 한다(개인정보)
-    #  - max_connections=100: 기본과 같은 값을 명시. 계정별 상한은 10-roles.sh(PG_ROLE_CONN_LIMIT, 기본 18 x 5 = 90 < 97) -> 한 서비스의 연결 폭주가 다른 서비스를 막지 못한다
-    #  - idle_in_transaction_session_timeout=60s: 트랜잭션을 연 채 멈춘 연결이 락을 쥐고 있지 않게 한다. statement_timeout 은 서비스가 연결별로 정한다(영역 몫)
-    # 값은 표준 관행의 시작값이고 측정 근거가 없다(사용자 결정 아님).
-    command: ["postgres", "-c", "log_min_error_statement=panic", "-c", "log_error_verbosity=terse", "-c", "log_parameter_max_length=0", "-c", "log_parameter_max_length_on_error=0", "-c", "max_connections=100", "-c", "idle_in_transaction_session_timeout=60s", "-c", "log_min_messages=warning"]
     user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
@@ -166,6 +163,30 @@ services:
       - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
     tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
     networks: [db-survey, db-qa, db-ops, db-gate]
+    shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
+    # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
+    #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
+    #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
+    #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
+    #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_error_verbosity=terse
+      - -c
+      - log_parameter_max_length=0          # 바인드 값은 로그에 남기지 않는다(PG13+, 오류 때도: 아래 _on_error)
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+      - -c
+      - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
@@ -173,12 +194,13 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
+      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
 
   gateway:
     <<: *hardening
-    mem_limit: ${LIMIT_GATEWAY_MEM:-256m}
-    cpus: "${LIMIT_GATEWAY_CPUS:-1.0}"
-    pids_limit: ${LIMIT_GATEWAY_PIDS:-200}
+    mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${GATEWAY_CPUS:-1.0}
+    pids_limit: ${GATEWAY_PIDS_LIMIT:-256}
     image: ${GATEWAY_IMAGE:?locks/images.lock}
     user: "10001:10001"
     cap_add: ["NET_BIND_SERVICE"]   # caddy 바이너리에 파일 권한이 있어 cap_drop ALL이면 실행이 거부된다. 실제로는 8080을 연다
@@ -205,30 +227,30 @@ services:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_TLS_PORT-8443}:8443"  # HTTPS (D88/U5)
     networks: [edge, ui, serving]   # ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     <<: *hardening
-    mem_limit: ${LIMIT_KIOSK_FRONTEND_MEM:-128m}
-    cpus: "${LIMIT_KIOSK_FRONTEND_CPUS:-0.5}"
-    pids_limit: ${LIMIT_KIOSK_FRONTEND_PIDS:-100}
+    mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
+    pids_limit: ${KIOSK_FRONTEND_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
     networks: [ui]
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
     <<: *hardening
-    mem_limit: ${LIMIT_ADMIN_CONSOLE_MEM:-128m}
-    cpus: "${LIMIT_ADMIN_CONSOLE_CPUS:-0.5}"
-    pids_limit: ${LIMIT_ADMIN_CONSOLE_PIDS:-100}
+    mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
+    pids_limit: ${ADMIN_CONSOLE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
     networks: [ui]
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   survey-service:
     <<: *hardening
-    mem_limit: ${LIMIT_SURVEY_SERVICE_MEM:-1g}
-    cpus: "${LIMIT_SURVEY_SERVICE_CPUS:-2.0}"
-    pids_limit: ${LIMIT_SURVEY_SERVICE_PIDS:-300}
+    mem_limit: ${SURVEY_SERVICE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${SURVEY_SERVICE_CPUS:-1.0}
+    pids_limit: ${SURVEY_SERVICE_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
@@ -255,9 +277,9 @@ services:
 
   question-authoring:
     <<: *hardening
-    mem_limit: ${LIMIT_QUESTION_AUTHORING_MEM:-512m}
-    cpus: "${LIMIT_QUESTION_AUTHORING_CPUS:-1.0}"
-    pids_limit: ${LIMIT_QUESTION_AUTHORING_PIDS:-200}
+    mem_limit: ${QUESTION_AUTHORING_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${QUESTION_AUTHORING_CPUS:-1.0}
+    pids_limit: ${QUESTION_AUTHORING_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
@@ -277,9 +299,9 @@ services:
 
   ops-feedback-ingest:
     <<: *hardening
-    mem_limit: ${LIMIT_OPS_FEEDBACK_INGEST_MEM:-512m}
-    cpus: "${LIMIT_OPS_FEEDBACK_INGEST_CPUS:-1.0}"
-    pids_limit: ${LIMIT_OPS_FEEDBACK_INGEST_PIDS:-200}
+    mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${OPS_FEEDBACK_INGEST_CPUS:-1.0}
+    pids_limit: ${OPS_FEEDBACK_INGEST_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
@@ -291,7 +313,6 @@ services:
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn   # 실패 사례(PostgreSQL)
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-dsn, db-ops-failure-dsn]
     tmpfs: ["/tmp", "/data"]
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # 잡도 로그 회전(상시 서비스와 같게)
     networks: [serving, logs, authoring, db-ops]
     depends_on:
       postgres: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
@@ -301,9 +322,9 @@ services:
 
   release-gate:
     <<: *hardening
-    mem_limit: ${LIMIT_RELEASE_GATE_MEM:-512m}
-    cpus: "${LIMIT_RELEASE_GATE_CPUS:-1.0}"
-    pids_limit: ${LIMIT_RELEASE_GATE_PIDS:-200}
+    mem_limit: ${RELEASE_GATE_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${RELEASE_GATE_CPUS:-1.0}
+    pids_limit: ${RELEASE_GATE_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
@@ -325,9 +346,9 @@ services:
 
   model-serving:        # 추론 서버(model-runtime, CPU/fake 변형, 문진 스키마는 이미지에 내장 D72). survey-service가 I9(HTTP)로 부른다
     <<: *hardening
-    mem_limit: ${LIMIT_MODEL_SERVING_MEM:-2g}
-    cpus: "${LIMIT_MODEL_SERVING_CPUS:-2.0}"
-    pids_limit: ${LIMIT_MODEL_SERVING_PIDS:-300}
+    mem_limit: ${MODEL_SERVING_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${MODEL_SERVING_CPUS:-2.0}
+    pids_limit: ${MODEL_SERVING_PIDS_LIMIT:-512}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving@${MODEL_SERVING_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/model-serving.env
@@ -344,9 +365,9 @@ services:
 
   model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
     <<: *hardening
-    mem_limit: ${LIMIT_MODEL_REGISTRY_MEM:-512m}
-    cpus: "${LIMIT_MODEL_REGISTRY_CPUS:-1.0}"
-    pids_limit: ${LIMIT_MODEL_REGISTRY_PIDS:-200}
+    mem_limit: ${MODEL_REGISTRY_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${MODEL_REGISTRY_CPUS:-1.0}
+    pids_limit: ${MODEL_REGISTRY_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-registry@${MODEL_REGISTRY_DIGEST:?locks/images.lock}
     environment:
       MODEL_REGISTRY_READ_TOKENS_FILE: /run/secrets/model-registry-read-tokens
@@ -361,10 +382,10 @@ services:
   # 주기 잡: 상시 서비스가 아니다. scripts/scheduler.py 가 `docker compose run --rm <잡>` 으로 한 번 실행한다(D39).
   # 이웃 서비스와 같은 이미지·볼륨·네트워크를 쓰되 쓰기 주체는 같은 영역이다.
   job-ops-feedback:
-    mem_limit: ${LIMIT_JOB_OPS_FEEDBACK_MEM:-512m}
-    cpus: "${LIMIT_JOB_OPS_FEEDBACK_CPUS:-1.0}"
-    pids_limit: ${LIMIT_JOB_OPS_FEEDBACK_PIDS:-200}
     profiles: ["jobs"]
+    mem_limit: ${JOB_OPS_FEEDBACK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${JOB_OPS_FEEDBACK_CPUS:-1.0}
+    pids_limit: ${JOB_OPS_FEEDBACK_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     command: ["python", "-m", "ops_feedback.job", "--config", "/config/job.yaml"]
     environment:
@@ -380,15 +401,15 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
+    logging: *joblog
     tmpfs: ["/tmp", "/data"]
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # 잡도 로그 회전(상시 서비스와 같게)
 
   job-survey-purge:             # 보존 정리(D88/U4): 끝난 지 SURVEY_SESSION_RETENTION_DAYS(survey.env, 90일) 지난 세션을 지운다. 지운 개수만 한 줄로 출력한다
     profiles: ["jobs"]
+    mem_limit: ${JOB_SURVEY_PURGE_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${JOB_SURVEY_PURGE_CPUS:-0.5}
+    pids_limit: ${JOB_SURVEY_PURGE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
-    mem_limit: ${LIMIT_JOB_SURVEY_PURGE_MEM:-256m}
-    cpus: "${LIMIT_JOB_SURVEY_PURGE_CPUS:-0.5}"
-    pids_limit: ${LIMIT_JOB_SURVEY_PURGE_PIDS:-100}
     command: ["python", "-m", "survey_service", "purge"]
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env
@@ -399,13 +420,13 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
+    logging: *joblog
     tmpfs: ["/tmp", "/data"]
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 
   job-question-authoring-purge: # 보존 정리 run-once(question-authoring, D88/U4, 멱등): 처리되지 않은 초안과 고아 원본 자료를 보존 일수 뒤 지운다. 버전·검수는 지우지 않는다
-    mem_limit: ${LIMIT_JOB_QUESTION_AUTHORING_PURGE_MEM:-256m}
-    cpus: "${LIMIT_JOB_QUESTION_AUTHORING_PURGE_CPUS:-0.5}"
-    pids_limit: ${LIMIT_JOB_QUESTION_AUTHORING_PURGE_PIDS:-100}
+    mem_limit: ${JOB_QUESTION_AUTHORING_PURGE_MEM_LIMIT:-256m}
+    cpus: ${JOB_QUESTION_AUTHORING_PURGE_CPUS:-0.5}
+    pids_limit: ${JOB_QUESTION_AUTHORING_PURGE_PIDS_LIMIT:-100}
     profiles: ["jobs"]
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
     command: ["python", "-m", "question_authoring", "purge"]
@@ -419,12 +440,12 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp", "/data"]
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    logging: *joblog
 
   job-release-gate-prune:       # 보존 정리 run-once(release-gate CR-0008, 멱등). 번들 파일은 gate-data 에서 정리하므로 서버와 같은 볼륨을 쓴다. 미리 보려면 인자 --dry-run
-    mem_limit: ${LIMIT_JOB_RELEASE_GATE_PRUNE_MEM:-256m}
-    cpus: "${LIMIT_JOB_RELEASE_GATE_PRUNE_CPUS:-0.5}"
-    pids_limit: ${LIMIT_JOB_RELEASE_GATE_PRUNE_PIDS:-100}
+    mem_limit: ${JOB_RELEASE_GATE_PRUNE_MEM_LIMIT:-256m}
+    cpus: ${JOB_RELEASE_GATE_PRUNE_CPUS:-0.5}
+    pids_limit: ${JOB_RELEASE_GATE_PRUNE_PIDS_LIMIT:-100}
     profiles: ["jobs"]
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     command: ["python", "-m", "release_gate", "prune"]
@@ -442,10 +463,10 @@ services:
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 
   job-release-gate-collect:     # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다
-    mem_limit: ${LIMIT_JOB_RELEASE_GATE_COLLECT_MEM:-512m}
-    cpus: "${LIMIT_JOB_RELEASE_GATE_COLLECT_CPUS:-1.0}"
-    pids_limit: ${LIMIT_JOB_RELEASE_GATE_COLLECT_PIDS:-200}
     profiles: ["jobs"]
+    mem_limit: ${JOB_RELEASE_GATE_COLLECT_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${JOB_RELEASE_GATE_COLLECT_CPUS:-1.0}
+    pids_limit: ${JOB_RELEASE_GATE_COLLECT_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     command: ["python", "-m", "release_gate", "collect"]
     env_file:
@@ -460,4 +481,5 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
+    logging: *joblog
     tmpfs: ["/tmp"]

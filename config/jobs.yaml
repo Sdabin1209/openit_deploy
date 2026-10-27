@@ -14,9 +14,9 @@ jobs:
     where: serving
     command: ["scripts/backup-all.sh"]
     interval_seconds: 86400
-  - name: backup-restore-test         # 정기 복원 시험(D88/U6, 주 1회): 최신 백업을 임시 DB로 되살려 대조. 암호화 백업은 서버에 키가 없어 해시만 확인한다(전체 복원은 키 보유자가 서버 밖에서 분기마다)
+  - name: backup-restore-test         # 정기 복원 시험(D88 U6): 시험용 키쌍으로 암호화 백업 -> 복호 -> 임시 DB 복원 -> 행 지문 대조 + 실제 백업 파일 무결성. 주 1회(604800초)는 시작값이며 측정·표준 근거 없음(docs/adr/0020-backup-tool-and-encryption.md)
     where: serving
-    command: ["scripts/restore-test.sh"]
+    command: ["scripts/backup-restore-test.sh"]
     interval_seconds: 604800
   - name: question-authoring-purge    # 초안·고아 원본 자료 보존 정리(D88/U4, 멱등). 하루 1회(보존 단위가 일 단위)
     where: serving

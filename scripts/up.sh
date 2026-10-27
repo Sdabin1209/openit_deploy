@@ -5,11 +5,10 @@
 set -euo pipefail
 if [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0; fi
 # 서버 기동용 사전 점검(docker·compose·데몬·자격증명). 건너뛰기: DEPLOY_SKIP_DOCTOR=1
-# 운영 기본 프로젝트(deploy)를 띄울 때는 백업 설정을 필수로 본다(D88/U6). 시험·데모 프로젝트(deploy-*)는 아니다.
-REQ=""; case "${1:-}" in ""|-*) REQ=--require-backup;; deploy) REQ=--require-backup;; esac
-[ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" --up $REQ || exit 1
 source "$(dirname "$0")/lib.sh"
 P=deploy; case "${1:-}" in ""|-*) ;; *) P=$1; shift;; esac
+# 운영 프로젝트(deploy)는 백업 설정이 없으면 기동하지 않는다(D88 U6). 시험 프로젝트(deploy-e2e-* 등)는 건너뛴다.
+[ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" --up $([ "$P" = deploy ] && echo --backup) || exit 1
 ARGS=(); EXT=""
 while [ $# -gt 0 ]; do case "$1" in
   --external-inference) [ $# -ge 2 ] || die "--external-inference 에는 URL이 필요하다"; EXT=$2; shift 2;;

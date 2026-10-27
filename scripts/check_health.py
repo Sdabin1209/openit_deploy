@@ -145,8 +145,8 @@ else:
         else:
             age = NOW - min(snaps)
             add("CRIT" if age > a.backup_max_age_seconds else "OK", "백업", f"가장 오래된 데이터베이스의 최신 백업이 {int(age)}초 전 (기준 {a.backup_max_age_seconds}초, 데이터베이스 {len(snaps)}개)")
-        if cfg.get("BACKUP_ENCRYPT", "none") in ("", "none"): add("WARN", "백업 암호화", "BACKUP_ENCRYPT=none: 개인정보가 든 덤프가 평문이다(D88/U6: gpg 또는 age 공개키 암호화)")
-        else: add("OK", "백업 암호화", f"{cfg['BACKUP_ENCRYPT']} (수신자 공개키만 서버에 둔다)")
+        if cfg.get("BACKUP_ALLOW_PLAINTEXT", "0") == "1" or not cfg.get("BACKUP_ENCRYPT_RECIPIENTS"): add("WARN", "백업 암호화", "수신자 공개키(BACKUP_ENCRYPT_RECIPIENTS)가 없거나 BACKUP_ALLOW_PLAINTEXT=1: 개인정보가 든 덤프가 평문이다(D88/U6: age 또는 gpg 공개키 암호화)")
+        else: add("OK", "백업 암호화", "수신자 공개키 암호화 (공개키만 서버에 둔다)")
 
 for s, n, d in R: print(f"{s:4} {n}: {d}")
 c = {k: sum(1 for r in R if r[0] == k) for k in ("OK", "WARN", "CRIT", "SKIP")}

@@ -3,21 +3,22 @@
 # 사용: scripts/doctor.sh [--up] [--inference <URL>]
 #   --llm              실제 LLM(GPU) 준비: GPU 컨테이너 접근, 프로파일 VRAM 대 GPU VRAM, 도커 디스크, huggingface.co 도달 (환경 변수 DEMO_LLM_PROFILE)
 #   --inference <URL>  외부 추론 서버(D72)에 이 호스트에서 닿는지: /healthz, /readyz, 토큰이 있으면 /v1/info (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE, 값은 출력하지 않는다)
+#   --backup           운영 백업 설정 점검(D88 U6): config/backup.env 의 대상 폴더·보관 일수·암호화 수신자 공개키. 없거나 불완전하면 FAIL(백업 없이 운영하지 않는다). up.sh 가 운영 프로젝트(deploy)에서 붙인다
 #   기본: 빌드·E2E 에 필요한 전부(소스 워크스페이스 포함).  --up: 서버에서 띄우기만 할 때(git·형제 리포·태그·빌드 의존 점검을 건너뛴다)
 # e2e.sh / up.sh 는 시작에서 이것을 부르고 FAIL 이 있으면 멈춘다. 건너뛰기: DEPLOY_SKIP_DOCTOR=1
 # 환경 문제를 코드로 숨기지 않는다: 진단하고 고치는 법을 안내할 뿐 아무것도 바꾸지 않는다.
 set -uo pipefail
 DEPLOY_NO_DOCKER=1
 source "$(dirname "$0")/lib.sh"
-UP_ONLY=0; INF_URL=""; LLM=0; REQ_BACKUP=0
+UP_ONLY=0; INF_URL=""; LLM=0; CHECK_BACKUP=0
 while [ $# -gt 0 ]; do case "$1" in
   --up) UP_ONLY=1; shift;;
+  --backup) CHECK_BACKUP=1; shift;;
   --llm) LLM=1; shift;;
-  --require-backup) REQ_BACKUP=1; shift;;
   --inference) [ $# -ge 2 ] || { echo "--inference 에는 URL이 필요하다" >&2; exit 2; }; INF_URL=$2; shift 2;;
   --inference=*) INF_URL=${1#*=}; shift;;
   -h|--help) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--require-backup] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
+  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--backup] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
 case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
 FAILS=0; WARNS=0; UNABLES=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
@@ -63,6 +64,9 @@ else
 fi
 if [ -n "$D" ]; then
   if "$D" compose version >/dev/null 2>&1; then ok "docker compose $("$D" compose version --short 2>/dev/null)"; else fail "docker compose 플러그인이 없다" "리눅스: sudo apt-get install -y docker-compose-plugin. WSL: Docker Desktop 통합을 켠다 (docs/SETUP.md)"; fi
+  # compose.yaml 의 healthcheck start_interval(기동 직후 1초 간격 확인)은 Docker 엔진 25 이상이 필요하다
+  EV=$("$D" version --format '{{.Server.Version}}' 2>/dev/null | tr -d '\r'); EVM=${EV%%.*}
+  if [ -n "$EVM" ] && [ "$EVM" -ge 25 ] 2>/dev/null; then ok "docker 엔진 $EV (healthcheck start_interval 지원)"; else fail "docker 엔진 버전 $EV 은(는) 25 미만이거나 읽지 못했다" "compose.yaml 의 healthcheck start_interval 은 엔진 25 이상이 필요하다. Docker를 25 이상으로 올린다 (docs/SETUP.md)"; fi
   if [ $UP_ONLY = 0 ]; then
     if "$D" buildx version >/dev/null 2>&1; then ok "docker buildx"; else fail "docker buildx 플러그인이 없다" "이미지 빌드(--build-context)에 필요: sudo apt-get install -y docker-buildx-plugin (WSL은 Docker Desktop 통합)"; fi
   fi
@@ -135,22 +139,21 @@ if [ $UP_ONLY = 0 ]; then
   # --- 고정 포트 금지
   if grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT/compose.test.yaml" >/dev/null 2>&1; then fail "compose.test.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
 fi
-# --- 비밀 폴더 권한(secrets/ 가 있을 때)과 운영 백업 설정(D88/U6, --require-backup: 운영 up.sh 가 준다)
-if [ -d "$DEPLOY_ROOT/secrets" ]; then
-  if out=$(bash "$DEPLOY_ROOT/scripts/check-secrets-perms.sh" "$DEPLOY_ROOT/secrets" 2>&1); then ok "$out"; else fail "비밀 폴더 권한 위반: $(echo "$out" | sed -n 2p)" "chmod 700 secrets secrets/tokens (scripts/check-secrets-perms.sh 가 모두 보여 준다)"; fi
+# --- 비밀 파일 권한(docs/adr/0022-secret-file-permissions.md): 비밀 폴더가 있으면 점검한다(없으면 아직 gen-secrets.sh 전이다: 이 점검은 건너뛴다)
+SDIR="${SECRETS_DIR:-$DEPLOY_ROOT/secrets}"
+if [ $UP_ONLY = 1 ] && [ -d "$SDIR" ]; then
+  echo "== 비밀 파일 권한"
+  PO=$(bash "$(dirname "$0")/check-secret-perms.sh" "$SDIR" 2>&1); PRC=$?
+  if [ $PRC = 0 ]; then ok "$(echo "$PO" | tail -1)"; else
+    while IFS= read -r l; do case "$l" in FAIL*) fail "${l#FAIL }" "bash scripts/gen-secrets.sh 를 다시 실행하면 모드를 바로잡는다 (docs/adr/0022-secret-file-permissions.md)";; esac; done <<<"$PO"; fi
 fi
-if [ $REQ_BACKUP = 1 ]; then
-  BC=${BACKUP_CONFIG:-$DEPLOY_ROOT/config/backup.env}
-  if [ ! -f "$BC" ]; then fail "백업 설정이 없다: $BC (D88/U6: 백업은 필수, 없으면 기동하지 않는다)" "cp config/backup.env.example config/backup.env 후 BACKUP_DIR(서버 밖 대상), BACKUP_RETENTION_DAYS, BACKUP_ENCRYPT/BACKUP_RECIPIENT_FILE 을 적는다. docs/runbook.md 4절"
-  else
-    BD=$(sed -n 's/^BACKUP_DIR=//p' "$BC" | tr -d '"'"'" | head -1); BE=$(sed -n 's/^BACKUP_ENCRYPT=//p' "$BC" | tr -d '"'"'" | head -1)
-    if [ -z "$BD" ]; then fail "BACKUP_DIR 이 비어 있다 ($BC)" "서버 밖 대상(별도 장치·원격 마운트)의 경로를 적는다. docs/runbook.md 4절"
-    else
-      ok "백업 대상 BACKUP_DIR 설정됨"
-      if [ -d "$BD" ] && [ "$(stat -c %d "$BD")" = "$(stat -c %d "$DEPLOY_ROOT")" ]; then warn "BACKUP_DIR($BD)이 이 리포와 같은 파일시스템이다: 서버 밖 사본이 아니다" "별도 장치나 원격 마운트를 쓴다(디스크 고장이 원본과 백업을 함께 잃게 한다)"; fi
-    fi
-    case "$BE" in gpg|age) ok "백업 암호화 $BE";; *) fail "BACKUP_ENCRYPT 가 none 이거나 비어 있다: 덤프(개인정보)가 평문이다" "BACKUP_ENCRYPT=gpg(또는 age)와 BACKUP_RECIPIENT_FILE(공개키 파일). 복호화 키는 서버 밖에 둔다. docs/runbook.md 4절";; esac
-  fi
+# --- 백업 필수(D88 U6): 설정이 없으면 backup 잡이 CRIT 로 실패한다. 기동 전에 막는다. 규칙의 정본은 scripts/backup-lib.sh
+if [ $CHECK_BACKUP = 1 ]; then
+  echo "== 백업 설정"
+  BOUT=$(bash "$(dirname "$0")/backup-check.sh" 2>&1); BRC=$?
+  if [ $BRC = 0 ]; then
+    while IFS= read -r l; do case "$l" in WARN:*) warn "${l#WARN: }" "BACKUP_DIR 를 다른 디스크나 원격 마운트로 바꾼다 (config/backup.env.example)";; OK:*) ok "${l#OK: }";; esac; done <<<"$BOUT"
+  else fail "$(echo "$BOUT" | sed -n 's/^CRIT: //p' | head -1)" "config/backup.env.example 을 config/backup.env 로 복사해 채운다. 수신자 공개키 만드는 법과 복호 키 보관: docs/SETUP.md 백업 절"; fi
 fi
 # --- 실제 LLM(GPU) 준비(D72/D73): 읽기 전용 점검. 컨테이너에서 GPU가 보여야 하고, 프로파일이 GPU 메모리에 맞아야 한다
 if [ $LLM = 1 ]; then

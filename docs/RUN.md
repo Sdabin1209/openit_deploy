@@ -64,7 +64,7 @@ bash scripts/demo.sh reset                       # down 후 up
 
 **방식.** 토큰·salt는 환경 변수가 아니라 파일이다. `scripts/gen-secrets.sh`가 `secrets/tokens/<이름>`에 값 하나짜리 파일을 만든다(개별 토큰, 서버가 받는 목록 값 `역할=토큰,...`, salt, 콘솔 암호). `compose.yaml`의 최상위 `secrets:`가 서비스마다 필요한 것만 `/run/secrets/<이름>`에 읽기 전용으로 마운트하고, 서비스에는 `NAME_FILE=/run/secrets/<이름>` 환경 변수(경로, 비밀 아님)만 준다. 서비스 코드는 `boundary_contracts.read_secret(NAME)`으로 읽는다. 예전처럼 `env_file`로 토큰을 넣으면 `docker inspect`, `docker exec <c> env`로 평문이 읽힌다(근본 원인).
 
-**권한.** 비밀 폴더 700, 파일 644. 컨테이너가 uid 10001로 실행되는데 compose의 파일 secrets는 호스트의 소유자·모드를 그대로 마운트하고(`uid/gid/mode` 옵션은 swarm 전용) 호스트 소유자가 달라서, 600이면 서비스가 읽지 못한다. 폴더가 700이라 호스트의 다른 사용자는 파일에 닿지 못한다.
+**권한.** 비밀 폴더 700. 파일은 두 종류다: 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본, 컨테이너에 마운트하지 않는 클라이언트 토큰)은 **600**, 컨테이너가 읽는 것은 644(폴더 700 안). 어느 쪽인지는 `lib.sh`의 `secret_mode`가 `compose.yaml`의 secrets를 읽어 정하고 `scripts/check-secret-perms.sh`(doctor --up이 부른다)가 어긋남을 잡는다. 근거와 한계: [adr/0022-secret-file-permissions.md](adr/0022-secret-file-permissions.md). 컨테이너가 읽는 파일을 600으로 못 만드는 이유: 컨테이너가 uid 10001로 실행되는데 compose의 파일 secrets는 호스트의 소유자·모드를 그대로 마운트하고(`uid/gid/mode` 옵션은 swarm 전용) 호스트 소유자가 달라서, 600이면 서비스가 읽지 못한다. 폴더가 700이라 호스트의 다른 사용자는 파일에 닿지 못한다.
 
 **게이트웨이(Caddy).** 환경 변수 대신 Caddy의 표준 파일 치환 `{file./run/secrets/<이름>}`을 Caddyfile에서 쓴다(`header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"`). 이유: Caddy는 `NAME_FILE` 규칙을 모르고, `{$ENV}`는 환경 변수를 요구하며, 파일 치환은 Caddy가 공식으로 지원하는 방법이라 래퍼 스크립트나 이미지 수정이 필요 없다. 값은 컨테이너 환경에 없고, 끝의 줄바꿈은 Caddy가 지운다(`caddy` 컨테이너에서 확인).
 
@@ -95,7 +95,7 @@ bash scripts/demo.sh reset                       # down 후 up
 **초기화.** 공식 이미지의 `/docker-entrypoint-initdb.d`(`config/postgres/initdb/10-roles.sh`)가 빈 볼륨에서 한 번 돈다. 계정마다 `CREATE ROLE`(LOGIN, 슈퍼유저·DB생성·역할생성·복제 없음), 같은 이름의 데이터베이스(소유자 = 그 계정), `PUBLIC`의 CONNECT 회수(다른 계정의 데이터베이스와 `postgres`·`template1`에는 접속 불가), 루프백 TCP의 `trust`를 암호 요구(scram-sha-256)로 교체. 스크립트는 멱등이라 다시 돌려도 안전하다(`pg-roles.sh sync`). 계정 암호는 비밀 파일에서 `psql`의 `\set … \`cat\``로 읽어 인자·환경 변수·로그에 나오지 않는다. 암호 없이 닿는 길은 컨테이너 안 유닉스 소켓(`docker exec`)뿐이다.
 
 **백업·복구.** `pg-data` 볼륨을 파일째 복사하지 않는다(쓰는 중에는 일관되지 않다).
-- `bash scripts/pg-backup.sh [db ...]`: 설정·거부 규칙·보관 기간은 `backup.sh`와 같다(`config/backup.env`). 데이터베이스의 소유 계정으로 `pg_dump -Fc`(한 시점의 일관된 스냅샷, 서버가 떠 있어도 된다)해 `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump` + `MANIFEST.json`(sha256, 크기, 서버 버전)을 만든다. 덤프는 파일 600, 폴더 700.
+- `bash scripts/pg-backup.sh [db ...]`: 설정·거부 규칙·보관 기간은 `backup.sh`와 같다(`config/backup.env`). 데이터베이스의 소유 계정으로 `pg_dump -Fc`(데이터베이스 안에서는 한 시점의 일관된 스냅샷, 서버가 떠 있어도 된다)해 `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump.age`(또는 `.gpg`, 수신자 공개키로 암호화, 평문은 남기지 않음) + `MANIFEST.json`(평문 sha256, 크기, 서버 버전, 덤프 시작·끝 시각)을 만든다. 5개는 병렬로 동시에 시작하지만 데이터베이스 사이 같은 시점은 아니다(한계: runbook 4-2절). 파일 600, 폴더 700. 설정이 불완전하면 CRIT와 종료 코드 2. 복호 개인키는 서버에 없다: 복구 절차는 [runbook.md](runbook.md) 4-3절.
 - `bash scripts/pg-restore.sh <db> <스냅샷 폴더> --yes`: 해시 검증(불일치면 종료 코드 3), 그 데이터베이스에 다른 접속이 있으면 거부(서비스를 먼저 멈춘다), 그다음 `pg_restore --clean --if-exists --single-transaction`. 볼륨을 잃었다면 `postgres`를 먼저 띄운다(초기화가 빈 데이터베이스와 계정을 만든다). 그다음 복구한다.
 - `scripts/backup-all.sh`가 backup 잡이다: 파일 저장소(`backup.sh`, 기본 `gate-data` 번들)와 PostgreSQL(`pg-backup.sh`)을 같은 `config/backup.env`로 백업한다. `e2e.sh`의 백업·복구 단계는 파일 저장소 2개(gate-data, models-data)와 데이터베이스 5개를 백업해 `pg-data` 볼륨까지 지우고, 초기화로 되살린 빈 데이터베이스에 `pg-restore.sh`로 복구한 뒤 `pg-fingerprint.sh`(스키마+행 집합 해시, 행 순서 무관)가 같은지 본다. 서버 단독 자체 시험은 `bash scripts/test-postgres.sh`.
 
@@ -207,12 +207,14 @@ HTTP·기본 인증이라 시험용이다. `DEMO_BIND=0.0.0.0`으로 열어 두�
 | `INFERENCE_RELEASE_TOKEN_FILE` | 필수 | 파일 경로. 내용: 게이트 읽기 토큰 하나(`MODEL_RUNTIME_RELEASE_TOKEN`). 두 파일은 secrets로 `/run/secrets`에 마운트된다(환경 변수로 넣지 않는다). 컨테이너(uid 10001)가 읽을 수 있어야 한다(모드 644, 폴더 700) |
 | `INFERENCE_CONFIG_ENV_FILE` | 선택 | (비밀이 아닌) 모델 설정 env 파일(프로파일 등). 기본 `/dev/null`. 토큰을 넣지 않는다 |
 | `INFERENCE_BACKEND` | 선택 | 기본 `fake`. GPU 변형은 model-runtime이 정한 값 |
-| `INFERENCE_BIND` / `INFERENCE_PORT` | 선택 | 호스트 바인드(기본 127.0.0.1; 다른 호스트가 부르는 외부 추론 서버로 쓸 때만 바꾼다) / 포트(기본 8080, 빈 값이면 Docker 배정 -> `docker port`로 읽는다) |
+| `INFERENCE_BIND` / `INFERENCE_PORT` | 선택 | 호스트 바인드(기본 127.0.0.1: 다른 호스트가 닿게 하려면 사설 인터페이스 주소나 0.0.0.0을 명시하고 방화벽으로 호출자만 허용한다) / 포트(기본 8080, 빈 값이면 Docker 배정 -> `docker port`로 읽는다) |
 
 ```
+# INFERENCE_BIND 기본은 127.0.0.1 이라 다른 호스트의 호출자가 닿으려면 아래처럼 명시한다(방화벽으로 호출자만 허용)
 INFERENCE_IMAGE=<레지스트리>/openit/model-serving@sha256:... \
 RELEASE_URL=http://<release-gate 주소>:<포트> \
 INFERENCE_TOKENS_FILE=/안전한/경로/model-runtime-tokens INFERENCE_RELEASE_TOKEN_FILE=/안전한/경로/gate-read-model-serving \
+INFERENCE_BIND=<이 서버의 사설 인터페이스 주소> \
 docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
 ```
 

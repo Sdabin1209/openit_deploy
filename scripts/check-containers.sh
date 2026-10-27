@@ -1,32 +1,35 @@
 #!/usr/bin/env bash
-# 떠 있는 상시 서비스 컨테이너의 격리 설정을 docker inspect·exec 로 실제로 확인한다(읽기 전용; 환경 변수는 읽지 않는다).
-# 항목: 비루트로 실행(exec id -u != 0), 읽기 전용 루트, cap_drop ALL(추가 capability는 gateway 의 NET_BIND_SERVICE 하나만 허용), no-new-privileges, privileged 아님, 호스트 네트워크·PID 아님,
-#       docker 소켓 마운트 없음, mem_limit·pids_limit 설정됨(0 = 무제한이면 실패), 로그 회전(max-size) 설정됨.
-# 사용: scripts/check-containers.sh [프로젝트]   (기본 DEPLOY_PROJECT 또는 deploy). 종료 코드 0 = 모두 통과, 1 = 하나라도 실패, 2 = 컨테이너 없음.
+# 실행 중인 컨테이너의 실제 격리 상태 점검(docker inspect 로 읽기만 한다; 값·환경 변수는 보지 않는다). 사용: check-containers.sh [프로젝트 ...]   (기본: deploy deploy-registry)
+# compose 파일에 적은 것이 아니라 **떠 있는 컨테이너가 실제로** 갖고 있는지 본다(감사 F1): 비root 사용자, 읽기 전용 루트, cap_drop ALL(추가 capability는 목록으로 보여 준다),
+# no-new-privileges, privileged 아님, docker.sock 마운트 없음, host network/pid 아님, 메모리·pid 한도 있음, 호스트 포트는 127.0.0.1 만(아니면 WARN).
+# 종료 코드 0 통과(WARN 은 통과), 1 FAIL 있음, 2 점검할 컨테이너가 없음. 한계: 이미지 안 파일 권한이나 취약점은 보지 않는다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
-P=${1:-${DEPLOY_PROJECT:-deploy}}
-mapfile -t CS < <("$DOCKER" ps --filter "label=com.docker.compose.project=$P" --format '{{.Names}}' | tr -d '\r' | sort)
-[ ${#CS[@]} -gt 0 ] || { echo "프로젝트 $P 의 실행 중 컨테이너가 없다"; exit 2; }
-FAIL=0; N=0; BAD=()
-for c in "${CS[@]}"; do
-  N=$((N+1)); probs=""
-  insp=$("$DOCKER" inspect "$c" --format '{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.Privileged}}|{{.HostConfig.NetworkMode}}|{{.HostConfig.PidMode}}|{{json .HostConfig.CapDrop}}|{{json .HostConfig.CapAdd}}|{{json .HostConfig.SecurityOpt}}|{{.HostConfig.Memory}}|{{.HostConfig.PidsLimit}}|{{index .HostConfig.LogConfig.Config "max-size"}}|{{range .Mounts}}{{.Source}} {{end}}' | tr -d '\r')
-  IFS='|' read -r ro priv net pid capdrop capadd secopt mem pids logmax mounts <<<"$insp"
-  uid=$("$DOCKER" exec "$c" id -u 2>/dev/null | tr -d '\r')
-  [ -n "$uid" ] && [ "$uid" != 0 ] || probs="$probs 루트로 실행(uid=${uid:-?})"
-  [ "$ro" = true ] || probs="$probs 읽기 전용 루트 아님"
-  [ "$priv" = false ] || probs="$probs privileged"
-  case "$net" in host) probs="$probs 호스트 네트워크";; esac
-  [ -z "$pid" ] || probs="$probs PID 공유($pid)"
-  [[ "$capdrop" == *ALL* ]] || probs="$probs cap_drop ALL 아님"
-  case "$capadd" in null|"[]") ;; '["NET_BIND_SERVICE"]'|'["CAP_NET_BIND_SERVICE"]') case "$c" in *-gateway-*) ;; *) probs="$probs 추가 capability $capadd";; esac;; *) probs="$probs 추가 capability $capadd";; esac
-  [[ "$secopt" == *no-new-privileges* ]] || probs="$probs no-new-privileges 없음"
-  [ "${mem:-0}" -gt 0 ] 2>/dev/null || probs="$probs 메모리 한도 없음"
-  [ "${pids:-0}" -gt 0 ] 2>/dev/null || probs="$probs pids 한도 없음"
-  [ -n "$logmax" ] || probs="$probs 로그 회전 없음"
-  case "$mounts" in *docker.sock*) probs="$probs docker 소켓 마운트";; esac
-  if [ -n "$probs" ]; then FAIL=$((FAIL+1)); BAD+=("$c:$probs"); fi
+PROJECTS=("$@"); [ ${#PROJECTS[@]} -gt 0 ] || PROJECTS=(deploy deploy-registry)
+FAILS=0; WARNS=0; N=0
+for P in "${PROJECTS[@]}"; do
+  ids=$("$DOCKER" ps -q --filter "label=com.docker.compose.project=$P" | tr -d '\r')
+  [ -n "$ids" ] || { echo "-- $P: 떠 있는 컨테이너가 없다"; continue; }
+  for id in $ids; do
+    N=$((N+1))
+    insp=$("$DOCKER" inspect "$id" --format '{{.Name}}|{{.Config.User}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.Privileged}}|{{.HostConfig.NetworkMode}}|{{.HostConfig.PidMode}}|{{.HostConfig.Memory}}|{{.HostConfig.PidsLimit}}|{{.HostConfig.CapDrop}}|{{.HostConfig.CapAdd}}|{{.HostConfig.SecurityOpt}}|{{range .Mounts}}{{.Source}} {{end}}|{{range $p,$b := .HostConfig.PortBindings}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}|{{index .Config.Labels "com.docker.compose.service"}}' | tr -d '\r')
+    IFS='|' read -r name user ro priv net pidm mem pids capdrop capadd secopt mounts ports svc <<<"$insp"
+    name=${name#/}; probs=(); warns=()
+    uid=$("$DOCKER" exec "$id" id -u 2>/dev/null | tr -d '\r'); [ -n "$uid" ] || uid=${user%%:*}
+    case "$uid" in ""|0|root) probs+=("root 로 실행 중이다(uid ${uid:-?}, Config.User='${user}')");; esac
+    [ "$ro" = true ] || probs+=("루트 파일시스템이 쓰기 가능하다")
+    [ "$priv" = false ] || probs+=("privileged 이다")
+    case "$capdrop" in *ALL*) ;; *) probs+=("cap_drop ALL 이 아니다(CapDrop=$capdrop)");; esac
+    [ "$capadd" = "[]" ] || warns+=("추가 capability: $capadd")
+    case "$secopt" in *no-new-privileges*) ;; *) probs+=("no-new-privileges 가 없다");; esac
+    case "$mounts" in *docker.sock*) probs+=("docker.sock 을 마운트했다");; esac
+    [ "$net" != host ] || probs+=("host 네트워크이다"); [ -z "$pidm" ] || probs+=("pid 네임스페이스를 공유한다(PidMode=$pidm)")
+    [ "${mem:-0}" -gt 0 ] 2>/dev/null || warns+=("메모리 한도가 없다")
+    { [ "${pids:-0}" != "<nil>" ] && [ "${pids:-0}" != 0 ] && [ "${pids:-0}" != -1 ]; } 2>/dev/null || warns+=("pids 한도가 없다")
+    for hp in $ports; do case "$hp" in 127.0.0.1:*) ;; *) warns+=("호스트 포트가 127.0.0.1 이 아닌 곳에 열려 있다: $hp");; esac; done
+    if [ ${#probs[@]} -eq 0 ]; then echo "  OK   $name (uid $uid, 읽기 전용, cap_drop ALL)"; else for x in "${probs[@]}"; do echo "  FAIL $name: $x"; FAILS=$((FAILS+1)); done; fi
+    for x in "${warns[@]+"${warns[@]}"}"; do echo "  WARN $name: $x"; WARNS=$((WARNS+1)); done
+  done
 done
-if [ $FAIL = 0 ]; then echo "컨테이너 $N개 모두 통과: 비루트, 읽기 전용 루트, cap_drop ALL, no-new-privileges, privileged·호스트 네트워크·PID 공유·docker 소켓 없음, 메모리·pids 한도, 로그 회전"; exit 0; fi
-printf '실패 %s/%s:\n' "$FAIL" "$N"; printf '  %s\n' "${BAD[@]}"; exit 1
+[ $N -gt 0 ] || { echo "점검할 컨테이너가 없다"; exit 2; }
+echo "-- 컨테이너 $N개: FAIL $FAILS, WARN $WARNS"; [ $FAILS = 0 ]

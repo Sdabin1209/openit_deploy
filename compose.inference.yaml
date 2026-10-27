@@ -11,7 +11,8 @@
 # 선택 변수:
 #   INFERENCE_CONFIG_ENV_FILE  (비밀 아닌) 모델 설정 env 파일 경로(프로파일 등). 토큰을 넣지 않는다. 기본 /dev/null
 #   INFERENCE_BACKEND    기본 fake. GPU 변형 이미지는 model-runtime 이 정한 값(vllm 등)
-#   INFERENCE_BIND       호스트 바인드 주소. 기본 127.0.0.1 (다른 호스트의 survey-service 가 부르는 외부 추론 서버로 쓸 때만 0.0.0.0 또는 그 호스트 주소로 바꾼다. 토큰이 있어도 HTTP 평문이다)
+#   INFERENCE_BIND       호스트 바인드 주소. 기본 127.0.0.1 (감사 B8: 인증은 Bearer 토큰뿐이고 TLS 가 없어 기본으로 밖에 열지 않는다).
+#                        다른 호스트의 호출자가 닿아야 하면 서버의 사설 인터페이스 주소(권장) 또는 0.0.0.0 을 **명시**하고 방화벽으로 호출자만 허용한다. docs/RUN.md 7-1
 #   INFERENCE_PORT       호스트 포트. 기본 8080. 빈 값(INFERENCE_PORT=)이면 Docker 가 배정한다(`docker port` 로 읽는다)
 # 사용 (추론 서버를 둘 호스트에서):
 #   INFERENCE_IMAGE=... RELEASE_URL=... INFERENCE_TOKENS_FILE=... INFERENCE_RELEASE_TOKEN_FILE=... docker compose -p deploy-inference -f compose.inference.yaml up -d --wait

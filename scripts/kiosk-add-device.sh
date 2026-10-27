@@ -25,9 +25,9 @@ kiosk_config() { # kiosk_config <ID>: 기기 산출물(600)
 case "$CMD" in
   from-list) LIST=${2:-$DEPLOY_ROOT/config/kiosk-devices.conf}; [ -f "$LIST" ] || die "기기 목록 파일이 없다: $LIST (config/kiosk-devices.conf.example 참고)"
     while read -r id _; do case "$id" in ""|\#*) continue;; esac; [[ "$id" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || die "기기 ID 규칙 위반: $id"
-      f="$D/tokens/kiosk-device-$id"; [ -s "$f" ] || { gw_rnd > "$f"; echo "기기 토큰을 만들었다: $id" >&2; }; chmod 644 "$f"; kiosk_config "$id"; done < "$LIST";;
-  rotate) f="$D/tokens/kiosk-device-$ID"; [ -s "$f" ] || die "없는 기기: $ID (먼저 add)"; gw_rnd > "$f"; chmod 644 "$f"; kiosk_config "$ID"; echo "회전: $ID (옛 토큰 무효. 새 산출물 $D/kiosk-config/$ID.json 을 기기에 전한다)" >&2;;
-  add) f="$D/tokens/kiosk-device-$ID"; [ -s "$f" ] && echo "이미 있다: $ID (토큰은 그대로)" >&2 || { gw_rnd > "$f"; echo "기기 토큰을 만들었다: $ID" >&2; }; chmod 644 "$f"; kiosk_config "$ID"; echo "토큰 파일: $f (값은 출력하지 않는다)" >&2;;
+      f="$D/tokens/kiosk-device-$id"; [ -s "$f" ] || { ( umask 077; gw_rnd > "$f" ); echo "기기 토큰을 만들었다: $id" >&2; }; chmod 600 "$f"; kiosk_config "$id"; done < "$LIST";;
+  rotate) f="$D/tokens/kiosk-device-$ID"; [ -s "$f" ] || die "없는 기기: $ID (먼저 add)"; ( umask 077; gw_rnd > "$f" ); chmod 600 "$f"; kiosk_config "$ID"; echo "회전: $ID (옛 토큰 무효. 새 산출물 $D/kiosk-config/$ID.json 을 기기에 전한다)" >&2;;
+  add) f="$D/tokens/kiosk-device-$ID"; [ -s "$f" ] && echo "이미 있다: $ID (토큰은 그대로)" >&2 || { ( umask 077; gw_rnd > "$f" ); echo "기기 토큰을 만들었다: $ID" >&2; }; chmod 600 "$f"; kiosk_config "$ID"; echo "토큰 파일: $f (값은 출력하지 않는다)" >&2;;
   remove) rm -f "$D/tokens/kiosk-device-$ID" "$D/kiosk-config/$ID.json"; echo "폐기: $ID" >&2;;
   list) gw_devices "$D"; exit 0;;
 esac
