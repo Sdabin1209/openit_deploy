@@ -37,6 +37,8 @@ E2E 통과 수는 **이 파일에만** 적는다. 다른 문서(README, STATUS, 
 | 2026-10-28 05:41 | 60a5700 | gpu-dev (WSL2, RTX 4070 SUPER 12GB) | 전체 | 119 | 2 | 1 | 0/0/12 | 1 | 3 | 수동 입력: gpu-dev의 e2e.sh가 자동 기록한 줄을 옮김(gpu-dev의 deploy/docs/E2E_RESULTS.md) |
 | 2026-10-28 06:02 | 76a25e4 | gpu-dev (WSL2, RTX 4070 SUPER 12GB) | 전체 | 120 | 1 | 1 | 0/0/12 | 2 | 3 | 수동 입력: gpu-dev의 e2e.sh가 자동 기록한 줄을 옮김(gpu-dev의 deploy/docs/E2E_RESULTS.md) |
 | 2026-10-28 06:24 | 4bb9535 | gpu-dev (WSL2, RTX 4070 SUPER 12GB) | 전체 | 121 | 0 | 0 | 0/0/12 | 2 | 3 | 수동 입력: gpu-dev의 e2e.sh가 자동 기록한 줄을 옮김(gpu-dev의 deploy/docs/E2E_RESULTS.md) |
+| 2026-10-28 07:11 | b0a851c | 이 PC (WSL2) | 전체 | 121 | 0 | 0 | 0/0/12 | 2 | 3 | e2e.sh 로그 자동 기록 |
+| 2026-10-28 07:11 | b0a851c | gpu-dev | 전체 | 121 | 0 | 0 | 0/0/12 | 2 | 3 | e2e.sh 로그 자동 기록 |
 <!-- E2E-ROWS-END -->
 
 ## 과거 기록 (이 표는 정본이 되기 전의 값이다)
