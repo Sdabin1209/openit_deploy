@@ -109,6 +109,18 @@ chk "도달: release-gate -> question-authoring (release, I1)" reach release-gat
 chk "도달: release-gate -> model-registry (release, I3)" reach release-gate model-registry
 chk "차단: survey-service -> question-authoring" blocked survey-service question-authoring
 chk "차단: survey-service -> model-registry" blocked survey-service model-registry
+chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
+chk "차단: model-registry -> model-serving" blocked model-registry model-serving
+chk "차단: question-authoring -> model-serving" blocked question-authoring model-serving
+net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원이 정확히 그 컨테이너들이다
+  local n=$1; shift; local got want
+  got=$("$DOCKER" network inspect "${PROJECT}_$n" --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}' | sed '/^$/d' | sort | tr '\n' ' ')
+  want=$(printf '%s\n' "$@" | sort | tr '\n' ' ')
+  [ "$got" = "$want" ] || { echo "구성원 불일치: $n"; return 1; }
+}
+for pair in "db-survey:survey-service" "db-qa:question-authoring" "db-ops:ops-feedback-ingest" "db-gate:release-gate"; do
+  chk "db 네트워크 ${pair%%:*} 에는 postgres 와 ${pair##*:} 만 있다(postgres 클라이언트끼리 닿지 않는다)" net_is "${pair%%:*}" "${PROJECT}-postgres-1" "${PROJECT}-${pair##*:}-1"
+done
 tcp() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import socket;socket.create_connection(('$2',$3),timeout=3)" >/dev/null 2>&1; }
 for s in survey-service question-authoring ops-feedback-ingest release-gate; do chk "도달: $s -> postgres:5432 (db 네트워크)" tcp $s postgres 5432; done
 tcp_blocked() { ! tcp "$@"; }

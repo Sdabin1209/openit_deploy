@@ -25,7 +25,15 @@ networks:
     internal: true
   logs:       # 로그 저장소(원본 Trace) 접근
     internal: true
-  db:         # PostgreSQL 서버 접근. 호스트로 열지 않는다. 서비스는 자기 영역이 PostgreSQL로 바뀔 때 이 네트워크에 붙는다
+  # PostgreSQL 접근: 서비스마다 postgres 와만 닿는 별도 네트워크(internal, 호스트로 열지 않는다). 하나로 합치면 postgres 클라이언트끼리 서로 닿는다(E2E 차단 단언이 잡았다).
+  # postgres 는 아래 넷에 모두 붙는다(여러 네트워크 가입은 compose 에서 정상). 서비스끼리의 길은 serving/authoring/release 만 열어 준다.
+  db-survey:
+    internal: true
+  db-qa:
+    internal: true
+  db-ops:     # ops-feedback 서버와 잡
+    internal: true
+  db-gate:    # release-gate 서버와 수집 잡
     internal: true
 
 volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서비스만(이웃은 HTTP와 토큰). 데이터베이스는 PostgreSQL(pg-data), 백업은 pg_dump
@@ -143,7 +151,7 @@ services:
       - pg-data:/var/lib/postgresql/data
       - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
     tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db]
+    networks: [db-survey, db-qa, db-ops, db-gate]
     stop_grace_period: 30s
     healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
@@ -203,7 +211,7 @@ services:
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
     secrets: [survey-api-kiosk, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
-    networks: [edge, serving, db]
+    networks: [edge, serving, db-survey]
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -225,7 +233,7 @@ services:
       QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
     secrets: [qa-author-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
     tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
-    networks: [authoring, release, db]
+    networks: [authoring, release, db-qa]
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
@@ -245,7 +253,7 @@ services:
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn   # 실패 사례(PostgreSQL)
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-dsn, db-ops-failure-dsn]
     tmpfs: ["/tmp", "/data"]
-    networks: [serving, logs, authoring, db]
+    networks: [serving, logs, authoring, db-ops]
     depends_on:
       postgres: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
     healthcheck:
@@ -265,7 +273,7 @@ services:
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn   # 릴리스 레지스트리는 PostgreSQL(D85). 번들 파일(releases/)은 gate-data 볼륨 그대로
     secrets: [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data]
-    networks: [serving, release, db]
+    networks: [serving, release, db-gate]
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
@@ -316,7 +324,7 @@ services:
     secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback, db-ops-log-dsn, db-ops-failure-dsn]
     volumes:
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
-    networks: [logs, release, db]
+    networks: [logs, release, db-ops]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -334,7 +342,7 @@ services:
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn
     secrets: [qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data]
-    networks: [release, db]
+    networks: [release, db-gate]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true

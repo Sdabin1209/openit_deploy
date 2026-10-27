@@ -78,7 +78,7 @@ bash scripts/demo.sh reset                       # down 후 up
 
 **결정(사용자 지시: 빈 곳은 표준적인 방법).** 영역별 SQLite 파일 대신 **PostgreSQL 서버 하나(공식 이미지 `postgres:16`, digest는 `locks/images.lock`의 `POSTGRES_IMAGE`)**를 `compose.yaml`의 `postgres` 서비스로 둔다. 서비스마다 데이터베이스와 최소 권한 계정을 따로 만든다. 소유 서비스만 쓰고 이웃은 HTTP로만 읽는 규칙(D49·D50)은 그대로다: 계정은 자기 데이터베이스에만 접속할 수 있다. 이유: 권한·암호화·백업·보존을 DB 계층 한 곳에서 걸 수 있고, 서버가 여러 대로 나뉘어도 같은 방식으로 동작한다.
 
-**상태.** 운영 구성(`compose.yaml`)과 데모·E2E 구성은 PostgreSQL을 쓴다. survey-service, question-authoring, ops-feedback(서버·잡), release-gate(서버·수집 잡)가 `db` 네트워크에 붙고, 아래 표의 `…_DATABASE_URL_FILE`로 DSN 비밀을 받고, postgres가 healthy가 되어야 뜬다. SQLite 경로 설정(`OPS_FAILURE_DB` 등)은 compose에서 뺐다(각 영역의 개발·시험 기본으로만 남는다). 남긴 볼륨: `survey-data`(릴리스 작업 폴더), `gate-data`(번들 파일 `releases/`), `models-data`(model-registry). `qa-data`, `ops-data`는 없앴다(`/data`는 읽기 전용 루트에서 쓰기 위한 tmpfs). **작성 시점에 각 서비스 이미지가 PostgreSQL을 지원하는지는 컨테이너로 확인하지 못했다**(영역 쪽 작업 중). model-registry는 파일 레지스트리라 데이터베이스가 없다.
+**상태.** 운영 구성(`compose.yaml`)과 데모·E2E 구성은 PostgreSQL을 쓴다. survey-service, question-authoring, ops-feedback(서버·잡), release-gate(서버·수집 잡)가 서비스마다 따로인 `db-survey`/`db-qa`/`db-ops`/`db-gate` 네트워크(internal)에 붙고(postgres는 넷 모두에 붙는다. 하나의 `db`로 합치면 postgres 클라이언트끼리 서로 닿는다), 아래 표의 `…_DATABASE_URL_FILE`로 DSN 비밀을 받고, postgres가 healthy가 되어야 뜬다. SQLite 경로 설정(`OPS_FAILURE_DB` 등)은 compose에서 뺐다(각 영역의 개발·시험 기본으로만 남는다). 남긴 볼륨: `survey-data`(릴리스 작업 폴더), `gate-data`(번들 파일 `releases/`), `models-data`(model-registry). `qa-data`, `ops-data`는 없앴다(`/data`는 읽기 전용 루트에서 쓰기 위한 tmpfs). **작성 시점에 각 서비스 이미지가 PostgreSQL을 지원하는지는 컨테이너로 확인하지 못했다**(영역 쪽 작업 중). model-registry는 파일 레지스트리라 데이터베이스가 없다.
 
 **이름 규칙(확정).** 서비스는 `boundary_contracts.read_secret(<환경 변수 이름>)`으로 읽는다. compose는 `<환경 변수 이름>_FILE=/run/secrets/<비밀 이름>`만 준다. 값은 `postgresql://<계정>:<암호>@postgres:5432/<데이터베이스>` 한 줄이다.
 
@@ -90,7 +90,7 @@ bash scripts/demo.sh reset                       # down 후 up
 | ops-feedback | `OPS_FAILURE_DATABASE_URL` | `db-ops-failure-dsn` | `ops_failure` | 실패 사례 |
 | release-gate | `GATE_DATABASE_URL` | `db-gate-dsn` | `gate` | 릴리스 레지스트리 |
 
-암호 파일은 `db-<이름>-password`(이름의 `_`는 `-`), 슈퍼유저 암호는 `postgres-password`다. 암호 파일은 `postgres` 서비스만 마운트하고(초기화 스크립트가 읽는다), DSN 파일은 소유 서비스만 마운트한다. 호스트 이름 `postgres`는 compose의 서비스 이름이고 `db` 네트워크(internal, 호스트 포트 없음)에서만 닿는다. `gen-secrets.sh`가 위 파일을 만든다(모드 644, 폴더 700, 값은 출력하지 않는다). `bash scripts/gen-secrets.sh --db-only [폴더]`는 이 비밀만 만든다(caddy 이미지 불필요). 암호를 바꾸면 DSN도 다시 쓰이고, 이어 `bash scripts/pg-roles.sh sync`가 서버의 계정 암호를 바꾼다.
+암호 파일은 `db-<이름>-password`(이름의 `_`는 `-`), 슈퍼유저 암호는 `postgres-password`다. 암호 파일은 `postgres` 서비스만 마운트하고(초기화 스크립트가 읽는다), DSN 파일은 소유 서비스만 마운트한다. 호스트 이름 `postgres`는 compose의 서비스 이름이고 `db-*` 네트워크(internal, 호스트 포트 없음)에서만 닿는다. `gen-secrets.sh`가 위 파일을 만든다(모드 644, 폴더 700, 값은 출력하지 않는다). `bash scripts/gen-secrets.sh --db-only [폴더]`는 이 비밀만 만든다(caddy 이미지 불필요). 암호를 바꾸면 DSN도 다시 쓰이고, 이어 `bash scripts/pg-roles.sh sync`가 서버의 계정 암호를 바꾼다.
 
 **초기화.** 공식 이미지의 `/docker-entrypoint-initdb.d`(`config/postgres/initdb/10-roles.sh`)가 빈 볼륨에서 한 번 돈다. 계정마다 `CREATE ROLE`(LOGIN, 슈퍼유저·DB생성·역할생성·복제 없음), 같은 이름의 데이터베이스(소유자 = 그 계정), `PUBLIC`의 CONNECT 회수(다른 계정의 데이터베이스와 `postgres`·`template1`에는 접속 불가), 루프백 TCP의 `trust`를 암호 요구(scram-sha-256)로 교체. 스크립트는 멱등이라 다시 돌려도 안전하다(`pg-roles.sh sync`). 계정 암호는 비밀 파일에서 `psql`의 `\set … \`cat\``로 읽어 인자·환경 변수·로그에 나오지 않는다. 암호 없이 닿는 길은 컨테이너 안 유닉스 소켓(`docker exec`)뿐이다.
 

@@ -601,7 +601,16 @@ def step5():
     # 직원 개입은 서비스에 직접(내부 경로)만: 키오스크 토큰은 403, 직원 토큰은 멈추지 않은 세션에 409(PUBLIC_API.md)
     ib = {"session_id": sid, "decision": "RESUME", "turn_id": "i1"}
     assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", TOK("survey-api-kiosk"), ib)[0] == 403, "키오스크 토큰으로 직원 개입이 열림"
-    assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", TOK("survey-api-staff"), ib)[0] == 409, "멈추지 않은 세션의 개입이 409가 아님"
+    # D85: 서비스는 개입의 행위자를 게이트웨이가 붙인 X-Openit-User 로 정한다(없으면 401). 내부 직접 호출에는 헤더를 직접 붙인다
+    def survey_intervene(user):
+        rq = urllib.request.Request(URL("survey") + f"/v1/sessions/{sid}/intervention", data=json.dumps(ib).encode(), method="POST")
+        rq.add_header("Authorization", "Bearer " + TOK("survey-api-staff")); rq.add_header("Content-Type", "application/json")
+        if user is not None: rq.add_header("X-Openit-User", user)
+        try:
+            with urllib.request.urlopen(rq, timeout=30) as r: return r.status, r.read().decode(errors="replace")[:200]
+        except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="replace")[:200]
+    c0, b0 = survey_intervene(None); assert c0 == 401, f"헤더 없는 직원 개입이 401이 아님: {c0} {b0}"
+    c1, b1 = survey_intervene(STAFF()[0]); assert c1 == 409, f"멈추지 않은 세션의 개입이 409가 아님: {c1} {b1}"
     assert http("GET", "gw", f"/v1/sessions/{sid}/turns", KDEV())[0] in (404, 405)
     c, en = kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"}); assert c == 200, (c, en); validate_survey("FrontendInput", en)
     # 서비스가 턴마다 Trace를 I6로 보냈는지(outbox 전송 수)

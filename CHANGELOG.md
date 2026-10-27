@@ -1,5 +1,9 @@
 # 변경 이력
 
+## 전체 E2E(00aa6de) 실패 둘 수정: db 네트워크 분리, 개입 단언
+- 차단 단언 `survey-service -> question-authoring` 실패 원인: 서비스 넷이 하나의 `db` 네트워크를 같이 써서 postgres 클라이언트끼리 닿았다(구성 결함). `db-survey`, `db-qa`, `db-ops`, `db-gate`로 나눴다(각 internal, postgres만 넷에 모두 가입). 이유: 데이터베이스 길이 서비스 사이의 새 길이 되면 영역 격리가 무너진다. 단언을 넓혔다: `question-authoring -> survey-service`, `model-registry -> model-serving`, `question-authoring -> model-serving` 차단, db 네트워크마다 구성원이 postgres와 자기 서비스뿐임.
+- 단계 5 `개입이 409가 아님` 원인: 단언이 `X-Openit-User` 없이 서비스에 직접 호출해 401을 받았다(낡은 단언). 헤더 없음은 401, 헤더 있으면 409로 나눠 응답 코드·본문을 메시지에 찍는다.
+
 ## PostgreSQL 구성을 컨테이너에서 처음 확인 (네 영역 최신 main으로 빌드)
 - 확인: 스택 10개 컨테이너 healthy. `/readyz`: survey-service `database.kind=postgresql`, release-gate `database=postgresql`, question-authoring `db=postgres`, ops-feedback `log_store`·`failure_store`=postgresql. ops-feedback I7 읽기 면은 `OPS_FAILURE_DB` 없이 DB URL만으로 켜진다(`GET /v1/cases` 200). `/data`(tmpfs)에 쓰기 흔적과 오류 로그 없음(qa, ops 비어 있음). 잡은 `storage` 항목이 필수(없으면 시작 거부)이고 DB URL이 있으면 PostgreSQL을 쓴다 -> 설정 파일에 주석만 보강.
 - 5r 수정: 개입 본문에 `staff_id`를 싣지 않는다(InterventionDecision은 additionalProperties false). 위조 `X-Openit-User`가 무시되는지로 확인. 목록 알림의 kind는 `RISK_STOP`, 세션 조회 알림의 kind는 `RISK`, rule_id는 세션 조회에서 본다. 단독 실행 시 활성 릴리스 적재를 기다린다.

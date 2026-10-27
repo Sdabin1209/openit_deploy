@@ -12,13 +12,13 @@ services:
   survey-service:
     ports: ["127.0.0.1::8080"]
   question-authoring:
-    networks: [authoring, release, db, test-qa]
+    networks: [authoring, release, db-qa, test-qa]
     ports: ["127.0.0.1::8080"]
   ops-feedback-ingest:
-    networks: [serving, logs, authoring, db, test-ops]
+    networks: [serving, logs, authoring, db-ops, test-ops]
     ports: ["127.0.0.1::8080"]
   release-gate:
-    networks: [serving, release, db, test-gate]
+    networks: [serving, release, db-gate, test-gate]
     ports: ["127.0.0.1::8080"]
     environment:
       GATE_POLL_SECONDS: "2"
