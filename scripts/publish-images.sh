@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build/images.env 의 이미지를 로컬 레지스트리에 올리고 digest 잠금(locks/images.lock)을 갱신한다(D24).
 # 이전 잠금은 locks/history/ 에 보관한다(롤백의 재료). 외부 이미지 줄(GATEWAY_IMAGE 등)은 그대로 둔다.
-# 사용: publish-images.sh [영역 ...]   (비우면 build/images.env 전부)
+# 사용: publish-images.sh [영역 ...]   (비우면 build/images.env 의 기본 영역 전부. 선택 이미지(model-serving-gpu, 13GB)는 이름을 줄 때만 올린다)
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; mkdir -p "$(dirname "$LOCK")/history"
@@ -10,6 +10,10 @@ only=" $* "
 tmp=$(mktemp); cp "$LOCK" "$tmp"
 while read -r area img commit; do
   [ "$only" = "  " ] || [[ "$only" == *" $area "* ]] || continue
+  # 선택 이미지는 기본 경로에 넣지 않는다: 기록이 남아 있어도 기본 게시·E2E 가 그 이미지에 의존하지 않는다
+  if [ "$only" = "  " ] && [[ " $SERVICES_OPTIONAL " == *" $area "* ]]; then echo "건너뜀: $area (선택 이미지, 이름을 줄 때만 게시)"; continue; fi
+  if [ "$area" = model-serving-gpu ]; then gpu_record_valid "$DEPLOY_ROOT/build/images.env" >/dev/null || die "GPU 이미지 기록이 유효하지 않다: $(gpu_record_valid "$DEPLOY_ROOT/build/images.env" 2>&1 >/dev/null | tail -1)"; fi
+  "$DOCKER" image inspect "$img" >/dev/null 2>&1 || die "이미지가 이 호스트에 없다: $img (다시 빌드: bash scripts/build-images.sh $area)"
   var=$(echo "$area" | tr 'a-z-' 'A-Z_')
   ref="$DEPLOY_REGISTRY/openit/$area:build-$commit"
   "$DOCKER" tag "$img" "$ref"

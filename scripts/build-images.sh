@@ -39,7 +39,8 @@ fi
 SUFFIX=${BUILD_SUFFIX:-}
 if [ "$ONLY" = "  " ]; then
   # 기본(전부) 빌드는 8개 기록을 새로 쓴다. 따로 빌드한 GPU 이미지 기록(model-serving-gpu)은 지우지 않는다(13GB를 다시 빌드하지 않게)
-  GPU_KEEP=$(grep '^model-serving-gpu ' "$DEPLOY_ROOT/build/images.env" 2>/dev/null || true)
+  # 단, 이미지가 실제로 있고 현재 기준 model-runtime 태그와 같은 커밋일 때만 유지한다(아니면 이유를 알리고 기록을 버린다: gpu_record_valid, lib.sh)
+  GPU_KEEP=$(gpu_record_valid "$DEPLOY_ROOT/build/images.env" || true)
   rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"
   if [ -n "$GPU_KEEP" ]; then mkdir -p "$DEPLOY_ROOT/build"; printf '%s\n' "$GPU_KEEP" > "$DEPLOY_ROOT/build/images.env"; fi
 fi

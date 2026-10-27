@@ -26,6 +26,18 @@ DEPLOY_SS_TAG="survey-schema-v1.0.0"                 # survey-service 의 문진
 SERVICES="survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console"
 # 선택 이미지: 기본 빌드·게시 흐름에 들어가지 않는다(약 13GB). build-images.sh --gpu 로 만든다 (compose.llm.yaml)
 SERVICES_OPTIONAL="model-serving-gpu"
+# build/images.env 의 선택 이미지(GPU) 기록을 유지해도 되는지: gpu_record_valid <기록 파일>. 유효하면 그 줄을 stdout 으로 내고 0, 아니면 이유를 stderr 로 내고 1.
+# 유효 = (1) 기록의 커밋이 현재 기준 model-runtime 태그(DEPLOY_MR_TAG)의 커밋과 같고 (2) 이미지가 로컬에 실제로 있다. 기록이 없으면 조용히 1.
+# 13GB 이미지를 따로 빌드한 사용자가 있어, 맞지 않는 기록은 버리되 이미지 자체는 지우지 않는다(디스크 회수는 사용자가 판단한다).
+gpu_record_valid() {
+  local rec img c want
+  rec=$(grep '^model-serving-gpu ' "$1" 2>/dev/null | head -1 || true); [ -n "$rec" ] || return 1
+  img=$(awk '{print $2}' <<<"$rec"); c=$(awk '{print $3}' <<<"$rec")
+  want=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$DEPLOY_MR_TAG^{commit}" 2>/dev/null) || { echo "GPU 이미지 기록을 버린다: model-runtime $DEPLOY_MR_TAG 의 커밋을 읽지 못했다(태그가 없다). 다시 빌드: bash scripts/build-images.sh --gpu" >&2; return 1; }
+  [ "$c" = "$want" ] || { echo "GPU 이미지 기록을 버린다: 기록의 커밋 $c 는 현재 기준 model-runtime $DEPLOY_MR_TAG($want)와 다르다. 다시 빌드: bash scripts/build-images.sh --gpu (이전 이미지는 지우지 않았다)" >&2; return 1; }
+  "${DOCKER:-docker}" image inspect "$img" >/dev/null 2>&1 || { echo "GPU 이미지 기록을 버린다: 이미지 $img 가 이 호스트에 없다. 다시 빌드: bash scripts/build-images.sh --gpu" >&2; return 1; }
+  printf '%s\n' "$rec"
+}
 # 이미지 이름은 영역 이름과 같다. 로컬 레지스트리 안의 저장소 이름은 openit/<영역>.
 dc() { # dc <project> <compose args...>
   local project=$1; shift

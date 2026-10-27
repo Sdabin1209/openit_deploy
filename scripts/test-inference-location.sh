@@ -50,7 +50,7 @@ bail() { echo "중단: $*" >&2; exit 1; }
 bash "$DEPLOY_ROOT/scripts/doctor.sh" || exit 1
 mkdir -p "$W"
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || bail "호스트 가상환경 준비 실패"
-have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(wc -l < "$DEPLOY_ROOT/build/images.env")" -ge 8 ] && while read -r _ img _; do "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
+have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(grep -vc '^model-serving-gpu ' "$DEPLOY_ROOT/build/images.env")" -ge 8 ] && while read -r n img _; do [ "$n" = model-serving-gpu ] && continue; "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
 if [ $REBUILD = 1 ] || ! have_images; then echo "== 이미지 빌드(현재 HEAD)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" || bail "이미지 빌드 실패"; fi
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels || bail "호스트 클라이언트 준비 실패"
 grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
