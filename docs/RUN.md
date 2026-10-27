@@ -224,6 +224,9 @@ bash scripts/demo.sh status                                          # model-ser
 
 - **읽기 전용 루트에서의 캐시·홈·원격 측정.** model-serving은 `read_only` 루트(보안 설정 유지)라서 캐시·홈이 쓰기 가능한 serving-data 볼륨(`/var/lib/model-runtime/…`)을 가리켜야 한다(안 그러면 ~/.cache(컨테이너 HOME 아래)에서 `OSError: [Errno 30] Read-only file system`으로 적재 실패, `/readyz` 503 `RuntimeError`). 이 환경 변수(`HOME`, `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT`, `TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `TORCH_HOME`)와 원격 측정 차단(`VLLM_NO_USAGE_STATS`, `DO_NOT_TRACK`, `HF_HUB_DISABLE_TELEMETRY`)은 **model-runtime v0.5.3부터 이미지의 ENV 기본값**이라 `compose.llm.yaml`은 다시 정하지 않는다(두 곳에서 어긋나는 것을 막으려는 것). 서버는 시작 때 캐시 디렉터리를 만들고 쓸 수 없으면 `/readyz`에 분명한 사유를 낸다. `compose.llm.yaml`에는 백엔드·프로파일·오프라인 같은 배포마다 달라지는 값만 있다. `TMPDIR`는 돌리지 않는다(`/tmp`는 noexec tmpfs, tmpfs exec 허용은 보안 설정 약화). 이 구성은 GPU 서버에서 확인 전이다.
 
+### 7-2-1b. 진짜 어댑터 얹기와 GPU 구멍
+`demo.sh up --llm --profile rtx4090-24g --adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE`은 중립 LoRA 대신 학습 서버에서 가져온 어댑터를 얹는다(기반 모델 불일치·순위 초과는 이미지 빌드 전에 거부, 평가하지 않음). GPU 서버가 열릴 때 따라 할 순서는 `docs/GPU_HOLE.md`. `demo.sh up`은 끝에 비밀 노출 점검을 자동으로 돌린다(`demo.sh check-secrets`로 다시, 인자 없는 `check-secrets-hidden.sh`는 떠 있으면 데모도 점검).
+
 ### 7-2-2. 서버(gpu-dev)에서 할 일 -- Qwen3-1.7B 기준 (서버 미검증)
 
 이 PC(GPU 없음)에서는 아래를 **하지 않았다.** 서버에 접속해 차례로 하고 결과를 OPEN_GAPS U07(새 구조의 실제 LLM 데모), U01(12GB에서 Qwen3-1.7B 적재, A·B 동시 적재)에 기록한다.

@@ -2,6 +2,8 @@
 # 사람이 화면을 직접 눌러 볼 수 있는 데모 환경. 상시 구성(`deploy` 프로젝트)과 따로, 같은 서버에서 함께 돌 수 있다.
 #   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
 #   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen3-1.7B(프로파일 gpu-12g, 파이프라인 데모) + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
+#   scripts/demo.sh up --llm --profile rtx4090-24g --adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE   중립 LoRA 대신 학습 서버에서 가져온 진짜 어댑터를 얹는다(docs/GPU_HOLE.md H2)
+#   scripts/demo.sh check-secrets                              데모 스택(state/demo/secrets)의 비밀 노출 점검(up 끝에도 자동으로 돈다)
 #   scripts/demo.sh config --llm [--profile gpu-12g]            컨테이너를 띄우지 않고 실제 LLM 구성의 병합(docker compose config)만 검증한다(이미지 참조가 로컬 태그인지)
 #   scripts/demo.sh diag                                        켜져 있는 데모의 release-gate 제출·판정(checks)·수집기·모델 패키지 요약(읽기 전용)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
@@ -14,7 +16,7 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1   # 사용법·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
 source "$(dirname "$0")/lib.sh"
 CMD=${1:-}; shift || true
-STOP=0; REBUILD=0; EXT=""; LLM=0; REBUILD_GPU=0; YES_LARGE=0; LLM_PROFILE_NAME=""; PURGE_CACHE=0; PURGE_YES=0
+STOP=0; REBUILD=0; EXT=""; LLM=0; REBUILD_GPU=0; YES_LARGE=0; LLM_PROFILE_NAME=""; AD_A=""; AD_B=""; PR_A=""; PR_B=""; PURGE_CACHE=0; PURGE_YES=0
 while [ $# -gt 0 ]; do case "$1" in
   --stop-before-approval) STOP=1; shift;; --rebuild) REBUILD=1; shift;;
   --external-inference) [ $# -ge 2 ] || die "--external-inference 에는 URL이 필요하다"; EXT=$2; shift 2;;
@@ -23,16 +25,29 @@ while [ $# -gt 0 ]; do case "$1" in
   --llm) LLM=1; shift;; --rebuild-gpu) REBUILD_GPU=1; shift;; --yes-large) YES_LARGE=1; shift;;
   --profile) [ $# -ge 2 ] || die "--profile 에는 이름이 필요하다 (예: gpu-12g)"; LLM_PROFILE_NAME=$2; shift 2;;
   --profile=*) LLM_PROFILE_NAME=${1#*=}; shift;;
+  --adapter-a|--adapter-b|--prompt-a|--prompt-b) [ $# -ge 2 ] || die "$1 에는 값이 필요하다"
+    case "$1" in --adapter-a) AD_A=$2;; --adapter-b) AD_B=$2;; --prompt-a) PR_A=$2;; --prompt-b) PR_B=$2;; esac; shift 2;;
   *) die "알 수 없는 인자: $1";; esac; done
 [ -z "$LLM_PROFILE_NAME" ] || [ $LLM = 1 ] || die "--profile 은 --llm 과 함께 쓴다"
 [ $LLM = 0 ] || [ -z "$EXT" ] || die "--llm 은 --external-inference 와 함께 쓰지 않는다 (외부 GPU 서버는 그 서버에서 compose.inference.yaml, docs/RUN.md 7-1)"
+ATTACH=0
+if [ -n "$AD_A$AD_B$PR_A$PR_B" ]; then
+  [ $LLM = 1 ] || die "--adapter-a/-b, --prompt-a/-b 는 --llm 과 함께 쓴다"
+  [ "$CMD" = up ] || [ "$CMD" = reset ] || [ "$CMD" = config ] || die "어댑터 인자는 up(reset, config)에서만 받는다"
+  [ -n "$AD_A" ] && [ -n "$AD_B" ] && [ -n "$PR_A" ] && [ -n "$PR_B" ] || die "--adapter-a --adapter-b --prompt-a --prompt-b 는 네 개를 모두 준다"
+  for d in "$AD_A" "$AD_B"; do [ -d "$d" ] || die "어댑터 디렉터리가 없다: $d"; done
+  for f in "$PR_A" "$PR_B"; do [ -f "$f" ] || die "시스템 프롬프트 파일이 없다: $f"; done
+  # 상대 경로는 절대 경로로 바꿔 둔다(하위 스크립트가 다른 디렉터리에서 돈다)
+  AD_A=$(cd "$AD_A" && pwd); AD_B=$(cd "$AD_B" && pwd); PR_A=$(cd "$(dirname "$PR_A")" && pwd)/$(basename "$PR_A"); PR_B=$(cd "$(dirname "$PR_B")" && pwd)/$(basename "$PR_B")
+  ATTACH=1
+fi
 [[ "${LLM_PROFILE_NAME:-gpu-12g}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "프로파일 이름은 소문자·숫자·하이픈이다: $LLM_PROFILE_NAME"
 [ $PURGE_CACHE = 1 ] || [ $PURGE_YES = 0 ] || die "--yes-purge-$HF_CACHE_VOLUME 는 --purge-cache 와 함께만 쓴다"
 [ $PURGE_CACHE = 0 ] || [ "$CMD" = down ] || die "--purge-cache 는 down 과 함께 쓴다 (모델 캐시는 기본적으로 남는다)"
 P=${DEMO_PROJECT:-deploy-demo}
 case "$P" in deploy-demo*) ;; *) die "DEMO_PROJECT 는 deploy-demo 로 시작해야 한다 (상시 구성과 섞이지 않게)";; esac
 W="$DEPLOY_ROOT/state/demo"
-usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
 
 set_llm_image() { # 데모는 방금 빌드한 로컬 GPU 이미지를 태그로 직접 쓴다(레지스트리에 올리지 않는다: 13GB 이중 보관 방지). digest 고정은 데모에서 하지 않는다
   MODEL_SERVING_GPU_IMAGE=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null || true)
@@ -97,7 +112,8 @@ guide() {
    예: cat $W/secrets/tokens/staff-console-password
 
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )
- $( [ $LLM = 1 ] && printf '%s' " 실제 LLM: 학습하지 않은 기반 모델(프로파일 $LLM_PROFILE_NAME, gpu-12g 는 Qwen/Qwen3-1.7B) + 학습 데이터의 시스템 프롬프트(prompt-4 조립) + 효과 없는 LoRA(lora_B=0, 시험용 대체). 학습된 모델이 아니라서 A 출력이 형식을 못 지키면 그 턴은 실패 신호로 처리된다(503 OUTPUT_INVALID, 값을 지어내지 않는다, D75). 12GB GPU에서 적재되는지는 서버 미검증이다. 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다." )
+ $( [ $LLM = 1 ] && [ -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 기반 모델(프로파일 $LLM_PROFILE_NAME) + 학습 서버에서 가져온 LoRA-A/B(평가하지 않음, 릴리스 평가 보고서는 시험용 고정값) + 사용자가 준 시스템 프롬프트. 어댑터가 학습 때와 같은 프롬프트로 만든 것인지는 사용자가 보증한다. 첫 응답은 적재가 끝난 뒤부터 된다." )
+ $( [ $LLM = 1 ] && [ ! -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 학습하지 않은 기반 모델(프로파일 $LLM_PROFILE_NAME, gpu-12g 는 Qwen/Qwen3-1.7B) + 학습 데이터의 시스템 프롬프트(prompt-4 조립) + 효과 없는 LoRA(lora_B=0, 시험용 대체). 학습된 모델이 아니라서 A 출력이 형식을 못 지키면 그 턴은 실패 신호로 처리된다(503 OUTPUT_INVALID, 값을 지어내지 않는다, D75). 12GB GPU에서 적재되는지는 서버 미검증이다. 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다." )
  직원 알림: 지금은 입력원이 없다(OPEN_GAPS G01). 직원 콘솔(/staff/)에 알림이 뜨지 않는 것이 정상이며 survey-service /readyz 의 staff_alert_source.active=false 로 드러난다.
  승인 화면: 승인 대기 시험 제출이 있다$( [ $STOP = 1 ] && echo " (--stop-before-approval: 문항 세트 v1·v2 모두 대기. 승인한 뒤 scripts/demo.sh activate)" || echo " (보지 못한 문항 세트 제출 1건. v1·v2는 스크립트가 시험용 승인자로 이미 승인·활성화)")
  실패 사례 검토 화면: 시험 사례 1건(PENDING). /admin/ 의 검토 메뉴(검토자 계정)
@@ -141,7 +157,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 survey-service /readyz 가 200 이 된다."
   return 0
 }
-case "$CMD" in up|activate|status|down|reset|config|diag) detect_docker;; esac
+case "$CMD" in up|activate|status|down|reset|config|diag|check-secrets) detect_docker;; esac
 case "$CMD" in
   up)
     [ -d "$W" ] && [ -f "$W/registry.env" ] && die "이미 데모 상태가 있다 ($W). scripts/demo.sh down 또는 reset"
@@ -154,6 +170,11 @@ case "$CMD" in
     fi
     [ -z "$EXT" ] || bash "$DEPLOY_ROOT/scripts/doctor.sh" --up --inference "$EXT" || { rm -f "$W/external-inference"; exit 1; }
     bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || die "호스트 가상환경 준비 실패"
+    if [ $ATTACH = 1 ]; then   # 13GB 이미지를 빌드하기 전에 어댑터를 거부한다(기반 모델 불일치, 순위 초과, 파일 누락)
+      echo "== 학습 서버 어댑터 사전 검사 (빌드 전에): 프로파일 $LLM_PROFILE_NAME"
+      bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "$LLM_PROFILE_NAME" "$W/llm-package" --check-only --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" \
+        || { rm -f "$W/llm"; die "어댑터 검사 거부: 빌드·기동을 하지 않았다. 사유를 고친 뒤 scripts/demo.sh down 으로 상태를 지우고 다시"; }
+    fi
     mr_label_ok() { # 이미지의 io.openit.model-runtime 라벨이 현재 태그와 같은가(라벨이 없는 이미지는 해당 없음; v 접두사는 무시). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
       local l; l=$("$DOCKER" image inspect "$1" --format '{{index .Config.Labels "io.openit.model-runtime"}}' 2>/dev/null | tr -d '\r') || return 1
       case "$l" in ""|"<no value>"|none) return 0;; esac
@@ -177,8 +198,13 @@ case "$CMD" in
         if [ -n "$old" ] && "$DOCKER" image inspect "$old" >/dev/null 2>&1; then echo "== GPU 이미지($old)가 현재 model-runtime 태그($DEPLOY_MR_TAG)과 맞지 않거나 --rebuild-gpu 라서 다시 빌드한다 (옛 이미지는 지우지 않는다; 비대화형은 --yes-large 필요)"; fi
         echo "== GPU 이미지 빌드(model-serving-gpu, 약 13GB)"; bash "$DEPLOY_ROOT/scripts/build-images.sh" --gpu $( [ $YES_LARGE = 1 ] && echo --yes-large ) || die "GPU 이미지 빌드 실패 (비대화형이면 --yes-large)"; fi
       set_llm_image   # 빌드로 images.env 가 바뀌었을 수 있다
-      echo "== 중립 LoRA 패키지(학습하지 않은 시험용 대체) 생성: 프로파일 $LLM_PROFILE_NAME"
-      bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "$LLM_PROFILE_NAME" "$W/llm-package" || die "중립 LoRA 패키지 생성 실패"
+      if [ $ATTACH = 1 ]; then
+        echo "== 학습 서버 어댑터 패키지 생성(평가하지 않음): 프로파일 $LLM_PROFILE_NAME"
+        bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "$LLM_PROFILE_NAME" "$W/llm-package" --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" || die "어댑터 패키지 생성 실패"
+      else
+        echo "== 중립 LoRA 패키지(학습하지 않은 시험용 대체) 생성: 프로파일 $LLM_PROFILE_NAME"
+        bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "$LLM_PROFILE_NAME" "$W/llm-package" || die "중립 LoRA 패키지 생성 실패"
+      fi
       if hf_cache_exists; then echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 재사용 (모델을 다시 받지 않는다)"; else echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 생성 (프로젝트 밖 볼륨: down 해도 남는다)"; hf_cache_ensure; fi
     fi
     grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
@@ -197,9 +223,20 @@ case "$CMD" in
     if [ $STOP = 1 ]; then run_steps "1,2,3,demo4" --demo-stop || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"
     else run_steps "1,2,3,demo4,6" || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"; fi
     guide
-    [ $LLM = 0 ] || wait_llm ;;
+    echo "== 비밀 노출 점검 (데모 스택 $P, 비밀 폴더 $SECRETS_DIR; 값은 출력하지 않는다)"
+    SEC_RC=0; bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" --no-demo --secrets-dir "$SECRETS_DIR" "$P" || SEC_RC=$?
+    [ $SEC_RC = 0 ] || echo "!! 비밀 노출 점검 실패($SEC_RC): 위의 컨테이너·변수 이름을 고칠 때까지 이 데모를 외부에 열지 않는다 (다시: scripts/demo.sh check-secrets)" >&2
+    [ $LLM = 0 ] || wait_llm
+    exit $SEC_RC ;;
+  check-secrets)
+    [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    env_demo; exec bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" --no-demo --secrets-dir "$SECRETS_DIR" "$P" ;;
   config)
     [ $LLM = 1 ] || die "demo.sh config 는 --llm 과 함께 쓴다 (실제 LLM 구성의 병합 검증)"
+    if [ $ATTACH = 1 ]; then
+      echo "== 어댑터 사전 검사 (아무것도 만들지 않는다): 프로파일 ${LLM_PROFILE_NAME:-gpu-12g}"
+      bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "${LLM_PROFILE_NAME:-gpu-12g}" /dev/null --check-only --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" || exit 2
+    fi
     env_demo; echo "== 실제 LLM 구성 병합 검증 (컨테이너를 띄우지 않는다): 프로파일 $LLM_PROFILE_NAME"
     llm_config_check sentinel || exit 1
     echo "  compose 파일 순서: $COMPOSE_EXTRA"
@@ -228,7 +265,7 @@ case "$CMD" in
     if [ $PURGE_CACHE = 1 ]; then hf_cache_purge $PURGE_YES; else hf_cache_report; fi ;;
   reset)
     "$0" down || true
-    exec "$0" up $( [ $STOP = 1 ] && echo --stop-before-approval ) $( [ $LLM = 1 ] && echo --llm ) $( [ -n "$LLM_PROFILE_NAME" ] && echo --profile "$LLM_PROFILE_NAME" ) $( [ $YES_LARGE = 1 ] && echo --yes-large ) ;;
+    exec "$0" up $( [ $STOP = 1 ] && echo --stop-before-approval ) $( [ $LLM = 1 ] && echo --llm ) $( [ -n "$LLM_PROFILE_NAME" ] && echo --profile "$LLM_PROFILE_NAME" ) $( [ $YES_LARGE = 1 ] && echo --yes-large ) $( [ $ATTACH = 1 ] && echo --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" ) ;;
   ""|-h|--help|help) usage; [ -z "$CMD" ] && exit 2 || exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac

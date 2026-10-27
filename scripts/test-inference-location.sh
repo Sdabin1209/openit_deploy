@@ -69,8 +69,9 @@ reach() { # reach <URL>: 컨테이너(호출자·서버와 같은 위치)에서 
   "$DOCKER" run --rm --name "$P-probe" --add-host host.docker.internal:host-gateway "$UTIL" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=5)" "$1" >/dev/null 2>&1
 }
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
+  # 시험용 fake 모델이 문항 순서 파일을 필요로 한다(test/compose.fake-model.yaml, e2e.sh 와 같다). 없으면 A 출력이 유효하지 않아 단계 5가 VALIDATE 에서 실패한다
   INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" RELEASE_URL="http://host.docker.internal:$GPORT" INFERENCE_PORT= INFERENCE_BIND=$BIND \
-    "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
+    "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" "$@" ); }
 
 OK=0
 for BIND in 127.0.0.1 0.0.0.0; do

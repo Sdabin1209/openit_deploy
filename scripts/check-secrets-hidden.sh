@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# 비밀 노출 표준 검사(D84). 사용: check-secrets-hidden.sh [프로젝트 ...]  (기본: $DEPLOY_PROJECT 또는 deploy)
+# 비밀 노출 표준 검사(D84). 사용: check-secrets-hidden.sh [--secrets-dir DIR] [--no-demo] [프로젝트 ...]
+#   프로젝트를 주지 않으면 자동 모드: 상시 구성(기본 $DEPLOY_PROJECT 또는 deploy, 비밀 폴더 $SECRETS_DIR 또는 secrets/)이 있으면 그것을,
+#   데모(state/demo/registry.env 가 있으면)도 함께 점검한다. 데모는 비밀 폴더(state/demo/secrets)·compose 파일·프로젝트 이름이 상시 구성과 달라서
+#   demo.sh 의 환경으로 점검한다(`demo.sh check-secrets`). 프로젝트를 이름으로 주면 그 프로젝트만(환경 SECRETS_DIR·COMPOSE_EXTRA 그대로).
+#   --secrets-dir DIR: 비밀 폴더를 직접 지정한다(SECRETS_DIR 와 같음). --no-demo: 자동 모드에서 데모를 건너뛴다(demo.sh 가 자기 점검을 부를 때 쓴다).
 #   환경: SECRETS_DIR(기본 secrets/), COMPOSE_EXTRA(dc 와 같음), DOCKER
 # 정적: compose 병합 결과(--profile jobs)에서 비밀 이름(…TOKEN/TOKENS/SALT/PASSWORD/SECRET/PRIVATE_KEY/API_KEY)에 값이 직접 들어 있으면 실패,
 #       NAME_FILE=/run/secrets/<이름> 이 그 서비스의 secrets 마운트와 맞지 않으면 실패.
@@ -8,11 +12,23 @@
 # 값은 절대 출력하지 않는다: 출력은 컨테이너 이름, 변수 이름(또는 Cmd/Entrypoint), 개수뿐이다. 비교는 파일 내용을 읽어 포함 여부만 판정한다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
-SD=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
-PROJECTS=("$@"); [ ${#PROJECTS[@]} -gt 0 ] || PROJECTS=("${DEPLOY_PROJECT:-deploy}")
+SD=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}; NODEMO=0; EXPLICIT_SD=0; PROJECTS=()
+while [ $# -gt 0 ]; do case "$1" in
+  --secrets-dir) [ $# -ge 2 ] || die "--secrets-dir 에는 디렉터리가 필요하다"; SD=$2; EXPLICIT_SD=1; shift 2;;
+  --no-demo) NODEMO=1; shift;;
+  -*) die "알 수 없는 인자: $1";;
+  *) PROJECTS+=("$1"); shift;; esac; done
+rc=0
+if [ ${#PROJECTS[@]} -eq 0 ]; then   # 자동 모드
+  DEMO_ON=0; [ $NODEMO = 0 ] && [ $EXPLICIT_SD = 0 ] && [ -f "$DEPLOY_ROOT/state/demo/registry.env" ] && DEMO_ON=1
+  if [ -d "$SD/tokens" ]; then PROJECTS=("${DEPLOY_PROJECT:-deploy}")
+  elif [ $DEMO_ON = 1 ]; then echo "상시 구성의 비밀 폴더($SD/tokens)가 없어 건너뛴다. 데모만 점검한다"
+  else die "비밀 폴더가 없다: $SD/tokens (먼저 scripts/gen-secrets.sh)"; fi
+  if [ $DEMO_ON = 1 ]; then echo "== 데모 점검 (state/demo)"; bash "$DEPLOY_ROOT/scripts/demo.sh" check-secrets || rc=1; fi
+  [ ${#PROJECTS[@]} -gt 0 ] || exit $rc
+fi
 [ -d "$SD/tokens" ] || die "비밀 폴더가 없다: $SD/tokens (먼저 scripts/gen-secrets.sh)"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-rc=0
 for P in "${PROJECTS[@]}"; do
   if [ "${CHECK_SECRETS_SKIP_STATIC:-0}" = 1 ]; then echo '{"services":{}}' > "$TMP/$P.json"   # 자기 점검용(compose 없이 동적 검사만)
   else dc "$P" --profile jobs config --format json > "$TMP/$P.json" 2>"$TMP/$P.err"; fi || { echo "오류: compose config 실패($P): $(tail -2 "$TMP/$P.err" | tr '\n' ' ' | cut -c1-200)" >&2; rc=1; continue; }

@@ -295,7 +295,7 @@ def step3():
         reg_ro = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); reg_ro.publish(pk["LORA_A"][0], pk["LORA_A"][1], b"{}"); raise AssertionError("읽기 토큰으로 게시됨")
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
     STATE["lora"] = refs; STATE["system_prompt"] = {r: pk[r][0]["system_prompt"]["sha256"] for r in pk}; save()
-    src_desc = ("학습하지 않은 중립 LoRA(model-runtime make_neutral_package.py + 학습 데이터 system 메시지 프롬프트, vllm 서빙 설정, lora_B=0이라 출력은 기반 모델과 같다)" if a.llm_package
+    src_desc = ("학습 서버에서 가져온 LoRA-A/B(model-runtime 설정 + 가져온 어댑터, 평가하지 않음)" if a.llm_package and pk["LORA_A"][0].get("ext", {}).get("deploy", {}).get("attached") else "학습하지 않은 중립 LoRA(model-runtime make_neutral_package.py + 학습 데이터 system 메시지 프롬프트, vllm 서빙 설정, lora_B=0이라 출력은 기반 모델과 같다)" if a.llm_package
                 else "시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct; fake 백엔드는 기반 모델을 적재하지 않는다)")
     rec(3, "TEST-SUB", f"학습 대신 {src_desc}와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(survey 이미지 fake_serving_configs와 다른 키: {STATE.get('fake_cfg_vs_survey_image')}). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2가 게시한 실제 데이터셋(단계 2가 BLOCKED이면 자리표시 참조, TEST-SUB). 시스템 프롬프트는 어댑터 디렉터리의 system_prompt.txt와 ModelPackageManifest.system_prompt(path, sha256)로 패키지에 들어 있다(시험용 자리표시 문장). model-lab 파이프라인·패키징 코드는 실행하지 않음(이웃 코드를 가져오지 않는다)")
 
