@@ -28,6 +28,16 @@ import /etc/caddy/devices.caddy
 }
 # 평문 포트(컨테이너 8080): 컨테이너 헬스체크와 서버 안 점검용 /healthz 만 평문으로 답하고, 나머지는 HTTPS 로 영구 이동(308: 메서드와 본문을 유지)시킨다.
 # GATEWAY_PUBLIC_TLS_PORT 는 밖에서 보이는 HTTPS 포트(운영 443, 기본 8443).
+# 저작 서비스 프록시(저자 경로, D88/U9): 사람 인증(개별 계정, 역할 author 또는 clinical-reviewer)을 마친 요청에만 gateway 서비스 토큰(QA_GATEWAY_TOKENS)과 인증된 사용자 ID(X-Openit-User)를 붙인다.
+# 클라이언트가 보낸 Authorization·X-Openit-User 는 덮어쓴다. 역할별 권한(저자 != 검수자)은 서비스가 QA_USER_ROLES 로 정한다. 본문 상한은 사이트 기본 8MiB(자료 업로드).
+(qa_proxy) {
+	reverse_proxy question-authoring:8080 {
+		import proxy_limits 15s
+		header_up Authorization "Bearer {file./run/secrets/qa-gateway-token}"
+		header_up X-Openit-User "{http.auth.user.id}"
+		header_down Cache-Control "no-store"
+	}
+}
 http://:8080 {
 	handle /healthz {
 		respond "ok" 200
@@ -244,6 +254,20 @@ http://:8080 {
 	# 키오스크 공개 API(PUBLIC_API.md, D85 F절): 기기 토큰(Authorization: Bearer, 기기마다 파일 하나)을 목록과 대조한 뒤에만 서비스 kiosk 토큰으로 바꿔 붙인다.
 	# 토큰이 없거나 틀리면 401. 클라이언트가 보낸 X-Openit-User 는 지운다. /v1/staff 는 위에서만 staff 토큰을 받는다.
 	# 위험 신호 입력(risk-source)과 결과 조회(result-reader)는 감지기·병원 시스템용 내부 면이다: 게이트웨이에 열지 않는다(D85). 키오스크 경로의 와일드카드가 삼키지 않게 먼저 닫는다.
+	# 저자 경로: 문항 자료 등록(POST /v1/materials), 초안 조회·편집·확인(/v1/drafts*), 임상 근거 승인(POST /v1/reviews). 읽기 면(I1: /v1/question-sets*)은 열지 않는다(이웃 서비스용).
+	@qaauthor path /v1/materials /v1/drafts /v1/drafts/* /v1/reviews
+	handle @qaauthor {
+		import authenticate
+		handle @role_author {
+			import qa_proxy
+		}
+		handle @role_clinical-reviewer {
+			import qa_proxy
+		}
+		handle {
+			respond "forbidden: author 또는 clinical-reviewer 역할이 아니다" 403
+		}
+	}
 	@internalsurvey path /v1/sessions/*/risk-signals /v1/results /v1/results/*
 	handle @internalsurvey {
 		respond "not found" 404

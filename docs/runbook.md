@@ -251,3 +251,11 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 - 회전: `bash scripts/kiosk-add-device.sh rotate <기기 ID> --apply`. 옛 토큰은 즉시 무효다. 새 산출물을 기기에 전한 뒤 기기를 다시 시작한다. 의심스러운 기기는 바로 회전하거나 폐기한다.
 - 폐기: `bash scripts/kiosk-add-device.sh remove <기기 ID> --apply`(토큰 파일과 산출물을 지우고 목록에서 뺀다).
 - survey-service가 기기별 토큰을 받는 설정(`SURVEY_KIOSK_DEVICE_TOKENS`)과 세션 소유 확인은 survey-service 영역 몫이다. gateway는 기기 토큰을 확인한 뒤 서비스 kiosk 토큰으로 바꿔 붙이는 지금 구조 그대로이므로, 서비스가 기기를 구별하려면 gateway가 기기 ID를 서비스에 전해 주는 변경이 따로 필요하다(**이 리포는 아직 하지 않았다**: 영역 합의 필요).
+
+### 9-4. 저자 경로(question-authoring)를 gateway로 여는 구성 (D88/U9)
+
+- 경로: `POST /v1/materials`, `/v1/drafts`, `/v1/drafts/*`, `POST /v1/reviews`. 개별 계정 인증(Basic) 뒤에서 역할 `author` 또는 `clinical-reviewer`만 통과하고(없으면 401, 다른 역할은 403), gateway가 서비스 토큰(`qa-gateway-token`, 서비스의 `QA_GATEWAY_TOKENS`)과 인증된 계정 ID(`X-Openit-User`)를 붙인다. 클라이언트가 보낸 `Authorization`·`X-Openit-User`는 덮어쓴다. 이웃 읽기 면(I1 `/v1/question-sets*`)은 열지 않는다.
+- 역할표는 두 곳이다: gateway 계정(`config/gateway-accounts.conf`, 역할 `author`/`clinical-reviewer`)과 서비스(`config/question-authoring.env`의 `QA_USER_ROLES`, 사용자 ID=역할). **둘을 같게 둔다.** 현재 값은 시험 계정(`author-e2e`, `clinical-e2e`)이다. 운영에서는 실제 계정으로 바꾸고 시험 계정은 지운다(`gen-secrets.sh`는 계정 파일의 모든 계정에 암호를 만든다).
+- 4-eyes는 서비스가 강제한다: 저자의 확인은 `clinical_basis_approved=false`이고 임상 근거 승인은 저자와 다른 `clinical-reviewer`가 `POST /v1/reviews`로 해야 `reviewed_only`에 나타난다(자기 승인 403).
+- 본문 상한은 사이트 기본 8MiB(자료 업로드). 응답 헤더 대기는 15초(`proxy_limits`, 시작값).
+- E2E 단계 `5a`가 gateway 경유로 위 흐름(401, 403, 등록·확인, 자기 승인 403, 위조 헤더 무시, 승인 뒤 `reviewed_only`, I1 404, 본문 상한)을 확인한다.

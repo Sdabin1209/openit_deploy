@@ -877,6 +877,45 @@ def step5m():
     assert gate_l and not gate_l[0].startswith(("CRIT", "SKIP")), ("check-health 의 release-gate 판정 루프", gate_l)
     rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 6s 안), 실패 응답 {body}; 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택의 check-health --project 가 model-serving /readyz OK, release-gate 판정 루프 '{gate_l[0][5:60].strip()}...'를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
 
+AUTHOR = lambda: ("author-e2e", TOK("account-author-e2e-password"))        # 저자 경로 계정(역할 author)
+CLINICAL = lambda: ("clinical-e2e", TOK("account-clinical-e2e-password"))   # 임상 근거 검수자(역할 clinical-reviewer, 저자와 다른 주체)
+def gw_bytes(method, path, data, ctype, basic=None, headers=None):
+    """게이트웨이 경유 원문 본문 호출(자료 업로드). (상태, JSON 또는 문자열, 헤더)"""
+    req = urllib.request.Request(URL("gw") + path, data=data, method=method)
+    if basic: req.add_header("Authorization", "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode())
+    if data is not None: req.add_header("Content-Type", ctype)
+    for k, v in (headers or {}).items(): req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r: b = r.read(); return r.status, json.loads(b or b"null"), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        b = e.read()
+        try: return e.code, json.loads(b), dict(e.headers)
+        except Exception: return e.code, b.decode(errors="replace"), dict(e.headers)
+
+def step5a():
+    title("5a", "저자 경로(question-authoring)를 gateway 기본 인증 뒤에서: 자료 등록·확인(author), 임상 근거 승인(clinical-reviewer), 자기 승인 403, 본문 상한 (D88/U9)")
+    qset = f"qs-{RID}-gwauthor"; form = (ROOT / "test/fixtures/question-form-v2.txt").read_bytes()
+    up = f"/v1/materials?question_set_id={qset}&filename=gw.txt"
+    assert gw_bytes("POST", up, form, "text/plain")[0] == 401, "인증 없이 저자 경로가 열려 있다"
+    assert gw_bytes("POST", up, form, "text/plain", basic=STAFF())[0] == 403, "author 역할이 아닌 계정(staff)이 저자 경로를 쓸 수 있다"
+    c, d, _ = gw_bytes("POST", up, form, "text/plain", basic=AUTHOR(), headers={"X-Openit-User": "spoofed-user", "Authorization-X": "x"}); assert c in (200, 201), ("자료 등록", c, d)
+    c, pv, _ = gw_raw("GET", f"/v1/drafts/{d['draft_id']}/preview", basic=AUTHOR()); assert c == 200 and pv["ready_to_confirm"], (c, pv)
+    c, ref, _ = gw_raw("POST", f"/v1/drafts/{d['draft_id']}/confirm", {"preview_hash": pv["preview_hash"]}, basic=AUTHOR()); assert c == 200, ("확인", c, ref)
+    # 4-eyes: 저자는 자기 확인을 임상 승인하지 못하고, 검수자의 위조 X-Openit-User 는 무시되어 인증 계정이 기록된다
+    body = {"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB)"}
+    c, e, _ = gw_raw("POST", "/v1/reviews", body, basic=AUTHOR()); assert c == 403, ("저자가 자기 확인을 임상 승인했다", c, e)
+    c, r_, _ = gw_raw("POST", "/v1/reviews", body, basic=CLINICAL(), headers={"X-Openit-User": AUTHOR()[0]}); assert c in (200, 201), ("임상 승인", c, r_)
+    revs = list(qa_reader().get_reviews(ref)); assert len(revs) == 2, len(revs)
+    assert revs[-1]["clinical_basis_approved"] is True and revs[-1]["reviewer_id"] == CLINICAL()[0], ("위조 헤더가 무시되고 인증 계정이 기록돼야 한다", revs[-1])
+    assert dict(qa_reader().latest(qset, reviewed_only=True))["version"] == ref["version"], "임상 승인 뒤 reviewed_only 에 나타나야 한다"
+    # 이웃 읽기 면(I1)은 gateway 에 열지 않는다. 본문 상한 8MiB 초과는 413
+    assert gw_raw("GET", "/v1/question-sets", basic=AUTHOR())[0] == 404, "I1 읽기 면이 gateway 에 열려 있다"
+    # Caddy 는 상한을 넘는 본문을 읽다가 413 으로 끊는다. 클라이언트가 아직 보내는 중이면 응답을 받기 전에 연결이 끊겨(SSL EOF·연결 재설정) 상태 코드를 못 읽기도 한다: 둘 다 '거부됨'으로 본다(정상 업로드가 아님)
+    try: c9 = gw_bytes("POST", up, b"x" * (9 * 1024 * 1024), "text/plain", basic=AUTHOR())[0]
+    except (urllib.error.URLError, ConnectionError, OSError) as e9: c9 = f"연결 끊김({type(e9).__name__})"
+    assert c9 == 413 or isinstance(c9, str), ("8MiB 초과 본문이 거부되지 않았다", c9)
+    rec("5a", "REAL", f"저자 경로(gateway 경유, 개별 계정): 인증 없음 401, 역할 없는 계정 403, author 계정의 자료 등록·미리보기·확인(문항 세트 {qset}@{ref['version']}), 저자의 자기 임상 승인 403(4-eyes), clinical-reviewer 계정의 승인 200(위조 X-Openit-User 는 무시되고 reviewer_id={CLINICAL()[0]} 가 기록됨), 승인 뒤 reviewed_only 최신 버전, I1 읽기 면 404, 9MiB 본문 거부({c9})")
+
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1351,7 +1390,7 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

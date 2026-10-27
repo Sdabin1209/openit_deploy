@@ -87,6 +87,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-dsn
   db-gate-dsn:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-dsn
+  qa-gateway-token:
+    file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-token
+  qa-gateway-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-tokens
   survey-api-kiosk:
     file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-kiosk
   survey-api-staff:
@@ -209,7 +213,7 @@ services:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
       - {source: gateway-accounts, target: /etc/caddy/accounts.caddy}
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
-    secrets: [survey-api-kiosk, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer]
+    secrets: [qa-gateway-token, survey-api-kiosk, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
@@ -226,7 +230,7 @@ services:
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_TLS_PORT-8443}:8443"  # HTTPS (D88/U5)
-    networks: [edge, ui, serving]   # ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
+    networks: [edge, ui, serving, authoring]   # ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
@@ -285,10 +289,11 @@ services:
       - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
     environment:
       QA_AUTHOR_TOKENS_FILE: /run/secrets/qa-author-tokens
+      QA_GATEWAY_TOKENS_FILE: /run/secrets/qa-gateway-tokens   # gateway 경유 저자 경로의 서비스 토큰(X-Openit-User 를 신뢰하는 유일한 토큰)
       QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
       QA_FAILURES_TOKEN_FILE: /run/secrets/ops-read-question-authoring
       QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
-    secrets: [qa-author-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
+    secrets: [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
     tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
     networks: [authoring, release, db-qa]
     depends_on:

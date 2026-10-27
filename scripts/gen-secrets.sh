@@ -59,6 +59,8 @@ putlist ops-read-tokens "$OPS_R"
 putlist model-registry-read-tokens "$MR_R"
 putlist model-registry-write-tokens "$MR_W"
 putlist ops-review-tokens "reviewer=$(tok ops-review-reviewer)"
+tok qa-gateway-token >/dev/null   # gateway 가 저작 서비스에 쓰는 서비스 토큰(저자 경로, D88/U9). 이 토큰의 요청에서만 서비스가 X-Openit-User 를 사용자로 쓴다
+putlist qa-gateway-tokens "$(tok qa-gateway-token)"
 putlist qa-author-tokens "$QA_AUTHOR:author-e2e:question-author,$QA_REVIEWER:clinical-e2e:clinical-reviewer"
 putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
 
