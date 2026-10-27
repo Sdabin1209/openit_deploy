@@ -389,7 +389,7 @@ def rule_relax() -> R:
     T = "ActionExtraction 완화"
     py = os.environ.get("CHECK_ALL_MR_PY") or str(WS / "model-runtime" / ".venv" / "bin" / "python")
     if not os.path.exists(py):
-        r.un.append((T, "model-runtime/.venv 가 없다"))
+        r.un.append((T, "model-runtime/.venv 가 없다 (해결: model-runtime/README.md 실행 방법의 설치 줄, docs/SETUP.md F절)"))
         return r
     try:
         p = subprocess.run([py, "-I", "-c", RELAX_SNIPPET], capture_output=True, text=True, timeout=60, cwd="/")
@@ -649,7 +649,7 @@ def collect_area(repo: str):
         return ("fail", f"문법 오류 {errs}") if errs else ("ok", f"시험 스크립트 {len(scripts)}개 수집(bash -n)")
     if kind == "node":
         if not (d / "node_modules").is_dir():
-            return "un", "node_modules 가 없다"
+            return "un", "node_modules 가 없다 (해결: 그 영역에서 npm ci, docs/SETUP.md F절)"
         try:
             pj = json.loads((d / "package.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -667,10 +667,10 @@ def collect_area(repo: str):
         return ("fail", "수집된 시험이 0개") if total == 0 else ("ok", f"npm test 시험 {total}개 수집·통과")
     py = d / ".venv" / "bin" / "python"
     if not py.exists():
-        return "un", ".venv 가 없다"
+        return "un", ".venv 가 없다 (해결: 그 영역 README 실행 방법의 설치 줄, docs/SETUP.md F절)"
     try:
         if subprocess.run([str(py), "-c", "import pytest"], capture_output=True, timeout=30).returncode != 0:
-            return "un", ".venv 에 pytest 가 없다"
+            return "un", ".venv 에 pytest 가 없다 (해결: 그 영역 .venv 에 pytest 설치, docs/SETUP.md F절)"
         p = subprocess.run([str(py), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"], cwd=d, capture_output=True, text=True, timeout=180)
     except Exception as e:
         return "fail", f"pytest 를 실행하지 못했다({type(e).__name__})"

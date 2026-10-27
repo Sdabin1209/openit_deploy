@@ -64,6 +64,7 @@ printf '#!/bin/sh\necho "[\\"allOf@/values[0]:unsupported\\"]"\n' > "$W/py-bad";
 run 3 CHECK_ALL_MR_PY="$W/py-ok"; expect "허용 집합 안이면 PASS" PASS
 run 3 CHECK_ALL_MR_PY="$W/py-bad"; expect "규칙을 빼면 FAIL" FAIL
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "venv 가 없으면 SKIP(검증 안 함 1)" SKIP "검증 안 함 1"
+run 3 CHECK_ALL_MR_PY="$W/없음"; expect "SKIP 이유에 해결 방법이 붙는다" SKIP "docs/SETUP.md F절"
 
 echo "== 4 삭제된 이름"
 mk deploy; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "깨끗하면 PASS" PASS

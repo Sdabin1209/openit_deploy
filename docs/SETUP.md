@@ -10,6 +10,7 @@
 | python3 (3.10+)와 venv 모듈 | E2E·스크립트가 `.venv` 가상환경을 만든다 | A절 |
 | Docker (데몬 + compose + buildx 플러그인) | 모든 서비스·이미지 | A절(리눅스) 또는 B절(WSL2) |
 | 형제 리포 11~13개 | 이미지는 각 영역 리포의 소스로 빌드한다 | C절 |
+| 영역별 `.venv`/`node_modules` | check-all이 영역 시험 수집·완화 정책을 실제로 확인한다(없으면 SKIP) | F절 |
 | 인터넷(빌드할 때만) | 베이스 이미지, pip, npm | 이미 만든 이미지로 `--reuse-build`만 할 때는 불필요 |
 | curl | 점검·스모크(선택) | 패키지 관리자 |
 
@@ -104,3 +105,9 @@ bash scripts/demo.sh status | down | reset
 | 게이트가 제출을 `REJECTED_AUTO`로 반려하고 `CONTRACT_COMPAT` FAIL(`학습 때의 model-runtime X이 게이트 기준 Y와 다르다`) | 이미지들이 서로 다른 model-runtime 태그로 빌드됨 | **모든 이미지는 같은 model-runtime 태그로 빌드해야 한다**(`scripts/lib.sh`의 `DEPLOY_MR_TAG` 한 곳). 어긋난 이미지를 다시 빌드한다(`demo.sh up`은 라벨 `io.openit.model-runtime`이 다르면 자동 재빌드). 진단: `bash scripts/demo.sh diag` |
 | `python3 -m venv` 실패(`ensurepip is not available`) | python3-venv 패키지 없음 | `sudo apt-get install -y python3-venv` |
 | 빌드 중 pip/npm/pull 실패 | 인터넷 또는 프록시 | 인터넷 확인(프록시는 `HTTP(S)_PROXY`). 오프라인이면 이미 만든 이미지로 `--reuse-build`만 가능 |
+
+## F. 영역 시험 환경 (check-all의 SKIP을 없애는 사전조건)
+
+`scripts/check-all.sh`의 규칙 3(완화 정책)과 규칙 8(영역별 시험 수집)은 형제 영역의 가상환경을 실제로 불러서 확인한다. 영역에 `.venv`(파이썬 영역) 또는 `node_modules`(admin-console, kiosk-frontend)가 없으면 그 영역은 **검증 안 함**이 되고 규칙은 SKIP이다. SKIP은 통과가 아니다. `e2e.sh`는 영역 소스로 이미지를 빌드할 뿐 영역의 개발용 가상환경을 만들지 않으므로, 새 머신에서 C절만 하고 check-all을 돌리면 SKIP이 나온다.
+
+해결: 영역마다 그 영역 README의 "실행 방법"에 적힌 설치 줄을 한 번 실행한다(영역마다 설치 줄이 달라 여기에 옮기지 않는다. 이 리포는 형제 폴더를 만들지 않는다). 요약하면 파이썬 영역은 `python3 -m venv .venv` 뒤 README의 `pip install ...`(pytest 포함), 노드 영역은 `npm ci`다. 규칙 3은 `model-runtime/.venv`를 쓴다. 확인: `bash scripts/check-all.sh`가 `SKIP 0`으로 끝나야 한다. `bash scripts/doctor.sh`는 빠진 영역을 WARN으로 알려 준다.

@@ -93,6 +93,10 @@ if [ $UP_ONLY = 0 ]; then
   NEED="boundary-contracts turn-engine model-runtime survey-service question-authoring ops-feedback release-gate model-lab kiosk-frontend admin-console synthetic-data"
   MISSING=""; for r in $NEED; do [ -e "$WORKSPACE/$r/.git" ] || MISSING="$MISSING $r"; done
   if [ -z "$MISSING" ]; then ok "형제 리포 $(echo $NEED | wc -w)개가 $WORKSPACE 옆에 있다"; else fail "형제 리포가 없다:$MISSING" "docs/SETUP.md C절: head 를 clone 한 뒤 bash <루트>/head/setup.sh (폴더 이름은 head/workspace.yaml 과 같아야 한다)"; fi
+  # --- 영역 시험 환경(check-all 의 SKIP 원인). 없으면 WARN: 점검 항목이 검증되지 않는다
+  NOENV=""; for r in boundary-contracts turn-engine model-runtime survey-service question-authoring ops-feedback release-gate model-lab synthetic-data; do [ -e "$WORKSPACE/$r/.git" ] && [ ! -x "$WORKSPACE/$r/.venv/bin/python" ] && NOENV="$NOENV $r"; done
+  for r in kiosk-frontend admin-console; do [ -e "$WORKSPACE/$r/.git" ] && [ ! -d "$WORKSPACE/$r/node_modules" ] && NOENV="$NOENV $r"; done
+  if [ -z "$NOENV" ]; then ok "영역 시험 환경(.venv, node_modules)이 있다: check-all 이 영역을 검증할 수 있다"; else warn "영역 시험 환경이 없다:$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "각 영역 README 실행 방법의 설치 줄(파이썬: .venv + pip install, 노드: npm ci). docs/SETUP.md F절"; fi
   tagchk() { # tagchk <리포> <태그>
     [ -e "$WORKSPACE/$1/.git" ] || return 0
     if git -C "$WORKSPACE/$1" rev-parse -q --verify "refs/tags/$2" >/dev/null 2>&1; then ok "태그 $1 $2"; else fail "태그가 없다: $1 $2" "git -C ../$1 fetch --tags (그래도 없으면 원격에 태그가 없다: head 에 알린다)"; fi
