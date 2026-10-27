@@ -8,7 +8,7 @@ LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; mkdir -p "$(dirname "$LOC
 source "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"   # DEPLOY_REGISTRY
 only=" $* "
 tmp=$(mktemp); cp "$LOCK" "$tmp"
-while read -r area img commit; do
+while read -r area img commit _; do   # 4번째 열(bc=..,te=..,mr=.. 빌드 태그 기록, 속도 개선의 --reuse-build 용)은 무시한다
   [ "$only" = "  " ] || [[ "$only" == *" $area "* ]] || continue
   # 선택 이미지는 기본 경로에 넣지 않는다: 기록이 남아 있어도 기본 게시·E2E 가 그 이미지에 의존하지 않는다
   if [ "$only" = "  " ] && [[ " $SERVICES_OPTIONAL " == *" $area "* ]]; then echo "건너뜀: $area (선택 이미지, 이름을 줄 때만 게시)"; continue; fi
