@@ -1,0 +1,13 @@
+# 예시(이 리포는 설치하지 않는다): 상태 점검 1회. 경로 /srv/deploy 와 사용자 openit 은 자리표시이고 서버에 맞게 바꾼다.
+# 종료 코드 0 = 모두 OK, 1 = WARN, 2 = CRIT. systemd 는 0 이 아니면 이 서비스를 failed 로 둔다 -> 아래 OnFailure 가 알림 수단 연결 지점이다.
+# 알림 수단(누구에게 어떻게)은 사용자 결정이라 만들지 않았다. OnFailure= 에 연결할 유닛을 사용자가 정한 수단(메일, 메신저 등)으로 만들어 이름을 적는다.
+[Unit]
+Description=openit deploy 상태 점검 (check-health.sh)
+#OnFailure=openit-alert@%n.service    # 알림 수단 연결 지점(미정, 주석 처리)
+
+[Service]
+Type=oneshot
+User=openit
+WorkingDirectory=/srv/deploy
+ExecStart=/srv/deploy/scripts/check-health.sh --project deploy
+# 결과 줄은 journald 에 남는다: journalctl -u openit-check-health.service

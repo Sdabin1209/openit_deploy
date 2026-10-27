@@ -103,6 +103,20 @@ bash scripts/check-health.sh        # 종료 코드 0 OK, 1 WARN, 2 CRIT. cron/s
 
 한계값(80/90%, 2배, 1시간)은 표준 관행의 시작값이고 사용자 결정이 아니다. SKIP은 통과가 아니라 따로 센다. 자체 시험: `bash scripts/test-check-health.sh`(Docker 불필요). 전체 E2E의 스케줄러 구간이 실제 스케줄러가 쓴 상태 파일과 gateway `/healthz`를 이 스크립트로 읽는다. 아직 하지 않은 것: 컨테이너 로그·Docker 볼륨 사용량과 postgres 자체의 디스크 경보(서비스 쓰기 거부 503은 각 영역의 몫), 이 점검을 부르는 cron/timer의 실제 배치(운영 서버가 정해지면).
 
+### 점검 호출 주체: systemd timer(표준)와 cron(대안)
+
+이 리포는 점검과 스케줄러를 **부르는 주체를 설치하지 않는다**(서버의 시스템 설정은 사람이 한다). 예시 유닛이 `config/systemd/`에 있다: `openit-check-health.{service,timer}`(5분마다 `scripts/check-health.sh --project deploy`), `openit-scheduler.{service,timer}`(1분마다 스케줄러 tick). 경로 `/srv/deploy`와 사용자 `openit`은 자리표시다.
+
+사람이 할 일(sudo 필요):
+1. 예시 파일을 서버에 맞게 고쳐 `/etc/systemd/system/`에 복사한다(경로, 사용자, 이 사용자가 docker 그룹이고 `.venv`가 있는지).
+2. `sudo systemctl daemon-reload && sudo systemctl enable --now openit-scheduler.timer openit-check-health.timer`.
+3. 확인(sudo 없이): `systemctl list-timers 'openit-*'`로 다음 실행 시각, `systemctl status openit-check-health.service`와 `journalctl -u openit-check-health.service -n 30`로 마지막 결과, 같은 명령을 손으로 `bash scripts/check-health.sh --project deploy; echo $?`. 서비스는 종료 코드가 0이 아니면(WARN 1, CRIT 2) failed가 되므로 `systemctl --failed`에도 보인다.
+4. cron 대안(systemd가 없을 때): `* * * * * cd /srv/deploy && .venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json tick >> state/scheduler.log 2>&1` 와 `*/5 * * * * cd /srv/deploy && bash scripts/check-health.sh --project deploy >> state/check-health.log 2>&1`. 종료 코드로 알리려면 cron의 `MAILTO` 또는 아래 연결 지점에 쓸 래퍼가 필요하다.
+
+**알림 수단 연결 지점(미정, 만들지 않았다).** 점검이 CRIT/WARN을 "누구에게 어떻게" 알릴지는 사용자 결정이다. 연결할 곳: (a) systemd 서비스의 `OnFailure=`(예시 유닛에 주석 처리된 줄) -- 사용자가 정한 수단으로 알리는 유닛을 지정한다. (b) cron 래퍼의 종료 코드 분기. (c) 서버 밖 감시가 gateway `/healthz`·`/readyz`를 보는 경로(`config/external-monitor.example.yaml`)는 이것과 별개로 서버 전체 중단을 본다(D10).
+
+`check-health.sh`가 추가로 읽는 것(`--project`가 release-gate·model-serving 컨테이너의 호스트 포트를 `docker port`로 찾는다. 호스트 포트가 없는 운영 구성에서는 `--readyz release-gate=URL --readyz model-serving=URL`로 주소를 직접 준다): release-gate `/readyz`의 `judging_loop`(`upstream_auth_failed`면 CRIT, 연속 실패 3회 이상 CRIT, 1회 이상 WARN, `last_run_at`이 15분보다 오래되었거나 없으면 WARN)와 model-serving `/readyz`(엔진 멈춤·사망 시 503이면 CRIT). 한계값은 시작값이고 사용자 결정이 아니다(15분은 판정 루프의 실제 주기를 확인하지 못한 채 잡은 값).
+
 ## 5-2. 자동 롤백 요청(D3): 운영 잡 설정에 `rollback`·`gate_service`가 없는 이유
 
 의도된 것이다. 근거: (1) `config/ops-feedback-job.yaml` 머리말이 "rollback과 retention 값은 사용자 결정 전이라 비워 둔다"고 쓰고 `rollback: null`로 둔다. (2) ops-feedback `docs/runbook.md`는 `rollback.*`을 사용자가 정할 기준 수치로 분류하고, `rollback` 항목이 없으면 롤백 평가를 하지 않는다. (3) 연결 쪽은 이미 준비돼 있다: compose의 `job-ops-feedback`은 `OPS_GATE_READ_TOKEN_FILE`·`OPS_GATE_WRITE_TOKEN_FILE`(역할 ops-feedback의 게이트 읽기·쓰기 토큰)을 받고, E2E 단계 8이 같은 쓰기 토큰으로 `request_rollback`을 HTTP로 부른다. 없는 것은 기준 수치와 `gate_service` 팩토리 선언뿐이다. 이 문서는 값을 채우지 않는다(자동 롤백 기준은 사용자 결정).
