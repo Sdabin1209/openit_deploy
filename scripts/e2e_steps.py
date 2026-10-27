@@ -724,6 +724,16 @@ def step5q():
     kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
     rec("5q", "REAL", f"survey-service stop 중 gateway 경유: 환자 턴 {obs['turn'][0]}({obs['turn'][1]}s) {{\"code\":\"UPSTREAM_UNAVAILABLE\"}} + Retry-After + JSON(본문에 내부 주소 없음), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s), /healthz {obs['healthz']}. start 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 세션 보존(Q1.D01 값 유지, 상류에 닿지 못한 턴은 기록 없음), 같은 turn_id 로 재전송하면 200 으로 확정")
 
+def gw_log_duration(path_part, since):
+    """gateway(Caddy) 접근 로그(JSON)에서 path_part 가 든 요청의 서버 쪽 처리 시간(duration, 초)과 상태를 (가장 최근 것으로) 읽는다. 클라이언트와 gateway 사이 전달 지연은 이 값에 들지 않는다."""
+    r = sh([a.docker, "logs", "--since", str(int(since) - 1), f"{a.project}-gateway-1"], check=False)
+    best = None
+    for ln in (r.stdout + r.stderr).splitlines():
+        try: d = json.loads(ln)
+        except ValueError: continue
+        if path_part in d.get("request", {}).get("uri", "") and d.get("duration") is not None: best = (float(d["duration"]), d.get("status"))
+    return best
+
 def step5w():
     title("5w", "survey-service 무응답(docker pause) -> gateway 경유 환자 요청이 마감 안에 504 UPSTREAM_UNAVAILABLE -> unpause 후 복구 (FAULT_POLICY 6)")
     if "pointers" not in STATE: rec("5w", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -732,15 +742,20 @@ def step5w():
     assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
     sh([a.docker, "pause", svc]); obs = {}
     try:
-        c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=30); obs["turn"] = (c, round(el, 1))
+        t_req = time.time(); c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=30); obs["turn"] = (c, round(el, 2))
         assert c == 504 and b == {"code": "UPSTREAM_UNAVAILABLE"} and h.get("retry-after"), f"무응답 상류: 504 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
-        # 불변식: 서버 턴 총 마감(8s)보다 길고 키오스크 대기(10s)보다 짧다. 설정은 연결 1s + 응답 헤더 8.5s(합 9.5s 상한, config/Caddyfile)
-        assert 8.0 <= el < 10.0, f"게이트웨이 마감이 서버 총 마감(8s)~키오스크 대기(10s) 사이가 아니다: {el:.1f}s"
+        # 불변식: 키오스크 대기(10s) > gateway 처리 시간 > 서버 턴 총 마감(6s, survey-service SURVEY_TURN_DEADLINE_SECONDS 기본). 설정은 연결 1s + 응답 헤더 8.5s(합 9.5s 상한, config/Caddyfile).
+        # gateway 의 상한은 gateway 자신의 접근 로그 duration 으로 잰다(클라이언트가 본 시간에는 호스트 게시 포트 전달 지연이 섞인다: 아래 정책 단언과 docs/E2E.md 측정표)
+        gd = gw_log_duration(f"/v1/sessions/{sid}/turns", t_req); assert gd, "gateway 접근 로그에서 이 요청을 찾지 못했다"
+        obs["gw_duration"] = round(gd[0], 2); assert gd[1] == 504, ("gateway 로그의 상태", gd)
+        assert 6.0 <= gd[0] < 10.0, f"gateway 처리 시간이 서버 총 마감(6s)~키오스크 대기(10s) 사이가 아니다: {gd[0]:.2f}s"
         rc, rb_, rh, rel = gwk("GET", "/readyz", auth=False); obs["readyz"] = (rc, round(rel, 1))
         assert rc == 504 and rel < 4, f"gateway /readyz 가 무응답 상류에서 504 를 2초대 마감으로 주지 않았다: {rc} {rel:.1f}s"
         hc = gwk("GET", "/healthz", auth=False); obs["healthz"] = hc[0]; assert hc[0] == 200
     finally: sh([a.docker, "unpause", svc])
     t0 = time.time(); wait_gw_ready(60); t_rec = time.time() - t0
+    def client_seen(): assert obs["turn"][1] < 10.0, f"클라이언트가 본 시간 {obs['turn'][1]}s (gateway 처리 {obs['gw_duration']}s, 차이 {obs['turn'][1]-obs['gw_duration']:.2f}s: 호스트 게시 포트 경유 전달 지연)"
+    policy("5w", "Docker Desktop(WSL2) 호스트 게시 포트 전달 지연(운영 서버의 gateway 직접 접속에서는 해당 없음, 미확인)", "호스트 클라이언트가 본 gateway 504 시간이 키오스크 대기(10s) 미만이다", client_seen)
     time.sleep(3)   # 멈춘 사이 도착한 요청을 서비스가 풀린 뒤 처리했을 수 있다
     sv = staff_sv(sid); n_after_unpause = utt_count(sv, "네 있어요")
     c, r = public_turn(sid, "w-1", "네 있어요"); assert c == 200, ("복구 뒤 같은 turn_id 재전송이 200이 아니다", c, r)
@@ -748,7 +763,7 @@ def step5w():
     print(f"  관찰: 504 를 받은 턴 w-1 이 unpause 뒤 서비스에서 처리된 횟수 {n_after_unpause}, 같은 turn_id 재전송 뒤 기록 {n_final}회")
     policy("5w", "survey-service 의 turn_id 멱등(처리 중·확정 재전송은 새로 처리하지 않음)", "504 로 끝난 턴을 같은 turn_id 로 재전송해도 발화는 한 번만 기록된다", lambda: (_ for _ in ()).throw(AssertionError(f"기록 {n_final}회")) if n_final != 1 else None)
     kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
-    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 {obs['turn'][1]}s (설정: 연결 1s + 응답 헤더 8.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
+    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 클라이언트 {obs['turn'][1]}s / gateway 접근 로그 duration {obs['gw_duration']}s (설정: 연결 1s + 응답 헤더 8.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
 
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
@@ -1207,8 +1222,8 @@ def step5p():
     turn_note = ""
     if has_release:
         c, b, h, el = out_turn
-        ok_fail = c != 200 or (isinstance(b, dict) and b.get("turn_failure_signal"))
-        assert ok_fail, ("DB 가 멈춘 동안 환자 턴이 성공으로 답했다", c, str(b)[:120])
+        # FAULT_POLICY 가 인정한 실패 응답: 재시도 가능한 503 UNAVAILABLE(retryable true). 값이 저장되지 않았음은 아래에서 직원 조회로 본다
+        assert c == 503 and isinstance(b, dict) and b.get("code") == "UNAVAILABLE" and b.get("retryable") is True, ("DB 중지 중 환자 턴이 503 UNAVAILABLE(retryable)이 아니다", c, str(b)[:140])
         sv = staff_sv(sidp); vals = {v["key"]: v for v in sv["values"]}
         assert vals["Q1.D01.diagnosed"]["value"] is True, ("확정된 이전 값이 사라졌다", vals)
         assert "Q1.D02.diagnosed" not in vals, "DB 중지 중 턴의 값이 저장됐다(부분 저장)"
@@ -1216,14 +1231,10 @@ def step5p():
         c2, r2 = public_turn(sidp, "p-2", "아니요 없어요"); assert c2 == 200 and not r2.get("turn_failure_signal"), ("복구 뒤 같은 turn_id 재전송이 확정되지 않았다", c2, str(r2)[:120])
         sv2 = staff_sv(sidp); v2 = {v["key"]: v for v in sv2["values"]}
         assert v2["Q1.D02.diagnosed"]["value"] is False, "재전송 뒤 값이 저장되지 않았다"
-        fb = b.get("turn_failure_signal") if isinstance(b, dict) else None
         turn_note = f" 환자 턴(DB 중지 중): 상태 {c} {el:.1f}s, 응답 {json.dumps(b, ensure_ascii=False)[:110] if isinstance(b, dict) else str(b)[:60]}; 값 저장 없음, 중지 중 발화 기록 {n_logged}건; 복구 뒤 같은 turn_id 재전송은 200 으로 확정(값 1회)."
-        def pol_deadline(): assert el <= 8.5, f"{el:.1f}s (총 마감 8s 가 없으면 gateway 의 9s 에서 끊긴다)"
-        def pol_nc():
-            assert isinstance(fb, dict) and fb.get("write_committed") == "NOT_COMMITTED", f"실패 신호 {str(b)[:140]}"
+        def pol_deadline(): assert el <= 6.5, f"{el:.1f}s (survey-service 턴 총 마감 6s + gateway 전달 여유 0.5s)"
         def pol_once(): assert utt_count(sv2, "아니요 없어요") == 1, f"재전송 뒤 같은 발화 기록 {utt_count(sv2, '아니요 없어요')}건(중지 중 {n_logged}건)"
-        policy("5p", "survey-service 의 턴 총 마감 시간(8s)과 DB statement_timeout", "DB 중지 중 환자 턴이 총 마감(8.5s) 안에 끝난다", pol_deadline)
-        policy("5p", "survey-service 의 NOT_COMMITTED 응답 형식 확정", "DB 중지 중 환자 턴의 실패 응답에 write_committed=NOT_COMMITTED 가 표시된다(지금은 재시도 가능한 503 UNAVAILABLE 오류 본문)", pol_nc)
+        policy("5p", "survey-service 의 턴 총 마감 시간(6s)과 DB 접속·문장 상한", "DB 중지 중 환자 턴이 총 마감(6s + 전달 여유 0.5s) 안에 끝난다", pol_deadline)
         policy("5p", "survey-service 의 turn_id 멱등", "실패한 턴을 같은 turn_id 로 재전송하면 발화가 한 번만 기록된다", pol_once)
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
