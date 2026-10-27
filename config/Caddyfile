@@ -42,6 +42,10 @@ import /etc/caddy/devices.caddy
 		-Server
 		#Strict-Transport-Security "max-age=31536000"
 	}
+	# 기기 설정 파일(/config.json)은 기기마다 그 기기의 정적 서버가 낸다(scripts/kiosk-add-device.sh). 중앙 kiosk-frontend 에는 기기 토큰 파일을 마운트하지 않고, 인증 없는 경로로 새지 않게 여기서도 막는다.
+	handle /config.json {
+		respond "not found" 404
+	}
 	handle /healthz {
 		respond "ok" 200
 	}
