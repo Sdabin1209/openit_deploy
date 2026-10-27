@@ -1,0 +1,6 @@
+# 규칙|경로 글롭(영역/파일)|이유. 이 목록은 check-all 출력에 그대로 나온다. 영역 파일을 고치지 않고 정당한 언급만 적는다.
+4|deploy/scripts/check_all.py|점검 규칙 자신의 패턴 문자열
+4|deploy/scripts/test-check-all.sh|자체 시험이 어긋난 예시를 만든다
+4|deploy/scripts/test-check-versions.sh|옛 v1.3.x 상태를 일부러 만드는 시험
+4|boundary-contracts/verify.py|v1 값이 거부되는지 보는 부정 시험(PARSER/GENERATOR)
+4|model-runtime/src/model_runtime/prompts.py|prompt-3 제거를 설명하는 docstring(거부 동작의 설명)

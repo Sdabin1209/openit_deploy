@@ -6,8 +6,11 @@
 #  - E2E_GPU=1 이면 단계 3을 gpu-dev의 model-lab 파이프라인으로 돌리는 경로(scripts/e2e_gpu.sh)를 쓴다. 기본은 끔.
 #  - --fast: 단계 1~8과 단계 9 앞부분(compose 기동 검사)까지만. 스케줄러, 백업·복구, 코드 축 롤백은 생략한다. 개발 중 빠른 확인용이며 **전체 합격이 아니다**.
 #    옵션 없이 돌리는 전체 모드가 인도 전 필수다. 종료 코드는 돌린 검사 기준이다.
+# 시작 전에 scripts/check-all.sh(정적 점검)를 돌리고 FAIL 이면 멈춘다.
 # 사용: scripts/e2e.sh [--fast] [--keep] [--keep-images] [--reuse-build]
 set -o pipefail
+# 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
+if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then bash "$(dirname "$0")/check-all.sh" || { echo "check-all.sh 가 FAIL 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }; fi
 # 사전 점검: 실패하면 바로 멈춘다(건너뛰기 DEPLOY_SKIP_DOCTOR=1). 하위 up.sh 가 다시 점검하지 않게 export 한다
 [ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" || exit 1
 export DEPLOY_SKIP_DOCTOR=1

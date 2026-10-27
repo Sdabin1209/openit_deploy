@@ -78,6 +78,15 @@ bash scripts/demo.sh reset                       # down 후 up
 
 경계 계약·turn-engine·model-runtime의 태그 기준은 `scripts/lib.sh`의 표 한 곳이다. 형제 영역(survey-service, release-gate, model-lab, ops-feedback, question-authoring, synthetic-data, turn-engine, model-runtime)의 requirements/lock/pyproject/Dockerfile/스크립트에 손으로 적힌 같은 태그가 표와 다르면 `bash scripts/check-versions.sh`가 실패하고 `파일:줄`을 알려 준다(읽기 전용, 문서·시험·변경 이력 제외). 점검기 자체의 시험은 `bash scripts/test-check-versions.sh`, 비밀 점검기는 `bash scripts/test-check-secrets-hidden.sh`. 태그를 바꿀 때는 표를 먼저 고치고 이 점검이 가리키는 곳을 영역 세션에서 맞춘다.
 
+## 4-3. 정적 일관성 점검 (check-all, 수 초)
+
+영역 단위 시험은 영역 사이 어긋남을 못 본다. `bash scripts/check-all.sh`는 실행 없이 읽어서 아는 어긋남을 E2E(6분) 앞에서 잡는다. `e2e.sh`가 시작할 때 자동으로 부르고 FAIL이면 E2E를 시작하지 않는다(`DEPLOY_SKIP_CHECK_ALL=1`로 건너뛸 수 있으나 개발 중에만 쓴다).
+
+- 규칙: 0 대상 열거(처리 방법을 모르는 영역·예시는 `모르는 대상`으로 FAIL), 1 버전표, 2 계약 예시 키 순서, 3 완화 정책이 규칙을 빼지 않는지, 4 삭제된 이름의 잔존, 5 박은 `pipeline_schema_version`, 6 설정의 인라인 비밀, 7 compose의 환경 변수 비밀, 8 영역별 시험 수집, 9 영역 README 필수 절(소개 + 6개 절).
+- 출력: 규칙마다 PASS/FAIL/SKIP과 `검증됨 N/M, 어긋남, 대상 아님(이유), 검증 안 함(이유)`. 검증에서 빠진 것을 통과로 세지 않는다. SKIP은 어긋남은 없지만 검증 안 함이 있다는 뜻이다. FAIL이면 종료 코드 1이고 `영역/파일:줄` 근거를 낸다. 값·비밀은 출력하지 않는다.
+- 예외: 정당한 언급은 `scripts/check-all-allow.txt`(규칙|경로 글롭|이유), 영역·예시를 점검에서 빼려면 `scripts/check-all.exclude`(`종류:이름 | 이유`, 이유 필수, 종류는 area/example/service). 두 목록은 출력에 그대로 나온다.
+- 자체 시험: `bash scripts/test-check-all.sh`(임시 폴더에 어긋난 예시를 만들어 규칙마다 FAIL/PASS 확인). 형제 영역은 읽기 전용으로만 본다.
+
 ## 5. 화면별로 써 보는 법
 
 아래 동작은 모두 **문서 기준**(kiosk-frontend, admin-console 설계 문서)이다. 게이트웨이를 거친 API 경로는 E2E로 확인했지만(확인함), **실제 브라우저에서 화면을 눌러 본 확인은 없다**(BLOCKED).
