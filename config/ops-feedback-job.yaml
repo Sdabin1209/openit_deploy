@@ -17,7 +17,7 @@ deid:
   mask_value_keys: [value]
   mask_number_keys: []
   residual_patterns:
-    email: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    email: '[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,}'   # 길이를 묶었다: 묶지 않은 패턴은 8만 자 입력에서 제곱 시간이었다(ops-feedback f7ac95f)
     phone_kr: '0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}'
     rrn_kr: '\d{6}[- ]?[1-4]\d{6}'
 detection:
