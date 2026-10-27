@@ -34,7 +34,7 @@ def get(name, path="/readyz"):
     return code, d if isinstance(d, dict) else {}
 for name in ("survey-service", "release-gate", "question-authoring", "ops-feedback-ingest", "model-registry", "model-serving", "gateway"):
     if name not in ports: continue
-    c, d = get(name)
+    c, d = get(name, "/healthz" if name == "gateway" else "/readyz")   # gateway 평문 포트는 /healthz 만 답한다(/readyz 는 HTTPS)
     extra = ""
     if name == "survey-service": extra = f": ready={d.get('ready')} active_release={d.get('active_release')} problems={d.get('problems')}"
     if name == "release-gate": extra = f": judging={d.get('judging')} awaiting_approval={d.get('awaiting_approval')}"
@@ -53,7 +53,7 @@ for p in "${PROJECTS[@]}"; do
   echo "== 프로젝트 $p"
   printf '%s\n' "$rows" | sed 's/^/  /'
   gw=$("$DOCKER" port "$p-gateway-1" 8080/tcp 2>/dev/null | head -1 | tr -d '\r' | sed 's/.*://')
-  [ -n "$gw" ] && echo "  gateway 주소: http://127.0.0.1:$gw  (바인드 주소가 127.0.0.1 이 아니면 그 주소로)"
+  [ -n "$gw" ] && gws=$("$DOCKER" port "$p-gateway-1" 8443/tcp 2>/dev/null | head -1 | tr -d '\r' | sed 's/.*://'); echo "  gateway 주소: https://127.0.0.1:${gws:-?} (HTTPS, 내부 CA), 평문 http://127.0.0.1:$gw 는 /healthz 만 답하고 나머지는 308  (바인드 주소가 127.0.0.1 이 아니면 그 주소로)"
   rp=$("$DOCKER" port "$p" 5000/tcp 2>/dev/null | head -1 | tr -d '\r' | sed 's/.*://')
   [ -n "$rp" ] && echo "  레지스트리 주소: 127.0.0.1:$rp"
   probe "$p"

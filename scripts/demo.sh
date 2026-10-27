@@ -57,7 +57,7 @@ set_llm_image() { # 데모는 방금 빌드한 로컬 GPU 이미지를 태그로
 env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트가 같은 값을 본다)
   export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT="$P" DEPLOY_SKIP_DOCTOR=1
   export REGISTRY_PROJECT="$P-reg" REGISTRY_HOST_BIND="${DEMO_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
-  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
+  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
   # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 compose.test.yaml 의 fake 백엔드를 덮는다. 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
 
@@ -79,7 +79,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
   local ms; if [ -n "$EXT" ]; then ms=0; else ms=$(pp model-serving); fi
-  echo "{\"qa\":$(pp question-authoring),\"gate\":$(pp release-gate),\"ops\":$(pp ops-feedback-ingest),\"survey\":$(pp survey-service),\"mr\":$(pp model-registry),\"gw\":$(pp gateway),\"ms\":$ms}"
+  echo "{\"qa\":$(pp question-authoring),\"gate\":$(pp release-gate),\"ops\":$(pp ops-feedback-ingest),\"survey\":$(pp survey-service),\"mr\":$(pp model-registry),\"gw\":$(port_of $P-gateway-1 8443),\"ms\":$ms}"
 }
 run_steps() { # run_steps <--only 목록> [추가 인자]
   local only=$1; shift
@@ -87,24 +87,27 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
   [ $LLM = 0 ] || msx+=(--llm-package "$W/llm-package")
   local img; img=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     echo "{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}" )
-  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$P" --secrets "$SECRETS_DIR" --ports "$(ports_json)" --images "$img" \
+  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$P" --secrets "$SECRETS_DIR" --ports "$(ports_json)" --images "$img" --gw-ca "$(demo_ca)" \
     --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id demo-test --only "$only" \
     "${msx[@]}" "$@"
 }
 
+demo_ca() { # gateway 내부 CA 루트(데모 스택에서 꺼내 작업 폴더에 둔다). e2e_steps 가 이것만 신뢰한다
+  local f="$W/gateway-ca.crt"; "$DOCKER" cp "$P-gateway-1:/data/caddy/pki/authorities/local/root.crt" "$f" >/dev/null 2>&1 || true; echo "$f"
+}
 guide() {
-  local gw; gw=$(port_of "$P-gateway-1" 8080)
+  local gw; gw=$(port_of "$P-gateway-1" 8443)
   local host=127.0.0.1; [ "${DEMO_BIND:-127.0.0.1}" != 127.0.0.1 ] && host="<서버 주소>"
   cat <<GUIDE
 
 ==================== 데모 접속 안내 ====================
  !! 이 데이터는 시험용 대체(가짜 모델, 시험용 승인자)입니다. 실제 모델·실제 승인이 아닙니다. !!
 
- 주소 (Docker가 배정한 포트): http://$host:$gw
-   키오스크 화면      http://$host:$gw/
-   직원 콘솔          http://$host:$gw/staff/      계정 staff-e2e (역할 staff)
-   승인·실패 사례 검토 http://$host:$gw/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
- (HTTP·기본 인증이라 시험용이다. 원격 서버면: ssh -L $gw:127.0.0.1:$gw <서버>  로 터널을 열고 http://127.0.0.1:$gw 로 본다)
+ 주소 (Docker가 배정한 포트): https://$host:$gw
+   키오스크 화면      https://$host:$gw/
+   직원 콘솔          https://$host:$gw/staff/      계정 staff-e2e (역할 staff)
+   승인·실패 사례 검토 https://$host:$gw/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
+ (HTTPS: 내부 CA 가 발급한 인증서라 브라우저가 경고한다. 루트 인증서는 $W/gateway-ca.crt 이고 신뢰시키려면 docs/runbook.md TLS 절. 시험용이다. 원격 서버면: ssh -L $gw:127.0.0.1:$gw <서버>  로 터널을 열고 https://127.0.0.1:$gw 로 본다)
 
  암호: 값은 출력하지 않는다. 비밀 파일을 열어 본다 (폴더 700, 저장소 밖 $W/secrets):
    staff-e2e        $W/secrets/tokens/account-staff-e2e-password

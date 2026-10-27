@@ -45,6 +45,7 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   gate-data:      # 번들 파일 releases/ (릴리스 레지스트리 DB는 PostgreSQL(gate))
   serving-data:   # model-serving: 게이트에서 받은 번들 캐시(다시 받을 수 있어 백업 대상 아님)
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
+  gateway-data:   # gateway(Caddy)의 내부 CA 루트와 발급 인증서(/data/caddy/pki). 비밀키가 들어 있어 백업·유출에 주의
   pg-data:        # postgres: 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 볼륨 복사가 아니라 scripts/pg-backup.sh(pg_dump)
 
 configs:
@@ -194,9 +195,15 @@ services:
       admin-console: {condition: service_healthy}
       release-gate: {condition: service_healthy}
       ops-feedback-ingest: {condition: service_healthy}
-    tmpfs: ["/tmp", "/data:uid=10001,gid=10001", "/config:uid=10001,gid=10001"]
+    environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
+      GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
+      GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
+    volumes:
+      - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
+    tmpfs: ["/tmp", "/config:uid=10001,gid=10001"]
     ports:
-      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"
+      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308
+      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_TLS_PORT-8443}:8443"  # HTTPS (D88/U5)
     networks: [edge, ui, serving]   # ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
 

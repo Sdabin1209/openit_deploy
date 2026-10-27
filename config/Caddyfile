@@ -1,6 +1,11 @@
 {
 	admin off
-	auto_https off
+	# TLS(D88/U5, ADR 0005): gateway 는 HTTPS 필수. 인증서는 Caddy 내부 CA(tls internal)가 기본이고 공인 인증서(ACME)는 GATEWAY_HOSTS 에 도메인을 적고 해당 사이트의 `tls internal` 줄을 지워 전환한다.
+	# 평문 포트의 자동 리다이렉트는 쓰지 않고(아래 http:// 사이트가 /healthz 만 평문으로 남기고 나머지를 308 으로 보낸다) 컨테이너 안에서 시스템 신뢰 저장소를 건드리지 않는다.
+	auto_https disable_redirects
+	skip_install_trust
+	# IP 로 접속하는 클라이언트(SNI 없음)에게 내줄 인증서의 이름
+	default_sni 127.0.0.1
 }
 # 토큰은 환경 변수가 아니라 Caddy 표준 파일 치환 {file./run/secrets/<이름>} 으로 읽는다(D84; 설정을 읽을 때 한 번 치환되고 컨테이너 환경에 값이 없다).
 # 인증 블록(D85 E절): 직원·운영자·승인자·검토자를 개별 계정으로 인증한다. 계정과 해시, 계정 -> 역할은 생성된 비밀 파일(secrets/gateway-accounts.caddy)에 있다
@@ -21,7 +26,19 @@ import /etc/caddy/devices.caddy
 		response_header_timeout {args[0]}
 	}
 }
-:8080 {
+# 평문 포트(컨테이너 8080): 컨테이너 헬스체크와 서버 안 점검용 /healthz 만 평문으로 답하고, 나머지는 HTTPS 로 영구 이동(308: 메서드와 본문을 유지)시킨다.
+# GATEWAY_PUBLIC_TLS_PORT 는 밖에서 보이는 HTTPS 포트(운영 443, 기본 8443).
+http://:8080 {
+	handle /healthz {
+		respond "ok" 200
+	}
+	handle {
+		redir https://{host}:{$GATEWAY_PUBLIC_TLS_PORT:8443}{uri} 308
+	}
+}
+# HTTPS 사이트(컨테이너 8443). 사이트 이름 목록은 GATEWAY_HOSTS(기본 localhost, 127.0.0.1). 운영에서는 병원 내부 도메인을 적는다(예: kiosk.hospital.local:8443).
+{$GATEWAY_HOSTS:localhost:8443, 127.0.0.1:8443} {
+	tls internal
 	import role_matchers
 	import kiosk_devices
 	# 접근 로그: 요청 본문은 남기지 않는다(Caddy는 본문을 기록하지 않는다). Authorization 헤더는 Caddy가 REDACTED로 바꾼다.
@@ -34,13 +51,13 @@ import /etc/caddy/devices.caddy
 		max_size 8MiB
 	}
 	# 보안 헤더(B7): 정적 화면 이미지가 같은 헤더를 이미 붙이더라도 gateway 가 한 곳에서 보장한다. 마이크(STT)를 쓰는 키오스크 때문에 Permissions-Policy 는 두지 않는다.
-	# HSTS(Strict-Transport-Security)는 TLS 가 정해지기 전에 켜면 HTTP 접속을 막으므로 도메인·인증서(사용자 결정 U5)가 정해진 뒤에 아래 줄의 주석을 푼다.
+	# HSTS: HTTPS 필수(D88/U5)이므로 켠다(1년). includeSubDomains/preload 는 도메인이 정해진 뒤에 판단한다.
 	header {
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
 		Referrer-Policy no-referrer
 		-Server
-		#Strict-Transport-Security "max-age=31536000"
+		Strict-Transport-Security "max-age=31536000"
 	}
 	# 기기 설정 파일(/config.json)은 기기마다 그 기기의 정적 서버가 낸다(scripts/kiosk-add-device.sh). 중앙 kiosk-frontend 에는 기기 토큰 파일을 마운트하지 않고, 인증 없는 경로로 새지 않게 여기서도 막는다.
 	handle /config.json {

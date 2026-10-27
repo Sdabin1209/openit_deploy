@@ -21,4 +21,11 @@ if [ -n "$EXT" ]; then
 fi
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 bash "$DEPLOY_ROOT/scripts/check-compose.sh" >/dev/null
+# gateway 의 CA 볼륨은 비루트(uid 10001)가 쓸 수 있어야 한다. 이미지의 /data 는 root 소유라 처음 한 번 소유자를 바꾼다(root 로 잠깐 도는 일회성 컨테이너, 네트워크 없음).
+V="${P}_gateway-data"
+if ! "$DOCKER" volume inspect "$V" >/dev/null 2>&1; then
+  "$DOCKER" volume create --label "com.docker.compose.project=$P" --label "com.docker.compose.volume=gateway-data" "$V" >/dev/null
+  UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
+  "$DOCKER" run --rm --network none --user 0 --cap-drop ALL --cap-add CHOWN -v "$V:/data" "$UTIL" chown 10001:10001 /data >/dev/null || die "gateway-data 볼륨 소유자 설정 실패"
+fi
 dc "$P" up -d --wait "$@"

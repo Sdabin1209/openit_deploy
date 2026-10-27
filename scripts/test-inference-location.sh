@@ -24,7 +24,7 @@ P=deploy-e2e-loc; INF=deploy-e2e-loc-inf; REGP=deploy-e2e-loc-reg
 W="$DEPLOY_ROOT/state/loc-test"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT="$P" DEPLOY_SKIP_DOCTOR=1
 export REGISTRY_PROJECT="$REGP" REGISTRY_HOST_BIND="${LOC_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
-export SECRETS_DIR="$W/secrets" GATEWAY_PORT=
+export SECRETS_DIR="$W/secrets" GATEWAY_PORT= GATEWAY_TLS_PORT=
 
 cleanup() {
   echo "== 정리 ($P, $INF, $REGP, state/loc-test)"

@@ -20,6 +20,7 @@ ap.add_argument("--docker", default="docker"); ap.add_argument("--root", require
 ap.add_argument("--work", required=True, help="이번 실행의 임시 작업 폴더")
 ap.add_argument("--run-id", default="e2e-test")
 ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기까지만 만든다(사람이 /admin/ 에서 승인)")
+ap.add_argument("--gw-ca", default="", help="gateway(HTTPS)의 내부 CA 루트 인증서 파일(시험용 CA). 있으면 gw 주소는 https 이고 이 CA만 신뢰한다")
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
 ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: http://gpu-host:8080). 비우면 이 프로젝트의 model-serving 컨테이너")
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
@@ -28,6 +29,9 @@ ap.add_argument("--llm-package", default="", help="실제 LLM 데모: make_neutr
 ap.add_argument("--turn-engine-version", default=os.environ.get("DEPLOY_TE_TAG", "v0.4.0").lstrip("v"), help="매니페스트 lineage 의 turn-engine 버전(게이트 기준과 문자열이 같아야 한다, D80). e2e.sh 가 lib.sh 의 값을 넘긴다")
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
+import ssl
+if a.gw_ca:   # 게이트웨이 호출(urlopen)이 HTTPS 이고 이 CA 만 신뢰한다. boundary_contracts 클라이언트는 gateway 를 거치지 않아 영향 없다
+    urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=a.gw_ca))))
 PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(a.root); WORK = pathlib.Path(a.work)
 WORK.mkdir(parents=True, exist_ok=True)
 RID = a.run_id
@@ -46,7 +50,7 @@ def _dyn_port(svc, key):   # 멈췄다 다시 띄우는 단계(5q·5w·5u)가 �
     out = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1", "8080/tcp"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS[key]
 DYN = {"survey": "survey-service", "gate": "release-gate", "ops": "ops-feedback-ingest"}
-URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"http://127.0.0.1:{_ms_port() if k == 'ms' else _dyn_port(DYN[k], k) if k in DYN else PORTS[k]}"
+URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"{'https' if (k == 'gw' and a.gw_ca) else 'http'}://127.0.0.1:{_ms_port() if k == 'ms' else _dyn_port(DYN[k], k) if k in DYN else PORTS[k]}"
 RESULTS = []; STATE_FILE = WORK / "state.json"
 STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
