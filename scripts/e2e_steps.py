@@ -814,6 +814,49 @@ def step5u():
     wait(lambda: gw_raw("GET", "/v1/cases", basic=REVIEWER())[0] == 200, 60, "검토 목록 복구(200)", every=2)
     rec("5u", "REAL", "사람이 쓰는 화면 경로의 gateway 상류 상한: release-gate 중지 중 승인 조회 " + f"{obs['승인 조회 C7']}·운영자 읽기 {obs['운영자 active-pointer C8']}(코드, 초)가 503 {{\"code\":\"UPSTREAM_UNAVAILABLE\"}}; release-gate 무응답 중 승인 조회 {obs['승인 조회 pause']}(코드, 클라이언트 초, gateway duration 초; 설정 헤더 15s), ops-feedback-ingest 무응답 중 검토 목록 {obs['검토 목록 pause']}(설정 헤더 10s)이 504 UPSTREAM_UNAVAILABLE; 해제 뒤 모두 200 복구. 정적 화면(admin-console, kiosk-frontend) 프록시의 상한은 같은 설정이나 이 단계에서 시험하지 않았다")
 
+def step5m():
+    title("5m", "model-serving 무응답(docker pause) 중 환자 턴: survey 턴 마감 안에 분류된 실패, 값 미저장, unpause 뒤 같은 turn_id 확정 (FAULT_MATRIX B1, model-runtime 요청 상한)")
+    if "pointers" not in STATE: rec("5m", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    wait_gw_ready(300)
+    sid = f"sess-{RID}-outm"
+    assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    c, r1 = public_turn(sid, "m-1", "네 있어요"); assert c == 200 and not r1.get("turn_failure_signal"), (c, r1)
+    sh([a.docker, "pause", MS_CONTAINER])
+    try:
+        t_req = time.time(); c, b, h, el = gk_turn(sid, "m-2", "아니요 없어요", timeout=30)
+        failed = c != 200 or (isinstance(b, dict) and b.get("turn_failure_signal"))
+        assert failed, ("model-serving 이 멈췄는데 턴이 성공했다", c, str(b)[:120])
+        gd = gw_log_duration(f"/v1/sessions/{sid}/turns", t_req); assert gd, "gateway 접근 로그에서 못 찾았다"
+        assert gd[0] < 6.5, f"survey 턴 마감(6s)을 넘겼다: gateway duration {gd[0]:.2f}s (클라이언트 {el:.2f}s)"
+        body = json.dumps(b, ensure_ascii=False)[:150] if isinstance(b, dict) else str(b)[:80]
+    finally: sh([a.docker, "unpause", MS_CONTAINER])
+    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", MS_CONTAINER]).stdout.strip() == "healthy", 60, "model-serving healthy", every=2)
+    sv = staff_sv(sid); vals = {v["key"]: v for v in sv["values"]}
+    assert vals["Q1.D01.diagnosed"]["value"] is True and "Q1.D02.diagnosed" not in vals, ("멈춘 동안 값이 저장됐거나 이전 값이 사라졌다", vals)
+    n_logged = utt_count(sv, "아니요 없어요")
+    # 같은 turn_id 재전송(FAULT_POLICY 2: NOT_COMMITTED 로 끝난 턴의 재전송은 확정되어야 한다): 이 PC 관찰은 서비스가 실패 응답(turn_failure_signal NOT_COMMITTED)을 저장해 같은 turn_id 에 계속 같은 실패를 돌려준다 -> 정책 단언(CR-D25)
+    tries = []
+    for _ in range(4):
+        c2, r2 = public_turn(sid, "m-2", "아니요 없어요"); tries.append((c2, r2))
+        if c2 == 200 and not r2.get("turn_failure_signal"): break
+        time.sleep(3)
+    def same_id_confirms(): assert tries[-1][0] == 200 and not tries[-1][1].get("turn_failure_signal"), f"같은 turn_id 재전송 {len(tries)}회 모두 실패 응답: {str(tries[-1][1])[:150]}"
+    policy("5m", "survey-service: NOT_COMMITTED 로 끝난 턴의 turn_id 재전송이 새로 처리되도록(CR-D25)", "model-serving 정지로 실패한 턴을 unpause 뒤 같은 turn_id 로 재전송하면 확정된다", same_id_confirms)
+    # 서비스 자체의 복구는 새 turn_id 로 확인한다(하드 단언): 값이 한 번 저장된다
+    if not (tries[-1][0] == 200 and not tries[-1][1].get("turn_failure_signal")):   # 같은 turn_id 가 확정되지 않았을 때만(확정됐다면 이미 저장돼 중복 기록이 된다)
+        def new_id():
+            c3, r3 = public_turn(sid, "m-3", "아니요 없어요"); return c3 == 200 and not r3.get("turn_failure_signal")
+        wait(new_id, 60, "unpause 뒤 새 turn_id 턴 확정", every=3)
+    sv2 = staff_sv(sid); assert {v["key"]: v for v in sv2["values"]}["Q1.D02.diagnosed"]["value"] is False, "복구 뒤 값이 저장되지 않았다"
+    n_final = utt_count(sv2, "아니요 없어요")
+    # model-runtime 요청 상한(MODEL_RUNTIME_REQUEST_DEADLINE_S 3.5s)과 엔진 멈춤 시 /readyz 503 은 pause 로는 볼 수 없다(컨테이너가 통째로 얼어 /readyz 도 응답하지 못한다).
+    # 이 이미지가 그 코드를 가졌는지는 라벨의 model-runtime 태그로만 안다: 태그가 73e79f9(요청 상한) 이후를 포함해야 한다.
+    chk_ = subprocess.run(["bash", str(ROOT / "scripts/check-health.sh"), "--project", a.project, "--disk-path", str(WORK), "--scheduler-state", str(WORK / "none.json"), "--jobs", str(ROOT / "config/jobs.yaml")], capture_output=True, text=True)
+    lines = chk_.stdout.splitlines(); gate_l = [l for l in lines if "release-gate 판정 루프" in l]; ms_l = [l for l in lines if "readyz model-serving" in l]
+    assert ms_l and ms_l[0].startswith("OK"), ("check-health 의 model-serving 판정", ms_l)
+    assert gate_l and not gate_l[0].startswith(("CRIT", "SKIP")), ("check-health 의 release-gate 판정 루프", gate_l)
+    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 6s 안), 실패 응답 {body}; 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택의 check-health --project 가 model-serving /readyz OK, release-gate 판정 루프 '{gate_l[0][5:60].strip()}...'를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
+
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1288,7 +1331,7 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:
