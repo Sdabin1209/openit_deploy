@@ -841,8 +841,15 @@ def step5m():
     sid = f"sess-{RID}-outm"
     assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
     c, r1 = public_turn(sid, "m-1", "네 있어요"); assert c == 200 and not r1.get("turn_failure_signal"), (c, r1)
+    sidr = f"sess-{RID}-outmr"; assert kiosk("/v1/sessions", {"session_id": sidr, "kind": "SESSION_START"})[0] == 200
+    phrase, _rules = risk_phrase_from_defaults()
     sh([a.docker, "pause", MS_CONTAINER])
     try:
+        # 모델 서버가 멈춘 턴에서도 위험 발화의 직원 알림이 먼저 나간다(D88 U1: 규칙 감지는 모델 추출·쓰기 확정과 무관). 추출 호출 없이 정지하므로 마감 안에 끝난다
+        t_r = time.time(); cr, rr = public_turn(sidr, "mr-1", f"저는 {phrase} 있어요"); dt_r = time.time() - t_r
+        assert cr == 200 and (rr.get("turn_failure_signal") or {}).get("staff_alert") in ("DELIVERED", "DELIVERY_FAILED"), ("모델 서버가 멈췄는데 위험 발화의 직원 알림이 나가지 않았다", cr, str(rr)[:160])
+        assert dt_r < 6.5, f"위험 정지 턴이 마감을 넘겼다: {dt_r:.1f}s"
+        assert [x for x in gws("GET", "/v1/staff/alerts?status=OPEN")[1]["items"] if x["session_id"] == sidr], "모델 서버가 멈춘 중의 위험 발화가 직원 알림 목록에 없다"
         t_req = time.time(); c, b, h, el = gk_turn(sid, "m-2", "아니요 없어요", timeout=30)
         failed = c != 200 or (isinstance(b, dict) and b.get("turn_failure_signal"))
         assert failed, ("model-serving 이 멈췄는데 턴이 성공했다", c, str(b)[:120])
@@ -875,7 +882,7 @@ def step5m():
     lines = chk_.stdout.splitlines(); gate_l = [l for l in lines if "release-gate 판정 루프" in l]; ms_l = [l for l in lines if "readyz model-serving" in l]
     assert ms_l and ms_l[0].startswith("OK"), ("check-health 의 model-serving 판정", ms_l)
     assert gate_l and not gate_l[0].startswith(("CRIT", "SKIP")), ("check-health 의 release-gate 판정 루프", gate_l)
-    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 6s 안), 실패 응답 {body}; 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택의 check-health --project 가 model-serving /readyz OK, release-gate 판정 루프 '{gate_l[0][5:60].strip()}...'를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
+    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 6s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택의 check-health --project 가 model-serving /readyz OK, release-gate 판정 루프 '{gate_l[0][5:60].strip()}...'를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
 
 AUTHOR = lambda: ("author-e2e", TOK("account-author-e2e-password"))        # 저자 경로 계정(역할 author)
 CLINICAL = lambda: ("clinical-e2e", TOK("account-clinical-e2e-password"))   # 임상 근거 검수자(역할 clinical-reviewer, 저자와 다른 주체)
@@ -1017,6 +1024,15 @@ def step5s():
     EA.check_release_loaded(st, new)
     rec("5s", "REAL", f"포인터 교체(활성화 2회째) 전후로 {', '.join(SWAP_SERVICES)} 컨테이너의 ID 와 StartedAt 이 같다(docker inspect 의 두 필드만 읽음). model-serving 의 /v1/releases/{new} 가 LOADED(오류 없음). 변경된 것은 model-serving 의 적재 릴리스뿐이다. 어댑터는 시험용 가짜(TEST-SUB)")
 
+def risk_phrase_from_defaults():
+    """survey-service 기본(임시) 위험 문구 목록에서 문구 하나를 읽는다(지어내지 않는다). 빌드 사본의 survey_service/risk_rules.py 의 _PROVISIONAL 을 ast 로 읽는다. (문구, 규칙 키 목록)"""
+    import ast
+    src = (ROOT / "build/ctx/survey-service/survey_service/risk_rules.py").read_text(encoding="utf-8")
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "_PROVISIONAL" for t in node.targets):
+            d = ast.literal_eval(node.value); k = "chest-pain" if "chest-pain" in d else next(iter(d)); return d[k][0], list(d)
+    raise AssertionError("risk_rules.py 에서 _PROVISIONAL 을 찾지 못했다")
+
 def step5f():
     title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 직원 알림 입력원 없음 (kiosk-frontend)")
     if "pointers" not in STATE: rec("5f", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1045,18 +1061,26 @@ def step5f():
     c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 in (401, 403), c3   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
-    # (d) 직원 알림의 입력원이 없다(OPEN_GAPS G01, D78/D79): 알림이 *나오지 않는 것*과 /readyz 의 staff_alert_source.active=false 를 확인한다.
-    c, rz = survey_ready(); sas = rz.get("staff_alert_source"); assert isinstance(sas, dict) and sas.get("active") is False, f"/readyz 의 staff_alert_source 가 active=false 가 아니다: {sas}"
-    s0 = f"sess-{RID}-nors"; assert kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
-    for i, text in enumerate(("숨이 안 쉬어져요", "가슴이 너무 아파요"), 1):   # v1 이었다면 위험으로 멈췄을 발화(시험 자료). 입력원이 없으므로 멈추지 않아야 한다
-        c, rr = public_turn(s0, f"nr{i}", text); assert c == 200, (c, rr); validate_survey("FrontendInput", rr)
-        assert not (rr.get("turn_failure_signal") or {}).get("staff_alert") in ("DELIVERED", "DELIVERY_FAILED"), f"입력원이 없는데 직원 알림이 나왔다: {rr}"
-    c, stn = state_of(s0); validate("SessionState", stn); assert stn["state"] == "ACTIVE", ("입력원이 없는데 세션이 멈췄다", stn)
-    c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); validate("StaffAlertPage", pg0)
-    assert not [x for x in pg0["items"] if x["session_id"] == s0], "입력원이 없는데 알림 목록에 이 세션의 알림이 있다"
-    assert kiosk(f"/v1/sessions/{s0}/end", {"session_id": s0, "kind": "SESSION_END"})[0] == 200
-    rec("5d", "REAL", "직원 알림 입력원 없음(G01): /readyz staff_alert_source.active=false, v1 이었다면 위험 정지였을 발화 2건에도 세션은 ACTIVE로 이어지고 알림 목록(OPEN)에 이 세션의 알림이 없으며 전달 실패 신호도 없다. 이것은 '알림이 동작한다'는 뜻이 아니라 알림이 일부러 비어 있다는 확인이다")
-    rec("5d-skip", "SKIPPED", "직원 콘솔 알림 화면 시험(알림 OPEN, SSE alert/resolved, 직원 RESUME/END, 정지 중 발화 무응답)은 건너뛴다. 이유: 알림을 만들려면 survey-service 의 시험용 입력원(SURVEY_RISK_SOURCE=tests.smoke_fakes:risk_source)이 필요한데, 그 코드는 survey-service 리포의 tests/ 에만 있고 이미지에 없다(스모크가 tests/ 를 읽기 전용으로 붙임). 다른 영역 리포의 시험 코드를 이 시험 구성에 끌어와 결합하는 것은 하지 않았고 운영 설정에 넣지도 않는다. 직원 개입의 권한 분리(키오스크 403, 직원 토큰 409)는 단계 5에서 REAL 로 본다")
+    # (d) 위험 감지는 기본으로 켜져 있다(D88 U1·U2, survey-service ADR-0013): 모든 발화 턴의 원문에 임시 기본 목록(임상 검토 전)을 먼저 적용한다. 알림은 모델 추출·쓰기 확정과 무관하게 먼저 나간다
+    c, rz = survey_ready(); sas = rz.get("staff_alert_source") or {}
+    assert sas.get("active") is True and sas.get("provisional") is True and sas.get("clinically_reviewed") is False and sas.get("source") == "PROVISIONAL_DEFAULT" and sas.get("rule_count", 0) > 0, f"/readyz 의 staff_alert_source 가 '켜짐, 임시 기본 목록, 임상 검토 전'이 아니다: {sas}"
+    phrase, rule_ids = risk_phrase_from_defaults()
+    s0 = f"sess-{RID}-risk0"; assert kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
+    c, ok_ = public_turn(s0, "rk0-1", "네 있어요"); assert c == 200 and not ok_.get("turn_failure_signal"), ("위험 문구가 없는 발화는 정상 진행해야 한다", c, ok_)
+    c, stn = state_of(s0); validate("SessionState", stn); assert stn["state"] == "ACTIVE", ("위험 문구가 없는데 세션이 멈췄다", stn)
+    c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); assert not [x for x in pg0["items"] if x["session_id"] == s0], "위험 문구가 없는데 알림이 있다"
+    vals_before = staff_sv(s0)["values"]
+    risk_text = f"저는 {phrase} 있어요"   # 기본 목록(survey-service risk_rules.py)에서 읽은 위험 문구로 만든 시험 문장
+    c, rr = public_turn(s0, "rk0-2", risk_text); assert c == 200, (c, rr); validate_survey("FrontendInput", rr)
+    fs = rr.get("turn_failure_signal") or {}
+    assert fs.get("staff_alert") in ("DELIVERED", "DELIVERY_FAILED"), ("위험 발화인데 직원 알림 신호가 없다(키오스크가 대기/직원 호출 화면으로 갈 신호)", rr)
+    c, stn = state_of(s0); assert stn["state"] == "PAUSED_RISK" or stn.get("status") == "PAUSED_RISK" or "PAUSED" in json.dumps(stn), ("세션이 위험 정지가 아니다", stn)
+    c, pg1 = gws("GET", "/v1/staff/alerts?status=OPEN"); validate("StaffAlertPage", pg1)
+    mine = [x for x in pg1["items"] if x["session_id"] == s0]; assert mine, "위험 발화인데 직원 알림 목록(OPEN)에 이 세션의 알림이 없다"
+    sv0 = staff_sv(s0); assert sv0["status"] == "PAUSED_RISK" and sv0["values"] == vals_before, ("위험 정지 턴의 답이 저장됐거나 상태가 다르다", sv0["status"], sv0["values"], vals_before)
+    hits = (survey_ready()[1].get("staff_alert_source") or {}).get("hits_by_rule") or {}; assert sum(hits.values()) >= 1, ("/readyz hits_by_rule 에 적중이 없다", hits)
+    kiosk(f"/v1/sessions/{s0}/end", {"session_id": s0, "kind": "SESSION_END"})
+    rec("5k", "REAL", f"위험 감지 기본 켜짐(D88 U1·U2): /readyz staff_alert_source active=true, provisional=true, clinically_reviewed=false, 규칙 {sas['rule_count']}개(임시 기본 목록, 임상 검토 전). 위험 문구가 없는 발화는 정상 진행(ACTIVE, 알림 없음). 기본 목록에서 읽은 문구('{phrase}')가 든 발화는 turn_failure_signal.staff_alert={fs.get('staff_alert')}, 세션 PAUSED_RISK, 직원 알림 목록(OPEN)에 나타남, 답은 저장되지 않음, /readyz hits_by_rule 적중 {sum(hits.values())}. 거짓 알림 가능성과 임상 검토 전이라는 한계는 survey-service 문서의 것이다")
     rec("5x", "BLOCKED", "실제 브라우저에서의 화면 동작, STT(Web Speech API), 웹 푸시 수신은 E2E에서 볼 수 없다(보안 출처 HTTPS·VAPID 키 필요, 푸시는 VAPID 없이 비활성: SSE만 확인). 운영 TLS·직원 콘솔 인증 방식은 미정")
 
 def trace_env(release_id, n):

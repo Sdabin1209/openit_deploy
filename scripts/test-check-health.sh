@@ -80,4 +80,21 @@ t "release-gate /readyz 503 은 CRIT" 2 "-> 503" "${base[@]}" --scheduler-state 
 t "model-serving /readyz 200 은 OK" 0 "엔진 정상" "${base[@]}" --scheduler-state $T/s.json --readyz model-serving=http://127.0.0.1:$P/ms/ok
 t "model-serving /readyz 503(엔진 멈춤)은 CRIT" 2 "engine stuck" "${base[@]}" --scheduler-state $T/s.json --readyz model-serving=http://127.0.0.1:$P/ms/down
 t "컨테이너가 없는 프로젝트는 SKIP" 0 "컨테이너가 없거나" "${base[@]}" --scheduler-state $T/s.json --project deploy-nonexistent-xyz
+# https 대상 + 내부 CA(ca_file): 자체 서명 인증서를 ca_file 로 주면 OK, 안 주면 신뢰할 수 없어 CRIT (D88/U5, external-monitor 의 ca_file)
+openssl req -x509 -newkey rsa:2048 -nodes -keyout $T/k.pem -out $T/c.pem -days 2 -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1" >/dev/null 2>&1
+python3 -I - "$T" <<'PY' &
+import http.server, ssl, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s): s.send_response(200); s.end_headers(); s.wfile.write(b"ok")
+    def log_message(*a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(sys.argv[1] + "/c.pem", sys.argv[1] + "/k.pem"); srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+open(sys.argv[1] + "/tlsport", "w").write(str(srv.server_port)); srv.serve_forever()
+PY
+SP2=$!; for i in $(seq 1 50); do [ -s $T/tlsport ] && break; sleep 0.1; done; TP=$(cat $T/tlsport)
+printf 'targets:\n  - {name: tls, url: "https://127.0.0.1:%s/healthz", expect_status: 200, ca_file: "%s/c.pem"}\n' $TP $T > $T/mon.yaml
+t "https 대상이 ca_file 로 검증되면 OK" 0 "감시 tls: https://127.0.0.1:$TP/healthz -> 200" "${base[@]}" --scheduler-state $T/s.json
+printf 'targets:\n  - {name: tls, url: "https://127.0.0.1:%s/healthz", expect_status: 200}\n' $TP > $T/mon.yaml
+t "ca_file 없이 자체 서명 https 는 신뢰할 수 없어 CRIT" 2 "닿지 못했다" "${base[@]}" --scheduler-state $T/s.json
+kill $SP2 2>/dev/null
 [ $F = 0 ] && echo "통과: check-health 자체 시험 $N건" || { echo "실패: $F/$N건"; exit 1; }

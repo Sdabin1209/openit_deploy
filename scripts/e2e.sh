@@ -215,8 +215,10 @@ YAML
 SCHED="$VENV/bin/python $DEPLOY_ROOT/scripts/scheduler.py --config $W/sched/jobs.yaml --state $W/sched/st.json"
 $SCHED tick >/dev/null; $SCHED tick >/dev/null; sleep 3.5; $SCHED tick >/dev/null
 chk "스케줄러: 기한이 되면 실행하고 기한 전 tick은 아무것도 안 한다(3초 주기, 3번 tick -> 2번 실행), 주기 미정·GPU 밖 잡은 실행 안 함" bash -c "[ \"\$(cat $W/sched/ran.txt)\" = \"\$(printf 'run\nrun')\" ] && echo '실행 2회, SHOULD-NOT-RUN 없음'"
-printf 'targets:\n  - {name: gateway-healthz, url: "http://127.0.0.1:%s/healthz", expect_status: 200}\n' "$PGW" > "$W/sched/monitor.yaml"
-chk "check-health: 스케줄러 상태 파일·디스크·외부 감시 대상(gateway /healthz)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --jobs "$W/sched/jobs.yaml" --scheduler-state "$W/sched/st.json" --monitor "$W/sched/monitor.yaml" --disk-path "$W" --skip-backup
+# 단계 5d/5q/5w 가 gateway 를 다시 시작하면 Docker 가 배정한 호스트 포트가 바뀐다: 감시 대상 주소는 지금 포트를 다시 읽어 만든다(평문 /healthz 와 HTTPS /healthz + 시험용 CA)
+PGW=$(port gateway); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)
+printf 'targets:\n  - {name: gateway-healthz-plain, url: "http://127.0.0.1:%s/healthz", expect_status: 200}\n  - {name: gateway-healthz-https, url: "https://127.0.0.1:%s/healthz", expect_status: 200, ca_file: "%s"}\n' "$PGW" "$PGWS" "$W/gateway-ca.crt" > "$W/sched/monitor.yaml"
+chk "check-health: 스케줄러 상태 파일·디스크·외부 감시 대상(gateway /healthz 평문·HTTPS)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --jobs "$W/sched/jobs.yaml" --scheduler-state "$W/sched/st.json" --monitor "$W/sched/monitor.yaml" --disk-path "$W" --skip-backup
 chk "config/jobs.yaml: GPU 잡 3개는 gpu-external(이 Compose에 없음)" bash -c "[ \$(grep -c 'where: gpu-external' $DEPLOY_ROOT/config/jobs.yaml) = 3 ] && ! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
 sect "단계 9: 백업과 복구 (O16 미정: 설정으로만)"

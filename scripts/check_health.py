@@ -4,7 +4,7 @@ cron·systemd timer·서버 밖 감시가 부르고 종료 코드로 판단한�
 읽는 것: 스케줄러 상태 파일(scheduler.py 가 쓴다), 잡 정의(config/jobs.yaml), 디스크(df), 외부 감시 설정의 대상(config/external-monitor.yaml, 없으면 .example.yaml)
 한계값(디스크 80/90%, 잡 지연 2배)은 헤드가 정한 표준 관행의 시작값이고 사용자 결정이 아니다. 비밀 값은 읽지도 출력하지도 않는다.
 """
-import argparse, json, os, shutil, sys, time, urllib.request, urllib.error
+import argparse, json, os, shutil, ssl, sys, time, urllib.request, urllib.error
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -78,7 +78,9 @@ else:
         if not u: add("SKIP", f"감시 {n}", f"url 미정({os.path.basename(mon)}): 공개 주소가 정해지면 채운다"); continue
         want = t.get("expect_status", 200)
         try:
-            with urllib.request.urlopen(u, timeout=5) as r: code = r.status
+            # https 대상은 ca_file(내부 CA 루트 인증서, D88/U5)이 있으면 그것으로 검증한다. 없으면 시스템 신뢰 저장소(공인 인증서나 이 서버에 신뢰시킨 CA)
+            ctx = ssl.create_default_context(cafile=t["ca_file"]) if t.get("ca_file") else None
+            with urllib.request.urlopen(u, timeout=5, context=ctx) as r: code = r.status
         except urllib.error.HTTPError as e: code = e.code
         except Exception as e: add("CRIT", f"감시 {n}", f"{u} 에 닿지 못했다({type(e).__name__})"); continue
         add("OK" if code == want else "CRIT", f"감시 {n}", f"{u} -> {code} (기대 {want})")
