@@ -164,3 +164,33 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 | 컨테이너가 `operation not permitted`로 안 뜸 | `cap_drop: ALL`과 파일 권한이 있는 바이너리 | 필요한 capability만 `cap_add` (gateway의 `NET_BIND_SERVICE`) |
 | SQLite `unable to open database file` (백업·읽기) | WAL 모드 DB를 읽기 전용 마운트로 연 것 | 백업 도구처럼 쓰기 가능 마운트로 읽기 전용 연결을 쓰고 만든 `-wal/-shm`을 지운다 |
 | 빌드가 `error getting credentials … docker-credential-desktop.exe: exec format error` 로 실패 | interop이 꺼진 WSL에서 `~/.docker/config.json`의 `credsStore`가 윈도 도우미를 가리킨다 | 환경 설정 문제: `credsStore` 항목을 직접 지우거나 interop을 켠다(SETUP.md B절). doctor가 미리 FAIL로 알려 준다 |
+
+## 9. gateway TLS, 로그인 시도, 기기 토큰 (D88/U5·U8, ADR 0005)
+
+### 9-1. HTTPS와 내부 CA 루트 인증서 배포 (사람이 할 일)
+
+- gateway는 HTTPS가 필수다. 컨테이너 8443이 HTTPS, 8080은 평문이지만 `/healthz`만 답하고 나머지는 `308`로 https 주소로 보낸다. 호스트 포트는 `GATEWAY_PORT`(평문), `GATEWAY_TLS_PORT`(HTTPS, 기본 8443; 운영에서 443을 쓰려면 `GATEWAY_TLS_PORT=443`과 `GATEWAY_PUBLIC_TLS_PORT=443`).
+- 사이트 이름은 `GATEWAY_HOSTS`(기본 `localhost:8443, 127.0.0.1:8443`)다. 운영에서는 병원 내부 도메인으로 바꾼다(예: `GATEWAY_HOSTS=kiosk.hospital.local:8443`). 인증서는 Caddy 내부 CA가 발급하고, 루트와 발급 인증서는 볼륨 `gateway-data`(`/data/caddy/pki`)에 있어 재시작해도 유지된다(**볼륨을 지우면 루트가 바뀌어 모든 기기가 다시 신뢰해야 한다**; 이 볼륨은 CA 비밀키를 담으므로 유출·백업에 주의).
+- 루트 인증서를 꺼낸다: `docker cp deploy-gateway-1:/data/caddy/pki/authorities/local/root.crt ./openit-root.crt`. 이 파일은 공개해도 되는 인증서다(비밀키는 서버에만 있다).
+- 키오스크와 직원 PC의 신뢰 저장소에 `openit-root.crt`를 넣는다(루트 권한이 필요한 사람 일): Windows는 `certutil -addstore -f ROOT openit-root.crt`, Ubuntu는 `/usr/local/share/ca-certificates/`에 복사 후 `sudo update-ca-certificates`, Firefox는 별도 저장소(설정에서 가져오기). 브라우저를 다시 시작한다.
+- 확인(서버나 PC에서): `curl --cacert openit-root.crt https://<도메인>:8443/healthz` 가 `ok`, `curl -I http://<도메인>:8080/` 가 `308`과 `Location: https://...`.
+- 공인 인증서(ACME)로 바꾸려면 병원 정보가 필요하다(도메인, 80/443 개방). `config/Caddyfile`의 HTTPS 사이트에서 `tls internal` 줄을 지우고 `GATEWAY_HOSTS`에 공인 도메인을 적는다(Caddy가 발급·갱신).
+- 서비스 사이(gateway→서비스→postgres)는 평문이다. 같은 서버의 Docker 내부 네트워크(서비스·DB 네트워크 internal)로 한정되며, 이 한계와 재검토 조건은 ADR 0005에 있다.
+- 이 PC에서 확인한 것: E2E가 시험용 CA만 신뢰하는 클라이언트로 gateway에 https로 접속하고, 평문 308, HSTS·`X-Content-Type-Options`·`X-Frame-Options`, `/config.json` 404를 확인한다. 확인하지 못한 것: 실제 키오스크 브라우저의 신뢰 절차, 공인 인증서 전환.
+
+### 9-2. 로그인 시도 속도 제한: 하지 않았다 (한계와 대안)
+
+Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules` 137개 중 rate/limit 없음, 확인). 모듈을 넣으려면 커스텀 이미지를 빌드해야 하고 이는 공급망에 새 위험을 더하므로 하지 않았다(ADR 0002). 대신:
+
+1. 암호가 무작위 48자리 16진수(`gen-secrets.sh`의 `token_hex(24)`)라 무차별 대입이 현실적이지 않다. 사람이 쓰는 계정 암호를 바꿀 때도 같은 강도를 쓴다.
+2. 네트워크 제한: gateway의 호스트 바인드(`GATEWAY_BIND`)를 병원 내부 주소로 한정하고 방화벽(예: nftables `limit rate`, 병원 방화벽)에서 접속 원본과 초당 접속 수를 제한한다(사람 일).
+3. 실패 로그 감시: Caddy 접근 로그(JSON, stdout)에 `status: 401`과 원격 IP가 남는다. 같은 IP에서 짧은 시간에 401이 반복되면 차단하는 도구(fail2ban 등)를 호스트에 두고 Docker 로그(`docker logs deploy-gateway-1`)를 읽게 한다. 이 리포는 설치하지 않는다.
+4. 한계: 위 둘은 이 리포의 시험으로 확인하지 못했다.
+
+### 9-3. 키오스크 기기별 토큰 (U8): 발급, 배포, 회전, 폐기
+
+- 목록 파일 `config/kiosk-devices.conf`(예시 `config/kiosk-devices.conf.example`, 한 줄에 기기 ID 하나)로 한꺼번에 만든다: `bash scripts/kiosk-add-device.sh from-list`. 한 대: `... add <기기 ID>`. 기기마다 토큰 파일 `secrets/tokens/kiosk-device-<ID>`와 **기기 산출물** `secrets/kiosk-config/<ID>.json`(`{"device_token":..., "allow_remote_stt":false}`, 모드 600)이 생기고 gateway 기기 목록(`gateway-devices.caddy`)이 갱신된다. 반영은 gateway 재시작(`--apply`).
+- 산출물은 그 기기에만 전한다(사람 일). 기기의 정적 서버가 `CONFIG_FILE`로 이 파일을 마운트해 `/config.json`으로 낸다(kiosk-frontend 런북). **중앙 kiosk-frontend 컨테이너에는 어떤 기기의 파일도 마운트하지 않는다**(한 컨테이너가 모든 키오스크에 같은 토큰을 내면 기기별 토큰이 무의미하고, 인증 없는 경로로 토큰이 샌다). gateway도 `/config.json`을 404로 막는다.
+- 회전: `bash scripts/kiosk-add-device.sh rotate <기기 ID> --apply`. 옛 토큰은 즉시 무효다. 새 산출물을 기기에 전한 뒤 기기를 다시 시작한다. 의심스러운 기기는 바로 회전하거나 폐기한다.
+- 폐기: `bash scripts/kiosk-add-device.sh remove <기기 ID> --apply`(토큰 파일과 산출물을 지우고 목록에서 뺀다).
+- survey-service가 기기별 토큰을 받는 설정(`SURVEY_KIOSK_DEVICE_TOKENS`)과 세션 소유 확인은 survey-service 영역 몫이다. gateway는 기기 토큰을 확인한 뒤 서비스 kiosk 토큰으로 바꿔 붙이는 지금 구조 그대로이므로, 서비스가 기기를 구별하려면 gateway가 기기 ID를 서비스에 전해 주는 변경이 따로 필요하다(**이 리포는 아직 하지 않았다**: 영역 합의 필요).
