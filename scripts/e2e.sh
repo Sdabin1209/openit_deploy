@@ -109,6 +109,11 @@ chk "도달: release-gate -> question-authoring (release, I1)" reach release-gat
 chk "도달: release-gate -> model-registry (release, I3)" reach release-gate model-registry
 chk "차단: survey-service -> question-authoring" blocked survey-service question-authoring
 chk "차단: survey-service -> model-registry" blocked survey-service model-registry
+tcp() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import socket;socket.create_connection(('$2',$3),timeout=3)" >/dev/null 2>&1; }
+for s in survey-service question-authoring ops-feedback-ingest release-gate; do chk "도달: $s -> postgres:5432 (db 네트워크)" tcp $s postgres 5432; done
+tcp_blocked() { ! tcp "$@"; }
+chk "차단: model-registry -> postgres" tcp_blocked model-registry postgres 5432
+chk "차단: 호스트에 postgres 포트 게시 없음" bash -c "[ -z \"\$($DOCKER port ${PROJECT}-postgres-1)\" ]"
 chk "도달: survey-service -> model-serving (serving, I9)" reach survey-service model-serving
 chk "도달: model-serving -> release-gate (serving, I4 번들 읽기)" reach model-serving release-gate
 chk "차단: model-serving -> question-authoring" blocked model-serving question-authoring
@@ -163,17 +168,23 @@ printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.e
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\n' "$W/backups" > "$W/backup-test.env"
 export BACKUP_CONFIG="$W/backup-test.env"
-dc "$PROJECT" --profile jobs stop >/dev/null 2>&1
-STORES="survey-data qa-data ops-data gate-data models-data"
+# 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data), 데이터베이스는 PostgreSQL(D85)
+dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx postgres | tr '\n' ' ') >/dev/null 2>&1
+STORES="gate-data models-data"; PGDBS="survey qa ops_log ops_failure gate"
 for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
-mkdir -p "$W/backups/qa-data/20200101T000000Z"; touch -d '2020-01-01' "$W/backups/qa-data/20200101T000000Z"
-chk "백업(5개 저장소, SQLite backup API + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
-chk "보관 기간(7일)이 지난 스냅샷만 삭제" bash -c "[ ! -d $W/backups/qa-data/20200101T000000Z ] && [ \$(ls $W/backups/qa-data | wc -l) = 1 ]"
+for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-before-pg-$d.json"; done
+mkdir -p "$W/backups/gate-data/20200101T000000Z"; touch -d '2020-01-01' "$W/backups/gate-data/20200101T000000Z"
+chk "백업(파일 저장소 2개, SQLite backup API + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
+chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
+chk "보관 기간(7일)이 지난 스냅샷만 삭제" bash -c "[ ! -d $W/backups/gate-data/20200101T000000Z ] && [ \$(ls $W/backups/gate-data | wc -l) = 1 ]"
 dc "$PROJECT" down >/dev/null 2>&1
-chk "볼륨 삭제(데이터를 실제로 지운다)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_qa-data ${PROJECT}_ops-data ${PROJECT}_gate-data ${PROJECT}_models-data >/dev/null"
-chk "지운 뒤 지문이 달라졌다(빈 볼륨)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh qa-data)\" != \"\$(cat $W/fp-before-qa-data.json)\" ]"
+chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_pg-data >/dev/null"
+dc "$PROJECT" up -d --wait --wait-timeout 120 postgres >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다
+chk "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
 for s in $STORES; do chk "복구 $s" bash -c "SN=\$(ls -d $W/backups/$s/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/restore.sh $s \"\$SN\" --yes"; done
+for d in $PGDBS; do chk "복구 pg-$d" bash -c "SN=\$(ls -d $W/backups/pg-$d/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/pg-restore.sh $d \"\$SN\" --yes"; done
 for s in $STORES; do chk "복구 후 지문 일치 $s" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh $s)\" = \"\$(cat $W/fp-before-$s.json)\" ]"; done
+for d in $PGDBS; do chk "복구 후 지문 일치 pg-$d" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh $d)\" = \"\$(cat $W/fp-before-pg-$d.json)\" ]"; done
 chk "복구 후 서비스 기동" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 PQA=$(port question-authoring); POPS=$(port ops-feedback-ingest); PGATE=$(port release-gate); PMR=$(port model-registry); PSURVEY=$(port survey-service)
 PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR}"

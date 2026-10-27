@@ -162,6 +162,11 @@ import /etc/caddy/devices.caddy
 	}
 	# 키오스크 공개 API(PUBLIC_API.md, D85 F절): 기기 토큰(Authorization: Bearer, 기기마다 파일 하나)을 목록과 대조한 뒤에만 서비스 kiosk 토큰으로 바꿔 붙인다.
 	# 토큰이 없거나 틀리면 401. 클라이언트가 보낸 X-Openit-User 는 지운다. /v1/staff 는 위에서만 staff 토큰을 받는다.
+	# 위험 신호 입력(risk-source)과 결과 조회(result-reader)는 감지기·병원 시스템용 내부 면이다: 게이트웨이에 열지 않는다(D85). 키오스크 경로의 와일드카드가 삼키지 않게 먼저 닫는다.
+	@internalsurvey path /v1/sessions/*/risk-signals /v1/results /v1/results/*
+	handle @internalsurvey {
+		respond "not found" 404
+	}
 	@kioskapi path /v1/sessions /v1/sessions/*
 	handle @kioskapi {
 		handle @device_ok {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: survey-data qa-data ops-data gate-data (비우면 전부)
+# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: gate-data models-data (파일 저장소. 비우면 gate-data). 데이터베이스는 PostgreSQL 이라 pg-backup.sh
 #  환경: DEPLOY_PROJECT(기본 deploy), BACKUP_CONFIG(기본 config/backup.env)
 # 설정(BACKUP_DIR, BACKUP_RETENTION_DAYS)이 없거나 비어 있으면 거부한다(코드에 기본값 없음, O16 미정).
 set -euo pipefail
@@ -15,7 +15,7 @@ LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK")
 [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금 파일에 없다"
 mkdir -p "$BACKUP_DIR"
-STORES=${*:-survey-data qa-data ops-data gate-data}
+STORES=${*:-gate-data}   # 세션·문항·로그·레지스트리는 PostgreSQL(D85)이라 pg-backup.sh 가 맡는다. 남은 파일 저장소는 번들(gate-data/releases)
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 for s in $STORES; do
   mkdir -p "$BACKUP_DIR/$s"

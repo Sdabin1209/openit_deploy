@@ -6,9 +6,9 @@ jobs:
     where: serving
     command: ["scripts/run-job.sh", "job-ops-feedback"]
     interval_seconds: 3600
-  - name: backup                      # 저장소 백업. 설정(config/backup.env)이 없으면 거부한다
+  - name: backup                      # 파일 저장소(gate-data 번들)와 PostgreSQL(pg_dump) 백업. 설정(config/backup.env)이 없으면 거부한다
     where: serving
-    command: ["scripts/backup.sh"]
+    command: ["scripts/backup-all.sh"]
     interval_seconds: 86400
   - name: release-gate-collector      # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다(멱등)
     where: serving

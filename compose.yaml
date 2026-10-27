@@ -28,11 +28,9 @@ networks:
   db:         # PostgreSQL 서버 접근. 호스트로 열지 않는다. 서비스는 자기 영역이 PostgreSQL로 바뀔 때 이 네트워크에 붙는다
     internal: true
 
-volumes:          # 저장소마다 볼륨 하나, 쓰기는 소유 서비스만(이웃은 HTTP와 토큰, 백업은 읽기 전용 마운트)
-  survey-data:    # SURVEY_SESSION_DB, SURVEY_OUTBOX_DB, 릴리스 작업 폴더
-  qa-data:        # 문항 저장소 questions.sqlite3
-  ops-data:       # log.db(원본 Trace), failures.db(실패 사례)
-  gate-data:      # 릴리스 레지스트리 registry.sqlite3 + releases/
+volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서비스만(이웃은 HTTP와 토큰). 데이터베이스는 PostgreSQL(pg-data), 백업은 pg_dump
+  survey-data:    # 릴리스 작업 폴더(releases/)만. 세션·outbox·알림은 PostgreSQL(survey)
+  gate-data:      # 번들 파일 releases/ (릴리스 레지스트리 DB는 PostgreSQL(gate))
   serving-data:   # model-serving: 게이트에서 받은 번들 캐시(다시 받을 수 있어 백업 대상 아님)
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
   pg-data:        # postgres: 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 볼륨 복사가 아니라 scripts/pg-backup.sh(pg_dump)
@@ -81,6 +79,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-write-release-approver
   gate-read-release-approver:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-release-approver
+  survey-result-reader:
+    file: ${SECRETS_DIR:-./secrets}/tokens/survey-result-reader
+  survey-risk-source:
+    file: ${SECRETS_DIR:-./secrets}/tokens/survey-risk-source
   gate-read-operator:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-operator
   gate-write-operator:
@@ -196,13 +198,17 @@ services:
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
       SURVEY_TRACE_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
       SURVEY_INFERENCE_TOKEN_FILE: /run/secrets/inference-survey-service
-    secrets: [survey-api-kiosk, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service]
-    volumes: [survey-data:/data]
-    networks: [edge, serving]
+      SURVEY_RESULT_READER_TOKEN_FILE: /run/secrets/survey-result-reader   # 결과 조회 API(result-reader 역할, 병원/의사 시스템용: 게이트웨이에 열지 않는다)
+      SURVEY_RISK_SOURCE_TOKEN_FILE: /run/secrets/survey-risk-source       # 위험 신호 입력 API(risk-source 역할, 감지기용: 게이트웨이에 열지 않는다)
+      SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
+    secrets: [survey-api-kiosk, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
+    volumes: [survey-data:/data]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
+    networks: [edge, serving, db]
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
     depends_on:
+      postgres: {condition: service_healthy}
       ops-feedback-ingest: {condition: service_healthy}
       release-gate: {condition: service_healthy}
       model-serving: {condition: service_healthy}
@@ -216,9 +222,12 @@ services:
       QA_AUTHOR_TOKENS_FILE: /run/secrets/qa-author-tokens
       QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
       QA_FAILURES_TOKEN_FILE: /run/secrets/ops-read-question-authoring
-    secrets: [qa-author-tokens, qa-read-tokens, ops-read-question-authoring]
-    volumes: [qa-data:/data]
-    networks: [authoring, release]
+      QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
+    secrets: [qa-author-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
+    tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
+    networks: [authoring, release, db]
+    depends_on:
+      postgres: {condition: service_healthy}
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -232,9 +241,13 @@ services:
       OPS_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
       OPS_READ_TOKENS_FILE: /run/secrets/ops-read-tokens
       OPS_REVIEW_TOKENS_FILE: /run/secrets/ops-review-tokens
-    secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens]
-    volumes: [ops-data:/data]
-    networks: [serving, logs, authoring]   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
+      OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn           # 원본 Trace 로그(PostgreSQL, D85)
+      OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn   # 실패 사례(PostgreSQL)
+    secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-dsn, db-ops-failure-dsn]
+    tmpfs: ["/tmp", "/data"]
+    networks: [serving, logs, authoring, db]
+    depends_on:
+      postgres: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -249,9 +262,12 @@ services:
       GATE_WRITE_TOKENS_FILE: /run/secrets/gate-write-tokens
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
       GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
-    secrets: [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate]
+      GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn   # 릴리스 레지스트리는 PostgreSQL(D85). 번들 파일(releases/)은 gate-data 볼륨 그대로
+    secrets: [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data]
-    networks: [serving, release]
+    networks: [serving, release, db]
+    depends_on:
+      postgres: {condition: service_healthy}
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -295,15 +311,16 @@ services:
       OPS_DEID_SALT_FILE: /run/secrets/deid-salt
       OPS_GATE_READ_TOKEN_FILE: /run/secrets/gate-read-ops-feedback
       OPS_GATE_WRITE_TOKEN_FILE: /run/secrets/gate-write-ops-feedback
-    secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback]
+      OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn
+      OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn
+    secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback, db-ops-log-dsn, db-ops-failure-dsn]
     volumes:
-      - ops-data:/data
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
-    networks: [logs, release]
+    networks: [logs, release, db]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
-    tmpfs: ["/tmp"]
+    tmpfs: ["/tmp", "/data"]
 
   job-release-gate-collect:     # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다
     profiles: ["jobs"]
@@ -314,9 +331,10 @@ services:
     environment:
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
       GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
-    secrets: [qa-read-release-gate, model-registry-read-release-gate]
+      GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn
+    secrets: [qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data]
-    networks: [release]
+    networks: [release, db]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true

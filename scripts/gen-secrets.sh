@@ -39,10 +39,12 @@ OPS_R=$(roles ops read synthetic-data model-lab question-authoring reviewer)
 MR_R=$(roles model-registry read release-gate model-lab)
 MR_W="model-lab=$(tok model-registry-write-model-lab)"
 QA_AUTHOR=$(tok qa-author-e2e)
+# survey-result-reader / survey-risk-source: survey-service 의 결과 조회(result-reader)·위험 신호 입력(risk-source) 역할 토큰(내부 호출용, 게이트웨이에 열지 않음)
 # 개별 토큰(compose.yaml 의 secrets 와 같은 이름). 클라이언트(역할)와 서버가 같은 파일 값을 쓴다
 for t in gate-read-survey-service ops-ingest-survey-service survey-api-kiosk survey-api-staff inference-survey-service qa-read-release-gate \
          model-registry-read-release-gate deid-salt gate-read-ops-feedback gate-write-ops-feedback ops-read-question-authoring gate-read-model-serving \
-         gate-write-release-approver gate-read-release-approver ops-read-reviewer ops-review-reviewer; do
+         gate-write-release-approver gate-read-release-approver ops-read-reviewer ops-review-reviewer \
+         survey-result-reader survey-risk-source; do
   tok "$t" >/dev/null
 done
 # 목록 값 파일: 서비스가 받는 형식 그대로 한 줄. 토큰이 이미 있으면 내용이 같아서 다시 써도 같다(다르면 갱신한다).

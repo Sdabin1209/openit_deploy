@@ -40,6 +40,7 @@ done
 no "틀린 암호로는 접속 못 함" bash -c "'$DOCKER' exec -e PGPASSWORD=wrong '$(C)' psql -h 127.0.0.1 -U survey -d survey -Atqc 'SELECT 1'"
 echo "== 백업·복구 왕복"
 for a in survey gate; do eval "FP_$a=\$(fp $a)"; done
+PF_before=$(bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" survey)
 ok "백업 (survey gate)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" survey gate
 SN_S=$(ls -d "$W"/backups/pg-survey/2* | tail -1); SN_G=$(ls -d "$W"/backups/pg-gate/2* | tail -1)
 ok "MANIFEST 에 해시·크기" bash -c "grep -q '\"sha256\": \"sha256:[0-9a-f]\{64\}\"' '$SN_S/MANIFEST.json' && [ \"\$(stat -c %a '$SN_S/survey.dump')\" = 600 ]"
@@ -52,7 +53,7 @@ cp -r "$SN_S" "$W/bad"; printf 'x' >> "$W/bad/survey.dump"
 no "해시가 다르면 복구 거부(종료 3)" bash -c "bash '$DEPLOY_ROOT/scripts/pg-restore.sh' survey '$W/bad' --yes; [ \$? = 3 ] && exit 1 || exit 0" 
 no "--yes 없이는 거부" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "$SN_S"
 ok "복구 survey" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "$SN_S" --yes
-N=$((N+1)); if [ "$(fp survey)" = "$FP_survey" ]; then echo "  PASS 복구 후 지문 일치 survey"; else echo "  FAIL 복구 후 지문 불일치 survey"; FAILS=$((FAILS+1)); fi
+N=$((N+1)); if [ "$(fp survey)" = "$FP_survey" ] && [ "$(bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" survey)" = "$PF_before" ]; then echo "  PASS 복구 후 지문 일치 survey (행 지문 pg-fingerprint.sh 포함)"; else echo "  FAIL 복구 후 지문 불일치 survey"; FAILS=$((FAILS+1)); fi
 echo "== 볼륨을 잃은 뒤 복구 (down -v -> 새 볼륨 -> 초기화 -> 복구)"
 dc "$P" down -v >/dev/null 2>&1
 dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up2.log" 2>&1; ok "새 볼륨에서 다시 기동·초기화" test -n "$(C)"

@@ -609,6 +609,51 @@ def step5():
     STATE["sess_a"] = sid; save()
     rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9 v2: 서비스 -> PUT 적재 -> extract(JSON) -> respond(text))를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 서버 직접 호출: {v2chk}. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
 
+def step5r():
+    title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
+    if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    sid = f"sess-{RID}-risk"; subj = f"e2e-subject-{RID}"; utter = "뇌졸중은 없고 약도 안 먹어요"
+    RES = lambda: TOK("survey-result-reader"); RSK = lambda: TOK("survey-risk-source")   # 내부 호출용 토큰(게이트웨이에 열지 않는다)
+    # (A) 기기 토큰으로 세션 시작(subject_ref), 발화 한 턴
+    c, st = kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "subject_ref": subj}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
+    c, tr = public_turn(sid, "rk-1", utter); assert c == 200, (c, tr)
+    # (D) 위험 신호: risk-source 토큰으로 서비스에 직접. 다른 역할 토큰은 403, 게이트웨이에는 열려 있지 않다
+    sig = {"signal_id": f"sig-{RID}-1", "source": "e2e-detector", "code": "TEST_RISK", "severity": "RISK"}
+    for lab, tk in (("kiosk", TOK("survey-api-kiosk")), ("staff", TOK("survey-api-staff")), ("result-reader", RES())):
+        assert http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", tk, sig)[0] in (401, 403), f"{lab} 토큰으로 위험 신호 입력이 열림"
+    assert http("POST", "gw", f"/v1/sessions/{sid}/risk-signals", KDEV(), sig)[0] in (403, 404), "위험 신호 입력이 게이트웨이를 통과함"
+    c, r1 = http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 201, (c, r1)
+    assert r1["session_status"] == "PAUSED_RISK" and r1["alert_id"], r1
+    c, r2 = http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 200 and r2["alert_id"] == r1["alert_id"], ("같은 signal_id 재전송이 멱등이 아님", c, r2)
+    # 직원 알림이 목록에 나온다(게이트웨이 경유, 직원 계정)
+    c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
+    mine = [x for x in pg["items"] if x["session_id"] == sid]; assert mine and mine[0]["kind"] == "RISK", ("위험 신호가 알림 목록에 없다", pg["items"][:2])
+    assert mine[0].get("rule_id") == "e2e-detector:TEST_RISK", mine[0]
+    # (C) 직원 세션 조회: 대화 기록·값·subject_ref
+    c, sv = gws("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv); validate_survey("StaffSessionView", sv)
+    assert sv["status"] == "PAUSED_RISK" and sv["subject_ref"] == subj and sv["turns"], (sv["status"], sv.get("subject_ref"), len(sv.get("turns", [])))
+    assert any(al["alert_id"] == r1["alert_id"] for al in sv["alerts"]), "직원 세션 조회의 alerts 에 이 알림이 없다"
+    assert gw_raw("GET", f"/v1/staff/sessions/{sid}", basic=OPERATOR())[0] == 403, "operator 계정이 직원 세션 조회를 부를 수 있다"
+    # (E) 직원 개입(RESUME): 행위자는 게이트웨이가 붙인 헤더의 계정, 본문의 staff_id 는 무시
+    c, iv = gws("POST", f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "iv-1", "staff_id": "spoofed-staff"}); assert c == 200, (c, iv)
+    c, sv2 = gws("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv2); validate_survey("StaffSessionView", sv2)
+    res = [al.get("resolved_by") for al in sv2["alerts"] if al["alert_id"] == r1["alert_id"]]
+    assert res == [STAFF()[0]], f"alerts[].resolved_by 가 인증된 직원 ID가 아니다: {res}"
+    assert sv2["status"] == "IN_PROGRESS", sv2["status"]
+    c, en = kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"}); assert c == 200, (c, en)
+    # (B) 결과 조회: result-reader 토큰. subject_ref·상태·answers 는 있고 환자 발화 원문은 없다
+    c, rs = http("GET", "survey", f"/v1/results/{sid}", RES()); assert c == 200, (c, rs); validate_survey("SessionResult", rs)
+    assert rs["subject_ref"] == subj and rs["status"].startswith("ENDED") and isinstance(rs["answers"], list), rs
+    assert utter not in json.dumps(rs, ensure_ascii=False), "결과 조회 응답에 환자 발화 원문이 있다"
+    c, lst = http("GET", "survey", f"/v1/results?subject_ref={subj}", RES()); assert c == 200 and any(x["session_id"] == sid for x in lst["items"]), (c, str(lst)[:150])
+    for lab, tk in (("kiosk", TOK("survey-api-kiosk")), ("staff", TOK("survey-api-staff")), ("risk-source", RSK())):
+        assert http("GET", "survey", f"/v1/results/{sid}", tk)[0] in (401, 403), f"{lab} 토큰으로 결과 조회가 열림"
+    for pth in (f"/v1/results/{sid}", f"/v1/results?subject_ref={subj}"):
+        assert gw_raw("GET", pth, basic=STAFF())[0] == 404 and gw_raw("GET", pth, basic=OPERATOR())[0] == 404, f"결과 조회 {pth} 가 게이트웨이에 열려 있다"
+    # 접근 기록: 읽는 공개 경로가 없다(DB 를 열지 않는다). 기록을 못 남기면 데이터를 주지 않는 설계(fail-closed)라 위 조회 성공이 기록 쓰기 성공을 뜻한다. /readyz 에 접근 기록 항목이 있으면 함께 본다
+    c, rz = survey_ready(); acc = {k: v for k, v in (rz or {}).items() if "access" in k.lower()}
+    rec("5r", "REAL", f"세션 시작(기기 토큰, subject_ref) -> 발화 -> POST /v1/sessions/{{id}}/risk-signals(risk-source 토큰, 서비스에 직접: 201 PAUSED_RISK, 재전송 200 같은 alert_id, 다른 역할 토큰·게이트웨이 경유는 거부) -> 직원 알림 목록(rule_id e2e-detector:TEST_RISK) -> GET /v1/staff/sessions/{{id}}(직원 계정, 게이트웨이 경유, StaffSessionView 스키마, subject_ref·turns) -> 개입 RESUME(위조 staff_id 무시, alerts[].resolved_by={STAFF()[0]}) -> GET /v1/results/{{id}}·/v1/results?subject_ref(result-reader 토큰, SessionResult 스키마, 발화 원문 없음, 게이트웨이에는 404). 접근 기록: 읽는 경로가 없어 간접 확인(조회 성공 = 기록 성공, /readyz 접근 항목 {sorted(acc) or '없음'}). SSE 수신은 확인하지 않았다(목록으로 확인).")
+
 def step5s():
     title("5s", "어댑터 교체(포인터 1 -> 2)에서 다른 서비스는 그대로이고 새 릴리스가 LOADED 이다")
     before = STATE.get("containers_before_swap")
@@ -946,7 +991,7 @@ def demo_swap():
     STATE.setdefault("swaps", []).append({"release_id": rid, "packages": refs}); save()
     rec("demo_swap", "TEST-SUB", f"새 릴리스 {rid} 활성화(승인자는 스크립트가 대신함, TEST-SUB). model-serving 에서 LOADED. {', '.join(SWAP_SERVICES)} 컨테이너의 ID·StartedAt 불변")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

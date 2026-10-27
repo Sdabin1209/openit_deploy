@@ -78,7 +78,7 @@ bash scripts/demo.sh reset                       # down 후 up
 
 **결정(사용자 지시: 빈 곳은 표준적인 방법).** 영역별 SQLite 파일 대신 **PostgreSQL 서버 하나(공식 이미지 `postgres:16`, digest는 `locks/images.lock`의 `POSTGRES_IMAGE`)**를 `compose.yaml`의 `postgres` 서비스로 둔다. 서비스마다 데이터베이스와 최소 권한 계정을 따로 만든다. 소유 서비스만 쓰고 이웃은 HTTP로만 읽는 규칙(D49·D50)은 그대로다: 계정은 자기 데이터베이스에만 접속할 수 있다. 이유: 권한·암호화·백업·보존을 DB 계층 한 곳에서 걸 수 있고, 서버가 여러 대로 나뉘어도 같은 방식으로 동작한다.
 
-**상태(이 단계는 기반만).** 서버·계정·비밀·백업은 준비됐다. 서비스 컨테이너는 아직 SQLite 볼륨을 쓴다. 서비스가 Postgres를 쓰도록 바꾸는 일은 각 영역 에이전트가 따로 한다(바꿀 때 해당 서비스를 `db` 네트워크에 붙이고 아래 DSN 비밀을 마운트한다). model-registry는 파일 레지스트리(어댑터 tar)라 데이터베이스를 만들지 않았다.
+**상태.** 운영 구성(`compose.yaml`)과 데모·E2E 구성은 PostgreSQL을 쓴다. survey-service, question-authoring, ops-feedback(서버·잡), release-gate(서버·수집 잡)가 `db` 네트워크에 붙고, 아래 표의 `…_DATABASE_URL_FILE`로 DSN 비밀을 받고, postgres가 healthy가 되어야 뜬다. SQLite 경로 설정(`OPS_FAILURE_DB` 등)은 compose에서 뺐다(각 영역의 개발·시험 기본으로만 남는다). 남긴 볼륨: `survey-data`(릴리스 작업 폴더), `gate-data`(번들 파일 `releases/`), `models-data`(model-registry). `qa-data`, `ops-data`는 없앴다(`/data`는 읽기 전용 루트에서 쓰기 위한 tmpfs). **작성 시점에 각 서비스 이미지가 PostgreSQL을 지원하는지는 컨테이너로 확인하지 못했다**(영역 쪽 작업 중). model-registry는 파일 레지스트리라 데이터베이스가 없다.
 
 **이름 규칙(확정).** 서비스는 `boundary_contracts.read_secret(<환경 변수 이름>)`으로 읽는다. compose는 `<환경 변수 이름>_FILE=/run/secrets/<비밀 이름>`만 준다. 값은 `postgresql://<계정>:<암호>@postgres:5432/<데이터베이스>` 한 줄이다.
 
@@ -97,7 +97,7 @@ bash scripts/demo.sh reset                       # down 후 up
 **백업·복구.** `pg-data` 볼륨을 파일째 복사하지 않는다(쓰는 중에는 일관되지 않다).
 - `bash scripts/pg-backup.sh [db ...]`: 설정·거부 규칙·보관 기간은 `backup.sh`와 같다(`config/backup.env`). 데이터베이스의 소유 계정으로 `pg_dump -Fc`(한 시점의 일관된 스냅샷, 서버가 떠 있어도 된다)해 `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump` + `MANIFEST.json`(sha256, 크기, 서버 버전)을 만든다. 덤프는 파일 600, 폴더 700.
 - `bash scripts/pg-restore.sh <db> <스냅샷 폴더> --yes`: 해시 검증(불일치면 종료 코드 3), 그 데이터베이스에 다른 접속이 있으면 거부(서비스를 먼저 멈춘다), 그다음 `pg_restore --clean --if-exists --single-transaction`. 볼륨을 잃었다면 `postgres`를 먼저 띄운다(초기화가 빈 데이터베이스와 계정을 만든다). 그다음 복구한다.
-- 이 단계에서 `e2e.sh`의 백업 단계(SQLite 볼륨)는 건드리지 않았다. 서비스가 Postgres로 옮겨 가면 그 단계에 `pg-backup.sh`/`pg-restore.sh`를 넣는다. 지금은 `bash scripts/test-postgres.sh`(서버 단독 자체 시험: 기동, 최소 권한, 비밀 비노출, 백업·복구 왕복, 볼륨을 잃은 뒤 복구)가 대신한다.
+- `scripts/backup-all.sh`가 backup 잡이다: 파일 저장소(`backup.sh`, 기본 `gate-data` 번들)와 PostgreSQL(`pg-backup.sh`)을 같은 `config/backup.env`로 백업한다. `e2e.sh`의 백업·복구 단계는 파일 저장소 2개(gate-data, models-data)와 데이터베이스 5개를 백업해 `pg-data` 볼륨까지 지우고, 초기화로 되살린 빈 데이터베이스에 `pg-restore.sh`로 복구한 뒤 `pg-fingerprint.sh`(스키마+행 집합 해시, 행 순서 무관)가 같은지 본다. 서버 단독 자체 시험은 `bash scripts/test-postgres.sh`.
 
 **영역 개발용 서버(`scripts/dev-postgres.sh`).** 영역 에이전트가 자기 시험에 쓰는 일회용 서버다. 개발은 컨테이너 밖에서 하므로 서비스는 호스트에서 접속한다.
 ```
@@ -121,6 +121,8 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 - 기기 추가: `bash scripts/kiosk-add-device.sh add <기기 ID> [--apply]`. 토큰 값은 출력하지 않고 파일 경로만 알린다. 기기에는 그 값을 기기 설정이나 시작 URL 조각(`#`)으로 한 번 전한다(URL 쿼리 금지).
 - 폐기: `kiosk-add-device.sh remove <ID> --apply`(또는 파일을 지우고 `sync`). **Caddy는 설정을 읽을 때 한 번 치환하므로 게이트웨이를 다시 시작해야 반영된다**(`--apply`가 `compose restart gateway`). 이 시험은 자체 시험(`scripts/test-gateway-auth.sh`)에서 목록 갱신까지 확인했고, 실행 중인 게이트웨이의 재시작 반영은 확인하지 못했다.
 - 키오스크 앱(kiosk-frontend)이 기기 토큰을 받아 보내는 구현은 그 영역의 일이다. 그 전에는 브라우저 데모의 키오스크 화면이 API를 부르지 못한다(401). 병원 내부망 제한은 배포 설정으로 병행한다.
+
+**내부 호출 면은 게이트웨이에 열지 않는다(판단, D85).** 위험 신호 입력(`POST /v1/sessions/{id}/risk-signals`, 역할 risk-source)과 결과 조회(`GET /v1/results…`, 역할 result-reader)는 감지기·병원/의사 시스템이 부르는 기계 간 호출이다. 근거: (1) 게이트웨이는 사람(브라우저)과 키오스크 기기를 위한 입구이고 인증이 계정/기기 토큰이라 시스템 토큰과 맞지 않는다. (2) 결과 조회는 환자 식별 자료(`subject_ref`)를 주므로 입구를 넓힐수록 노출이 는다. (3) 위험 신호는 PAUSED_RISK로 세션을 멈추므로 키오스크 와일드카드(`/v1/sessions/*`)로 새면 안 된다: Caddyfile이 두 경로를 먼저 404로 닫는다. 토큰은 `secrets/tokens/survey-result-reader`, `survey-risk-source`(gen-secrets, survey-service에만 마운트)다. **남은 문제(결정 필요):** 지금 survey-service는 호스트 포트가 없고 `edge`·`serving`·`db` 네트워크에만 있어 도커 밖의 감지기·병원 시스템은 닿지 못한다(E2E는 시험 구성의 게시 포트로 직접 부른다). 병원 시스템 연동 방식이 정해지면 게이트웨이와 별도의 내부 입구(병원망 한정 리스너 + 시스템 토큰 통과, 또는 mTLS)를 두는 것을 권한다. 이 단계에서 만들지 않았다.
 
 ## 4-2. 버전 표 (드리프트 점검)
 

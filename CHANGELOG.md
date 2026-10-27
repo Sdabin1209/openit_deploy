@@ -1,5 +1,13 @@
 # 변경 이력
 
+## 운영·E2E 구성을 PostgreSQL로, 위험 신호·결과 조회 E2E 단계, 백업 잡에 pg_dump (코드·구성만, 컨테이너 검증 전)
+- 결정(사용자 지시, 표준): 운영 구성은 PostgreSQL, SQLite는 각 영역의 개발·시험 기본으로만 남긴다. 이유: 권한·백업·보존을 DB 한 곳에서 걸고 서버가 나뉘어도 같은 방식으로 동작한다.
+- `compose.yaml`: survey-service(`SURVEY_DATABASE_URL_FILE`), question-authoring(`QA_DATABASE_URL_FILE`), ops-feedback 서버·잡(`OPS_LOG_/OPS_FAILURE_DATABASE_URL_FILE`), release-gate 서버·수집 잡(`GATE_DATABASE_URL_FILE`)을 `db` 네트워크에 붙이고 `db-*-dsn` 비밀을 마운트, 서버 서비스는 postgres healthy에 의존. `qa-data`, `ops-data` 볼륨과 `OPS_FAILURE_DB` 설정을 정리(`gate-data/releases`, `survey-data` 릴리스 작업 폴더는 유지). survey-service에 `SURVEY_RESULT_READER_TOKEN_FILE`, `SURVEY_RISK_SOURCE_TOKEN_FILE`. `gen-secrets.sh`가 `survey-result-reader`, `survey-risk-source`를 만든다. `compose.test.yaml`에도 `db` 네트워크.
+- 게이트웨이: `/v1/sessions/*/risk-signals`, `/v1/results*`를 404로 먼저 닫는다(내부 면, 이유는 docs/RUN.md 4-1-1).
+- E2E 새 단계 5r(REAL, 가짜 모델): 세션 시작(기기 토큰, subject_ref) -> 발화 -> 위험 신호(risk-source) -> 알림 목록 -> 직원 세션 조회 -> 개입 RESUME(resolved_by=staff-e2e) -> 결과 조회(result-reader, 발화 없음). 네트워크 단언: 서비스 4개는 postgres:5432에 닿고 model-registry는 못 닿으며 호스트에 게시 없음.
+- 백업: `backup-all.sh`(파일 저장소 + `pg-backup.sh`)를 backup 잡으로, `pg-fingerprint.sh` 추가. E2E 백업·복구 단계가 gate-data/models-data와 PostgreSQL 5개 데이터베이스(`pg-data` 볼륨 삭제 후 `pg-restore.sh`)의 왕복을 본다. `backup.sh` 기본 저장소는 `gate-data`.
+- 실행해 본 것: compose 해석(서비스별 네트워크·환경 변수·의존), Caddyfile `caddy validate`, 스크립트 구문, check-all. 실행하지 않은 것: 새 E2E 단계와 백업 단계 전체, PostgreSQL 지원 이미지.
+
 ## E2E·데모의 activate를 헤더 있는 HTTP 호출로 (release-gate D85 행위자 식별 반영)
 - release-gate가 activate·rollback에서 본문의 `requested_by_role`을 버리고 역할은 쓰기 토큰, 행위자는 `X-Openit-User`로 정한다(사람 역할 토큰에 헤더가 없으면 401). `GATE_SERVICE_ROLES`에 operator를 넣는 우회는 하지 않았다(더 엄격한 쪽). 이유: 감사 기록의 행위자는 서버가 정하고, 시험도 운영과 같은 경로를 탄다.
 - `e2e_steps.py`: `gate_ops`/`gate_activate`(urllib, 이웃 코드 import 없음)로 activate를 부른다. 새 단언: 헤더 없이 operator 토큰으로 activate하면 401이고 포인터가 안 바뀐다, 헤더가 있으면 통과하고 `GET /v1/active-pointer`의 `ext["release-gate"].requested_by`가 그 ID. `demo_up`·`demo_activate`·단계 4b·단계 8도 같은 호출. ops-feedback 자동 롤백은 서비스 역할이라 그대로.

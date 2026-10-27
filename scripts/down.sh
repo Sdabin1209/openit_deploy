@@ -40,10 +40,10 @@ REGP=${REGISTRY_PROJECT:-deploy-registry}
 vols_of() { "$DOCKER" volume ls -q --filter "label=com.docker.compose.project=$1" 2>/dev/null; }
 describe() { # 볼륨 이름(프로젝트 접두 제거) -> 들어 있는 것
   case "${1#"$P"_}" in
-    survey-data) echo "문진 세션 DB, 발신함, 릴리스 작업 폴더";;
+    survey-data) echo "릴리스 작업 폴더(세션·발신함은 PostgreSQL)";;
     qa-data) echo "문항 저장소(questions.sqlite3)";;
     ops-data) echo "원본 Trace 로그, 실패 사례 DB";;
-    gate-data) echo "릴리스 이력(registry.sqlite3)과 번들(releases/), 승인 기록";;
+    gate-data) echo "릴리스 번들 파일(releases/). 이력·승인 기록은 PostgreSQL";;
     models-data) echo "모델 패키지(어댑터)";;
     serving-data) echo "추론 서버 번들 캐시(다시 받을 수 있음)";;
     pg-data) echo "PostgreSQL 서버의 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 scripts/pg-backup.sh";;
