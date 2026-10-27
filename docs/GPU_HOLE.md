@@ -68,6 +68,14 @@ docker compose -p deploy-demo logs --no-color --tail 200 model-serving > ms.log 
 nvidia-smi > smi.txt; docker image ls 'deploy-build/*' > images.txt; df -h > df.txt
 ```
 
+**시간 상한 재정을 위한 지연 측정(H1에 편입).** 적재가 끝나 `/readyz`가 200이 되면 같은 서버에서 extract와 respond 각각의 지연 분포를 잰다. model-runtime의 요청 상한(`MODEL_RUNTIME_REQUEST_DEADLINE_S` 기본 3.5초)과 서버·gateway 시간 불변식(키오스크 10초 > gateway > survey 턴 마감 6초 > survey의 읽기 timeout 4초 > 요청 상한)의 값은 실제 모델 지연으로 측정한 적이 없는 초기값이라 여기서 재정한다.
+```bash
+# [서버] 대표 발화 묶음을 수십~백 회(기본 입력 10개 x --repeat). extract 와 respond 가 각각 표로 나온다. 재시작 직후 첫 호출(콜드)은 따로 나온다
+python3 scripts/probe-serving.py --demo --repeat 10 > probe-h1.txt
+cat probe-h1.txt | sed -n '/== 지연 표/,$p'
+```
+표의 열: 호출 수, 성공(HTTP 200)과 성공률, respond의 `fallback` 수, 콜드 첫 호출 지연, 이후 호출의 p50/p95/max, `X-Openit-Attempts`가 2 이상인 재시도 호출의 호출 수와 p50/p95/max(재시도는 이후 호출과 겹쳐 세지 않고 따로 한 줄로 더 본다). 백분위는 최근접 순위이고 표본이 20 미만이면 p95는 max와 같다. 이 숫자를 OPEN_GAPS에 옮겨 적고(이 리포 문서에 숫자를 복사하지 않는다), 한 호출의 p95가 3.5초를 넘으면 요청 상한 초기값을 model-runtime 쪽에서 다시 정해야 한다(deploy가 정하지 않는다). `--endpoints extract`처럼 하나만 잴 수도 있다. 이 도구는 model-serving의 호출만 잰다(서비스·gateway를 거친 전체 턴이 아니다).
+
 측정해서 OPEN_GAPS에 적을 것: **U02** 적재 성공 여부, 적재 시간(컨테이너 시작부터 `/readyz` 200까지), `nvidia-smi` 사용 메모리, KV 캐시 토큰 수. **U13**는 H2까지 끝나야 닫는다. 프로파일 값(`max_model_len`, `gpu_memory_utilization`, `max_num_seqs`)을 바꿔야 하면 deploy가 아니라 model-runtime 소유라 변경 요청으로 낸다.
 
 ## H2. 학습된 LoRA-A/B를 얹어 한 턴 통과, 어댑터 교체 (U07, U08, U10)

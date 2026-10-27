@@ -324,7 +324,7 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 - 같은 어댑터 쌍을 다시 주면 이미 활성이라 교체 없음으로 끝난다. 문항 세트는 가장 최근 것을 그대로 쓴다.
 - 이 PC에서 확인한 것: 가짜 백엔드 데모의 시험용 어댑터 교체와 기반 모델 불일치 거부. 확인하지 못한 것: `--llm`(vLLM) 데모의 교체.
 
-**추론 서버 측정 도구 `scripts/probe-serving.py`**: 떠 있는 model-serving의 `extract`에 입력 묶음을 보내 집계한다(표준 라이브러리만 씀, 서비스를 거치지 않음).
+**추론 서버 측정 도구 `scripts/probe-serving.py`**: 떠 있는 model-serving의 `extract`와 `respond`에 입력 묶음을 보내 집계한다(표준 라이브러리만 씀, 서비스를 거치지 않음). `--endpoints extract|respond|extract,respond`(기본 둘 다); respond 입력은 `../boundary-contracts/examples/ResponseRequest*.json`.
 ```bash
 python3 scripts/probe-serving.py --demo [--repeat N] [--concurrency K] [--inputs FILE]     # 데모 스택(포트는 Docker 배정을 compose port로 찾는다)
 python3 scripts/probe-serving.py --url http://HOST:PORT --token-file FILE [--release-id ID]  # 다른 model-serving(예: 외부 추론 서버)
@@ -332,6 +332,7 @@ python3 scripts/probe-serving.py --url http://HOST:PORT --token-file FILE [--rel
 - 토큰: `NAME_FILE`처럼 파일에서 읽는다(값 하나가 든 파일). `--demo`의 기본은 `state/demo/secrets/tokens/inference-survey-service`. 토큰 값은 출력하지 않는다.
 - 입력: 없으면 `../boundary-contracts/examples/ActionExtractionInput.json`에 내장 발화 10개를 바꿔 넣는다. 파일은 ActionExtractionInput 하나, 그 배열, 또는 `{"inputs": [...]}`.
 - 출력 표: 성공 / `OUTPUT_INVALID` / 그 밖의 실패 건수, `X-Openit-Outcome` 분포, `details.violations`("경로:키워드")의 키워드별 빈도와 경로:키워드 상위, 지연(첫 호출 대 이후 중앙값·최소·최대). 발화·모델 출력은 출력하지 않는다. `OUTPUT_INVALID`가 있어도 종료 코드는 0이다(측정 도구, 합격 판정이 아님). 서버에 닿지 못하면 3, 사용 오류는 2.
+- 지연 표(엔드포인트별 한 줄): 호출 수, 성공(HTTP 200)·성공률, fallback 수(respond), 콜드 첫 호출, 이후 p50/p95/max, `X-Openit-Attempts` > 1 인 재시도 호출의 호출 수와 p50/p95/max(따로). 백분위는 최근접 순위, 표본 20 미만이면 p95 = max. 시간 상한 재정(GPU_HOLE H1)에 쓴다.
 - 첫 호출은 항상 혼자 보내므로 문법 컴파일 같은 첫 호출 비용이 이후 중앙값과 분리되어 보인다(재시작 직후에 쓴다).
 - 자체 시험: `python3 scripts/test_probe_serving.py`(일부러 OUTPUT_INVALID를 섞은 가짜 응답과 가짜 서버로 집계를 확인). GPU 측정 절차는 `docs/GPU_HOLE.md` H4.
 - 한계: 이 PC에서는 가짜 백엔드(출력 고정)에만 돌려 봤다. 실제 모델의 OUTPUT_INVALID 분포는 측정 전이다.

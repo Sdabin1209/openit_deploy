@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""떠 있는 model-serving 의 extract 에 입력 묶음을 보내 결과를 집계한다(표준 라이브러리만 쓴다). docs/RUN.md '추론 서버 측정 도구'.
+"""떠 있는 model-serving 의 extract 와 respond 에 입력 묶음을 보내 결과를 집계한다(표준 라이브러리만 쓴다). docs/RUN.md '추론 서버 측정 도구'.
+H1(24GB 실측)용 지연 표: extract·respond 각각의 호출 수, 성공률, 콜드 첫 호출(따로), 이후 p50/p95/max, X-Openit-Attempts>1 인 재시도 호출의 호출 수와 p50/p95/max(따로). 백분위는 최근접 순위(nearest-rank)이고 표본이 20 미만이면 p95 는 max 와 같다.
 집계: 성공 / OUTPUT_INVALID / 그 밖의 실패 건수, details.violations 의 키워드별 빈도("경로:키워드" 의 키워드), 지연(첫 호출 대 이후 중앙값), X-Openit-Outcome 분포.
 토큰은 파일에서 읽고 값을 출력하지 않는다. 입력·모델 원문·발화는 출력하지 않는다(경로와 키워드 이름만).
 
@@ -83,6 +84,58 @@ def render(s: dict) -> str:
     return "\n".join(L)
 
 
+def pctl(vals, q):
+    """최근접 순위 백분위(q 는 0~100). 빈 목록은 None."""
+    if not vals: return None
+    v = sorted(vals); k = max(1, -(-len(v) * q // 100)); return v[int(k) - 1]
+
+
+def lat_stats(vals):
+    return {"n": len(vals), "p50": pctl(vals, 50), "p95": pctl(vals, 95), "max": max(vals) if vals else None}
+
+
+def table_row(name, results):
+    """엔드포인트 하나의 지연 표 행. results 는 호출 순서(첫 항목 = 콜드 첫 호출). 순수 함수(단위 시험 대상)."""
+    n = len(results); ok = [r for r in results if r["status"] == 200]
+    warm = [r for r in results[1:]]
+    att = lambda r: int(r["attempts"]) if str(r.get("attempts") or "").isdigit() else 1
+    retried = [r for r in results if att(r) > 1]
+    return {"name": name, "calls": n, "ok": len(ok), "fallback": sum(1 for r in results if r["outcome"] == "fallback"),
+            "cold_s": results[0]["latency_s"] if results else None,
+            "warm": lat_stats([r["latency_s"] for r in warm]), "retried": {"calls": len(retried), **lat_stats([r["latency_s"] for r in retried])}}
+
+
+def render_table(rows):
+    f = lambda v: "-" if v is None else f"{v:.3f}"
+    L = ["", "== 지연 표 (초). 콜드 = 첫 호출 1건, 이후 = 나머지. 재시도 = X-Openit-Attempts > 1 인 호출(전체에서 따로 집계). 표본 20 미만이면 p95 = max",
+         f"  {'엔드포인트':8} {'호출':>5} {'성공':>5} {'성공률':>7} {'fallback':>8} {'콜드첫호출':>10} {'이후n':>6} {'p50':>7} {'p95':>7} {'max':>7} | {'재시도n':>7} {'p50':>7} {'p95':>7} {'max':>7}"]
+    for r in rows:
+        w, t = r["warm"], r["retried"]
+        L.append(f"  {r['name']:8} {r['calls']:5} {r['ok']:5} {(100.0 * r['ok'] / r['calls'] if r['calls'] else 0):6.1f}% {r['fallback']:8} {f(r['cold_s']):>10} {w['n']:6} {f(w['p50']):>7} {f(w['p95']):>7} {f(w['max']):>7} | {t['calls']:7} {f(t['p50']):>7} {f(t['p95']):>7} {f(t['max']):>7}")
+    return "\n".join(L)
+
+
+def call_respond(url: str, token: str, release: str, body: dict, timeout: float) -> dict:
+    req = urllib.request.Request(f"{url}/v1/releases/{release}/respond", data=json.dumps(body, ensure_ascii=False).encode(), method="POST")
+    req.add_header("Authorization", f"Bearer {token}"); req.add_header("Content-Type", "application/json")
+    t = time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r: st, hd, raw = r.status, dict(r.headers), r.read()
+    except urllib.error.HTTPError as e: st, hd, raw = e.code, dict(e.headers), e.read()
+    dt = time.perf_counter() - t
+    try: parsed = json.loads(raw)
+    except ValueError: parsed = None
+    rec = classify(st, hd, parsed); rec["latency_s"] = dt
+    return rec
+
+
+def respond_inputs(repeat: int) -> list[dict]:
+    files = sorted((ROOT.parent / "boundary-contracts" / "examples").glob("ResponseRequest*.json"))
+    items = [json.loads(f.read_text(encoding="utf-8")) for f in files]
+    if not items: raise SystemExit("boundary-contracts/examples 에 ResponseRequest 예제가 없다")
+    return [dict(x) for _ in range(repeat) for x in items]
+
+
 def call_extract(url: str, token: str, release: str, body: dict, timeout: float) -> dict:
     req = urllib.request.Request(f"{url}/v1/releases/{release}/extract", data=json.dumps(body, ensure_ascii=False).encode(), method="POST")
     req.add_header("Authorization", f"Bearer {token}"); req.add_header("Content-Type", "application/json")
@@ -121,6 +174,7 @@ def main(argv=None) -> int:
     ap.add_argument("--repeat", type=int, default=3, help="입력 묶음을 몇 번 반복할지(기본 3)")
     ap.add_argument("--concurrency", type=int, default=1, help="첫 호출은 혼자 보내고, 나머지를 이 수만큼 동시에 보낸다")
     ap.add_argument("--timeout", type=float, default=120)
+    ap.add_argument("--endpoints", default="extract,respond", help="측정할 엔드포인트(쉼표): extract, respond. 기본 둘 다. respond 입력은 boundary-contracts 의 ResponseRequest 예제")
     a = ap.parse_args(argv)
     if bool(a.demo) == bool(a.url): print("--demo 또는 --url 중 하나를 준다", file=sys.stderr); return 2
     if a.repeat < 1 or a.concurrency < 1: print("--repeat, --concurrency 는 1 이상", file=sys.stderr); return 2
@@ -138,14 +192,21 @@ def main(argv=None) -> int:
             loaded = get_json(url, token, "/v1/info").get("loaded") or []
             if not loaded: print("적재된 릴리스가 없다(--release-id 로 지정하거나 적재를 기다린다)", file=sys.stderr); return 3
             rel = loaded[-1]
-        print(f"== probe-serving: {url} 릴리스 {rel}, 호출 {len(inputs)}건 (동시 {a.concurrency})")
-        res = [call_extract(url, token, rel, inputs[0], a.timeout)]
-        if a.concurrency == 1: res += [call_extract(url, token, rel, x, a.timeout) for x in inputs[1:]]
-        else:
-            with ThreadPoolExecutor(a.concurrency) as ex: res += list(ex.map(lambda x: call_extract(url, token, rel, x, a.timeout), inputs[1:]))
+        eps = [e for e in a.endpoints.split(",") if e]
+        if not eps or any(e not in ("extract", "respond") for e in eps): print("--endpoints 는 extract, respond 중에서 쉼표로 준다", file=sys.stderr); return 2
+        rows = []; print(f"== probe-serving: {url} 릴리스 {rel}, 엔드포인트 {','.join(eps)} (동시 {a.concurrency})")
+        for ep in eps:
+            ins = inputs if ep == "extract" else respond_inputs(a.repeat); fn = call_extract if ep == "extract" else call_respond
+            res = [fn(url, token, rel, ins[0], a.timeout)]
+            if a.concurrency == 1: res += [fn(url, token, rel, x, a.timeout) for x in ins[1:]]
+            else:
+                with ThreadPoolExecutor(a.concurrency) as ex: res += list(ex.map(lambda x: fn(url, token, rel, x, a.timeout), ins[1:]))
+            if ep == "extract": print(f"-- extract 호출 {len(ins)}건"); print(render(summarize(res)))
+            else: print(f"-- respond 호출 {len(ins)}건")
+            rows.append(table_row(ep, res))
     except (urllib.error.URLError, OSError, ValueError) as e:
         print(f"서버에 닿지 못했다: {type(e).__name__}", file=sys.stderr); return 3
-    print(render(summarize(res)))
+    print(render_table(rows))
     return 0
 
 
