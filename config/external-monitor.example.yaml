@@ -1,7 +1,13 @@
-# 서버 밖 외부 감시 연동 자리(D10). 값은 사용자 결정 뒤에 채운다. 이 파일은 예시이고 어떤 스크립트도 읽지 않는다.
+# 서버 밖 외부 감시 연동 자리(D10, FAULT_POLICY 14). 값은 사용자 결정 뒤에 채운다.
+# 이 파일은 scripts/check-health.sh 가 읽는다(config/external-monitor.yaml 이 있으면 그것을 우선). url 이 null 인 대상은 'SKIP(확인 못 함)'으로 나오고 통과로 세지 않는다.
+# 서버 밖 감시 서비스도 같은 대상을 같은 기대로 부른다: /healthz 는 상류와 무관한 살아 있음, /readyz 는 환자 경로(survey-service)를 반영한다.
 targets:
   - name: gateway-healthz
     url: null            # 공개 주소가 정해지면 https://<도메인>/healthz
+    interval_seconds: null
+    expect_status: 200
+  - name: gateway-readyz
+    url: null            # https://<도메인>/readyz  (survey-service 가 준비되지 않으면 503/504)
     interval_seconds: null
     expect_status: 200
 notify:

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# check-health.sh 자체 시험(Docker 불필요): 가짜 스케줄러 상태, 가짜 디스크 한계, 로컬 HTTP 서버로 OK/WARN/CRIT/SKIP 과 종료 코드를 확인한다. 사용: bash scripts/test-check-health.sh
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; T=$(mktemp -d); trap 'kill $SP 2>/dev/null; rm -rf "$T"' EXIT
+N=0; F=0
+t() { local name=$1 want_rc=$2 want_txt=$3; shift 3; local out rc; out=$(bash "$HERE/check-health.sh" "$@" 2>&1); rc=$?; N=$((N+1))
+  if [ $rc = "$want_rc" ] && grep -qF -- "$want_txt" <<<"$out"; then echo "  PASS $name"; else echo "  FAIL $name (종료 $rc, 기대 $want_rc, '$want_txt')"; echo "$out" | sed 's/^/       /'; F=$((F+1)); fi; }
+NOW=1000000
+cat > $T/jobs.yaml <<'Y'
+jobs:
+  - {name: a, where: serving, command: ["x"], interval_seconds: 100}
+  - {name: g, where: gpu-external, command: ["x"], interval_seconds: null}
+  - {name: u, where: serving, command: ["x"], interval_seconds: null}
+Y
+cat > $T/mon.yaml <<'Y'
+targets:
+  - {name: none, url: null}
+Y
+base=(--jobs $T/jobs.yaml --monitor $T/mon.yaml --disk-path $T --now $NOW)
+echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":0}}' > $T/s.json
+t "정상: 종료 코드 0, 위치 밖·주기 미정·url 미정은 SKIP 으로 따로 센다" 0 "SKIP(확인 못 함, 통과 아님) 3" "${base[@]}" --scheduler-state $T/s.json
+echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":3,"last_msg":"boom"}}' > $T/s.json
+t "잡의 마지막 종료 코드가 0이 아니면 CRIT(2)" 2 "마지막 종료 코드 3" "${base[@]}" --scheduler-state $T/s.json
+echo '{"a":{"last_start":999000,"last_end":999001,"last_exit":0}}' > $T/s.json
+t "주기의 2배를 넘게 실행이 없으면 CRIT" 2 "주기 100초" "${base[@]}" --scheduler-state $T/s.json
+echo '{"a":{"last_start":990000,"last_exit":0}}' > $T/s.json
+t "시작했지만 상한을 넘겨 끝나지 않으면 CRIT" 2 "아직 끝나지 않았다" "${base[@]}" --scheduler-state $T/s.json --stuck-seconds 3600
+echo '{}' > $T/s.json
+t "실행 기록이 없으면 WARN(1)" 1 "실행 기록이 없다" "${base[@]}" --scheduler-state $T/s.json
+t "상태 파일이 없으면 WARN" 1 "스케줄러 상태 파일" "${base[@]}" --scheduler-state $T/none.json
+echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":0}}' > $T/s.json
+t "디스크 한계를 0%로 낮추면 CRIT" 2 "디스크" "${base[@]}" --scheduler-state $T/s.json --disk-crit 0 --disk-warn 0
+t "없는 경로는 SKIP(확인 못 함)" 0 "경로가 없어" "${base[@]}" --scheduler-state $T/s.json --disk-path $T/nope
+python3 -I - "$T" <<'PY' &
+import http.server, sys, threading
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s): s.send_response(200 if s.path == "/healthz" else 503); s.end_headers(); s.wfile.write(b"x")
+    def log_message(*a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H); open(sys.argv[1] + "/port", "w").write(str(srv.server_port)); srv.serve_forever()
+PY
+SP=$!; for i in $(seq 1 50); do [ -s $T/port ] && break; sleep 0.1; done; P=$(cat $T/port)
+printf 'targets:\n  - {name: h, url: "http://127.0.0.1:%s/healthz", expect_status: 200}\n' $P > $T/mon.yaml
+t "외부 감시 대상이 기대 코드면 OK" 0 "감시 h: http://127.0.0.1:$P/healthz -> 200" "${base[@]}" --scheduler-state $T/s.json
+printf 'targets:\n  - {name: r, url: "http://127.0.0.1:%s/readyz", expect_status: 200}\n' $P > $T/mon.yaml
+t "외부 감시 대상이 다른 코드면 CRIT" 2 "-> 503 (기대 200)" "${base[@]}" --scheduler-state $T/s.json
+printf 'targets:\n  - {name: d, url: "http://127.0.0.1:1/healthz"}\n' > $T/mon.yaml
+t "닿지 못하면 CRIT" 2 "닿지 못했다" "${base[@]}" --scheduler-state $T/s.json
+[ $F = 0 ] && echo "통과: check-health 자체 시험 $N건" || { echo "실패: $F/$N건"; exit 1; }

@@ -87,6 +87,22 @@ bash scripts/up.sh deploy
 - 잡 하나를 지금 실행: `bash scripts/run-job.sh job-ops-feedback`(설정 파일 `OPS_JOB_CONFIG`가 있어야 한다. 없으면 거부).
 - `gpu-external` 잡은 GPU 서버에서 돈다(D40). 서빙 서버의 Compose·스케줄러가 실행하지 않는다.
 
+## 5-1. 상태 감시 (FAULT_POLICY 13·14)
+
+서버 밖 감시가 gateway `/healthz`(살아 있음)와 `/readyz`(환자 경로 survey-service 반영)를 본다. 서버 안에서 읽을 수 있는 상태는 다음이다.
+
+```
+bash scripts/check-health.sh        # 종료 코드 0 OK, 1 WARN, 2 CRIT. cron/systemd timer 가 부르고 종료 코드로 알린다
+```
+
+| 대상 | 읽는 곳 | 판정 |
+|---|---|---|
+| 스케줄러·잡 실패 | `state/scheduler.json`(scheduler.py가 잡마다 last_start/last_end/last_exit/last_msg를 쓴다), `config/jobs.yaml` | 마지막 종료 코드가 0이 아니면 CRIT. 마지막 시작이 주기의 2배(+60초)를 넘으면 CRIT(스케줄러 정지). 시작했는데 1시간 넘게 끝나지 않으면 CRIT. 기록이 없으면 WARN. 주기 미정·서버 밖(gpu-external) 잡은 SKIP |
+| 디스크 사용률 | `df`(state/ 폴더와 `config/backup.env`의 `BACKUP_DIR`) | 80% 이상 WARN, 90% 이상 CRIT. Docker 볼륨(pg-data 등)이 있는 디스크가 위 경로와 다르면 `--disk-path`로 더한다 |
+| 외부 감시 대상 | `config/external-monitor.yaml`(없으면 `.example.yaml`)의 `targets[].url` | 기대 상태 코드와 다르거나 닿지 못하면 CRIT. url이 null이면 SKIP(확인 못 함, 통과 아님) |
+
+한계값(80/90%, 2배, 1시간)은 표준 관행의 시작값이고 사용자 결정이 아니다. SKIP은 통과가 아니라 따로 센다. 자체 시험: `bash scripts/test-check-health.sh`(Docker 불필요). 전체 E2E의 스케줄러 구간이 실제 스케줄러가 쓴 상태 파일과 gateway `/healthz`를 이 스크립트로 읽는다. 아직 하지 않은 것: 컨테이너 로그·Docker 볼륨 사용량과 postgres 자체의 디스크 경보(서비스 쓰기 거부 503은 각 영역의 몫), 이 점검을 부르는 cron/timer의 실제 배치(운영 서버가 정해지면).
+
 ## 5-2. 자동 롤백 요청(D3): 운영 잡 설정에 `rollback`·`gate_service`가 없는 이유
 
 의도된 것이다. 근거: (1) `config/ops-feedback-job.yaml` 머리말이 "rollback과 retention 값은 사용자 결정 전이라 비워 둔다"고 쓰고 `rollback: null`로 둔다. (2) ops-feedback `docs/runbook.md`는 `rollback.*`을 사용자가 정할 기준 수치로 분류하고, `rollback` 항목이 없으면 롤백 평가를 하지 않는다. (3) 연결 쪽은 이미 준비돼 있다: compose의 `job-ops-feedback`은 `OPS_GATE_READ_TOKEN_FILE`·`OPS_GATE_WRITE_TOKEN_FILE`(역할 ops-feedback의 게이트 읽기·쓰기 토큰)을 받고, E2E 단계 8이 같은 쓰기 토큰으로 `request_rollback`을 HTTP로 부른다. 없는 것은 기준 수치와 `gate_service` 팩토리 선언뿐이다. 이 문서는 값을 채우지 않는다(자동 롤백 기준은 사용자 결정).

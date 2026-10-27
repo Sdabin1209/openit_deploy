@@ -86,6 +86,7 @@ chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/che
 chk "버전 표 드리프트 없음 (check-versions: lib.sh 표 == 형제 영역 표기)" bash "$DEPLOY_ROOT/scripts/check-versions.sh"
 chk "check-versions 자기 점검" bash "$DEPLOY_ROOT/scripts/test-check-versions.sh"
 chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰, caddy validate)" bash "$DEPLOY_ROOT/scripts/test-gateway-auth.sh"
+chk "check-health 자체 점검 (실패 상태 파일·디스크 한계·감시 대상 응답을 읽는다)" bash "$DEPLOY_ROOT/scripts/test-check-health.sh"
 chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
 abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)
@@ -185,6 +186,8 @@ YAML
 SCHED="$VENV/bin/python $DEPLOY_ROOT/scripts/scheduler.py --config $W/sched/jobs.yaml --state $W/sched/st.json"
 $SCHED tick >/dev/null; $SCHED tick >/dev/null; sleep 3.5; $SCHED tick >/dev/null
 chk "스케줄러: 기한이 되면 실행하고 기한 전 tick은 아무것도 안 한다(3초 주기, 3번 tick -> 2번 실행), 주기 미정·GPU 밖 잡은 실행 안 함" bash -c "[ \"\$(cat $W/sched/ran.txt)\" = \"\$(printf 'run\nrun')\" ] && echo '실행 2회, SHOULD-NOT-RUN 없음'"
+printf 'targets:\n  - {name: gateway-healthz, url: "http://127.0.0.1:%s/healthz", expect_status: 200}\n' "$PGW" > "$W/sched/monitor.yaml"
+chk "check-health: 스케줄러 상태 파일·디스크·외부 감시 대상(gateway /healthz)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --jobs "$W/sched/jobs.yaml" --scheduler-state "$W/sched/st.json" --monitor "$W/sched/monitor.yaml" --disk-path "$W"
 chk "config/jobs.yaml: GPU 잡 3개는 gpu-external(이 Compose에 없음)" bash -c "[ \$(grep -c 'where: gpu-external' $DEPLOY_ROOT/config/jobs.yaml) = 3 ] && ! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
 sect "단계 9: 백업과 복구 (O16 미정: 설정으로만)"
