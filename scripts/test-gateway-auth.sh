@@ -39,5 +39,37 @@ csrf_case "Sec-Fetch-Site: none(주소창 직접 입력 등)은 막지 않는다
 csrf_case "같은 출처 Origin 은 막지 않는다" 401 no POST /v1/activate -H "Origin: https://127.0.0.1:$CP"
 csrf_case "헤더가 없는 요청(curl·서비스 간 호출·E2E)은 막지 않는다" 401 no POST /v1/activate
 csrf_case "GET 은 교차 출처여도 이 규칙의 대상이 아니다" 200 no GET /healthz -H "Sec-Fetch-Site: cross-site"
+# 우회 시도 회귀(요청 바이트 그대로 보내려고 --path-as-is): 인증 없이 보호 경로에 닿으면 안 된다. 상류가 없는 시험이므로 401/403/404 가 아니라 502/503/504(상류로 넘어감)나 200 이면 **우회**다
+byp() { # byp <설명> <허용 코드들> <경로> [curl 인자...]
+  local name=$1 allow=$2 path=$3; shift 3; local code; code=$(curl -sk -m 5 --path-as-is -o "$T/by.out" -w '%{http_code}' "$@" "https://127.0.0.1:$CP$path")
+  case " $allow " in *" $code "*) echo "  PASS 우회 시도: $name -> $code";; *) echo "  FAIL 우회 시도: $name -> $code (허용 $allow; 상류로 넘어갔거나 인증 없이 통과했다 = 우회)"; FAILS=$((FAILS+1));; esac; }
+byp "/staff/ 정상 경로는 인증 요구" "401" /staff/
+byp "대소문자 /Staff/" "401 403 404" /Staff/
+byp "/STAFF/" "401 403 404" /STAFF/
+byp "//staff//" "401 403 404" //staff//
+byp "///staff/x" "401 403 404" ///staff/x
+byp "/staff/../staff/" "401 403 404" /staff/../staff/
+byp "/./staff/" "401 403 404" /./staff/
+byp "/x/../staff/" "401 403 404" /x/../staff/
+byp "%2f 인코딩 /staff%2f" "401 403 404" /staff%2f
+byp "%73 인코딩 /%73taff/" "401 403 404" /%73taff/
+byp "%2e%2e 인코딩 /v1/%2e%2e/staff/" "401 403 404" /v1/%2e%2e/staff/
+byp "%2e 인코딩 /staff/%2e/" "401 403 404" /staff/%2e/
+byp "직원 API 대소문자 /V1/Staff/alerts" "401 403 404" /V1/Staff/alerts
+byp "직원 API //v1//staff/alerts" "401 403 404" //v1//staff/alerts
+byp "승인 경로 /v1/approvals 인증 없음" "401 403 404" /v1/approvals -X POST -d '{}'
+byp "운영자 경로 /V1/Activate 대소문자" "401 403 404" /V1/Activate -X POST -d '{}'
+byp "/admin 대소문자 /ADMIN/" "401 403 404" /ADMIN/
+byp "/admin//" "401 403 404" /admin//
+byp "Authorization 헤더 두 개(둘 다 틀림)" "401 403" /v1/staff/alerts -H "Authorization: Basic YTpi" -H "Authorization: Basic Yzpk"
+byp "Authorization 두 개(Basic 과 Bearer)" "401 403" /v1/staff/alerts -H "Authorization: Basic YTpi" -H "Authorization: Bearer 0000"
+byp "X-Openit-User 위조만(인증 없음)" "401 403" /v1/staff/alerts -H "X-Openit-User: staff-e2e"
+byp "X-Openit-User 두 개 위조" "401 403" /v1/approvals -X POST -d '{}' -H "X-Openit-User: a" -H "X-Openit-User: b"
+byp "메서드 오버라이드 X-HTTP-Method-Override" "401 403 404" /v1/activate -X POST -H "X-HTTP-Method-Override: GET"
+byp "X-Method-Override 로 GET 처럼 위장한 POST" "401 403 404" /v1/rollback -X POST -H "X-Method-Override: GET" -d '{}'
+byp "GET 에 오버라이드 헤더로 DELETE" "401 403 404" /v1/staff/alerts -H "X-HTTP-Method-Override: DELETE"
+# 청크 본문: 인증이 먼저라 인증 없는 큰 본문은 401(본문 상한 413 은 인증 뒤라 E2E 5a 가 본다)
+head -c $((9*1024*1024)) /dev/zero | tr '\0' 'x' > "$T/big.bin"
+byp "청크 전송 9MiB 본문(인증 없음)" "401 403 404 413" /v1/approvals -X POST -H "Transfer-Encoding: chunked" --data-binary @"$T/big.bin"
 docker rm -f $CN >/dev/null 2>&1
 [ $FAILS = 0 ] && echo "통과: 게이트웨이 인증 자체 시험" || { echo "실패: $FAILS건"; exit 1; }

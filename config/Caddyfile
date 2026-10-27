@@ -86,6 +86,8 @@ http://:8080 {
 	# 상류에 닿지 못하면 아래 handle_errors 가 503/504 와 UPSTREAM_UNAVAILABLE 을 준다. /healthz 는 상류와 무관한 정적 200.
 	handle /readyz {
 		reverse_proxy survey-service:8080 {
+			header_up -X-Openit-User   # 공개 /readyz 에 클라이언트의 사용자 헤더·자격을 넘기지 않는다(점검 L1)
+			header_up -Authorization
 			lb_try_duration 0
 			transport http {
 				dial_timeout 1s
