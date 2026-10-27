@@ -87,6 +87,27 @@ bash scripts/up.sh deploy
 - 잡 하나를 지금 실행: `bash scripts/run-job.sh job-ops-feedback`(설정 파일 `OPS_JOB_CONFIG`가 있어야 한다. 없으면 거부).
 - `gpu-external` 잡은 GPU 서버에서 돈다(D40). 서빙 서버의 Compose·스케줄러가 실행하지 않는다.
 
+## 5-2. 자동 롤백 요청(D3): 운영 잡 설정에 `rollback`·`gate_service`가 없는 이유
+
+의도된 것이다. 근거: (1) `config/ops-feedback-job.yaml` 머리말이 "rollback과 retention 값은 사용자 결정 전이라 비워 둔다"고 쓰고 `rollback: null`로 둔다. (2) ops-feedback `docs/runbook.md`는 `rollback.*`을 사용자가 정할 기준 수치로 분류하고, `rollback` 항목이 없으면 롤백 평가를 하지 않는다. (3) 연결 쪽은 이미 준비돼 있다: compose의 `job-ops-feedback`은 `OPS_GATE_READ_TOKEN_FILE`·`OPS_GATE_WRITE_TOKEN_FILE`(역할 ops-feedback의 게이트 읽기·쓰기 토큰)을 받고, E2E 단계 8이 같은 쓰기 토큰으로 `request_rollback`을 HTTP로 부른다. 없는 것은 기준 수치와 `gate_service` 팩토리 선언뿐이다. 이 문서는 값을 채우지 않는다(자동 롤백 기준은 사용자 결정).
+
+기준이 정해지면 `config/ops-feedback-job.yaml`의 `rollback: null`을 아래로 바꾸고 `gate_service`를 더한다. **숫자는 자리표시자이며 권고가 아니다.**
+
+```yaml
+rollback:
+  window_hours: <사용자 결정>
+  min_turns: <사용자 결정>
+  max_failure_rate: <사용자 결정>
+  counted_review_statuses: [PENDING, CONFIRMED]   # 예시(ops-feedback config/job.example.yaml)
+  requested_by_role: ops-feedback
+  auto_submit: false        # 처음에는 false: 요청을 aux(kind rollback_request)에만 기록하고 게이트에 보내지 않는다
+gate_service:               # auto_submit: true 일 때 I5 request_rollback
+  factory: "boundary_contracts.clients:HttpGateService"
+  args: {base_url: "http://release-gate:8080", token: {secret: OPS_GATE_WRITE_TOKEN}}
+```
+
+확인 방법(이 단계들은 아직 실행하지 않았다): (1) `auto_submit: false`로 `bash scripts/run-job.sh job-ops-feedback`를 돌리고 출력 JSON 한 줄(종료 코드 1이면 `errors`)과 ops-feedback 영역 runbook의 `rollback_request` 기록을 본다. (2) 시험 프로젝트(`scripts/demo.sh` 또는 `e2e.sh --keep`)에서 `auto_submit: true`로 바꿔 게이트의 영수증(`rollback_receipt`)과 `GET /v1/active-pointer`를 본다. 운영에서 먼저 켜지 않는다. 시험 프로젝트는 `OPS_JOB_CONFIG`로 별도 파일을 가리킨다(`test/ops-job/`). 값 `{secret: 이름}`이 이 이미지 버전에서 받아들여지는지는 ops-feedback 예시 파일의 문구를 따랐을 뿐 deploy에서 실행해 보지 않았다.
+
 ## 6. 시험
 
 - **인도 전에는 옵션 없는 전체 모드(`bash scripts/e2e.sh --reuse-build`)가 필수다.** 스케줄러, 백업·복구, 코드 축 롤백까지 돌고 약 4~5분(이미지 빌드 제외)이 걸린다.
