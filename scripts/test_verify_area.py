@@ -58,6 +58,17 @@ class T(unittest.TestCase):
         self._bad(lambda c: c["areas"].pop("deploy"), "deploy")
         self._bad(lambda c: c.update(e2e_base=["1", "zz"]), "zz")
 
+    def test_every_e2e_step_is_mapped_to_some_area(self):
+        """점검 M5: e2e_steps.py 의 STEPS 에 있는 단계(demo·diag 제외)는 최소 한 영역의 e2e 에 대응해야 한다. 아니면 그 단계를 바꿔도 verify-area 가 돌리지 않는다."""
+        import re
+        steps = re.findall(r'\("([0-9a-z]+)", step', (HERE / "e2e_steps.py").read_text(encoding="utf-8").split("STEPS = [")[1].split("]")[0])
+        cfg = v.load_config(); mapped = set()
+        for a, av in cfg["areas"].items():
+            e = av.get("e2e")
+            if isinstance(e, dict) and "why" not in e: mapped |= set(e)
+        missing = [x for x in steps if x not in mapped and not x.startswith("demo") and x != "diag"]
+        self.assertEqual(missing, [], f"어느 영역에도 대응되지 않은 E2E 단계: {missing}")
+
     def test_skippable(self):
         g = self.cfg["default_skip_e2e_paths"]
         self.assertTrue(v.skippable(["docs/a.md", "tests/test_x.py", "README.md"], g))

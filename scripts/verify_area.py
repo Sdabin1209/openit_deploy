@@ -205,7 +205,17 @@ def changed_files(ws, area, since):
         st = _run(["git", "-C", str(repo), "status", "--porcelain"]).stdout.splitlines()
         if st:
             return [l[3:].split(" -> ")[-1] for l in st], True
-        r = _run(["git", "-C", str(repo), "diff", "--name-only", "HEAD~1", "HEAD"])
+        # 기본 비교 범위(점검 M5): 마지막 커밋 하나가 아니라 기준 브랜치와의 차이 전체. 기준은 origin/main -> origin/master -> main -> master 중 처음 있는 것(없으면 마지막 커밋 하나로 물러서고 경고한다).
+        # 여러 커밋짜리 작업에서 마지막 커밋이 문서뿐이어서 E2E 를 잘못 건너뛰는 일을 막는다. 다른 기준은 --since REF.
+        base = next((b for b in ("origin/main", "origin/master", "main", "master") if _run(["git", "-C", str(repo), "rev-parse", "--verify", "-q", b]).returncode == 0), None)
+        r = None
+        if base:
+            mb = _run(["git", "-C", str(repo), "merge-base", base, "HEAD"]).stdout.strip()
+            if mb and _run(["git", "-C", str(repo), "rev-parse", "HEAD"]).stdout.strip() != mb:
+                r = _run(["git", "-C", str(repo), "diff", "--name-only", mb, "HEAD"])
+        if r is None:
+            print(f"경고: 기준 브랜치와 갈라진 커밋이 없어(또는 기준 브랜치가 없어) 마지막 커밋 하나만 비교한다. 여러 커밋을 바꿨다면 --since REF 를 준다", file=sys.stderr)
+            r = _run(["git", "-C", str(repo), "diff", "--name-only", "HEAD~1", "HEAD"])
     return [l for l in r.stdout.splitlines() if l], False
 
 
@@ -221,7 +231,7 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="명령만 보여 주고 돌리지 않는다")
     ap.add_argument("--tests-only", action="store_true", help="영역 시험과 check-all 만(E2E 안 함)")
     ap.add_argument("--no-e2e", metavar="이유", help="E2E 를 건너뛴다. 이유를 반드시 적는다(영역 내부 로직만 바뀌고 이미지·호출 경계가 그대로인 이유)")
-    ap.add_argument("--since", metavar="REF", help="바뀐 파일을 REF 와 비교해 정한다 (기본: 커밋 안 된 변경, 없으면 마지막 커밋)")
+    ap.add_argument("--since", metavar="REF", help="바뀐 파일을 REF 와 비교해 정한다 (기본: 커밋 안 된 변경, 없으면 기준 브랜치(origin/main 등)와 갈라진 지점부터 HEAD 까지)")
     ap.add_argument("--allow-dirty", action="store_true", help="커밋 안 된 변경이 있어도 E2E 를 돌린다(이미지는 HEAD 로 빌드되어 그 변경을 보지 못한다)")
     a = ap.parse_args(argv)
     cfg = load_config()

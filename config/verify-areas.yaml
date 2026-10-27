@@ -37,6 +37,7 @@ areas:
       "5w": {why: "survey-service 무응답 때 gateway 504와 마감 시간 체인(키오스크 10s > gateway 9.5s > 서버 6s)"}
       "5m": {why: "model-serving 무응답 때 survey-service의 턴 마감과 실패 분류(survey→model-serving, I9)"}
       "5r": {why: "외부 위험 신호 접수와 직원 조회(survey 직원 API, 위험 정지)"}
+      "5d": {why: "기기별 키오스크 토큰 표(SURVEY_KIOSK_DEVICE_TOKENS)로 세션 소유 기기만 접근, 공유 토큰 경고 없음(gateway 가 기기 토큰을 그대로 전달)"}
       "6":  {why: "survey-service가 만든 Trace를 ops-feedback이 받는 계약(I6)"}
       "5p": {why: "PostgreSQL 중지·재시작 때 /readyz와 복구, DB 쓰기 경계(survey→postgres)"}
   release-gate:
@@ -66,6 +67,7 @@ areas:
       "4":  {why: "release-gate가 I1을 HTTP로 읽어 판정에 쓴다"}
       "7":  {why: "실패 사례(I7)가 저작으로 돌아가는 읽기"}
       "5p": {why: "question-authoring의 DB 중지·복구"}
+      "5a": {why: "gateway 경유 저자 경로: QA_GATEWAY_TOKENS·X-Openit-User 신뢰, 4-eyes(저자≠임상 검수자), 역할표(QA_USER_ROLES)"}
   model-runtime:
     image: [model-serving]
     tests: {kind: pytest}
@@ -110,6 +112,13 @@ areas:
         - ["bash", "scripts/test-check-versions.sh"]
         - ["python3", "scripts/test_e2e_asserts.py"]
         - ["python3", "scripts/test_verify_area.py"]
+        # 아래는 Docker 가 필요하다(점검 M4: 예전에는 아무 자동 경로도 부르지 않았다). 오래 걸리는 것(test-postgres, test-backup)은 e2e 준비 단계가 아니라 여기서만 돈다
+        - ["bash", "scripts/test-check-containers.sh"]
+        - ["bash", "scripts/test-secret-perms.sh"]
+        - ["bash", "scripts/test-gateway-auth.sh"]
+        - ["bash", "scripts/test-backup-secrets.sh"]
+        - ["bash", "scripts/test-backup.sh"]
+        - ["bash", "scripts/test-postgres.sh"]
     # compose.yaml·Caddyfile·스크립트는 모든 경계에 닿는다. 단계 일부로 줄이지 않는다.
     e2e: fast
     skip_e2e_paths: ["docs/**", "*.md", "CHANGELOG*", "CLAUDE.md"]
