@@ -1,5 +1,12 @@
 # 변경 이력
 
+## demo.sh swap-adapters, 추론 서버 측정 도구 probe-serving.py (OPEN_GAPS U08)
+- `demo.sh swap-adapters [--adapter-a/-b DIR --prompt-a/-b FILE]`: 떠 있는 데모에서 새 모델 패키지를 게시, 자동 검사, 시험용 승인자(스크립트) 승인, 활성화해 model-serving만 새 번들을 적재시킨다. 어댑터 인자는 `up --llm`과 같은 사전 검사를 거치고 거부되면 아무것도 게시하지 않는다. 전후 컨테이너 StartedAt(Env는 읽지 않음)과 새 release_id의 LOADED를 출력한다. 이전에는 `reset`(데모 전체 재생성)뿐이었다.
+- `scripts/e2e_steps.py`: 단계 3의 게시·재확인을 `publish_packages()`로 뽑아 단계 3과 새 단계 `demo_swap`이 같이 쓴다(`demo_active`는 활성 포인터 읽기). 두 단계는 demo 전용이라 E2E 기본 실행에 들어가지 않는다. 단계 3의 동작은 같고, 어댑터 열기 위치만 패키지 ID가 들어간 폴더로 바뀌었다.
+- `scripts/probe-serving.py`(+ 자체 시험 `scripts/test_probe_serving.py`): model-serving extract에 입력 묶음을 보내 성공/OUTPUT_INVALID 건수, 위반 키워드별 빈도, 첫 호출 대 이후 중앙값 지연, X-Openit-Outcome 분포를 표로 낸다. 토큰은 파일에서 읽고 출력하지 않는다.
+- 문서: `docs/RUN.md` 7-2-3, `docs/GPU_HOLE.md` H2(교체)·H4(측정)가 두 도구를 쓰도록 바꿨다.
+- 확인하지 못한 것: `--llm`(vLLM) 데모에서의 교체, 실제 모델의 OUTPUT_INVALID 분포. 전체 E2E는 돌리지 않았다.
+
 ## E2E가 값 추출 경로를 지나가게 함 (model-runtime v0.7.1 가짜 A, OPEN_GAPS U16)
 - `test/fake-model/question_flow.json`을 객체 형식(`order`, `slots`, `skips`)으로 확장: 순서·건너뛰기 7규칙은 survey-service `schema/data/question_flow.json`, 칸 키·타입은 같은 스키마의 키 이름과 boundary-contracts `V2_DRAFT.md`의 값 형태에서 가져왔다(Q1.D*/Q2.D*/Q4~Q6/Q7 bool, Q8_1/Q9_1/Q10 `days` 정수. 문자열 칸 문항은 칸 정의 없음).
 - E2E 단계 5g: 가짜 A 직접 호출 6건(값·타입·건너뛰기), 서비스 경유 값 있는 3턴(실패 신호 없음, 추론 실패·형식 위반 증가 0, Trace 전송). 단계 5s: 포인터 1->2 전후 survey-service·release-gate·model-registry·ops-feedback-ingest·question-authoring·gateway의 컨테이너 ID·StartedAt 불변, model-serving 새 릴리스 LOADED.

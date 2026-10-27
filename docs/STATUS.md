@@ -190,3 +190,9 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 ## E2E 값 추출 경로 (U16)
 - 가짜 A 흐름 파일을 객체 형식(slots/skips)으로 확장하고 E2E에 단계 5g(값 추출·건너뛰기·서비스 경유 3턴)와 5s(어댑터 교체 시 다른 서비스 불변, 새 릴리스 LOADED)를 추가했다. 둘 다 REAL(모델은 가짜). 확인: `bash scripts/e2e.sh --fast --reuse-build` 통과(전체 모드 아님, 숫자는 `docs/E2E_RESULTS.md` 과거 기록), `scripts/test-check-all.sh` 통과.
 - 확인하지 못한 것: 저장된 값 내용(공개 읽기 경로 없음, ops-feedback은 실패 사례만 노출), CORRECT(가짜 A가 내지 않음), 전체 모드.
+
+## 어댑터 교체 경로와 측정 도구 (U08)
+- `demo.sh swap-adapters`를 추가했다. model-serving만 새 번들을 적재하게 하는 경로가 deploy에 없던 구멍(D72)을 메운다. E2E 단계 코드(게시 `publish_packages`, 컨테이너 비교 `container_ids`)를 재사용한다. 승인자는 시험용 스크립트(TEST-SUB)다.
+- `scripts/probe-serving.py`: model-serving extract 측정 도구(GPU_HOLE H4에서 쓴다). 자체 시험 `scripts/test_probe_serving.py`.
+- 확인한 것(이 PC, 가짜 백엔드 데모): 시험용 어댑터 교체가 통과하고 다른 서비스 컨테이너의 StartedAt이 불변이며 새 릴리스가 LOADED. 기반 모델 불일치 어댑터는 거부되고 활성 릴리스는 그대로. probe는 데모의 model-serving에 돌아 표가 나온다.
+- 확인하지 못한 것: `--llm`(vLLM)에서의 교체, 실제 모델의 OUTPUT_INVALID 분포, 전체 E2E.

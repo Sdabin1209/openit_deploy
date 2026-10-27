@@ -100,17 +100,17 @@ model-lab 쪽 명령도 있다: `python -m model_lab package-adapters ...`는 �
 - 키오스크(안내된 주소)에서 한 턴: 형식 위반(`503 OUTPUT_INVALID`) 없이 다음 질문이나 확인 응답이 온다. 모델 출력은 로그에 원문이 없다.
 - 가능하면 `/v1/info`의 `system_prompt_sha256`이 `--prompt-a/-b` 파일의 해시와 같다(어긋나면 학습 때 프롬프트와 다른 것).
 
-어댑터 교체 시험 (U08): 같은 기반 모델의 두 번째 어댑터 세트(예: 다른 학습 run)로 바꿔 본다.
+어댑터 교체 시험 (U08): 같은 기반 모델의 두 번째 어댑터 세트(예: 다른 학습 run)로 바꿔 본다. 데모 전체를 지우지 않고 model-serving만 새 번들로 바꾸는 `swap-adapters`가 있다(D72).
 ```bash
-# [서버] 모델 캐시 볼륨은 지워지지 않아 모델을 다시 받지 않는다
-bash scripts/demo.sh reset --llm --profile rtx4090-24g --yes-large \
+# [서버] 떠 있는 --llm 데모에서. 같은 사전 검사로 기반 모델 불일치·순위 초과·파일 누락이면 아무것도 게시하지 않고 거부한다(활성 릴리스 그대로)
+bash scripts/demo.sh swap-adapters \
   --adapter-a ~/attach2/LORA_A --adapter-b ~/attach2/LORA_B --prompt-a ~/attach/lora_a.system.txt --prompt-b ~/attach/lora_b.system.txt
 ```
-합격: 나머지 서비스(게이트, 레지스트리, 문진)는 같은 구성으로 새 패키지를 받아 한 턴이 다시 통과. 한계(확인하지 못한 것): `reset`은 데모 전체를 지우고 다시 만든다. "model-serving만 바꾸고 나머지는 그대로"(D72)의 정확한 시험은 아니다. 그 시험을 하려면 model-serving 단독 교체 경로가 필요하고 지금 deploy에는 없다(헤드 판단 필요).
+`swap-adapters`는 새 패키지를 게시하고 자동 검사를 거쳐 시험용 승인자(스크립트, TEST-SUB)로 승인·활성화한 뒤, model-serving에서 새 release_id가 `LOADED`가 되는 것과 다른 서비스 컨테이너(survey-service, release-gate, model-registry, ops-feedback-ingest, question-authoring, gateway)의 ID·StartedAt이 전후로 같음을 출력한다(`docker inspect`의 두 필드만 읽는다). 합격: 그 출력 + 키오스크 한 턴이 다시 통과. 한계(확인하지 못한 것): 이 PC에서는 가짜 백엔드 데모로만 돌려 봤다(실제 vLLM에서 두 번째 LoRA를 적재하는 시간·메모리는 측정 전). 기존 어댑터가 GPU 메모리에 남아 있는지, 새 어댑터의 적재가 추론 중인 요청에 미치는 영향도 미확인. 같은 어댑터 쌍을 다시 주면 이미 활성이라 교체 없음으로 끝난다.
 
 실패 시 모을 것: `bash scripts/demo.sh diag`, model-serving 로그 마지막 200줄, `nvidia-smi`, 거부 메시지 전문(`거부: ...`, 값은 없다). 기반 모델 불일치 거부는 정상 동작이다. 어댑터가 4B로 학습된 것이면 24GB 프로파일에는 얹을 수 없다.
 
-측정해서 OPEN_GAPS에 적을 것: **U07** 실제 어댑터로 한 턴 통과 여부, 기동 시간, 시작·응답 지연. **U08** 교체 후 통과 여부와 위 한계. **U10** 이 길은 평가하지 않으므로 U10은 닫히지 않는다(평가는 model-lab 쪽, H3). **U13** H1+H2 결과로 갱신.
+측정해서 OPEN_GAPS에 적을 것: **U07** 실제 어댑터로 한 턴 통과 여부, 기동 시간, 시작·응답 지연. **U08** 교체 후 통과 여부(`swap-adapters` 출력의 LOADED·StartedAt 불변)와 위 한계. **U10** 이 길은 평가하지 않으므로 U10은 닫히지 않는다(평가는 model-lab 쪽, H3). **U13** H1+H2 결과로 갱신.
 
 ## H3. 학습 파이프라인 실제 실행 (G06)
 
@@ -126,7 +126,14 @@ docker compose -p deploy-demo restart model-serving
 # /readyz 200 이 되면 키오스크에서 같은 입력으로 두 번 말하고, 로그 시각으로 각 extract 호출 시간을 비교
 docker compose -p deploy-demo logs --no-color --timestamps --tail 100 model-serving
 ```
-동시 부하: 키오스크 세션 N개를 동시에 시작해 본다(N=1,2,4,8; 프로파일 `max_num_seqs`=8). **이 리포지토리에는 부하 시험 스크립트가 없다(미구현).** 우선 브라우저 탭 여러 개나, 게이트웨이의 키오스크 경로(`/v1/sessions`, `/v1/sessions/{id}/turns`)를 `curl` 병렬로 부르는 것으로 대신하고, 스크립트가 필요하면 헤드에게 요청한다.
+측정 도구: `scripts/probe-serving.py`(docs/RUN.md 7-2-3). model-serving의 extract에 입력 묶음을 보내 성공/OUTPUT_INVALID 건수, 위반 키워드별 빈도, 첫 호출 대 이후 중앙값 지연, `X-Openit-Outcome` 분포를 표로 낸다. 일회용 스크립트를 새로 쓰지 않는다.
+```bash
+# [서버] 재시작 직후 첫 호출(문법 컴파일)과 이후 호출이 분리되어 나온다. 동시 N개(N=1,2,4,8; 프로파일 max_num_seqs=8)는 --concurrency
+bash scripts/demo.sh status        # 떠 있는지
+python3 scripts/probe-serving.py --demo --repeat 3
+python3 scripts/probe-serving.py --demo --repeat 5 --concurrency 4 --inputs 내_발화.json   # 입력 파일은 선택
+```
+이 도구는 model-serving의 extract만 잰다(서비스·게이트웨이 경유 전체 턴이 아니다). 키오스크 세션 전체의 동시 부하는 이 리포지토리에 도구가 없다(미구현): 필요하면 브라우저 탭이나 게이트웨이 키오스크 경로(`/v1/sessions`, `/v1/sessions/{id}/turns`)를 `curl` 병렬로 부르거나 헤드에게 요청한다.
 
 합격 기준: 첫 호출 이후 지연이 안정되고, 동시 N개에서 `OUTPUT_INVALID`·시간 초과가 없거나 그 빈도가 기록된다. (합격선 수치는 정해진 바 없다: 사용자 결정 전. 측정값만 적는다.)
 

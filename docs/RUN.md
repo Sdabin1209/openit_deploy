@@ -235,7 +235,7 @@ bash scripts/demo.sh status                                          # model-ser
 - **읽기 전용 루트에서의 캐시·홈·원격 측정.** model-serving은 `read_only` 루트(보안 설정 유지)라서 캐시·홈이 쓰기 가능한 serving-data 볼륨(`/var/lib/model-runtime/…`)을 가리켜야 한다(안 그러면 ~/.cache(컨테이너 HOME 아래)에서 `OSError: [Errno 30] Read-only file system`으로 적재 실패, `/readyz` 503 `RuntimeError`). 이 환경 변수(`HOME`, `XDG_CACHE_HOME`, `VLLM_CACHE_ROOT`, `TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`, `TORCH_HOME`)와 원격 측정 차단(`VLLM_NO_USAGE_STATS`, `DO_NOT_TRACK`, `HF_HUB_DISABLE_TELEMETRY`)은 **model-runtime v0.5.3부터 이미지의 ENV 기본값**이라 `compose.llm.yaml`은 다시 정하지 않는다(두 곳에서 어긋나는 것을 막으려는 것). 서버는 시작 때 캐시 디렉터리를 만들고 쓸 수 없으면 `/readyz`에 분명한 사유를 낸다. `compose.llm.yaml`에는 백엔드·프로파일·오프라인 같은 배포마다 달라지는 값만 있다. `TMPDIR`는 돌리지 않는다(`/tmp`는 noexec tmpfs, tmpfs exec 허용은 보안 설정 약화). 이 구성은 GPU 서버에서 확인 전이다.
 
 ### 7-2-1b. 진짜 어댑터 얹기와 GPU 구멍
-`demo.sh up --llm --profile rtx4090-24g --adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE`은 중립 LoRA 대신 학습 서버에서 가져온 어댑터를 얹는다(기반 모델 불일치·순위 초과는 이미지 빌드 전에 거부, 평가하지 않음). GPU 서버가 열릴 때 따라 할 순서는 `docs/GPU_HOLE.md`. `demo.sh up`은 끝에 비밀 노출 점검을 자동으로 돌린다(`demo.sh check-secrets`로 다시, 인자 없는 `check-secrets-hidden.sh`는 떠 있으면 데모도 점검).
+`demo.sh up --llm --profile rtx4090-24g --adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE`은 중립 LoRA 대신 학습 서버에서 가져온 어댑터를 얹는다(기반 모델 불일치·순위 초과는 이미지 빌드 전에 거부, 평가하지 않음). GPU 서버가 열릴 때 따라 할 순서는 `docs/GPU_HOLE.md`. `demo.sh swap-adapters`는 떠 있는 데모의 model-serving만 새 어댑터로 바꾼다(7-2-3). `demo.sh up`은 끝에 비밀 노출 점검을 자동으로 돌린다(`demo.sh check-secrets`로 다시, 인자 없는 `check-secrets-hidden.sh`는 떠 있으면 데모도 점검).
 
 ### 7-2-2. 서버(gpu-dev)에서 할 일 -- Qwen3-1.7B 기준 (서버 미검증)
 
@@ -246,7 +246,7 @@ bash scripts/demo.sh status                                          # model-ser
 3. 패키지 생성 단계가 `config.json`을 받으려면 서버에서도 huggingface.co에 닿아야 한다. 닿지 않으면 `미확인`으로 멈춘다(`build/hf-config/Qwen__Qwen3-1.7B.config.json`을 다른 곳에서 받아 같은 위치에 두면 sha256 검사 뒤 쓴다).
 4. 확인할 것(결과를 있는 그대로 적는다): (a) model-serving `/readyz`가 200이 되는가(적재, 메모리), (b) `/v1/info`의 `system_prompt_sha256`이 패키지(`test/llm-demo` 프롬프트)와 같은가, (c) 제출 3건이 `REJECTED_AUTO` 없이 승인 대기까지 가는가(`demo.sh diag`), (d) 키오스크 한 턴이 형식 위반(`OUTPUT_INVALID`) 없이 도는가 -- 학습하지 않은 모델이라 실패할 수 있고, 그 빈도가 U04 자료다, (e) `nvidia-smi`의 사용 메모리(프로파일 `engine` 값이 추정이므로 확정 근거).
 5. 안 되면 `bash scripts/demo.sh diag`와 model-serving 로그(발화·모델 출력 원문은 로그에 없다)를 모아 헤드에게 넘긴다. 프로파일 값(`max_model_len`, `gpu_memory_utilization` 등)은 deploy가 아니라 model-runtime이 소유한다.
-6. LoRA 교체 시험(D72, U08): 같은 기반 모델의 두 번째 어댑터가 생기면 model-serving만 바꾸고 나머지가 그대로 도는지 본다. 지금은 두 번째 어댑터가 없어 하지 못했다.
+6. LoRA 교체 시험(D72, U08): 같은 기반 모델의 두 번째 어댑터가 생기면 `bash scripts/demo.sh swap-adapters --adapter-a ... `(7-2-3)로 model-serving만 바꾸고 나머지가 그대로 도는지 본다. 이 PC에서는 가짜 백엔드로만 해 봤고 실제 LoRA로는 하지 못했다.
 
 **모델 캐시가 쓰기 불가일 때** (`/readyz` 503 사유 `OSError`, `status.sh`/`diag`에 "모델 캐시 쓰기 불가 가능성" 안내).
 - 원인: model-serving은 uid 10001로 도는데, HF 캐시 볼륨이 이미지가 준비하지 않은 경로에 마운트되었거나(예: 옛 설정의 `/var/lib/hf-cache`) root 소유로 초기화되어 쓸 수 없다. 이미지는 `/var/lib/model-runtime/hf`와 `bundles`를 uid 10001 소유로 만들어 두므로 `compose.llm.yaml`은 그 경로에 마운트한다. 빈 새 볼륨은 처음 마운트될 때 그 경로의 소유자로 초기화된다.
@@ -261,6 +261,30 @@ bash scripts/demo.sh status                                          # model-ser
 **용량과 정리.**
 - 확인: `docker system df`(이미지·볼륨·빌드 캐시의 크기와 회수 가능량). Docker Engine(리눅스)은 보통 `/var/lib/docker`(`docker info --format '{{.DockerRootDir}}'`), Docker Desktop은 VM 디스크 안이라 이 셸의 `df`로 보이지 않는다(설정의 Resources > Disk image 위치).
 - 지울지는 사용자가 판단한다. GPU 이미지: `docker image ls 'deploy-build/model-serving-gpu'`로 보고 필요 없으면 `docker rmi <이미지>`(레지스트리에 올렸다면 레지스트리 볼륨에도 있다: `scripts/down.sh <레지스트리 프로젝트> --registry --purge`는 레지스트리 볼륨까지 지운다). HF 캐시: `bash scripts/down.sh --purge-hf-cache`(또는 `demo.sh down --purge-cache`)로만 지워진다. **Docker Desktop(WSL2)은 이미지·볼륨을 지워도 호스트의 디스크 파일이 줄지 않을 수 있다**(디스크 이미지 축소는 Docker Desktop 설정에서 사용자가 판단). 빌드 캐시: `docker builder prune`.
+
+### 7-2-3. 어댑터 교체와 추론 서버 측정 도구
+
+**어댑터 교체 `demo.sh swap-adapters`** (D72, OPEN_GAPS U08): 떠 있는 데모에서 `reset`처럼 전체를 다시 만들지 않고 model-serving만 새 번들을 적재하게 한다. 순서는 새 모델 패키지 게시, 후보 수집·자동 검사, 시험용 승인자(스크립트, TEST-SUB) 승인, 활성화, model-serving에서 새 release_id `LOADED` 확인이다. 승인·활성화는 E2E 단계 코드(`scripts/e2e_steps.py`의 `demo_swap`: 게시는 단계 3과 같은 `publish_packages`, 컨테이너 비교는 단계 5s와 같은 `container_ids`·`check_unchanged`)를 그대로 쓴다.
+```bash
+bash scripts/demo.sh swap-adapters          # 가짜 백엔드 데모: 시험용 어댑터 쌍(새 패키지 ID)으로 교체
+bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE   # --llm 데모: 진짜 어댑터
+```
+- 어댑터 인자는 `up --llm`과 같은 사전 검사(`make-llm-package.sh --check-only`, 기반 모델·순위·파일)를 먼저 거친다. 거부되면 아무것도 게시하지 않고 비0으로 끝난다(활성 릴리스 그대로). 가짜 백엔드 데모에 진짜 어댑터를 주면 검사 뒤에 "가짜 백엔드라 얹을 수 없다"로 멈춘다. `--llm` 데모에서 인자 없이 부르면 거부한다.
+- 출력: 교체 전후 활성 릴리스와 pointer_version, 서비스별 컨테이너 StartedAt(전 -> 후, `불변`), model-serving의 새 release_id 상태. 컨테이너 Env는 읽지 않는다.
+- 같은 어댑터 쌍을 다시 주면 이미 활성이라 교체 없음으로 끝난다. 문항 세트는 가장 최근 것을 그대로 쓴다.
+- 이 PC에서 확인한 것: 가짜 백엔드 데모의 시험용 어댑터 교체와 기반 모델 불일치 거부. 확인하지 못한 것: `--llm`(vLLM) 데모의 교체.
+
+**추론 서버 측정 도구 `scripts/probe-serving.py`**: 떠 있는 model-serving의 `extract`에 입력 묶음을 보내 집계한다(표준 라이브러리만 씀, 서비스를 거치지 않음).
+```bash
+python3 scripts/probe-serving.py --demo [--repeat N] [--concurrency K] [--inputs FILE]     # 데모 스택(포트는 Docker 배정을 compose port로 찾는다)
+python3 scripts/probe-serving.py --url http://HOST:PORT --token-file FILE [--release-id ID]  # 다른 model-serving(예: 외부 추론 서버)
+```
+- 토큰: `NAME_FILE`처럼 파일에서 읽는다(값 하나가 든 파일). `--demo`의 기본은 `state/demo/secrets/tokens/inference-survey-service`. 토큰 값은 출력하지 않는다.
+- 입력: 없으면 `../boundary-contracts/examples/ActionExtractionInput.json`에 내장 발화 10개를 바꿔 넣는다. 파일은 ActionExtractionInput 하나, 그 배열, 또는 `{"inputs": [...]}`.
+- 출력 표: 성공 / `OUTPUT_INVALID` / 그 밖의 실패 건수, `X-Openit-Outcome` 분포, `details.violations`("경로:키워드")의 키워드별 빈도와 경로:키워드 상위, 지연(첫 호출 대 이후 중앙값·최소·최대). 발화·모델 출력은 출력하지 않는다. `OUTPUT_INVALID`가 있어도 종료 코드는 0이다(측정 도구, 합격 판정이 아님). 서버에 닿지 못하면 3, 사용 오류는 2.
+- 첫 호출은 항상 혼자 보내므로 문법 컴파일 같은 첫 호출 비용이 이후 중앙값과 분리되어 보인다(재시작 직후에 쓴다).
+- 자체 시험: `python3 scripts/test_probe_serving.py`(일부러 OUTPUT_INVALID를 섞은 가짜 응답과 가짜 서버로 집계를 확인). GPU 측정 절차는 `docs/GPU_HOLE.md` H4.
+- 한계: 이 PC에서는 가짜 백엔드(출력 고정)에만 돌려 봤다. 실제 모델의 OUTPUT_INVALID 분포는 측정 전이다.
 
 ## 8. 흔한 문제
 

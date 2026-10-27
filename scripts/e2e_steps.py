@@ -272,14 +272,9 @@ def make_packages():
         pk[role] = (mf, adir[role], rep)
     return pk
 
-def step3():
-    title(3, "설정 하나로 학습·평가·패키징·게시가 돈다 (model-lab, I3) -- 시험 대역")
-    if os.environ.get("E2E_GPU") == "1":
-        r = subprocess.run(["bash", str(ROOT / "scripts/e2e_gpu.sh"), str(PORTS["mr"]), str(pathlib.Path(a.secrets) / "tokens" / "model-registry-write-model-lab")], capture_output=True, text=True)
-        if r.returncode != 0:
-            rec(3, "BLOCKED", f"E2E_GPU=1 경로(scripts/e2e_gpu.sh, 미검증) 실패 {r.returncode}: {(r.stderr or r.stdout)[-300:]}. 기본 경로(시험용 어댑터)로 계속하지 않았다"); return
-        rec(3, "BLOCKED", "E2E_GPU=1 경로는 게시까지만 있고 이후 단계가 읽을 참조 해석이 미구현(CR-D12)"); return
-    pk = make_packages(); reg = HttpModelRegistry(URL("mr"), TOK("model-registry-write-model-lab"))
+def publish_packages(pk):
+    """make_packages() 의 패키지 2건을 model-registry 에 HTTP 로 게시(멱등 확인)하고 읽기 토큰으로 다시 읽어 해시를 검증한다. 단계 3 과 demo.sh swap-adapters 가 같이 쓴다. {역할: 참조} 를 돌려준다."""
+    reg = HttpModelRegistry(URL("mr"), TOK("model-registry-write-model-lab"))
     refs = {}
     for role, (mf, adir, rep) in pk.items():
         rb = json.dumps(rep, ensure_ascii=False, sort_keys=True).encode()
@@ -288,10 +283,20 @@ def step3():
         refs[role] = {"id": mf["package_id"], "version": mf["version"], "content_hash": mf["content_hash"]}
     rr = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate"))
     for role, (mf, adir, rep) in pk.items():
-        g = rr.get_manifest(mf["package_id"], "1"); validate("ModelPackageManifest", g); assert g["content_hash"] == mf["content_hash"]
+        g = rr.get_manifest(mf["package_id"], mf["version"]); validate("ModelPackageManifest", g); assert g["content_hash"] == mf["content_hash"]
         got_rep = json.loads(rr.get_eval_report(g["eval_report_ref"])); validate("EvaluationReport", got_rep); assert got_rep["content_hash"] == rep["content_hash"] == canonical.content_hash({k: v for k, v in got_rep.items()})
-        dest = WORK / f"adapter-{role}"; p = rr.open_adapter(mf["package_id"], "1", dest=dest)   # 해시 검증 포함
+        dest = WORK / f"adapter-{role}-{mf['package_id']}"; p = rr.open_adapter(mf["package_id"], mf["version"], dest=dest)   # 해시 검증 포함
         assert canonical.directory_hash(p) == mf["adapter_hash"]
+    return refs
+
+def step3():
+    title(3, "설정 하나로 학습·평가·패키징·게시가 돈다 (model-lab, I3) -- 시험 대역")
+    if os.environ.get("E2E_GPU") == "1":
+        r = subprocess.run(["bash", str(ROOT / "scripts/e2e_gpu.sh"), str(PORTS["mr"]), str(pathlib.Path(a.secrets) / "tokens" / "model-registry-write-model-lab")], capture_output=True, text=True)
+        if r.returncode != 0:
+            rec(3, "BLOCKED", f"E2E_GPU=1 경로(scripts/e2e_gpu.sh, 미검증) 실패 {r.returncode}: {(r.stderr or r.stdout)[-300:]}. 기본 경로(시험용 어댑터)로 계속하지 않았다"); return
+        rec(3, "BLOCKED", "E2E_GPU=1 경로는 게시까지만 있고 이후 단계가 읽을 참조 해석이 미구현(CR-D12)"); return
+    pk = make_packages(); refs = publish_packages(pk)
     try:
         reg_ro = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); reg_ro.publish(pk["LORA_A"][0], pk["LORA_A"][1], b"{}"); raise AssertionError("읽기 토큰으로 게시됨")
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
@@ -847,7 +852,58 @@ def diag():
     print(f"-- 상태 파일 요약: 릴리스 {STATE.get('releases')}, 제출 {STATE.get('demo_subs')}, llm 대조 {STATE.get('llm_cfg_vs_server')}")
     rec("diag", "REAL", "진단 출력만 했다(변경 없음)")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("diag", diag)]
+def demo_active():
+    """demo.sh swap-adapters 가 전후에 부른다: 활성 릴리스 포인터(읽기 전용)."""
+    title("demo_active", "활성 릴리스 포인터 (읽기 전용)")
+    ap = dict(_gate_clients()[0].get_active_pointer())
+    print(f"  활성 릴리스 {ap.get('release_id')} pointer_version {ap.get('pointer_version')}")
+    rec("demo_active", "REAL", f"활성 릴리스 {ap.get('release_id')} (pointer_version {ap.get('pointer_version')})")
+
+def demo_swap():
+    """demo.sh swap-adapters: 새 모델 패키지(LORA_A/LORA_B)를 게시 -> 후보 수집·자동 검사 -> 시험용 승인자(스크립트) 승인 -> 활성화 -> model-serving 만 새 번들을 적재.
+    문항 세트는 가장 최근 것을 그대로 쓰고 어댑터 쌍만 바뀐다. 단계 3(make_packages, publish_packages)·5s(container_ids, check_unchanged, check_release_loaded)와 같은 함수를 쓴다."""
+    title("demo_swap", "어댑터 교체: 게시 -> 자동 검사 -> 시험용 승인 -> 활성화 -> model-serving 적재")
+    if "qs" not in STATE or "dataset" not in STATE: rec("demo_swap", "BLOCKED", "데모 상태(문항 세트·데이터셋)가 없다: demo.sh up 이 먼저"); return
+    print("  !! 승인자는 사람이 아니라 이 스크립트가 시험용 release-approver 토큰으로 대신한다(TEST-SUB) !!")
+    gate_r, gate_op, gate_rep, gate_ap = _gate_clients()
+    before_ptr = dict(gate_r.get_active_pointer())
+    pk = make_packages(); refs = publish_packages(pk)
+    subj = {"question_set": STATE["qs"][-1], "lora_a": refs["LORA_A"], "lora_b": refs["LORA_B"]}
+    snap = container_ids(); assert set(snap) == set(SWAP_SERVICES), f"컨테이너를 찾지 못했다: {sorted(set(SWAP_SERVICES) - set(snap))}"
+    ms_before = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", MS_CONTAINER], check=False).stdout.strip()
+    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
+    assert r.returncode in (0, 75), f"collect 종료 {r.returncode}: {(r.stderr + r.stdout)[-500:]}"
+    sub = dict(gate_op.submit_candidate(subj, requested_by_role="operator")); validate("GateSubmission", sub); sid = sub["submission_id"]
+    def report_of(x):
+        try: return dict(gate_rep.get_review_report(x))
+        except bc.BoundaryError: return None
+    existing = next((d for d in decisions_for(gate_r, subj) if d["result"] == "PASS"), None)
+    if not existing:
+        rep = wait_review_report(report_of, sid, "교체 후보"); validate("ReviewReport", rep)
+        bad = [c for c in rep["checks"] if c["result"] not in ("PASS", "SKIPPED")]
+        assert not bad, f"자동 검사가 통과하지 못했다(승인하지 않고 멈춤): {bad}"
+        print("  자동 검사: " + ", ".join(f"{c['kind']}={c['result']}" for c in rep["checks"]))
+        dec = dict(gate_ap.decide(sid, "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="데모: 시험용 승인자(스크립트)가 대신 승인(어댑터 교체)")); validate("GateApproval", dec)
+        existing = wait(lambda: next((d for d in decisions_for(gate_r, subj) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
+    rid = existing.get("release_id"); validate("ReleaseManifest", dict(gate_r.get_release(rid)))
+    gate_r.load_bundle(rid, dest=WORK / "bundles")
+    unchanged_pointer = before_ptr["release_id"] == rid
+    ap = dict(before_ptr) if unchanged_pointer else dict(gate_op.activate(rid, requested_by_role="operator")); validate("ActivePointer", ap)
+    r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == rid else None)(survey_ready()), 300, f"survey가 릴리스 {rid} 적재", every=3)
+    tok = INF_TOK()
+    st = wait(lambda: (lambda cs: cs[1] if cs[0] == 200 and cs[1].get("state") in ("LOADED", "FAILED") else None)(http("GET", "ms", f"/v1/releases/{rid}", tok)), 600, f"model-serving 이 {rid} 적재", every=3)
+    EA.check_release_loaded(st, rid)
+    after = container_ids(); EA.check_unchanged({k: tuple(v) for k, v in snap.items()}, after, SWAP_SERVICES)
+    ms_after = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", MS_CONTAINER], check=False).stdout.strip()
+    print(f"  활성 릴리스: {before_ptr['release_id']} (pointer_version {before_ptr['pointer_version']}) -> {rid} (pointer_version {ap['pointer_version']})" + ("  [이미 활성이었다: 같은 어댑터 쌍, 교체 없음]" if unchanged_pointer else ""))
+    print("  컨테이너 StartedAt (전 -> 후):")
+    for svc in SWAP_SERVICES: print(f"    {svc:22} {snap[svc][1]} -> {after[svc][1]}  {'불변' if snap[svc] == after[svc] else '바뀜'}")
+    print(f"    {'model-serving':22} {ms_before} -> {ms_after}  {'불변' if ms_before == ms_after else '바뀜(컨테이너 재시작)'}")
+    print(f"  model-serving 의 릴리스 {rid}: state={st['state']} (LOADED)")
+    STATE.setdefault("swaps", []).append({"release_id": rid, "packages": refs}); save()
+    rec("demo_swap", "TEST-SUB", f"새 릴리스 {rid} 활성화(승인자는 스크립트가 대신함, TEST-SUB). model-serving 에서 LOADED. {', '.join(SWAP_SERVICES)} 컨테이너의 ID·StartedAt 불변")
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

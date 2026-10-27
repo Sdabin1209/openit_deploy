@@ -6,6 +6,7 @@
 #   scripts/demo.sh check-secrets                              데모 스택(state/demo/secrets)의 비밀 노출 점검(up 끝에도 자동으로 돈다)
 #   scripts/demo.sh config --llm [--profile gpu-12g]            컨테이너를 띄우지 않고 실제 LLM 구성의 병합(docker compose config)만 검증한다(이미지 참조가 로컬 태그인지)
 #   scripts/demo.sh diag                                        켜져 있는 데모의 release-gate 제출·판정(checks)·수집기·모델 패키지 요약(읽기 전용)
+#   scripts/demo.sh swap-adapters [--adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE]   떠 있는 데모에서 새 모델 패키지를 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화해 model-serving 만 새 번들을 적재시킨다(다른 서비스는 재시작하지 않는다, D72/U08). 인자 없음 = 가짜 백엔드 데모의 시험용 어댑터, 인자 = --llm 데모의 진짜 어댑터(같은 사전 검사)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
 #   scripts/demo.sh status | reset [--stop-before-approval] | down [--purge-cache]   (모델 캐시 볼륨은 down 해도 남는다. --purge-cache 로 명시적으로 지운다)
 # 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 시험 구성(compose.test.yaml)을 쓴다.
@@ -32,8 +33,8 @@ while [ $# -gt 0 ]; do case "$1" in
 [ $LLM = 0 ] || [ -z "$EXT" ] || die "--llm 은 --external-inference 와 함께 쓰지 않는다 (외부 GPU 서버는 그 서버에서 compose.inference.yaml, docs/RUN.md 7-1)"
 ATTACH=0
 if [ -n "$AD_A$AD_B$PR_A$PR_B" ]; then
-  [ $LLM = 1 ] || die "--adapter-a/-b, --prompt-a/-b 는 --llm 과 함께 쓴다"
-  [ "$CMD" = up ] || [ "$CMD" = reset ] || [ "$CMD" = config ] || die "어댑터 인자는 up(reset, config)에서만 받는다"
+  [ $LLM = 1 ] || [ "$CMD" = swap-adapters ] || die "--adapter-a/-b, --prompt-a/-b 는 --llm 과 함께 쓴다"
+  [ "$CMD" = up ] || [ "$CMD" = reset ] || [ "$CMD" = config ] || [ "$CMD" = swap-adapters ] || die "어댑터 인자는 up(reset, config, swap-adapters)에서만 받는다"
   [ -n "$AD_A" ] && [ -n "$AD_B" ] && [ -n "$PR_A" ] && [ -n "$PR_B" ] || die "--adapter-a --adapter-b --prompt-a --prompt-b 는 네 개를 모두 준다"
   for d in "$AD_A" "$AD_B"; do [ -d "$d" ] || die "어댑터 디렉터리가 없다: $d"; done
   for f in "$PR_A" "$PR_B"; do [ -f "$f" ] || die "시스템 프롬프트 파일이 없다: $f"; done
@@ -47,7 +48,7 @@ fi
 P=${DEMO_PROJECT:-deploy-demo}
 case "$P" in deploy-demo*) ;; *) die "DEMO_PROJECT 는 deploy-demo 로 시작해야 한다 (상시 구성과 섞이지 않게)";; esac
 W="$DEPLOY_ROOT/state/demo"
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
 
 set_llm_image() { # 데모는 방금 빌드한 로컬 GPU 이미지를 태그로 직접 쓴다(레지스트리에 올리지 않는다: 13GB 이중 보관 방지). digest 고정은 데모에서 하지 않는다
   MODEL_SERVING_GPU_IMAGE=$(sed -n 's/^model-serving-gpu \([^ ]*\) .*/\1/p' "$DEPLOY_ROOT/build/images.env" 2>/dev/null || true)
@@ -157,7 +158,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 survey-service /readyz 가 200 이 된다."
   return 0
 }
-case "$CMD" in up|activate|status|down|reset|config|diag|check-secrets) detect_docker;; esac
+case "$CMD" in up|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
 case "$CMD" in
   up)
     [ -d "$W" ] && [ -f "$W/registry.env" ] && die "이미 데모 상태가 있다 ($W). scripts/demo.sh down 또는 reset"
@@ -247,6 +248,26 @@ case "$CMD" in
   diag)
     [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
     env_demo; run_steps "diag" || true ;;
+  swap-adapters)
+    [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    env_demo
+    if [ $ATTACH = 1 ]; then   # 먼저 같은 사전 검사로 거른다(기반 모델 불일치, 순위 초과, 파일 누락). 거부되면 아무것도 게시하지 않는다
+      echo "== 어댑터 사전 검사 (아무것도 게시하지 않는다): 프로파일 ${LLM_PROFILE_NAME:-gpu-12g}"
+      bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "${LLM_PROFILE_NAME:-gpu-12g}" /dev/null --check-only --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" \
+        || die "어댑터 검사 거부: 게시·활성화를 하지 않았다. 활성 릴리스는 그대로다"
+      [ $LLM = 1 ] || die "검사는 통과했지만 이 데모는 가짜 백엔드다: 진짜 어댑터는 --llm 데모에서만 얹는다 (인자 없이 부르면 시험용 어댑터로 교체한다)"
+    elif [ $LLM = 1 ]; then die "--llm 데모의 swap-adapters 는 --adapter-a --adapter-b --prompt-a --prompt-b 가 필요하다"
+    fi
+    SWAPX=(--run-id "demo-swap-$(date +%s)")
+    if [ $ATTACH = 1 ]; then
+      echo "== 어댑터 패키지 생성(평가하지 않음): $W/llm-package-swap"
+      bash "$DEPLOY_ROOT/scripts/make-llm-package.sh" "$LLM_PROFILE_NAME" "$W/llm-package-swap" --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" || die "어댑터 패키지 생성 실패: 활성 릴리스는 그대로다"
+      SWAPX+=(--llm-package "$W/llm-package-swap")   # 뒤에 오는 인자가 run_steps 의 기본값을 덮는다
+    fi
+    echo "== 교체 전 활성 릴리스"; run_steps "demo_active" || die "활성 릴리스를 읽지 못했다"
+    echo "== 모델 패키지 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화 -> model-serving 적재 (E2E 단계 코드 재사용)"
+    run_steps "demo_swap" "${SWAPX[@]}" || die "어댑터 교체 실패 (원인 진단: scripts/demo.sh diag). 활성화 전 단계에서 멈췄다면 활성 릴리스는 그대로다"
+    echo "== 교체 후 활성 릴리스"; run_steps "demo_active" || true ;;
   activate)
     [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
     env_demo; run_steps "demo_activate,6" || die "활성화 실패(/admin/ 에서 먼저 승인했는지 확인)"
