@@ -167,12 +167,12 @@ if [ -n "$INF_URL" ]; then
     if [ "$hc" = 200 ]; then
       rc=$(curl -s -o /dev/null -m 6 -w '%{http_code}' "$INF_URL/readyz" 2>/dev/null || true)
       if [ "$rc" = 200 ]; then ok "추론 서버 /readyz 200"
-      else warn "추론 서버 /readyz 응답 ${rc:-없음} (살아 있으나 준비되지 않음)" "양방향 도달성: 서버가 release-gate 에 닿아야 한다. 서버 호스트에서 RELEASE_URL 로 닿는지, MODEL_RUNTIME_RELEASE_TOKEN 이 게이트 읽기 토큰인지 확인 (서버 로그: docker compose -p deploy-inference logs model-serving)"; fi
+      else warn "추론 서버 /readyz 응답 ${rc:-없음} (살아 있으나 준비되지 않음)" "양방향 도달성: 서버가 release-gate 에 닿아야 한다. 서버 호스트에서 RELEASE_URL 로 닿는지, MODEL_RUNTIME_RELEASE_TOKEN(_FILE) 이 게이트 읽기 토큰인지 확인 (서버 로그: docker compose -p deploy-inference logs model-serving)"; fi
     fi
     TOKF="${INFERENCE_TOKEN_FILE:-}"; T=""
-    if [ -n "$TOKF" ] && [ -r "$TOKF" ]; then T=$(sed -n 's/^EXTERNAL_INFERENCE_TOKEN=//p' "$TOKF" | head -1)
+    if [ -n "$TOKF" ] && [ -r "$TOKF" ]; then T=$(tr -d '[:space:]' < "$TOKF")
     elif [ -n "${INFERENCE_TOKEN:-}" ]; then T=$INFERENCE_TOKEN; fi
-    if [ -z "$T" ]; then warn "추론 서버 토큰이 없어 /v1/info 확인을 건너뛴다" "INFERENCE_TOKEN 환경 변수 또는 INFERENCE_TOKEN_FILE(EXTERNAL_INFERENCE_TOKEN=... 한 줄)을 주고 다시 실행"
+    if [ -z "$T" ]; then warn "추론 서버 토큰이 없어 /v1/info 확인을 건너뛴다" "INFERENCE_TOKEN 환경 변수 또는 INFERENCE_TOKEN_FILE(토큰 하나가 든 파일)을 주고 다시 실행"
     elif [ "$hc" = 200 ]; then
       ic=$(printf 'header = "Authorization: Bearer %s"\n' "$T" | curl -s -o /dev/null -m 8 -w '%{http_code}' -K - "$INF_URL/v1/info" 2>/dev/null || true)
       case "$ic" in

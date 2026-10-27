@@ -19,7 +19,7 @@ trap cleanup EXIT
 mk_image() { # mk_image <태그> <revision> [라벨 생략: no-revision]
   local tag=$1 rev=$2 d="$W/ctx-$2"; mkdir -p "$d"
   { echo "FROM $UTIL"; echo "RUN echo $rev > /rev.txt"
-    echo 'LABEL io.openit.service="test" io.openit.contracts.boundary="v2.0.1" io.openit.contracts.survey-schema="1"'
+    echo 'LABEL io.openit.service="test" io.openit.contracts.boundary="v2.0.2" io.openit.contracts.survey-schema="1"'
     [ "${3:-}" = no-revision ] || echo "LABEL io.openit.revision=\"$rev\""; } > "$d/Dockerfile"
   "$DOCKER" build -q -t "$tag" "$d" >/dev/null
 }

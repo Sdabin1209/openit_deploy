@@ -41,7 +41,7 @@ model-serving(model-runtime CPU/fake 변형): 포트 8080, uid 10001, `/healthz`
 
 - 이미지는 잠금 파일의 digest로만 뜬다. 이미지 안의 코드를 바꾸지 않는다.
 - 릴리스 활성 포인터를 바꾸지 않는다(게이트 API를 호출하지 않는다. E2E의 롤백 요청은 시험 프로젝트에서 ops-feedback 토큰으로 한 시험이다).
-- 비밀 값은 `secrets/`(gitignore)에만 있다. 서비스는 자기 `env_file`만 받는다.
+- 비밀 값은 `secrets/`(gitignore)에만 있다. 서비스는 자기 secrets 파일만 `/run/secrets`로 받고 `NAME_FILE` 경로로 읽는다(D84). 토큰을 환경 변수로 넣지 않는다.
 - 이웃 리포지토리를 수정하지 않는다. 빌드는 `git archive` 사본에서 한다.
 - 영역 주기 잡은 영역이 정한 `run-once` 성격의 명령을 그대로 실행한다. 스케줄러는 다른 영역을 깨우지 않고 정해진 주기에 그 영역의 잡만 실행한다(D39).
 

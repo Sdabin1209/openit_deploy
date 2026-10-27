@@ -60,16 +60,16 @@ bash "$DEPLOY_ROOT/scripts/publish-images.sh" || bail "게시 실패"
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null || bail "비밀 생성 실패"
 
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_LOCK")
-printf 'EXTERNAL_INFERENCE_TOKEN=%s\n' "$(cat "$SECRETS_DIR/tokens/inference-survey-service")" > "$W/inference-token.env"; chmod 600 "$W/inference-token.env"
+cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 644 "$W/inference-token"
 export COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml" OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
-export INFERENCE_TOKEN_FILE="$W/inference-token.env"
+export INFERENCE_TOKEN_FILE="$W/inference-token"
 INF_IMAGE=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST" )
 PLACEHOLDER="http://host.docker.internal:1"   # 서버가 뜨기 전 자리표시 주소(아무 포트도 열지 않는다). 뒤에서 실제 주소로 바꿔 survey-service 만 다시 만든다
 reach() { # reach <URL>: 컨테이너(호출자·서버와 같은 위치)에서 host.docker.internal 로 닿는지
   "$DOCKER" run --rm --name "$P-probe" --add-host host.docker.internal:host-gateway "$UTIL" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=5)" "$1" >/dev/null 2>&1
 }
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
-  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_ENV_FILE="$SECRETS_DIR/model-serving.env" RELEASE_URL="http://host.docker.internal:$GPORT" INFERENCE_PORT= INFERENCE_BIND=$BIND \
+  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" RELEASE_URL="http://host.docker.internal:$GPORT" INFERENCE_PORT= INFERENCE_BIND=$BIND \
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
 
 OK=0

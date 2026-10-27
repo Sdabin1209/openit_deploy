@@ -1,39 +1,45 @@
 #!/usr/bin/env bash
 # 서비스 토큰과 salt를 만든다. 사용: gen-secrets.sh [디렉터리]  (기본 secrets/, gitignore). 이미 있는 파일은 건드리지 않는다.
 # CONVENTIONS 9절: 서버는 토큰에 역할을 묶는다. 호출하는 영역마다 다른 읽기 토큰, 쓰기 토큰은 역할마다 하나.
-# secrets/tokens/<서버>-<read|write>-<역할> : 클라이언트(역할)에게만 주는 개별 토큰
-# secrets/<서비스>.env : 서비스가 받는 환경 변수(자기 것만)
+# secrets/tokens/<이름> : 비밀 값 하나가 파일 하나(개별 토큰, 서버가 받는 목록 값 "역할=토큰,...", salt, 콘솔 암호).
+#   compose.yaml 의 최상위 secrets 가 이 파일을 /run/secrets/<이름> 에 마운트하고, 서비스는 NAME_FILE 경로로만 읽는다(D84).
+#   예전 방식 secrets/<서비스>.env(환경 변수로 토큰 주입)는 없앴다: 남아 있으면 지워도 된다(아래에서 알려 준다).
+# 권한: 디렉터리 700(호스트 다른 사용자 차단), 파일 644. 컨테이너는 uid 10001 로 실행되는데 compose 의 파일 secrets 는 호스트 소유자·모드를
+#   그대로 마운트하므로(uid/gid/mode 옵션은 swarm 전용) 600 이면 서비스가 읽지 못한다.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 D=${1:-$DEPLOY_ROOT/secrets}; mkdir -p "$D/tokens"; chmod 700 "$D" "$D/tokens"
 rnd() { python3 -c 'import secrets;print(secrets.token_hex(24))'; }
-tok() { [ -s "$D/tokens/$1" ] || { rnd > "$D/tokens/$1"; chmod 600 "$D/tokens/$1"; }; cat "$D/tokens/$1"; }
+tok() { [ -s "$D/tokens/$1" ] || rnd > "$D/tokens/$1"; chmod 644 "$D/tokens/$1"; cat "$D/tokens/$1"; }
+putlist() { local f="$D/tokens/$1"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || printf '%s\n' "$2" > "$f"; chmod 644 "$f"; }
 roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="${out:+,}$r=$(tok "$srv-$kind-$r")"; done; echo "$out"; }
-put() { local f=$1; shift; [ -s "$D/$f" ] && return 0; printf '%s\n' "$@" > "$D/$f"; chmod 600 "$D/$f"; }
 
-# 서버가 받는 목록
+# 서버가 받는 목록 값(역할=토큰,...): 값 하나짜리 파일로 만든다
 GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver)
 GATE_W=$(roles gate write operator ops-feedback question-authoring model-lab release-gate-collector release-approver)
 QA_R=$(roles qa read release-gate synthetic-data model-lab)
 OPS_R=$(roles ops read synthetic-data model-lab question-authoring reviewer)
 MR_R=$(roles model-registry read release-gate model-lab)
 MR_W="model-lab=$(tok model-registry-write-model-lab)"
-OPS_INGEST=$(tok ops-ingest-survey-service)
 QA_AUTHOR=$(tok qa-author-e2e)
-tok deid-salt >/dev/null
+# 개별 토큰(compose.yaml 의 secrets 와 같은 이름). 클라이언트(역할)와 서버가 같은 파일 값을 쓴다
+for t in gate-read-survey-service ops-ingest-survey-service survey-api-kiosk survey-api-staff inference-survey-service qa-read-release-gate \
+         model-registry-read-release-gate deid-salt gate-read-ops-feedback gate-write-ops-feedback ops-read-question-authoring gate-read-model-serving \
+         gate-write-release-approver gate-read-release-approver ops-read-reviewer ops-review-reviewer staff-console-password admin-console-password reviewer-console-password; do
+  tok "$t" >/dev/null
+done
+# 목록 값 파일: 서비스가 받는 형식 그대로 한 줄. 토큰이 이미 있으면 내용이 같아서 다시 써도 같다(다르면 갱신한다).
+putlist gate-read-tokens "$GATE_R"
+putlist gate-write-tokens "$GATE_W"
+putlist qa-read-tokens "$QA_R"
+putlist ops-read-tokens "$OPS_R"
+putlist model-registry-read-tokens "$MR_R"
+putlist model-registry-write-tokens "$MR_W"
+putlist ops-review-tokens "reviewer=$(tok ops-review-reviewer)"
+putlist qa-author-tokens "$QA_AUTHOR:author-e2e:question-author"
+putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
 
-# 각 클라이언트가 받는 자기 토큰(이웃 서버가 그 역할로 알아본다)
-put release-gate.env "GATE_READ_TOKENS=$GATE_R" "GATE_WRITE_TOKENS=$GATE_W" "GATE_I1_TOKEN=$(tok qa-read-release-gate)" "GATE_I3_TOKEN=$(tok model-registry-read-release-gate)"
-put release-gate-job.env "GATE_I1_TOKEN=$(tok qa-read-release-gate)" "GATE_I3_TOKEN=$(tok model-registry-read-release-gate)"
-put survey-service.env "SURVEY_RELEASE_READER_TOKEN=$(tok gate-read-survey-service)" "SURVEY_TRACE_INGEST_TOKEN=$OPS_INGEST" "SURVEY_API_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_API_TOKEN=$(tok survey-api-staff)" "SURVEY_INFERENCE_TOKEN=$(tok inference-survey-service)"
-put ops-feedback-ingest.env "OPS_INGEST_TOKEN=$OPS_INGEST" "OPS_READ_TOKENS=$OPS_R" "OPS_REVIEW_TOKENS=reviewer=$(tok ops-review-reviewer)"
-put ops-feedback-job.env "OPS_DEID_SALT=$(tok deid-salt)" "OPS_GATE_READ_TOKEN=$(tok gate-read-ops-feedback)" "OPS_GATE_WRITE_TOKEN=$(tok gate-write-ops-feedback)"
-put question-authoring.env "QA_AUTHOR_TOKENS=$QA_AUTHOR:author-e2e:question-author" "QA_READ_TOKENS=$QA_R" "QA_FAILURES_TOKEN=$(tok ops-read-question-authoring)"
-put model-serving.env "MODEL_RUNTIME_TOKENS=survey-service=$(tok inference-survey-service)" "MODEL_RUNTIME_RELEASE_TOKEN=$(tok gate-read-model-serving)"
-put model-registry.env "MODEL_REGISTRY_READ_TOKENS=$MR_R" "MODEL_REGISTRY_WRITE_TOKENS=$MR_W"
-
-# 게이트웨이: 브라우저 대신 survey-service 토큰을 붙인다(토큰은 게이트웨이의 비밀). 직원 콘솔은 기본 인증(개발/E2E용, 운영 방식은 미정)
-put gateway.env "SURVEY_KIOSK_TOKEN=$(tok survey-api-kiosk)" "SURVEY_STAFF_TOKEN=$(tok survey-api-staff)" "GATE_APPROVER_TOKEN=$(tok gate-write-release-approver)" "GATE_APPROVER_READ_TOKEN=$(tok gate-read-release-approver)" "OPS_REVIEWER_READ_TOKEN=$(tok ops-read-reviewer)" "OPS_REVIEWER_WRITE_TOKEN=$(tok ops-review-reviewer)"
+# 게이트웨이(Caddy)는 위의 개별 토큰 파일을 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 없음). 직원 콘솔은 기본 인증(개발/E2E용, 운영 방식은 미정)
 if [ ! -s "$D/gateway-staff-auth.caddy" ]; then
   GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
   HASH=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok staff-console-password)" | tr -d '\r')
@@ -49,4 +55,6 @@ if [ ! -s "$D/gateway-human-auth.caddy" ]; then
   [ -n "$H1" ] && [ -n "$H2" ] || die "caddy hash-password 실패"
   printf '(human_auth) {\n\tbasic_auth {\n\t\ttrainer-e2e %s\n\t\treviewer-e2e %s\n\t}\n}\n(role_matchers) {\n\t@role_approver expression `{http.auth.user.id} in ["trainer-e2e"]`\n\t@role_reviewer expression `{http.auth.user.id} in ["reviewer-e2e"]`\n}\n' "$H1" "$H2" > "$D/gateway-human-auth.caddy"; chmod 644 "$D/gateway-human-auth.caddy"
 fi
+old=$(cd "$D" && ls *.env 2>/dev/null | tr '\n' ' ') || true
+[ -z "$old" ] || echo "알림: 예전 방식의 비밀 env 파일이 남아 있다($old). 더는 쓰지 않는다(환경 변수로 평문이 노출됐다). 지워도 된다: (cd $D && rm -f $old)" >&2
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

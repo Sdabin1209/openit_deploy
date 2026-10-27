@@ -14,10 +14,10 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v2.0.1}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
-DEPLOY_BC_TAG_SD="v2.0.1"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용, requirements.lock)
-DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.6.5}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
-DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.3.1}"          # turn-engine (survey-service·release-gate 빌드와 model-serving 이미지 라벨)
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v2.0.2}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
+DEPLOY_BC_TAG_SD="v2.0.2"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용, requirements.lock)
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.7.0}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.4.0}"          # turn-engine (survey-service·release-gate 빌드와 model-serving 이미지 라벨)
 export DEPLOY_TE_TAG
 DEPLOY_SS_TAG="survey-schema-v1.0.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름
@@ -39,8 +39,8 @@ dc() { # dc <project> <compose args...>
     "$DOCKER" compose -p "$project" --project-directory "$DEPLOY_ROOT" "${files[@]}" "${envs[@]}" "$@"
 }
 # 외부 추론 서버 모드(D72): external_inference_setup <URL>. INFERENCE_URL / INFERENCE_TOKEN_FILE 을 내보내고 COMPOSE_EXTRA 에 override 를 붙인다.
-# 토큰은 값을 인자로 받지 않는다: 환경 변수 INFERENCE_TOKEN(여기서 600 파일로 옮긴다) 또는 INFERENCE_TOKEN_FILE(경로, 파일에 EXTERNAL_INFERENCE_TOKEN=...)
-# 또는 이미 있는 $SECRETS_DIR/external-inference.env. 값은 출력하지 않는다.
+# 토큰은 값을 인자로 받지 않는다: 환경 변수 INFERENCE_TOKEN(여기서 파일로 옮긴다) 또는 INFERENCE_TOKEN_FILE(경로, 파일 내용이 토큰 하나, D84)
+# 또는 이미 있는 $SECRETS_DIR/tokens/external-inference. 파일은 compose 가 secrets 로 마운트한다(컨테이너 환경 변수로 넣지 않는다). 값은 출력하지 않는다.
 external_inference_setup() {
   local url=${1:-} sd=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
   case "$url" in http://*|https://*) ;; *) die "--external-inference 에는 http:// 또는 https:// 로 시작하는 주소가 필요하다: '$url'";; esac
@@ -48,14 +48,15 @@ external_inference_setup() {
   if [ -n "${INFERENCE_TOKEN_FILE:-}" ]; then
     case "$INFERENCE_TOKEN_FILE" in /*) ;; *) INFERENCE_TOKEN_FILE="$PWD/$INFERENCE_TOKEN_FILE";; esac
     [ -s "$INFERENCE_TOKEN_FILE" ] || die "INFERENCE_TOKEN_FILE 이 없거나 비었다: $INFERENCE_TOKEN_FILE"
+    ! grep -q '^EXTERNAL_INFERENCE_TOKEN=' "$INFERENCE_TOKEN_FILE" || die "INFERENCE_TOKEN_FILE 형식이 바뀌었다(D84): 파일 내용은 EXTERNAL_INFERENCE_TOKEN=<토큰> 줄이 아니라 토큰 값 하나여야 한다"
   elif [ -n "${INFERENCE_TOKEN:-}" ]; then
-    mkdir -p "$sd"; chmod 700 "$sd" 2>/dev/null || true
-    INFERENCE_TOKEN_FILE="$sd/external-inference.env"
-    ( umask 077; printf 'EXTERNAL_INFERENCE_TOKEN=%s\n' "$INFERENCE_TOKEN" > "$INFERENCE_TOKEN_FILE" )
-  elif [ -s "$sd/external-inference.env" ]; then
-    INFERENCE_TOKEN_FILE="$sd/external-inference.env"
+    mkdir -p "$sd/tokens"; chmod 700 "$sd" "$sd/tokens" 2>/dev/null || true
+    INFERENCE_TOKEN_FILE="$sd/tokens/external-inference"
+    ( umask 022; printf '%s\n' "$INFERENCE_TOKEN" > "$INFERENCE_TOKEN_FILE" )   # 644: 컨테이너(uid 10001)가 읽는다. 폴더가 700
+  elif [ -s "$sd/tokens/external-inference" ]; then
+    INFERENCE_TOKEN_FILE="$sd/tokens/external-inference"
   else
-    die "외부 추론 서버의 토큰이 필요하다: 환경 변수 INFERENCE_TOKEN 을 두거나, EXTERNAL_INFERENCE_TOKEN=<토큰> 한 줄이 든 파일 경로를 INFERENCE_TOKEN_FILE 로 준다 (값을 인자로 넘기지 않는다)"
+    die "외부 추론 서버의 토큰이 필요하다: 환경 변수 INFERENCE_TOKEN 을 두거나, 토큰 하나가 든 파일의 경로를 INFERENCE_TOKEN_FILE 로 준다 (값을 인자로 넘기지 않는다)"
   fi
   export INFERENCE_URL="$url" INFERENCE_TOKEN_FILE
   unset INFERENCE_TOKEN

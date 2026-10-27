@@ -94,9 +94,9 @@
 | model-registry | `MODEL_REGISTRY_READ_TOKENS`, `MODEL_REGISTRY_WRITE_TOKENS` | release-gate, model-lab | model-lab |
 | job-ops-feedback | `OPS_DEID_SALT` | | 운영 중 바꾸지 않는다 |
 
-`scripts/gen-secrets.sh`가 `secrets/tokens/<서버>-<read|write>-<역할>`로 역할마다 다른 토큰을 만들고, 서비스는 `secrets/<서비스>.env`에서 **자기 것만** 받는다(서버용 목록과 자기가 호출할 이웃용 토큰). 클라이언트가 이웃 토큰을 받는 환경 변수의 이름은 각 영역 런북이 정한 것을 쓴다(survey: `SURVEY_*_TOKEN_ENV`로 이름 지정, gate: `GATE_I1_TOKEN`·`GATE_I3_TOKEN`, ops 잡: 설정의 `{env: 이름}`).
+`scripts/gen-secrets.sh`가 `secrets/tokens/<서버>-<read|write>-<역할>`로 역할마다 다른 토큰을 만들고, 서버가 받는 목록 값(`역할=토큰,...`)도 값 하나짜리 파일(`secrets/tokens/gate-read-tokens` 등)로 만든다. 서비스는 compose의 최상위 `secrets:`로 **자기 것만** `/run/secrets/<이름>`에 마운트하고 `NAME_FILE`로 읽는다(D84; 서버용 목록과 자기가 호출할 이웃용 토큰). 클라이언트가 이웃 토큰을 받는 환경 변수의 이름은 각 영역 런북이 정한 것을 쓴다(survey: `SURVEY_*_TOKEN_ENV`로 이름 지정, gate: `GATE_I1_TOKEN`·`GATE_I3_TOKEN`, ops 잡: 설정의 `{env: 이름}`).
 
-비밀 값은 이미지·리포지토리에 없다. 서비스는 자기 `env_file`(`secrets/<서비스>.env`)만 받는다. 클라이언트가 어떤 환경 변수 이름으로 토큰을 받는지는 클라이언트 SDK가 아직 없어 정할 수 없다(CR-D01).
+비밀 값은 이미지·리포지토리에 없고, 환경 변수로도 넣지 않는다(`env_file`로 토큰을 넣으면 `docker inspect`·`docker exec env`로 평문이 읽힌다). 서비스는 자기 secrets 파일만 받는다. `scripts/check-secrets-hidden.sh`가 이를 검사한다(docs/RUN.md "비밀 파일 (D84)"). 클라이언트가 어떤 환경 변수 이름으로 토큰을 받는지는 클라이언트 SDK가 아직 없어 정할 수 없다(CR-D01).
 
 ## 6. 서비스 표
 

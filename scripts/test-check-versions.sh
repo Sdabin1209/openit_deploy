@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# check-versions.sh 자기 점검: 임시 워크스페이스에서 (1) 표와 같으면 통과 (2) 어긋나면 실패하고 파일:줄을 말한다 (3) 문서·시험의 옛 표기는 무시한다.
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh" 2>/dev/null || DEPLOY_NO_DOCKER=1 source "$HERE/lib.sh"
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/survey-service/docs" "$T/survey-service/tests" "$T/model-lab" "$T/synthetic-data"
+BC=$DEPLOY_BC_TAG; MR=$DEPLOY_MR_TAG; TE=$DEPLOY_TE_TAG
+printf 'x\ngit+ssh://git@github.com/Sdabin1209/openit_boundary-contracts.git@%s\ngit+ssh://git@github.com/Sdabin1209/openit_turn-engine.git@%s\n' "$BC" "$TE" > "$T/survey-service/requirements.txt"
+printf 'BOUNDARY_TAG=${BOUNDARY_TAG:-%s}\n' "$BC" > "$T/model-lab/build.sh"
+printf 'boundary-contracts @ git+ssh://git@github.com/x/openit_boundary-contracts.git@%s\n' "$DEPLOY_BC_TAG_SD" > "$T/synthetic-data/requirements.lock"
+echo "옛 표기 boundary-contracts@v0.0.1" > "$T/survey-service/docs/old.md"; echo "BOUNDARY_TAG=v0.0.1" > "$T/survey-service/tests/old.sh"
+export CHECK_VERSIONS_WORKSPACE="$T"; rc=0
+out=$(bash "$HERE/check-versions.sh" 2>&1) && echo "ok: 표와 같으면 통과" || { echo "FAIL: 같은데 실패"; echo "$out"; rc=1; }
+sed -i "s/@$MR\$/@v0.0.9/; s/openit_turn-engine.git@$TE/openit_turn-engine.git@v0.0.9/" "$T/survey-service/requirements.txt"
+sed -i "s/$BC/v9.9.9/" "$T/model-lab/build.sh"
+out=$(bash "$HERE/check-versions.sh" 2>&1); r=$?
+{ [ $r = 1 ] && grep -q 'survey-service/requirements.txt:3: turn-engine v0.0.9' <<<"$out" && grep -q 'model-lab/build.sh:1: boundary-contracts v9.9.9' <<<"$out"; } && echo "ok: 어긋나면 실패하고 파일:줄을 말한다" || { echo "FAIL: 어긋남을 못 잡았다 (rc=$r)"; echo "$out"; rc=1; }
+grep -q 'docs/old.md\|tests/old.sh' <<<"$out" && { echo "FAIL: 문서·시험을 검사했다"; rc=1; } || echo "ok: 문서·시험의 옛 표기는 무시"
+exit $rc

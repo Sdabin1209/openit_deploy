@@ -42,6 +42,61 @@ configs:
   gateway-human-auth:
     file: ${SECRETS_DIR:-./secrets}/gateway-human-auth.caddy   # 사람 계정 기본 인증과 계정 -> 역할(release-approver, reviewer) 매핑(비밀)
 
+# 비밀(D84): 토큰·salt는 환경 변수가 아니라 파일로 마운트한다(/run/secrets/<이름>, 읽기 전용). 서비스에는 NAME_FILE=/run/secrets/<이름> 경로만 환경 변수로 준다(경로는 비밀이 아니다).
+# 파일은 scripts/gen-secrets.sh 가 ${SECRETS_DIR}/tokens/<이름> 에 만든다(값 하나, 목록 값은 서비스가 받는 형식 그대로 한 줄).
+# env_file 로 토큰을 넣지 않는다: docker inspect / docker exec env 로 평문이 읽히기 때문이다. scripts/check-secrets-hidden.sh 가 이를 검사한다.
+secrets:
+  survey-api-kiosk:
+    file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-kiosk
+  survey-api-staff:
+    file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-staff
+  gate-write-release-approver:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-write-release-approver
+  gate-read-release-approver:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-release-approver
+  ops-read-reviewer:
+    file: ${SECRETS_DIR:-./secrets}/tokens/ops-read-reviewer
+  ops-review-reviewer:
+    file: ${SECRETS_DIR:-./secrets}/tokens/ops-review-reviewer
+  gate-read-survey-service:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-survey-service
+  ops-ingest-survey-service:
+    file: ${SECRETS_DIR:-./secrets}/tokens/ops-ingest-survey-service
+  inference-survey-service:
+    file: ${SECRETS_DIR:-./secrets}/tokens/inference-survey-service
+  qa-read-release-gate:
+    file: ${SECRETS_DIR:-./secrets}/tokens/qa-read-release-gate
+  model-registry-read-release-gate:
+    file: ${SECRETS_DIR:-./secrets}/tokens/model-registry-read-release-gate
+  deid-salt:
+    file: ${SECRETS_DIR:-./secrets}/tokens/deid-salt
+  gate-read-ops-feedback:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-ops-feedback
+  gate-write-ops-feedback:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-write-ops-feedback
+  ops-read-question-authoring:
+    file: ${SECRETS_DIR:-./secrets}/tokens/ops-read-question-authoring
+  gate-read-model-serving:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-model-serving
+  gate-read-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-tokens
+  gate-write-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-write-tokens
+  ops-read-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/ops-read-tokens
+  ops-review-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/ops-review-tokens
+  qa-author-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/qa-author-tokens
+  qa-read-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/qa-read-tokens
+  model-runtime-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/model-runtime-tokens
+  model-registry-read-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/model-registry-read-tokens
+  model-registry-write-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/model-registry-write-tokens
+
 services:
   gateway:
     <<: *hardening
@@ -53,7 +108,8 @@ services:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
       - {source: gateway-staff-auth, target: /etc/caddy/staff-auth.caddy}
       - {source: gateway-human-auth, target: /etc/caddy/human-auth.caddy}
-    env_file: ${SECRETS_DIR:-./secrets}/gateway.env              # SURVEY_KIOSK_TOKEN, SURVEY_STAFF_TOKEN, GATE_APPROVER_TOKEN, GATE_APPROVER_READ_TOKEN, OPS_REVIEWER_READ_TOKEN, OPS_REVIEWER_WRITE_TOKEN (게이트웨이의 비밀)
+    secrets: [survey-api-kiosk, survey-api-staff, gate-write-release-approver, gate-read-release-approver, ops-read-reviewer, ops-review-reviewer]
+    # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
       survey-service: {condition: service_healthy}
@@ -82,7 +138,13 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
-      - ${SECRETS_DIR:-./secrets}/survey-service.env            # SURVEY_RELEASE_READER_TOKEN, SURVEY_TRACE_INGEST_TOKEN (비밀)
+    environment:   # 비밀은 파일 경로만(D84)
+      SURVEY_API_TOKEN_FILE: /run/secrets/survey-api-kiosk
+      SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
+      SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
+      SURVEY_TRACE_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
+      SURVEY_INFERENCE_TOKEN_FILE: /run/secrets/inference-survey-service
+    secrets: [survey-api-kiosk, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service]
     volumes: [survey-data:/data]
     networks: [edge, serving]
     healthcheck:
@@ -98,7 +160,11 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
-      - ${SECRETS_DIR:-./secrets}/question-authoring.env        # QA_AUTHOR_TOKENS, QA_READ_TOKENS, QA_FAILURES_TOKEN (비밀)
+    environment:
+      QA_AUTHOR_TOKENS_FILE: /run/secrets/qa-author-tokens
+      QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
+      QA_FAILURES_TOKEN_FILE: /run/secrets/ops-read-question-authoring
+    secrets: [qa-author-tokens, qa-read-tokens, ops-read-question-authoring]
     volumes: [qa-data:/data]
     networks: [authoring, release]
     healthcheck:
@@ -110,7 +176,11 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
-      - ${SECRETS_DIR:-./secrets}/ops-feedback-ingest.env       # OPS_INGEST_TOKEN, OPS_READ_TOKENS, OPS_REVIEW_TOKENS (비밀)
+    environment:
+      OPS_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
+      OPS_READ_TOKENS_FILE: /run/secrets/ops-read-tokens
+      OPS_REVIEW_TOKENS_FILE: /run/secrets/ops-review-tokens
+    secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens]
     volumes: [ops-data:/data]
     networks: [serving, logs, authoring]   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
     healthcheck:
@@ -121,8 +191,13 @@ services:
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     env_file:
-      - ${SECRETS_DIR:-./secrets}/release-gate.env              # GATE_READ_TOKENS, GATE_WRITE_TOKENS, GATE_I1_TOKEN, GATE_I3_TOKEN (비밀)
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
+    environment:
+      GATE_READ_TOKENS_FILE: /run/secrets/gate-read-tokens
+      GATE_WRITE_TOKENS_FILE: /run/secrets/gate-write-tokens
+      GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
+      GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
+    secrets: [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate]
     volumes: [gate-data:/data]
     networks: [serving, release]
     healthcheck:
@@ -134,7 +209,10 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving@${MODEL_SERVING_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/model-serving.env
-      - ${SECRETS_DIR:-./secrets}/model-serving.env             # MODEL_RUNTIME_TOKENS, MODEL_RUNTIME_RELEASE_TOKEN (비밀)
+    environment:
+      MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
+      MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/gate-read-model-serving
+    secrets: [model-runtime-tokens, gate-read-model-serving]
     volumes:
       - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다)
     networks: [serving]
@@ -145,7 +223,10 @@ services:
   model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
     <<: *hardening
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-registry@${MODEL_REGISTRY_DIGEST:?locks/images.lock}
-    env_file: ${SECRETS_DIR:-./secrets}/model-registry.env      # MODEL_REGISTRY_READ_TOKENS, MODEL_REGISTRY_WRITE_TOKENS (비밀)
+    environment:
+      MODEL_REGISTRY_READ_TOKENS_FILE: /run/secrets/model-registry-read-tokens
+      MODEL_REGISTRY_WRITE_TOKENS_FILE: /run/secrets/model-registry-write-tokens
+    secrets: [model-registry-read-tokens, model-registry-write-tokens]
     volumes: [models-data:/data]
     networks: [release]
     healthcheck:
@@ -158,7 +239,11 @@ services:
     profiles: ["jobs"]
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     command: ["python", "-m", "ops_feedback.job", "--config", "/config/job.yaml"]
-    env_file: ${SECRETS_DIR:-./secrets}/ops-feedback-job.env     # OPS_DEID_SALT, OPS_GATE_READ_TOKEN, OPS_GATE_WRITE_TOKEN (비밀)
+    environment:
+      OPS_DEID_SALT_FILE: /run/secrets/deid-salt
+      OPS_GATE_READ_TOKEN_FILE: /run/secrets/gate-read-ops-feedback
+      OPS_GATE_WRITE_TOKEN_FILE: /run/secrets/gate-write-ops-feedback
+    secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback]
     volumes:
       - ops-data:/data
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
@@ -174,7 +259,10 @@ services:
     command: ["python", "-m", "release_gate", "collect"]
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
-      - ${SECRETS_DIR:-./secrets}/release-gate-job.env           # GATE_I1_TOKEN, GATE_I3_TOKEN (비밀)
+    environment:
+      GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
+      GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
+    secrets: [qa-read-release-gate, model-registry-read-release-gate]
     volumes: [gate-data:/data]
     networks: [release]
     security_opt: ["no-new-privileges:true"]

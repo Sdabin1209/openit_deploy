@@ -102,7 +102,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 ## 7. 비밀 값
 
-`scripts/gen-secrets.sh`가 `secrets/`에 만든다(없는 것만). 이미지·리포지토리에 넣지 않는다. 회전: 해당 파일을 지우고 다시 만든 뒤 소유 서비스와 그 클라이언트를 재시작한다. 서비스는 자기 `env_file`만 받는다.
+`scripts/gen-secrets.sh`가 `secrets/`에 만든다(없는 것만). 이미지·리포지토리에 넣지 않는다. 서비스는 compose `secrets:`로 자기 파일만 `/run/secrets`에 받는다(D84, docs/RUN.md "비밀 파일"). 회전: 해당 토큰 파일을 지우고 `gen-secrets.sh`를 다시 실행한다(목록 값 파일도 새 값으로 다시 쓴다). 그 뒤 소유 서비스와 그 클라이언트를 다시 만든다(`up.sh`).
 
 ## 8. 흔한 문제
 

@@ -2,6 +2,7 @@
 	admin off
 	auto_https off
 }
+# 토큰은 환경 변수가 아니라 Caddy 표준 파일 치환 {file./run/secrets/<이름>} 으로 읽는다(D84; 설정을 읽을 때 한 번 치환되고 컨테이너 환경에 값이 없다).
 # 직원 콘솔 인증 조각. 비밀 파일(secrets/gateway-staff-auth.caddy)에 있다: 기본 인증(개발/E2E용). 운영 인증 방식(SSO, 사내망 제한 등)은 미정이다.
 import /etc/caddy/staff-auth.caddy
 # 사람 계정 인증 조각(secrets/gateway-human-auth.caddy): 기본 인증(개발/E2E용, 운영 방식 미정). 직원 콘솔 계정과 분리한다.
@@ -24,7 +25,7 @@ import /etc/caddy/human-auth.caddy
 	handle @staffapi {
 		import staff_auth
 		reverse_proxy survey-service:8080 {
-			header_up Authorization "Bearer {$SURVEY_STAFF_TOKEN}"
+			header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
 			flush_interval -1
 			transport http {
 				read_timeout 1h
@@ -47,7 +48,7 @@ import /etc/caddy/human-auth.caddy
 		import human_auth
 		handle @role_approver {
 			reverse_proxy release-gate:8080 {
-				header_up Authorization "Bearer {$GATE_APPROVER_READ_TOKEN}"
+				header_up Authorization "Bearer {file./run/secrets/gate-read-release-approver}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
 			}
@@ -60,7 +61,7 @@ import /etc/caddy/human-auth.caddy
 		import human_auth
 		handle @role_approver {
 			reverse_proxy release-gate:8080 {
-				header_up Authorization "Bearer {$GATE_APPROVER_TOKEN}"
+				header_up Authorization "Bearer {file./run/secrets/gate-write-release-approver}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
 			}
@@ -83,7 +84,7 @@ import /etc/caddy/human-auth.caddy
 		import human_auth
 		handle @role_reviewer {
 			reverse_proxy ops-feedback-ingest:8080 {
-				header_up Authorization "Bearer {$OPS_REVIEWER_READ_TOKEN}"
+				header_up Authorization "Bearer {file./run/secrets/ops-read-reviewer}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
 			}
@@ -96,7 +97,7 @@ import /etc/caddy/human-auth.caddy
 		import human_auth
 		handle @role_reviewer {
 			reverse_proxy ops-feedback-ingest:8080 {
-				header_up Authorization "Bearer {$OPS_REVIEWER_WRITE_TOKEN}"
+				header_up Authorization "Bearer {file./run/secrets/ops-review-reviewer}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				header_down Cache-Control "no-store"
 			}
@@ -115,7 +116,7 @@ import /etc/caddy/human-auth.caddy
 	@kioskapi path /v1/sessions /v1/sessions/*
 	handle @kioskapi {
 		reverse_proxy survey-service:8080 {
-			header_up Authorization "Bearer {$SURVEY_KIOSK_TOKEN}"
+			header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"
 		}
 	}
 	handle /v1/* {
