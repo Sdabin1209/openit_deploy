@@ -6,10 +6,18 @@ jobs:
     where: serving
     command: ["scripts/run-job.sh", "job-ops-feedback"]
     interval_seconds: 3600
+  - name: survey-purge                # 세션 보존 정리(D88/U4: 종료 후 90일, 설정 config/survey.env). 멱등
+    where: serving
+    command: ["scripts/run-job.sh", "job-survey-purge"]
+    interval_seconds: 86400
   - name: backup                      # 파일 저장소(gate-data 번들)와 PostgreSQL(pg_dump) 백업. 설정(config/backup.env)이 없으면 거부한다
     where: serving
     command: ["scripts/backup-all.sh"]
     interval_seconds: 86400
+  - name: backup-restore-test         # 정기 복원 시험(D88/U6, 주 1회): 최신 백업을 임시 DB로 되살려 대조. 암호화 백업은 서버에 키가 없어 해시만 확인한다(전체 복원은 키 보유자가 서버 밖에서 분기마다)
+    where: serving
+    command: ["scripts/restore-test.sh"]
+    interval_seconds: 604800
   - name: release-gate-collector      # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다(멱등)
     where: serving
     command: ["scripts/run-job.sh", "job-release-gate-collect"]

@@ -4,6 +4,7 @@
 # 계정 암호는 비밀 파일(/run/secrets/db-<이름>-password, 이름의 _ 는 -)에서 읽는다. 값은 인자·환경 변수·출력에 나오지 않는다(psql 의 \set ... `cat` 으로 읽는다).
 # 권한: 계정은 자기 데이터베이스의 소유자(스키마 변경 가능)이고 슈퍼유저·DB 생성·역할 생성·복제 권한이 없다.
 #       PUBLIC 의 CONNECT 를 모두 거두어 다른 계정의 데이터베이스와 postgres·template1 에는 접속할 수 없다.
+# 연결 상한: 계정마다 CONNECTION LIMIT(PG_ROLE_CONN_LIMIT, 기본 18; 5계정 x 18 = 90 이 max_connections 100 에서 슈퍼유저 예약 3을 뺀 97 안). 시작값, 측정 근거 없음.
 # 환경: PG_INIT_ACCOUNTS(공백으로 나눈 이름, 기본 survey qa ops_log ops_failure gate), PG_INIT_SECRETS_DIR(기본 /run/secrets), POSTGRES_USER(기본 postgres)
 set -Eeuo pipefail
 ACCOUNTS=${PG_INIT_ACCOUNTS:-"survey qa ops_log ops_failure gate"}
@@ -14,10 +15,10 @@ for acc in $ACCOUNTS; do
   [[ "$acc" =~ ^[a-z][a-z0-9_]{0,30}$ ]] || { echo "10-roles: 계정 이름이 규칙에 맞지 않는다: '$acc'" >&2; exit 1; }
   pwfile="$SDIR/db-${acc//_/-}-password"
   [ -s "$pwfile" ] || { echo "10-roles: 암호 파일이 없거나 비었다: $pwfile" >&2; exit 1; }
-  PWFILE="$pwfile" psql_ -v acc="$acc" <<'SQL'
+  PWFILE="$pwfile" psql_ -v acc="$acc" -v conn_limit="${PG_ROLE_CONN_LIMIT:-18}" <<'SQL'
 \set pw `cat "$PWFILE"`
 SELECT format('CREATE ROLE %I', :'acc') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'acc') \gexec
-ALTER ROLE :"acc" WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'pw';
+ALTER ROLE :"acc" WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :conn_limit PASSWORD :'pw';
 SELECT format('CREATE DATABASE %I OWNER %I', :'acc', :'acc') WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'acc') \gexec
 ALTER DATABASE :"acc" OWNER TO :"acc";
 REVOKE ALL ON DATABASE :"acc" FROM PUBLIC;
@@ -28,7 +29,7 @@ done
 # pg_hba.conf: 공식 이미지는 루프백(127.0.0.1, ::1) TCP 에도 trust 를 둔다. 암호 없이 들어오는 길은 컨테이너 안의 유닉스 소켓(docker exec 로만 닿는다)만 남기고
 # 루프백 TCP 도 암호(scram-sha-256)를 요구하게 바꾼다. 이미 바뀌었으면 아무것도 하지 않는다(멱등).
 HBA=$(psql_ -Atc 'SHOW hba_file')
-sed -i -E 's#^(host[[:space:]]+all[[:space:]]+all[[:space:]]+(127\.0\.0\.1/32|::1/128)[[:space:]]+)trust#\1scram-sha-256#' "$HBA"
+sed -i -E 's#^(host[[:space:]]+(all|replication)[[:space:]]+all[[:space:]]+(127\.0\.0\.1/32|::1/128)[[:space:]]+)trust#\1scram-sha-256#' "$HBA"   # replication 줄도 포함(점검 B12: 복제 접속도 암호)
 # 최초 초기화의 임시 서버(listen_addresses 가 비어 있다)는 곧 꺼지고 본 서버가 파일을 새로 읽으므로 다시 읽히지 않는다(불필요한 경고를 피한다)
 [ -z "$(psql_ -Atc 'SHOW listen_addresses')" ] || psql_ -Atc 'SELECT pg_reload_conf()' >/dev/null
 # 기본 데이터베이스에는 서비스 계정이 들어오지 못하게 한다(슈퍼유저는 소켓으로 들어온다)

@@ -1,5 +1,5 @@
 # ops-feedback 잡 설정(compose job-ops-feedback 이 /config/job.yaml 로 읽기 전용 마운트한다. run-job.sh 기본 경로). 형식은 ops-feedback 가 정한다.
-# 비식별 기준·분류체계는 보수적 시작값이고 사용자 결정이 아니다. rollback 과 retention 값은 사용자 결정 전이라 비워 둔다(null = 지정 안 함).
+# 비식별 기준·분류체계는 보수적 시작값이고 사용자 결정이 아니다. retention 은 D88/U4 잠정 기본값(원본 30일, 사례 180일). rollback 은 D88/U11대로 사람 승인 유지라 기준 값을 비워 둔다(null = 평가 안 함, auto_submit 은 켜지 않는다).
 # storage: 개발 기본(SQLite 경로)이며 항목 자체는 필수다(없으면 '설정에 storage 항목이 없다'로 시작을 거부). 환경에 OPS_LOG_DATABASE_URL_FILE / OPS_FAILURE_DATABASE_URL_FILE 이 있으면 PostgreSQL 이 쓰인다(compose 가 준다; 실행으로 확인: 잡이 PG 테이블을 쓰고 /data 에 쓰지 않음).
 storage:
   log_db: /data/log.db
@@ -34,8 +34,10 @@ classification:
   default_failure_type: UNCLASSIFIED
   rule_to_type: {}
   priority: [TURN_FAILURE_SIGNAL, COMMIT_ERROR, TURN_FAILED_STEPS]
-retention:
-  raw_days: null            # 보관 기간: 사용자 결정 전(null)
+retention:                  # D88/U4 최소 보존 잠정 기본값(병원 규정이 다르면 숫자만 바꾼다. null은 시작 거부, 무기한은 "forever"). 영역 템플릿(ops-feedback/config/job.example.yaml)과 같은 키
+  raw_days: 30              # 처리 끝난 원본 Trace
+  cases_days: 180           # 비식별 실패 사례와 고아 trace
+  metrics_days: 365         # 지표 스냅샷·롤백 요청·영수증
 rollback: null              # 롤백 기준: 사용자 결정 전(null)
 release_reader:
   factory: "boundary_contracts.clients:HttpReleaseReader"

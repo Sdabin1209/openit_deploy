@@ -32,8 +32,10 @@ classification:
   default_failure_type: UNCLASSIFIED
   rule_to_type: {}
   priority: [TURN_FAILURE_SIGNAL, COMMIT_ERROR, TURN_FAILED_STEPS]
-retention:
-  raw_days: null
+retention:                  # D88/U4 최소 보존 잠정 기본값(병원 규정이 다르면 숫자만 바꾼다. null은 시작 거부, 무기한은 "forever"). 영역 템플릿(ops-feedback/config/job.example.yaml)과 같은 키
+  raw_days: 30              # 처리 끝난 원본 Trace
+  cases_days: 180           # 비식별 실패 사례와 고아 trace
+  metrics_days: 365         # 지표 스냅샷·롤백 요청·영수증
 release_reader:
   factory: "boundary_contracts.clients:HttpReleaseReader"
   args: {base_url: "http://release-gate:8080", token: {env: OPS_GATE_READ_TOKEN}}

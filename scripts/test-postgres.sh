@@ -62,4 +62,27 @@ for a in survey gate; do SN=$(ls -d "$W"/backups/pg-$a/2* | tail -1); ok "복구
 for a in survey gate; do want=FP_$a; N=$((N+1)); if [ "$(fp $a)" = "${!want}" ]; then echo "  PASS 볼륨 상실 후 지문 일치 $a"; else echo "  FAIL 지문 불일치 $a"; FAILS=$((FAILS+1)); fi; done
 ok "pg-roles.sh sync 멱등" bash "$DEPLOY_ROOT/scripts/pg-roles.sh" sync
 ok "sync 뒤에도 접속" sql survey survey "SELECT 1"
+echo "== 서버 설정, 계정 연결 상한 (점검 C4·G2)"
+ok "오류 로그에 SQL 값이 남지 않는 설정(log_min_error_statement=panic, terse, 파라미터 길이 0)" bash -c "[ \"\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc 'SHOW log_min_error_statement')\" = panic ] && [ \"\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc 'SHOW log_error_verbosity')\" = terse ] && [ \"\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc 'SHOW log_parameter_max_length_on_error')\" = 0 ]"
+ok "max_connections 100, idle_in_transaction_session_timeout 1min" bash -c "[ \"\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc 'SHOW max_connections')\" = 100 ] && [ \"\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc 'SHOW idle_in_transaction_session_timeout')\" = 1min ]"
+ok "서비스 계정마다 연결 상한(CONNECTION LIMIT 18)" bash -c "[ \"\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc \"SELECT count(*) FROM pg_roles WHERE rolname IN ('survey','qa','ops_log','ops_failure','gate') AND rolconnlimit = 18\")\" = 5 ]"
+ok "pg_hba: 루프백 TCP도 scram-sha-256, trust 는 소켓(local)뿐" bash -c "h=\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc 'SHOW hba_file'); ! '$DOCKER' exec '$(C)' grep -E '^host.*trust' \$h"
+echo "== 백업 암호화(gpg 시험용 키쌍)와 복원 시험 (D88/U6)"
+G="$W/gpg"; mkdir -p "$G"; chmod 700 "$G"
+gpg --homedir "$G" --batch --quiet --passphrase '' --quick-generate-key "backup-test@example.invalid" default default never >/dev/null 2>&1
+gpg --homedir "$G" --batch --armor --export backup-test@example.invalid > "$W/recipient.pub.asc"
+printf 'BACKUP_DIR=%s/enc\nBACKUP_RETENTION_DAYS=14\nBACKUP_ENCRYPT=gpg\nBACKUP_RECIPIENT_FILE=%s/recipient.pub.asc\n' "$W" "$W" > "$W/backup-enc.env"
+ok "암호화 백업(gpg 공개키만 서버에 둔다)" env BACKUP_CONFIG="$W/backup-enc.env" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" survey gate
+ENC=$(ls -d "$W"/enc/pg-survey/2* | tail -1)
+ok "암호화 파일이 .dump.enc 이고 평문 .dump 가 없으며 모드 600" bash -c "[ -f '$ENC/survey.dump.enc' ] && [ ! -f '$ENC/survey.dump' ] && [ \"\$(stat -c %a '$ENC/survey.dump.enc')\" = 600 ]"
+no "암호문에 평문 PGDMP 머리가 없다(복호화 없이 읽히지 않는다)" bash -c "head -c 5 '$ENC/survey.dump.enc' | grep -q PGDMP"
+ok "같은 백업 세트·시작/끝 시각이 MANIFEST 에 있다" grep -q '"backup_set": "set-' "$ENC/MANIFEST.json"
+sql survey survey "DELETE FROM items WHERE id % 3 = 0" >/dev/null 2>&1
+no "복호화 명령 없이 복구하면 거부" env BACKUP_CONFIG="$W/backup-enc.env" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "$ENC" --yes
+ok "시험용 비밀키로 복호화해 복구(BACKUP_DECRYPT_CMD)" env BACKUP_DECRYPT_CMD="gpg --homedir '$G' --batch --quiet --decrypt" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "$ENC" --yes
+N=$((N+1)); if [ "$(fp survey)" = "$FP_survey" ]; then echo "  PASS 암호화 백업에서 복구한 뒤 지문이 원래와 같다"; else echo "  FAIL 복구 후 지문 불일치(암호화)"; FAILS=$((FAILS+1)); fi
+ok "복원 시험: 복호화 키가 없으면 해시만 확인한다고 낸다" bash -c "BACKUP_CONFIG='$W/backup-enc.env' bash '$DEPLOY_ROOT/scripts/restore-test.sh' survey gate 2>&1 | grep -q '해시만 확인 survey'"
+ok "복원 시험: 임시 데이터베이스로 되살려 테이블 목록 대조(복호화 키 있음)" bash -c "BACKUP_DECRYPT_CMD=\"gpg --homedir '$G' --batch --quiet --decrypt\" BACKUP_CONFIG='$W/backup-enc.env' bash '$DEPLOY_ROOT/scripts/restore-test.sh' survey gate > '$W/rt.out' 2>&1; cat '$W/rt.out'; grep -q '통과 survey' '$W/rt.out' && grep -q '통과 gate' '$W/rt.out'"
+ok "복원 시험 뒤 임시 데이터베이스가 남지 않는다" bash -c "[ \"\$('$DOCKER' exec '$(C)' psql -U postgres -Atqc \"SELECT count(*) FROM pg_database WHERE datname LIKE 'restoretest_%'\")\" = 0 ]"
+ok "최신 백업이 기준보다 오래되면 복원 시험이 실패한다" bash -c "! BACKUP_CONFIG='$W/backup-enc.env' bash '$DEPLOY_ROOT/scripts/restore-test.sh' --max-age-seconds -1 survey >/dev/null 2>&1"
 echo; [ $FAILS = 0 ] && echo "통과: postgres 자체 시험 $N건" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }
