@@ -250,7 +250,7 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 - 산출물은 그 기기에만 전한다(사람 일). 기기의 정적 서버가 `CONFIG_FILE`로 이 파일을 마운트해 `/config.json`으로 낸다(kiosk-frontend 런북). **중앙 kiosk-frontend 컨테이너에는 어떤 기기의 파일도 마운트하지 않는다**(한 컨테이너가 모든 키오스크에 같은 토큰을 내면 기기별 토큰이 무의미하고, 인증 없는 경로로 토큰이 샌다). gateway도 `/config.json`을 404로 막는다.
 - 회전: `bash scripts/kiosk-add-device.sh rotate <기기 ID> --apply`. 옛 토큰은 즉시 무효다. 새 산출물을 기기에 전한 뒤 기기를 다시 시작한다. 의심스러운 기기는 바로 회전하거나 폐기한다.
 - 폐기: `bash scripts/kiosk-add-device.sh remove <기기 ID> --apply`(토큰 파일과 산출물을 지우고 목록에서 뺀다).
-- survey-service가 기기별 토큰을 받는 설정(`SURVEY_KIOSK_DEVICE_TOKENS`)과 세션 소유 확인은 survey-service 영역 몫이다. gateway는 기기 토큰을 확인한 뒤 서비스 kiosk 토큰으로 바꿔 붙이는 지금 구조 그대로이므로, 서비스가 기기를 구별하려면 gateway가 기기 ID를 서비스에 전해 주는 변경이 따로 필요하다(**이 리포는 아직 하지 않았다**: 영역 합의 필요).
+- survey-service가 기기별 토큰을 받는 설정(`SURVEY_KIOSK_DEVICE_TOKENS`)과 세션 소유 확인은 survey-service 영역 몫이다. gateway는 기기 토큰을 확인한 뒤 Authorization을 바꾸지 않고 그대로 넘기며 survey-service가 같은 기기 토큰 표로 세션 소유 기기를 확인한다(9-5절).
 
 ### 9-4. 저자 경로(question-authoring)를 gateway로 여는 구성 (D88/U9)
 

@@ -35,7 +35,7 @@ gw_write_accounts() {
     [ -s "$D/tokens/account-$acc-hash" ] || { [ -s "$D/tokens/account-$acc-password" ] || ( umask 077; gw_rnd > "$D/tokens/account-$acc-password" ); chmod 600 "$D/tokens/account-$acc-password"; }
     if [ ! -s "$D/tokens/account-$acc-hash" ]; then
       GW_IMG=${GW_IMG:-$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")}
-      "$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(cat "$D/tokens/account-$acc-password")" | tr -d '\r\n' > "$D/tokens/account-$acc-hash"
+      { pw=$(cat "$D/tokens/account-$acc-password"); printf '%s\n%s\n' "$pw" "$pw" | "$DOCKER" run --rm -i "$GW_IMG" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n' > "$D/tokens/account-$acc-hash"; unset pw; }   # 암호는 docker run 인자(ps 에 보임)가 아니라 표준 입력으로 준다(점검 L6)
       [ -s "$D/tokens/account-$acc-hash" ] || { rm -f "$D/tokens/account-$acc-hash"; die "caddy hash-password 실패($acc)"; }
       chmod 600 "$D/tokens/account-$acc-hash"
     fi

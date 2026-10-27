@@ -12,7 +12,7 @@ D=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}; ID=${1:-}; APPLY=0; [ "${2:-}" = --apply
 gw_parse_accounts | awk -v a="$ID" '$1==a{f=1} END{exit !f}' || die "config/gateway-accounts.conf 에 없는 계정: $ID"
 GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
 PW=$(gw_rnd)
-H=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$PW" | tr -d '\r\n'); [ -n "$H" ] || die "caddy hash-password 실패"
+H=$(printf '%s\n%s\n' "$PW" "$PW" | "$DOCKER" run --rm -i "$GW_IMG" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n')   # 표준 입력(점검 L6: 인자는 ps 에 보인다); [ -n "$H" ] || die "caddy hash-password 실패"
 ( umask 077; printf '%s' "$H" > "$D/tokens/account-$ID-hash.new" ); mv "$D/tokens/account-$ID-hash.new" "$D/tokens/account-$ID-hash"; chmod 600 "$D/tokens/account-$ID-hash"
 rm -f "$D/tokens/account-$ID-password"
 gw_write_accounts "$D"

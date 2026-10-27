@@ -112,6 +112,7 @@ areas:
         - ["bash", "scripts/test-check-versions.sh"]
         - ["python3", "scripts/test_e2e_asserts.py"]
         - ["python3", "scripts/test_verify_area.py"]
+        - ["python3", "scripts/test_e2e_constants.py"]
         # 아래는 Docker 가 필요하다(점검 M4: 예전에는 아무 자동 경로도 부르지 않았다). 오래 걸리는 것(test-postgres, test-backup)은 e2e 준비 단계가 아니라 여기서만 돈다
         - ["bash", "scripts/test-check-containers.sh"]
         - ["bash", "scripts/test-secret-perms.sh"]

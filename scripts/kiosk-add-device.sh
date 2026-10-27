@@ -23,7 +23,8 @@ kiosk_config() { # kiosk_config <ID>: 기기 산출물(600)
   ( umask 077; python3 -I -c 'import json,sys;print(json.dumps({"device_token": open(sys.argv[1]).read().strip(), "allow_remote_stt": False}))' "$D/tokens/kiosk-device-$1" > "$D/kiosk-config/$1.json" ); chmod 600 "$D/kiosk-config/$1.json"
 }
 case "$CMD" in
-  from-list) LIST=${2:-$DEPLOY_ROOT/config/kiosk-devices.conf}; [ -f "$LIST" ] || die "기기 목록 파일이 없다: $LIST (config/kiosk-devices.conf.example 참고)"
+  from-list) LIST=${2:-}; case "$LIST" in ""|--*) LIST=$DEPLOY_ROOT/config/kiosk-devices.conf;; esac;   # from-list --apply 처럼 옵션이 두 번째 인자로 오면 기본 목록(점검 L4)
+    [ -f "$LIST" ] || die "기기 목록 파일이 없다: $LIST (config/kiosk-devices.conf.example 참고)"
     while read -r id _; do case "$id" in ""|\#*) continue;; esac; [[ "$id" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || die "기기 ID 규칙 위반: $id"
       f="$D/tokens/kiosk-device-$id"; [ -s "$f" ] || { ( umask 077; gw_rnd > "$f" ); echo "기기 토큰을 만들었다: $id" >&2; }; chmod 600 "$f"; kiosk_config "$id"; done < "$LIST";;
   rotate) f="$D/tokens/kiosk-device-$ID"; [ -s "$f" ] || die "없는 기기: $ID (먼저 add)"; ( umask 077; gw_rnd > "$f" ); chmod 600 "$f"; kiosk_config "$ID"; echo "회전: $ID (옛 토큰 무효. 새 산출물 $D/kiosk-config/$ID.json 을 기기에 전한다)" >&2;;

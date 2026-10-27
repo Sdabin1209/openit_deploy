@@ -56,7 +56,7 @@ http://:8080 {
 		output stdout
 		format json
 	}
-	# 요청 본문 상한(점검 B4·D5·G3): 사이트 기본 8MiB(계약 상한), 사람이 쓰는 승인·운영·검토 경로는 1MiB(JSON 몇 줄뿐). 초과하면 Caddy 가 413 으로 끊는다. 값은 시작값이다.
+	# 요청 본문 상한(점검 B4·D5·G3): 사이트 기본 8MiB(계약 상한), 사람이 쓰는 승인·운영·검토 경로 중 **쓰기(POST) 3곳**(승인 결정, 운영자 activate/rollback, 검토 게시)만 1MiB(JSON 몇 줄뿐). 읽기 경로와 직원·저자 경로는 사이트 기본 8MiB. 초과하면 Caddy 가 413 으로 끊는다. 값은 시작값이다.
 	request_body {
 		max_size 8MiB
 	}
@@ -212,6 +212,8 @@ http://:8080 {
 	handle_path /admin/* {
 		import authenticate      # 화면은 어느 역할이든 열린다. API는 위에서 역할로 막힌다
 		reverse_proxy admin-console:8080 {
+			header_up -X-Openit-User   # 정적 화면에는 클라이언트의 사용자 헤더와 Basic 자격을 넘기지 않는다(점검 L1)
+			header_up -Authorization
 			import proxy_limits 10s
 		}
 	}
@@ -306,6 +308,8 @@ http://:8080 {
 		import authenticate
 		handle @role_staff {
 			reverse_proxy kiosk-frontend:8080 {
+			header_up -X-Openit-User
+			header_up -Authorization
 				transport http {
 					dial_timeout 2s
 					response_header_timeout 10s
@@ -318,6 +322,8 @@ http://:8080 {
 	}
 	handle {
 		reverse_proxy kiosk-frontend:8080 {
+			header_up -X-Openit-User
+			header_up -Authorization
 			transport http {
 				dial_timeout 2s
 				response_header_timeout 10s

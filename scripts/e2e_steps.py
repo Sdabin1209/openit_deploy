@@ -702,7 +702,6 @@ def step5c():
 # ---- 시간 단언의 상수: 설정(config/Caddyfile, 서비스 문서)에서 도출한 값과 측정 환경별 관찰값을 이름으로 둔다. 단언의 의미(상한 안에 들어와야 한다)는 그대로이고, 한 환경의 측정값을 불변식처럼 쓰지 않는다.
 KIOSK_WAIT_S = 10.0          # 키오스크 대기(kiosk-frontend 영역, ADR 0003)
 SURVEY_TURN_DEADLINE_S = 6.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS 기본)
-GW_PATIENT_CAP_S = 9.5       # 환자 경로 gateway 상한 = 연결 1s + 응답 헤더 8.5s (Caddyfile 환자 API)
 GW_DIAL_PROXY_S = 2.0        # 사람용 프록시(proxy_limits) 연결 상한 dial_timeout
 GW_READYZ_CAP_S = 3.0        # gateway /readyz 프록시 = 연결 1s + 응답 헤더 2s (Caddyfile)
 GW_HDR_GATE_S, GW_HDR_OPS_S = 15.0, 10.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, 시작값)

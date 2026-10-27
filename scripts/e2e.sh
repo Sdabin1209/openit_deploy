@@ -133,10 +133,10 @@ tls_checks() { # HTTPS 필수(D88/U5): 평문은 /healthz 만 답하고 나머�
   echo "$h" | grep -qi '^x-content-type-options: nosniff' || { echo "X-Content-Type-Options 가 없다"; return 1; }
   echo "$h" | grep -qi '^x-frame-options: DENY' || { echo "X-Frame-Options 가 없다"; return 1; }
   [ "$($GWCURL -s -o /dev/null -w '%{http_code}' "https://127.0.0.1:$PGWS/config.json")" = 404 ] || { echo "/config.json 이 막혀 있지 않다"; return 1; }
-  echo "평문: /healthz 만 ok, 나머지 308 https; https: 시험용 CA 검증 통과, HSTS·nosniff·X-Frame-Options, /config.json 404, 사이트 기본 본문 상한 설정"
+  echo "평문: /healthz 만 ok, 나머지 308 https; https: 시험용 CA 검증 통과, HSTS·nosniff·X-Frame-Options, /config.json 404"
 }
 chk "TLS(D88/U5): 평문은 308 https 로 이동, https 는 시험용 CA 로 검증되고 HSTS·보안 헤더가 있다" tls_checks
-chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
+chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
 no_auto_pass() { getj "$PGATE" /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
 chk "gateway: /v1/turns -> 404, /staff/ 와 직원 API 는 인증 없이 401, /v1/activate 는 인증 없이 401, 키오스크 경로는 기기 토큰 없이 401(D85)" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/staff/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/admin/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/submissions)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/activate)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/cases)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/traces)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/staff/alerts)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions/x/intervention)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions)\" = 401 ]"
@@ -221,7 +221,7 @@ printf 'targets:\n  - {name: gateway-healthz-plain, url: "http://127.0.0.1:%s/he
 chk "check-health: 스케줄러 상태 파일·디스크·외부 감시 대상(gateway /healthz 평문·HTTPS)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --jobs "$W/sched/jobs.yaml" --scheduler-state "$W/sched/st.json" --monitor "$W/sched/monitor.yaml" --disk-path "$W" --skip-backup
 chk "config/jobs.yaml: GPU 잡 3개는 gpu-external(이 Compose에 없음)" bash -c "[ \$(grep -c 'where: gpu-external' $DEPLOY_ROOT/config/jobs.yaml) = 3 ] && ! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
-sect "단계 9: 백업과 복구 (O16 미정: 설정으로만)"
+sect "단계 9: 백업과 복구 (평문 모드 BACKUP_ALLOW_PLAINTEXT=1 은 **시험 전용**이다. 암호화 경로(gpg 공개키)는 scripts/test-backup.sh 가 시험한다. age 분기는 age 가 없어 미실행)"
 chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.env"
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
