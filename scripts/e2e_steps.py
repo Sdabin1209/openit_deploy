@@ -618,6 +618,45 @@ def step5():
     STATE["sess_a"] = sid; save()
     rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9 v2: 서비스 -> PUT 적재 -> extract(JSON) -> respond(text))를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 서버 직접 호출: {v2chk}. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
 
+def step5c():
+    title("5c", "정정(CORRECT) 흐름: 값이 있는 턴 뒤 정정 발화 -> 서비스가 CORRECT 를 처리한다 (가짜 A 의 corrections, model-runtime 0.7.2)")
+    if "pointers" not in STATE: rec("5c", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    new = STATE["releases"]["2"]
+    wait(lambda: (lambda cr: cr[0] == 200 and cr[1].get("active_release") == new)(survey_ready()), 300, f"survey가 릴리스 {new} 적재", every=3)
+    # (1) 추론 서버 직접: 정정 발화는 at 문항(Q1.D02)에서만 CORRECT, 다른 문항에서는 일반 값 추출
+    tok = INF_TOK(); utt = "아까 말한 거 아니에요"
+    def ext(qid, text, state):
+        ein = {"question_id": qid, "current_question": f"시험 문항 {qid}입니다.", "user_utterance": text, "state": state}
+        validate("ActionExtractionInput", ein)
+        c, body, _ = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 200, (qid, c, body[:200])
+        out = json.loads(body); validate("ActionExtraction", out); return out
+    o1 = ext("Q1.D02", utt, {"Q1.D01.diagnosed": {"value": True, "status": "ANSWERED"}})
+    assert o1["action"] == "CORRECT" and o1["next_item"] == "Q1.D02", o1
+    (cv,) = o1["values"]; assert (cv["key"], cv["value"], cv["status"], cv["save"]) == ("Q1.D01.diagnosed", False, "CORRECTION", True), cv
+    o2 = ext("Q1.D03", utt, {}); assert o2["action"] == "NEXT" and o2["values"][0]["status"] == "ANSWERED", ("at 가 다른 문항인데 CORRECT 가 나왔다", o2)
+    # (2) 서비스 경유: Q1.D01 에 '네' -> 저장, 다음 턴에 정정 발화
+    sid = f"sess-{RID}-corr"; assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    rb = survey_ready()[1]
+    c, r1 = public_turn(sid, "cor-1", "네 있어요"); assert c == 200, (c, r1); validate_survey("FrontendInput", r1)
+    v1 = {v["key"]: v for v in gws("GET", f"/v1/staff/sessions/{sid}")[1]["values"]}
+    assert v1["Q1.D01.diagnosed"]["value"] is True and v1["Q1.D01.diagnosed"]["status"] == "ANSWERED", v1
+    c, r2 = public_turn(sid, "cor-2", utt); assert c == 200, (c, r2); validate_survey("FrontendInput", r2)
+    wait(lambda: survey_ready()[1]["trace_outbox"]["sent"] - rb["trace_outbox"]["sent"] >= 2 or None, 30, "정정 턴의 Trace 전송")
+    EA.check_turns_clean([r1, r2], rb, survey_ready()[1])
+    c, sv = gws("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv); validate_survey("StaffSessionView", sv)
+    said = [t for t in sv["turns"] if t["utterance"]]
+    assert [t["action"] for t in said] == ["NEXT", "CORRECT"], ("턴 기록의 action", [(t["turn_id"], t["action"]) for t in said])
+    v2 = {v["key"]: v for v in sv["values"]}
+    assert v2["Q1.D01.diagnosed"]["value"] is False and v2["Q1.D01.diagnosed"]["status"] == "CORRECTION", ("정정이 저장 값에 반영되지 않았다", v2["Q1.D01.diagnosed"])
+    assert sv["status"] == "IN_PROGRESS", sv["status"]
+    # (3) 대조: 같은 발화가 at 이 아닌 문항(Q1.D01)에서는 정정이 아니다
+    sid2 = f"sess-{RID}-corr-ctl"; assert kiosk("/v1/sessions", {"session_id": sid2, "kind": "SESSION_START"})[0] == 200
+    c, r3 = public_turn(sid2, "ctl-1", utt); assert c == 200, (c, r3)
+    sv3 = gws("GET", f"/v1/staff/sessions/{sid2}")[1]; said3 = [t for t in sv3["turns"] if t["utterance"]]
+    assert [t["action"] for t in said3] == ["NEXT"] and all(v["status"] == "ANSWERED" for v in sv3["values"]), ("at 밖의 발화가 정정으로 처리됨", said3, sv3["values"])
+    for s_ in (sid, sid2): kiosk(f"/v1/sessions/{s_}/end", {"session_id": s_, "kind": "SESSION_END"})
+    rec("5c", "REAL", "정정 흐름(가짜 A corrections: '아까 말'+at Q1.D02, 키 Q1.D01.diagnosed). 추론 서버 직접: Q1.D02 에서 CORRECT(CORRECTION, 값 false, next_item Q1.D02), Q1.D03 에서는 NEXT. 서비스 경유: 'cor-1' 뒤 직원 세션 조회에서 Q1.D01.diagnosed=true ANSWERED -> 'cor-2' 뒤 턴 기록 action [NEXT, CORRECT], 값 false·status CORRECTION, 세션 IN_PROGRESS, 실패 신호 없음, Trace 전송. 대조 세션(Q1.D01 에서 같은 발화)은 NEXT·ANSWERED. 못 보는 것: 이력의 이전 값(NEW_REVISION)과 다음 질문 문항(공개 조회에 없음)")
+
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1063,7 +1102,7 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

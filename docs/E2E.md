@@ -18,6 +18,14 @@
 
 합격 조건: 1~9가 사람 손 없이 순서대로 실행되고, 모든 레코드가 계약 스키마와 해시 검증을 통과한다.
 
+## 단계 5c: 정정(CORRECT) 흐름 (deploy 소유, 시나리오 5의 일부)
+
+`scripts/e2e_steps.py`의 `5c`. 가짜 A(model-runtime 0.7.2)의 선택 항목 `corrections`를 `test/fake-model/question_flow.json`에 둔다: 발화에 `아까 말`이 있고 입력 `question_id`가 `Q1.D02`이면 `Q1.D01.diagnosed`를 `false`로 정정하는 `CORRECT`를 낸다(`Q1.D01.diagnosed`는 survey-service의 문진 스키마 `QuestionFlow`/시험 문항 세트에 있는 실제 칸 키다). 흐름: (1) 추론 서버를 직접 불러 `Q1.D02`에서는 `CORRECT`(값 `CORRECTION`), `Q1.D03`에서는 일반 `NEXT`임을 본다. (2) 서비스를 거쳐 `Q1.D01`에 "네 있어요"(저장) 뒤 "아까 말한 거 아니에요"를 보낸다. (3) 같은 발화를 `Q1.D01`에서 보낸 대조 세션은 정정이 아니다.
+
+**정정이 처리됐다고 판단하는 신호.** 저장된 값을 읽는 환자용 공개 경로는 없지만, 직원 세션 조회 `GET /v1/staff/sessions/{id}`(게이트웨이 경유, 직원 계정, `StaffSessionView`, boundary-contracts `PUBLIC_API.md`의 직원 콘솔 절)가 읽기 전용으로 두 가지를 낸다: `turns[].action`(LoRA-A가 낸 절차, 이 턴이 `CORRECT`인지)과 `values[]`(저장된 칸의 `value`와 `status`, 정정된 적이 있으면 `CORRECTION`). 근거 문구는 survey-service `docs/change-requests/CR-013-staff-session-view-public-api.md`(PUBLIC_API.md가 채택)와 `docs/design.md`의 저장 규칙(ANSWERED·CORRECTION만 저장)이다. 단언: 정정 전 `Q1.D01.diagnosed=true`(ANSWERED), 정정 뒤 턴 기록 action이 `[NEXT, CORRECT]`, 값 `false`·`CORRECTION`, 세션 `IN_PROGRESS`, 턴 실패 신호 없음, Trace 전송 수 증가. 이 단계는 서비스가 `CORRECT`를 검증·저장·기록하는 데까지만 본다.
+
+**못 보는 것.** 직원 조회는 값의 현재 상태만 주므로, 정정 전 값이 이력(`NEW_REVISION`)에 남았는지는 볼 수 없다. 다음에 어느 문항을 묻는지(`progress_record.current_question_id`)도 공개 조회에 없어, 정정 뒤 같은 문항을 다시 묻는지는 확인하지 못한다. 응답 문장은 가짜 B의 고정 문장이라 환자에게 나간 문장의 내용은 보지 않는다. 가짜 A의 규칙(키워드와 `at`)이 맞는지를 볼 뿐 모델이 실제 정정 표현을 알아듣는지는 보지 않는다. 단독 실행은 활성 릴리스를 만드는 단계가 필요하다: `bash scripts/e2e.sh --only 1,2,3,4,5c`.
+
 ## 단계 5p: PostgreSQL 컨테이너 재시작 (deploy 소유, 시나리오 9의 일부)
 
 `scripts/e2e_steps.py`의 `5p`. question-authoring에 자료를 등록해 쓴 뒤 postgres 컨테이너를 `docker stop`하고, 서비스 `/readyz`가 200이 아닌 상태가 되는 것(`/healthz`는 200 유지)을 관찰해 단계 출력에 코드와 경과 시간을 남긴다. `docker start`로 다시 띄우면 모든 서비스 `/readyz`가 200으로 돌아오는지, 재시작 전후 데이터베이스 행 지문(`pg-fingerprint.sh`)이 같은지, 복구 뒤 새 쓰기가 되는지 본다. 단계 8 뒤에 돈다. 단독 실행: `bash scripts/e2e.sh --only 5p`(활성 릴리스가 없어 survey-service는 제외). survey-service까지 보려면 활성 릴리스를 만드는 단계를 함께 준다: `--only 1,2,3,4,5p`. `--only`는 전체 합격이 아니며 `E2E_RESULTS.md`에 기록하지 않는다. 관찰에서 나온 영역 요청: [CR-D23](change-requests/CR-D23-survey-readyz-db-outage.md).

@@ -33,5 +33,8 @@
   {"slot": "Q7.does_not_drink", "op": "==", "value": true, "skip_item": "Q7_2"},
   {"slot": "Q8_1.days", "op": "==", "value": 0, "skip_item": "Q8_2"},
   {"slot": "Q9_1.days", "op": "==", "value": 0, "skip_item": "Q9_2"}
+ ],
+ "corrections": [
+  {"contains": "아까 말", "key": "Q1.D01.diagnosed", "value": false, "at": "Q1.D02"}
  ]
 }
