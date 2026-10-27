@@ -1,5 +1,10 @@
 # 변경 이력
 
+## PostgreSQL 구성을 컨테이너에서 처음 확인 (네 영역 최신 main으로 빌드)
+- 확인: 스택 10개 컨테이너 healthy. `/readyz`: survey-service `database.kind=postgresql`, release-gate `database=postgresql`, question-authoring `db=postgres`, ops-feedback `log_store`·`failure_store`=postgresql. ops-feedback I7 읽기 면은 `OPS_FAILURE_DB` 없이 DB URL만으로 켜진다(`GET /v1/cases` 200). `/data`(tmpfs)에 쓰기 흔적과 오류 로그 없음(qa, ops 비어 있음). 잡은 `storage` 항목이 필수(없으면 시작 거부)이고 DB URL이 있으면 PostgreSQL을 쓴다 -> 설정 파일에 주석만 보강.
+- 5r 수정: 개입 본문에 `staff_id`를 싣지 않는다(InterventionDecision은 additionalProperties false). 위조 `X-Openit-User`가 무시되는지로 확인. 목록 알림의 kind는 `RISK_STOP`, 세션 조회 알림의 kind는 `RISK`, rule_id는 세션 조회에서 본다. 단독 실행 시 활성 릴리스 적재를 기다린다.
+- `pg-fingerprint.sh`: 비어 있는 데이터베이스(INSERT 없음)에서 실패하던 것을 고침. `10-roles.sh`: 최초 초기화의 임시 서버에서 불필요한 reload 경고를 없앰.
+
 ## 운영·E2E 구성을 PostgreSQL로, 위험 신호·결과 조회 E2E 단계, 백업 잡에 pg_dump (코드·구성만, 컨테이너 검증 전)
 - 결정(사용자 지시, 표준): 운영 구성은 PostgreSQL, SQLite는 각 영역의 개발·시험 기본으로만 남긴다. 이유: 권한·백업·보존을 DB 한 곳에서 걸고 서버가 나뉘어도 같은 방식으로 동작한다.
 - `compose.yaml`: survey-service(`SURVEY_DATABASE_URL_FILE`), question-authoring(`QA_DATABASE_URL_FILE`), ops-feedback 서버·잡(`OPS_LOG_/OPS_FAILURE_DATABASE_URL_FILE`), release-gate 서버·수집 잡(`GATE_DATABASE_URL_FILE`)을 `db` 네트워크에 붙이고 `db-*-dsn` 비밀을 마운트, 서버 서비스는 postgres healthy에 의존. `qa-data`, `ops-data` 볼륨과 `OPS_FAILURE_DB` 설정을 정리(`gate-data/releases`, `survey-data` 릴리스 작업 폴더는 유지). survey-service에 `SURVEY_RESULT_READER_TOKEN_FILE`, `SURVEY_RISK_SOURCE_TOKEN_FILE`. `gen-secrets.sh`가 `survey-result-reader`, `survey-risk-source`를 만든다. `compose.test.yaml`에도 `db` 네트워크.

@@ -1,5 +1,6 @@
 # ops-feedback 잡 설정(compose job-ops-feedback 이 /config/job.yaml 로 읽기 전용 마운트한다. run-job.sh 기본 경로). 형식은 ops-feedback 가 정한다.
 # 비식별 기준·분류체계는 보수적 시작값이고 사용자 결정이 아니다. rollback 과 retention 값은 사용자 결정 전이라 비워 둔다(null = 지정 안 함).
+# storage: 개발 기본(SQLite 경로)이며 항목 자체는 필수다(없으면 '설정에 storage 항목이 없다'로 시작을 거부). 환경에 OPS_LOG_DATABASE_URL_FILE / OPS_FAILURE_DATABASE_URL_FILE 이 있으면 PostgreSQL 이 쓰인다(compose 가 준다; 실행으로 확인: 잡이 PG 테이블을 쓰고 /data 에 쓰지 않음).
 storage:
   log_db: /data/log.db
   failure_db: /data/failures.db

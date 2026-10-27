@@ -612,6 +612,7 @@ def step5():
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    wait(lambda: survey_ready()[0] == 200, 300, "survey-service 가 활성 릴리스를 적재(/readyz 200)", every=3)   # 단계 5 없이 단독으로 돌려도 되게
     sid = f"sess-{RID}-risk"; subj = f"e2e-subject-{RID}"; utter = "뇌졸중은 없고 약도 안 먹어요"
     RES = lambda: TOK("survey-result-reader"); RSK = lambda: TOK("survey-risk-source")   # 내부 호출용 토큰(게이트웨이에 열지 않는다)
     # (A) 기기 토큰으로 세션 시작(subject_ref), 발화 한 턴
@@ -627,15 +628,17 @@ def step5r():
     c, r2 = http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 200 and r2["alert_id"] == r1["alert_id"], ("같은 signal_id 재전송이 멱등이 아님", c, r2)
     # 직원 알림이 목록에 나온다(게이트웨이 경유, 직원 계정)
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
-    mine = [x for x in pg["items"] if x["session_id"] == sid]; assert mine and mine[0]["kind"] == "RISK", ("위험 신호가 알림 목록에 없다", pg["items"][:2])
-    assert mine[0].get("rule_id") == "e2e-detector:TEST_RISK", mine[0]
+    mine = [x for x in pg["items"] if x["session_id"] == sid and x["alert_id"] == r1["alert_id"]]; assert mine and mine[0]["status"] == "OPEN", ("위험 신호가 알림 목록에 없다", pg["items"][:2])
+    assert mine[0]["kind"] == "RISK_STOP", mine[0]   # 목록(StaffAlert)의 kind 는 RISK_STOP, 세션 조회(StaffViewAlert)의 kind 는 RISK(신호 severity)
     # (C) 직원 세션 조회: 대화 기록·값·subject_ref
     c, sv = gws("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv); validate_survey("StaffSessionView", sv)
     assert sv["status"] == "PAUSED_RISK" and sv["subject_ref"] == subj and sv["turns"], (sv["status"], sv.get("subject_ref"), len(sv.get("turns", [])))
-    assert any(al["alert_id"] == r1["alert_id"] for al in sv["alerts"]), "직원 세션 조회의 alerts 에 이 알림이 없다"
+    va = [al for al in sv["alerts"] if al["alert_id"] == r1["alert_id"]]; assert va, "직원 세션 조회의 alerts 에 이 알림이 없다"
+    assert va[0]["kind"] == "RISK" and va[0]["rule_id"] == "e2e-detector:TEST_RISK", va[0]
     assert gw_raw("GET", f"/v1/staff/sessions/{sid}", basic=OPERATOR())[0] == 403, "operator 계정이 직원 세션 조회를 부를 수 있다"
     # (E) 직원 개입(RESUME): 행위자는 게이트웨이가 붙인 헤더의 계정, 본문의 staff_id 는 무시
-    c, iv = gws("POST", f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "iv-1", "staff_id": "spoofed-staff"}); assert c == 200, (c, iv)
+    # 본문은 InterventionDecision(+turn_id 봉투)뿐이다(additionalProperties false: staff_id 를 실으면 400). 행위자는 헤더가 정본이므로 위조 X-Openit-User 를 실어도 인증 계정이 기록되어야 한다
+    c, iv, _ = gw_raw("POST", f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "iv-1"}, basic=STAFF(), headers={"X-Openit-User": "spoofed-staff"}); assert c == 200, (c, iv)
     c, sv2 = gws("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv2); validate_survey("StaffSessionView", sv2)
     res = [al.get("resolved_by") for al in sv2["alerts"] if al["alert_id"] == r1["alert_id"]]
     assert res == [STAFF()[0]], f"alerts[].resolved_by 가 인증된 직원 ID가 아니다: {res}"
@@ -652,7 +655,7 @@ def step5r():
         assert gw_raw("GET", pth, basic=STAFF())[0] == 404 and gw_raw("GET", pth, basic=OPERATOR())[0] == 404, f"결과 조회 {pth} 가 게이트웨이에 열려 있다"
     # 접근 기록: 읽는 공개 경로가 없다(DB 를 열지 않는다). 기록을 못 남기면 데이터를 주지 않는 설계(fail-closed)라 위 조회 성공이 기록 쓰기 성공을 뜻한다. /readyz 에 접근 기록 항목이 있으면 함께 본다
     c, rz = survey_ready(); acc = {k: v for k, v in (rz or {}).items() if "access" in k.lower()}
-    rec("5r", "REAL", f"세션 시작(기기 토큰, subject_ref) -> 발화 -> POST /v1/sessions/{{id}}/risk-signals(risk-source 토큰, 서비스에 직접: 201 PAUSED_RISK, 재전송 200 같은 alert_id, 다른 역할 토큰·게이트웨이 경유는 거부) -> 직원 알림 목록(rule_id e2e-detector:TEST_RISK) -> GET /v1/staff/sessions/{{id}}(직원 계정, 게이트웨이 경유, StaffSessionView 스키마, subject_ref·turns) -> 개입 RESUME(위조 staff_id 무시, alerts[].resolved_by={STAFF()[0]}) -> GET /v1/results/{{id}}·/v1/results?subject_ref(result-reader 토큰, SessionResult 스키마, 발화 원문 없음, 게이트웨이에는 404). 접근 기록: 읽는 경로가 없어 간접 확인(조회 성공 = 기록 성공, /readyz 접근 항목 {sorted(acc) or '없음'}). SSE 수신은 확인하지 않았다(목록으로 확인).")
+    rec("5r", "REAL", f"세션 시작(기기 토큰, subject_ref) -> 발화 -> POST /v1/sessions/{{id}}/risk-signals(risk-source 토큰, 서비스에 직접: 201 PAUSED_RISK, 재전송 200 같은 alert_id, 다른 역할 토큰·게이트웨이 경유는 거부) -> 직원 알림 목록(RISK_STOP, OPEN) -> GET /v1/staff/sessions/{{id}}(직원 계정, 게이트웨이 경유, StaffSessionView 스키마, subject_ref·turns, alerts[].rule_id e2e-detector:TEST_RISK) -> 개입 RESUME(위조 X-Openit-User 무시, alerts[].resolved_by={STAFF()[0]}) -> GET /v1/results/{{id}}·/v1/results?subject_ref(result-reader 토큰, SessionResult 스키마, 발화 원문 없음, 게이트웨이에는 404). 접근 기록: 읽는 경로가 없어 간접 확인(조회 성공 = 기록 성공, /readyz 접근 항목 {sorted(acc) or '없음'}). SSE 수신은 확인하지 않았다(목록으로 확인).")
 
 def step5s():
     title("5s", "어댑터 교체(포인터 1 -> 2)에서 다른 서비스는 그대로이고 새 릴리스가 LOADED 이다")

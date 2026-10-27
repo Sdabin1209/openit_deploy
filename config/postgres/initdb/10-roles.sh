@@ -29,6 +29,7 @@ done
 # 루프백 TCP 도 암호(scram-sha-256)를 요구하게 바꾼다. 이미 바뀌었으면 아무것도 하지 않는다(멱등).
 HBA=$(psql_ -Atc 'SHOW hba_file')
 sed -i -E 's#^(host[[:space:]]+all[[:space:]]+all[[:space:]]+(127\.0\.0\.1/32|::1/128)[[:space:]]+)trust#\1scram-sha-256#' "$HBA"
-psql_ -Atc 'SELECT pg_reload_conf()' >/dev/null
+# 최초 초기화의 임시 서버(listen_addresses 가 비어 있다)는 곧 꺼지고 본 서버가 파일을 새로 읽으므로 다시 읽히지 않는다(불필요한 경고를 피한다)
+[ -z "$(psql_ -Atc 'SHOW listen_addresses')" ] || psql_ -Atc 'SELECT pg_reload_conf()' >/dev/null
 # 기본 데이터베이스에는 서비스 계정이 들어오지 못하게 한다(슈퍼유저는 소켓으로 들어온다)
 psql_ -c 'REVOKE CONNECT ON DATABASE postgres FROM PUBLIC' -c 'REVOKE CONNECT ON DATABASE template1 FROM PUBLIC'
