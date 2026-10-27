@@ -266,3 +266,9 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 - 공유 서비스 키오스크 토큰(`SURVEY_API_TOKEN`)은 compose에서 뺐다. `/readyz`의 `kiosk_tokens.shared_kiosk_token`은 false이고 `device_tokens`는 기기 수다(E2E 5d가 확인).
 - 기기 표는 `kiosk-add-device.sh add/remove/rotate/from-list/sync`가 gateway 목록과 함께 다시 쓴다. `--apply`는 gateway와 survey-service를 함께 다시 시작한다(survey가 표를 시작 때 읽는다). 폐기는 gateway에서 즉시(재시작 직후) 막히고 survey 표는 survey 재시작 뒤에 바뀐다.
 - 기기 목록이 2대 이상일 때 예전 생성기가 Caddy `header` 매처(값을 하나만 받는다)에 값을 여러 개 넘겨 목록이 동작하지 않았다. `expression {http.request.header.Authorization} in [...]`로 고쳤다(이 PC에서 4대로 확인, 자체 시험이 5대로 `caddy validate`).
+
+### 9-6. gateway CA 루트의 백업과 복원 (점검 M3)
+
+- `gateway-data`(Caddy 내부 CA 루트 인증서와 **비밀키**, `/data/caddy/pki`)는 `scripts/backup.sh`가 다른 파일 저장소와 같은 수신자 공개키 암호화 경로로 백업한다(기본 대상에 포함). 평문 모드(`BACKUP_ALLOW_PLAINTEXT=1`, 시험 전용)에서는 비밀키라서 이 볼륨을 건너뛴다.
+- **루트가 바뀌면(볼륨을 잃었거나 새 서버면) 모든 키오스크와 직원 PC가 새 루트를 다시 신뢰해야 한다. 백업에서 복원하면 루트가 유지되어 기기는 아무것도 하지 않아도 된다.** 복원: 복호 개인키가 있는 곳에서 `gateway-data.tar.gpg`(또는 `.age`)를 풀어 서버의 `deploy_gateway-data` 볼륨에 올리고(소유자 uid 10001) gateway를 시작한다. 복원 시험은 자체 시험(`test-backup.sh`)이 시험용 키쌍으로 풀어 `root.key`가 든 것을 확인한다.
+- age 분기는 이 PC에 age가 없어 **실행해 보지 못했다(미실행)**. gpg 경로만 시험했다.

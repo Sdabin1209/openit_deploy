@@ -74,4 +74,14 @@ N=$((N+1)); if ! ls -a "$W/backups/models-data" 2>/dev/null | grep -qE '^\.(tar|
 mkdir -p "$W/backups/models-data/.tar-OLD" ; touch -d '3 hours ago' "$W/backups/models-data/.tar-OLD"
 ( source "$DEPLOY_ROOT/scripts/lib.sh"; source "$DEPLOY_ROOT/scripts/backup-lib.sh"; BACKUP_RETENTION_DAYS=14; backup_prune "$W/backups/models-data" ) >/dev/null 2>&1
 N=$((N+1)); if [ ! -e "$W/backups/models-data/.tar-OLD" ]; then echo "  PASS backup_prune 이 오래된 임시 파일(.tar-*)도 지운다"; else echo "  FAIL prune 이 임시 파일을 지우지 않았다"; FAILS=$((FAILS+1)); fi
+echo "== gateway-data(내부 CA 루트·비밀키)도 암호화 백업된다 (점검 M3)"
+"$DOCKER" volume create "${P}_gateway-data" >/dev/null 2>&1
+UT=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
+"$DOCKER" run --rm -v "${P}_gateway-data:/d" "$UT" sh -c 'mkdir -p /d/caddy/pki/authorities/local && echo FAKE-CA-PRIVATE-KEY-MARKER > /d/caddy/pki/authorities/local/root.key' >/dev/null 2>&1
+ok "backup.sh gateway-data (암호화)" bash "$DEPLOY_ROOT/scripts/backup.sh" gateway-data
+GD=$(ls -d "$W"/backups/gateway-data/2* | tail -1)
+ok "gateway-data 백업은 암호문이고 평문 표지가 없다" bash -c "ls '$GD'/*.gpg >/dev/null && ! grep -aq FAKE-CA-PRIVATE-KEY-MARKER '$GD'/*"
+ok "개인키(서버 밖)로 풀면 CA 비밀키 파일이 들어 있다(복원 시험)" bash -c "gpg --batch --quiet --decrypt '$GD'/gateway-data.tar.gpg 2>/dev/null | tar -tf - | grep -q 'caddy/pki/authorities/local/root.key'"
+printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_ALLOW_PLAINTEXT=1\n' "$W/backups-plain" > "$W/bp.env"
+N=$((N+1)); BACKUP_CONFIG="$W/bp.env" bash "$DEPLOY_ROOT/scripts/backup.sh" gateway-data >/dev/null 2>&1; if ! ls "$W"/backups-plain/gateway-data/2* >/dev/null 2>&1; then echo "  PASS 평문 모드에서는 CA 비밀키를 백업하지 않는다"; else echo "  FAIL 평문 모드에서 CA 비밀키가 백업됐다"; FAILS=$((FAILS+1)); fi
 echo; [ $FAILS = 0 ] && echo "통과: 백업 자체 시험 $N건" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }
