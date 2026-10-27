@@ -105,3 +105,13 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 | [E2E_RESULTS.md](docs/E2E_RESULTS.md) | E2E 통과 수의 정본(실행 기록 + 과거 기록) |
 | `docs/change-requests/` | 헤드에게 보낸 변경 요청(CR-D01~D22) |
 | [CHANGELOG.md](CHANGELOG.md) (리포 루트) | 변경 이력 |
+
+## 설계 결정 기록 (ADR, docs/adr/)
+
+구조 선택마다 '왜'(따른 표준과 근거, 검토한 대안과 버리는 이유, 되돌리는 조건)를 적는다. 측정하지 않은 값은 '측정 안 함'으로 적었다.
+
+- [0001 오케스트레이션은 단일 서버의 Docker Compose](docs/adr/0001-compose.md)
+- [0002 gateway는 Caddy](docs/adr/0002-caddy-gateway.md)
+- [0003 시간 불변식 체인](docs/adr/0003-time-invariants.md)
+- [0004 E2E는 가짜 모델로, 전체 모드와 --only/--fast](docs/adr/0004-e2e-fake-model.md)
+- [0005 TLS는 gateway에서 HTTPS 필수, 내부 CA 기본](docs/adr/0005-tls-internal-ca.md)
