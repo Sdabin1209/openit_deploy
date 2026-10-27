@@ -7,7 +7,7 @@ source "$(dirname "$0")/lib.sh"
 ID=$$; P=deploy-pgtest-$ID; W="$DEPLOY_ROOT/state/pgtest-$ID"; mkdir -p "$W/backups"
 export DEPLOY_PROJECT=$P SECRETS_DIR="$W/secrets" DEPLOY_REGISTRY_ENV="$W/registry.env"
 echo "DEPLOY_REGISTRY=127.0.0.1:1" > "$DEPLOY_REGISTRY_ENV"   # compose 전체 해석에 필요한 자리 채움(이 시험은 postgres 만 쓴다)
-printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\n' "$W/backups" > "$W/backup.env"; export BACKUP_CONFIG="$W/backup.env"
+printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_ALLOW_PLAINTEXT=1\n' "$W/backups" > "$W/backup.env"; export BACKUP_CONFIG="$W/backup.env"
 cleanup() { dc "$P" down -v --remove-orphans >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
 FAILS=0; N=0

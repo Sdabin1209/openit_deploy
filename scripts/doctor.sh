@@ -3,15 +3,17 @@
 # 사용: scripts/doctor.sh [--up] [--inference <URL>]
 #   --llm              실제 LLM(GPU) 준비: GPU 컨테이너 접근, 프로파일 VRAM 대 GPU VRAM, 도커 디스크, huggingface.co 도달 (환경 변수 DEMO_LLM_PROFILE)
 #   --inference <URL>  외부 추론 서버(D72)에 이 호스트에서 닿는지: /healthz, /readyz, 토큰이 있으면 /v1/info (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE, 값은 출력하지 않는다)
+#   --backup           운영 백업 설정 점검(D88 U6): config/backup.env 의 대상 폴더·보관 일수·암호화 수신자 공개키. 없거나 불완전하면 FAIL(백업 없이 운영하지 않는다). up.sh 가 운영 프로젝트(deploy)에서 붙인다
 #   기본: 빌드·E2E 에 필요한 전부(소스 워크스페이스 포함).  --up: 서버에서 띄우기만 할 때(git·형제 리포·태그·빌드 의존 점검을 건너뛴다)
 # e2e.sh / up.sh 는 시작에서 이것을 부르고 FAIL 이 있으면 멈춘다. 건너뛰기: DEPLOY_SKIP_DOCTOR=1
 # 환경 문제를 코드로 숨기지 않는다: 진단하고 고치는 법을 안내할 뿐 아무것도 바꾸지 않는다.
 set -uo pipefail
 DEPLOY_NO_DOCKER=1
 source "$(dirname "$0")/lib.sh"
-UP_ONLY=0; INF_URL=""; LLM=0
+UP_ONLY=0; INF_URL=""; LLM=0; CHECK_BACKUP=0
 while [ $# -gt 0 ]; do case "$1" in
   --up) UP_ONLY=1; shift;;
+  --backup) CHECK_BACKUP=1; shift;;
   --llm) LLM=1; shift;;
   --inference) [ $# -ge 2 ] || { echo "--inference 에는 URL이 필요하다" >&2; exit 2; }; INF_URL=$2; shift 2;;
   --inference=*) INF_URL=${1#*=}; shift;;
@@ -133,6 +135,14 @@ if [ $UP_ONLY = 0 ]; then
   fi
   # --- 고정 포트 금지
   if grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT/compose.test.yaml" >/dev/null 2>&1; then fail "compose.test.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
+fi
+# --- 백업 필수(D88 U6): 설정이 없으면 backup 잡이 CRIT 로 실패한다. 기동 전에 막는다. 규칙의 정본은 scripts/backup-lib.sh
+if [ $CHECK_BACKUP = 1 ]; then
+  echo "== 백업 설정"
+  BOUT=$(bash "$(dirname "$0")/backup-check.sh" 2>&1); BRC=$?
+  if [ $BRC = 0 ]; then
+    while IFS= read -r l; do case "$l" in WARN:*) warn "${l#WARN: }" "BACKUP_DIR 를 다른 디스크나 원격 마운트로 바꾼다 (config/backup.env.example)";; OK:*) ok "${l#OK: }";; esac; done <<<"$BOUT"
+  else fail "$(echo "$BOUT" | sed -n 's/^CRIT: //p' | head -1)" "config/backup.env.example 을 config/backup.env 로 복사해 채운다. 수신자 공개키 만드는 법과 복호 키 보관: docs/SETUP.md 백업 절"; fi
 fi
 # --- 실제 LLM(GPU) 준비(D72/D73): 읽기 전용 점검. 컨테이너에서 GPU가 보여야 하고, 프로파일이 GPU 메모리에 맞아야 한다
 if [ $LLM = 1 ]; then

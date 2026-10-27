@@ -10,6 +10,10 @@ jobs:
     where: serving
     command: ["scripts/backup-all.sh"]
     interval_seconds: 86400
+  - name: backup-restore-test         # 정기 복원 시험(D88 U6): 시험용 키쌍으로 암호화 백업 -> 복호 -> 임시 DB 복원 -> 행 지문 대조 + 실제 백업 파일 무결성. 주 1회(604800초)는 시작값이며 측정·표준 근거 없음(docs/adr/0001)
+    where: serving
+    command: ["scripts/backup-restore-test.sh"]
+    interval_seconds: 604800
   - name: release-gate-collector      # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다(멱등)
     where: serving
     command: ["scripts/run-job.sh", "job-release-gate-collect"]
