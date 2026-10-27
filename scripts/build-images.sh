@@ -45,7 +45,7 @@ if [ "$ONLY" = "  " ]; then
 fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
-# 경계 계약·turn-engine·model-runtime 태그(lib.sh 의 기준값, 2.0.0 구조). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
+# 경계 계약·turn-engine·model-runtime 태그(lib.sh 의 기준값, 2.0 구조). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
 export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG" TE="$DEPLOY_TE_TAG"   # 태그는 lib.sh 한 곳에서 정한다
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
