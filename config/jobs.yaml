@@ -6,6 +6,10 @@ jobs:
     where: serving
     command: ["scripts/run-job.sh", "job-ops-feedback"]
     interval_seconds: 3600
+  - name: survey-purge                # 세션 보존 정리(D88/U4: 종료 후 90일, 설정 config/survey.env). 멱등
+    where: serving
+    command: ["scripts/run-job.sh", "job-survey-purge"]
+    interval_seconds: 86400
   - name: backup                      # 파일 저장소(gate-data 번들)와 PostgreSQL(pg_dump) 백업. 설정(config/backup.env)이 없으면 거부한다
     where: serving
     command: ["scripts/backup-all.sh"]

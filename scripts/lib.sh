@@ -16,7 +16,7 @@ detect_docker() {
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
 DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v2.0.2}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
 DEPLOY_BC_TAG_SD="v2.0.2"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용, requirements.lock)
-DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.7.2}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.7.3}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.4.0}"          # turn-engine (survey-service·release-gate 빌드와 model-serving 이미지 라벨)

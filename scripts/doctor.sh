@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --inference) [ $# -ge 2 ] || { echo "--inference 에는 URL이 필요하다" >&2; exit 2; }; INF_URL=$2; shift 2;;
   --inference=*) INF_URL=${1#*=}; shift;;
   -h|--help) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
+  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--backup] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
 case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
 FAILS=0; WARNS=0; UNABLES=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
@@ -64,6 +64,9 @@ else
 fi
 if [ -n "$D" ]; then
   if "$D" compose version >/dev/null 2>&1; then ok "docker compose $("$D" compose version --short 2>/dev/null)"; else fail "docker compose 플러그인이 없다" "리눅스: sudo apt-get install -y docker-compose-plugin. WSL: Docker Desktop 통합을 켠다 (docs/SETUP.md)"; fi
+  # compose.yaml 의 healthcheck start_interval(기동 직후 1초 간격 확인)은 Docker 엔진 25 이상이 필요하다
+  EV=$("$D" version --format '{{.Server.Version}}' 2>/dev/null | tr -d '\r'); EVM=${EV%%.*}
+  if [ -n "$EVM" ] && [ "$EVM" -ge 25 ] 2>/dev/null; then ok "docker 엔진 $EV (healthcheck start_interval 지원)"; else fail "docker 엔진 버전 $EV 은(는) 25 미만이거나 읽지 못했다" "compose.yaml 의 healthcheck start_interval 은 엔진 25 이상이 필요하다. Docker를 25 이상으로 올린다 (docs/SETUP.md)"; fi
   if [ $UP_ONLY = 0 ]; then
     if "$D" buildx version >/dev/null 2>&1; then ok "docker buildx"; else fail "docker buildx 플러그인이 없다" "이미지 빌드(--build-context)에 필요: sudo apt-get install -y docker-buildx-plugin (WSL은 Docker Desktop 통합)"; fi
   fi

@@ -16,9 +16,9 @@ cat > $T/mon.yaml <<'Y'
 targets:
   - {name: none, url: null}
 Y
-base=(--jobs $T/jobs.yaml --monitor $T/mon.yaml --disk-path $T --now $NOW)
+base=(--jobs $T/jobs.yaml --monitor $T/mon.yaml --disk-path $T --now $NOW --skip-backup)
 echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":0}}' > $T/s.json
-t "정상: 종료 코드 0, 위치 밖·주기 미정·url 미정은 SKIP 으로 따로 센다" 0 "SKIP(확인 못 함, 통과 아님) 3" "${base[@]}" --scheduler-state $T/s.json
+t "정상: 종료 코드 0, 위치 밖·주기 미정·url 미정은 SKIP 으로 따로 센다" 0 "SKIP(확인 못 함, 통과 아님) 4" "${base[@]}" --scheduler-state $T/s.json
 echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":3,"last_msg":"boom"}}' > $T/s.json
 t "잡의 마지막 종료 코드가 0이 아니면 CRIT(2)" 2 "마지막 종료 코드 3" "${base[@]}" --scheduler-state $T/s.json
 echo '{"a":{"last_start":999000,"last_end":999001,"last_exit":0}}' > $T/s.json
@@ -59,6 +59,14 @@ printf 'targets:\n  - {name: r, url: "http://127.0.0.1:%s/readyz", expect_status
 t "외부 감시 대상이 다른 코드면 CRIT" 2 "-> 503 (기대 200)" "${base[@]}" --scheduler-state $T/s.json
 printf 'targets:\n  - {name: d, url: "http://127.0.0.1:1/healthz"}\n' > $T/mon.yaml
 t "닿지 못하면 CRIT" 2 "닿지 못했다" "${base[@]}" --scheduler-state $T/s.json
+printf 'targets: []\n' > $T/mon-empty.yaml
+bb=(--jobs $T/jobs.yaml --monitor $T/mon-empty.yaml --disk-path $T --now $NOW --scheduler-state $T/s.json)
+t "백업 설정이 없으면 CRIT(U6)" 2 "백업이 돌지 않는다" "${bb[@]}" --backup-config $T/none.env
+printf 'BACKUP_DIR=\n' > $T/b0.env; t "BACKUP_DIR 이 비면 CRIT" 2 "BACKUP_DIR 이 비어" "${bb[@]}" --backup-config $T/b0.env
+mkdir -p $T/bk/pg-survey/20260101T000000Z $T/bk/pg-gate/20260101T000000Z; touch -d @999000 $T/bk/pg-survey/20260101T000000Z $T/bk/pg-gate/20260101T000000Z
+printf 'BACKUP_DIR=%s/bk\nBACKUP_ENCRYPT_RECIPIENTS=/x/pub\n' $T > $T/b1.env; t "최신 백업이 신선하면 OK, 암호화 gpg 면 OK" 0 "암호화" "${bb[@]}" --backup-config $T/b1.env
+t "최신 백업이 기준보다 오래되면 CRIT" 2 "초 전 (기준 100초" "${bb[@]}" --backup-config $T/b1.env --backup-max-age-seconds 100
+printf 'BACKUP_DIR=%s/bk\n' $T > $T/b2.env; t "암호화 none 은 WARN" 1 "평문" "${bb[@]}" --backup-config $T/b2.env
 mon0=(--monitor $T/mon.yaml); printf 'targets: []\n' > $T/mon.yaml
 rz() { echo "--readyz release-gate=http://127.0.0.1:$P/gate/$1"; }
 t "release-gate 판정 루프 정상이면 OK" 0 "연속 실패 0" "${base[@]}" --scheduler-state $T/s.json $(rz ok)

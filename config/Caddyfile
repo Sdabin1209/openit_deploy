@@ -29,6 +29,23 @@ import /etc/caddy/devices.caddy
 		output stdout
 		format json
 	}
+	# 요청 본문 상한(점검 B4·D5·G3): 사이트 기본 8MiB(계약 상한), 사람이 쓰는 승인·운영·검토 경로는 1MiB(JSON 몇 줄뿐). 초과하면 Caddy 가 413 으로 끊는다. 값은 시작값이다.
+	request_body {
+		max_size 8MiB
+	}
+	# 보안 헤더(B7): 정적 화면 이미지가 같은 헤더를 이미 붙이더라도 gateway 가 한 곳에서 보장한다. 마이크(STT)를 쓰는 키오스크 때문에 Permissions-Policy 는 두지 않는다.
+	# HSTS(Strict-Transport-Security)는 TLS 가 정해지기 전에 켜면 HTTP 접속을 막으므로 도메인·인증서(사용자 결정 U5)가 정해진 뒤에 아래 줄의 주석을 푼다.
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		-Server
+		#Strict-Transport-Security "max-age=31536000"
+	}
+	# 기기 설정 파일(/config.json)은 기기마다 그 기기의 정적 서버가 낸다(scripts/kiosk-add-device.sh). 중앙 kiosk-frontend 에는 기기 토큰 파일을 마운트하지 않고, 인증 없는 경로로 새지 않게 여기서도 막는다.
+	handle /config.json {
+		respond "not found" 404
+	}
 	handle /healthz {
 		respond "ok" 200
 	}
@@ -101,6 +118,9 @@ import /etc/caddy/devices.caddy
 	}
 	handle @adminwrite {
 		import authenticate
+		request_body {
+			max_size 1MiB
+		}
 		handle @role_approver {
 			reverse_proxy release-gate:8080 {
 				import proxy_limits 15s
@@ -139,6 +159,9 @@ import /etc/caddy/devices.caddy
 	}
 	handle @reviewwrite {
 		import authenticate
+		request_body {
+			max_size 1MiB
+		}
 		handle @role_reviewer {
 			reverse_proxy ops-feedback-ingest:8080 {
 				import proxy_limits 10s
@@ -186,6 +209,9 @@ import /etc/caddy/devices.caddy
 	}
 	handle @operatewrite {
 		import authenticate
+		request_body {
+			max_size 1MiB
+		}
 		handle @role_operator {
 			reverse_proxy release-gate:8080 {
 				import proxy_limits 15s

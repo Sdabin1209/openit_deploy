@@ -62,18 +62,20 @@ def validate_survey(name, obj):
     schema = survey_schema.load_schema(name)
     errs = list(jsonschema.validators.validator_for(schema)(schema, registry=reg).iter_errors(obj))
     assert not errs, f"문진 스키마 {name} 위반: {errs[0].message}"
-def http(method, k, path, token=None, body=None, raw=None, ctype="application/json", basic=None):
+def http(method, k, path, token=None, body=None, raw=None, ctype="application/json", basic=None, headers=None):
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
     req = urllib.request.Request(URL(k) + path, data=data, method=method)
     if token: req.add_header("Authorization", f"Bearer {token}")
     if basic: req.add_header("Authorization", "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode())
     if data is not None: req.add_header("Content-Type", ctype)
+    for hk, hv in (headers or {}).items(): req.add_header(hk, hv)
     try:
         with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
     except urllib.error.HTTPError as e:
         b = e.read()
         try: return e.code, json.loads(b)
         except Exception: return e.code, b.decode(errors="replace")
+RVH = {"X-Openit-User": "reviewer-direct-e2e"}   # 검토 게시는 X-Openit-User(gateway 가 붙이는 인증 사용자)가 없으면 403(ops-feedback D88/U7). gateway 를 거치지 않는 직접 호출에 시험용 값을 붙인다
 OPERATOR_ID = "operator-e2e-script"   # 시험용 운영자 ID: 게이트웨이가 계정 ID를 X-Openit-User 로 붙이는 것을 스크립트가 직접 흉내 낸다
 def gate_ops(path, body, user=OPERATOR_ID, token=None):
     """release-gate 의 activate·rollback 을 HTTP 로 부른다(D85: 역할은 쓰기 토큰, 행위자는 X-Openit-User 헤더. SDK 는 헤더를 못 보낸다). (상태, JSON 본문)을 돌려준다.
@@ -851,7 +853,7 @@ def step5m():
     n_final = utt_count(sv2, "아니요 없어요")
     # model-runtime 요청 상한(MODEL_RUNTIME_REQUEST_DEADLINE_S 3.5s)과 엔진 멈춤 시 /readyz 503 은 pause 로는 볼 수 없다(컨테이너가 통째로 얼어 /readyz 도 응답하지 못한다).
     # 이 이미지가 그 코드를 가졌는지는 라벨의 model-runtime 태그로만 안다: 태그가 73e79f9(요청 상한) 이후를 포함해야 한다.
-    chk_ = subprocess.run(["bash", str(ROOT / "scripts/check-health.sh"), "--project", a.project, "--disk-path", str(WORK), "--scheduler-state", str(WORK / "none.json"), "--jobs", str(ROOT / "config/jobs.yaml")], capture_output=True, text=True)
+    chk_ = subprocess.run(["bash", str(ROOT / "scripts/check-health.sh"), "--project", a.project, "--skip-backup", "--disk-path", str(WORK), "--scheduler-state", str(WORK / "none.json"), "--jobs", str(ROOT / "config/jobs.yaml")], capture_output=True, text=True)
     lines = chk_.stdout.splitlines(); gate_l = [l for l in lines if "release-gate 판정 루프" in l]; ms_l = [l for l in lines if "readyz model-serving" in l]
     assert ms_l and ms_l[0].startswith("OK"), ("check-health 의 model-serving 판정", ms_l)
     assert gate_l and not gate_l[0].startswith(("CRIT", "SKIP")), ("check-health 의 release-gate 판정 루프", gate_l)
@@ -1018,13 +1020,13 @@ def step7():
     rec("7s", "REAL", f"question-authoring GET /v1/signals(저자 토큰, 읽기 토큰은 403)가 ops-feedback I7을 HTTP로 읽어 문항 세트 {QS}의 사례 수를 낸다(저작으로의 환류). 응답 {blob[:200]}")
     rv_tok = TOK("ops-review-reviewer")
     bad = {"review_status": "CONFIRMED", "expected": {"items": [{"bad": 1}]}, "expected_kind": "LORA_A"}
-    c, e = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, bad); assert c == 400, (c, e); validate("BoundaryError", e)
-    c, e2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, {"review_status": "CONFIRMED", "expected": GOOD_EXPECTED}); assert c == 400, (c, e2)
-    assert http("POST", "ops", f"/v1/cases/{cid}/review", TOK("ops-read-synthetic-data"), bad)[0] == 403, "읽기 토큰으로 검토 게시됨"
-    assert http("POST", "ops", f"/v1/cases/nonexistent-case/review", rv_tok, {"review_status": "DISMISSED"})[0] == 404
+    c, e = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, bad, headers=RVH); assert c == 400, (c, e); validate("BoundaryError", e)
+    c, e2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, {"review_status": "CONFIRMED", "expected": GOOD_EXPECTED}, headers=RVH); assert c == 400, (c, e2)
+    assert http("POST", "ops", f"/v1/cases/{cid}/review", TOK("ops-read-synthetic-data"), bad, headers=RVH)[0] == 403, "읽기 토큰으로 검토 게시됨"
+    assert http("POST", "ops", f"/v1/cases/nonexistent-case/review", rv_tok, {"review_status": "DISMISSED"}, headers=RVH)[0] == 404
     pi = dict(__import__("copy").deepcopy(STATE["extract_input"])); pi["user_utterance"] = "뇌졸중은 진단받은 적 없어요"   # 개인정보를 뺀 문장으로 검토자가 쓴 입력(시험 자료, ActionExtractionInput)
     badri = {**bad_ok(), "reviewed_input": {"user_utterance": 1}}
-    c, eri = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, badri); assert c == 400, ("잘못된 reviewed_input이 받아들여짐", c, eri)
+    c, eri = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, badri, headers=RVH); assert c == 400, ("잘못된 reviewed_input이 받아들여짐", c, eri)
     good = {"review_status": "CONFIRMED", "expected_kind": "LORA_A", "reviewed_input": pi, "expected": GOOD_EXPECTED}
     # ---- 게이트웨이 경유 검토(admin-console 검토 화면의 경로): 사람 계정(reviewer-e2e) 인증 뒤, ops-feedback 읽기/reviewer 쓰기 토큰은 게이트웨이가 붙인다
     assert gw_raw("GET", "/v1/cases")[0] == 401, "인증 없이 /v1/cases 가 열려 있다"

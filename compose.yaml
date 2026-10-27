@@ -3,6 +3,8 @@
 # 이름: 프로젝트 이름(-p)이 컨테이너·네트워크·볼륨 접두어다(운영 기본 deploy, 시험 deploy-e2e-*).
 name: deploy
 
+# 자원 한도(FAULT 점검 A9·F3·G3): 서비스마다 mem_limit·cpus·pids_limit. 값은 **시작값이며 측정 근거가 없다**(사용자 결정 아님). 환경 변수 <서비스>_MEM_LIMIT/_CPUS/_PIDS_LIMIT 로 바꾼다(config/resource-limits.env.example, ADR 0023).
+# 한도가 너무 낮으면 OOM kill(컨테이너 재시작)으로 드러난다: docs/runbook.md 자원 한도 절.
 x-hardening: &hardening
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
@@ -18,10 +20,13 @@ x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 c
   timeout: 3s
   retries: 5
   start_period: 20s
+  start_interval: 1s   # 왜: start_period 동안만 1초 간격으로 확인한다(기본 5초). 뜬 직후 healthy가 되어 depends_on 사슬과 `up --wait`가 빨라진다. 평시 간격(interval)은 그대로. Docker 엔진 25 이상 필요(doctor.sh가 확인)
 
 networks:
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
   serving:    # 문진 서비스 런타임 경로: survey-service <-> 수집 API, 릴리스 읽기
+  ui:         # gateway <-> 정적 화면(kiosk-frontend, admin-console). internal: 정적 화면 컨테이너는 외부로 나가지 못한다
+    internal: true
   authoring:  # 문항 저작
   release:    # 게이트와 그 입력·요청자(I1 읽기, 롤백 요청)
     internal: true
@@ -174,6 +179,10 @@ services:
       - -c
       - log_error_verbosity=terse
       - -c
+      - log_parameter_max_length=0          # 바인드 값은 로그에 남기지 않는다(PG13+, 오류 때도: 아래 _on_error)
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
       - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
       - -c
       - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
@@ -184,6 +193,7 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
+      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
 
   gateway:
     <<: *hardening
@@ -209,8 +219,8 @@ services:
     tmpfs: ["/tmp", "/data:uid=10001,gid=10001", "/config:uid=10001,gid=10001"]
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"
-    networks: [edge, serving]   # serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
+    networks: [edge, ui, serving]   # ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     <<: *hardening
@@ -218,7 +228,7 @@ services:
     cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
     pids_limit: ${KIOSK_FRONTEND_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
-    networks: [edge]
+    networks: [ui]
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
     <<: *hardening
@@ -226,8 +236,8 @@ services:
     cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
     pids_limit: ${ADMIN_CONSOLE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
-    networks: [edge]
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
+    networks: [ui]
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   survey-service:
     <<: *hardening
@@ -380,6 +390,25 @@ services:
     volumes:
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
     networks: [logs, release, db-ops]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    tmpfs: ["/tmp", "/data"]
+
+  job-survey-purge:             # 보존 정리(D88/U4): 끝난 지 SURVEY_SESSION_RETENTION_DAYS(survey.env, 90일) 지난 세션을 지운다. 지운 개수만 한 줄로 출력한다
+    profiles: ["jobs"]
+    mem_limit: ${JOB_SURVEY_PURGE_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${JOB_SURVEY_PURGE_CPUS:-0.5}
+    pids_limit: ${JOB_SURVEY_PURGE_PIDS_LIMIT:-128}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
+    command: ["python", "-m", "survey_service", "purge"]
+    env_file:
+      - ${CONFIG_DIR:-./config}/survey.env
+    environment:
+      SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn
+    secrets: [db-survey-dsn]
+    networks: [db-survey]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true

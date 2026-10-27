@@ -27,6 +27,7 @@ services:
     ports: ["127.0.0.1::8080"]
     environment:
       MODEL_RUNTIME_BACKEND: fake   # 시험: 출력이 고정된 가짜 백엔드
+      MODEL_RUNTIME_ALLOW_FAKE: "1"   # v0.7.3: fake 는 이 값이 1일 때만 시작한다(시험·개발 전용)
   model-registry:
     networks: [release, test-mr]
     ports: ["127.0.0.1::8080"]
