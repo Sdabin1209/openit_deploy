@@ -8,7 +8,8 @@
 #    옵션 없이 돌리는 전체 모드가 인도 전 필수다. 종료 코드는 돌린 검사 기준이다.
 # 시작 전에 scripts/check-all.sh(정적 점검)를 돌리고 FAIL 이면 멈춘다.
 # 끝에서 scripts/record-e2e.sh 가 결과 한 줄을 docs/E2E_RESULTS.md(E2E 통과 수의 정본)에 더한다(DEPLOY_NO_RECORD=1 이면 안 더함. 못 더하면 종료 코드 1).
-# 사용: scripts/e2e.sh [--fast] [--keep] [--keep-images] [--reuse-build]
+#  - --only <단계,...>: 단계 일부만(예: --only 5p, PostgreSQL 컨테이너 재시작 시험). --fast 처럼 9단계 뒷구간을 생략하고 정본에 기록하지 않는다. 전체 합격이 아니다.
+# 사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--keep] [--keep-images] [--reuse-build]
 set -o pipefail
 # 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
 CA_TXT=""
@@ -21,7 +22,14 @@ fi
 export DEPLOY_SKIP_DOCTOR=1
 source "$(dirname "$0")/lib.sh"
 KEEP=0; REUSE=0; KEEPIMG=0; FAST=0
-for x in "$@"; do case "$x" in --fast) FAST=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;; esac; done
+ONLY=""
+while [ $# -gt 0 ]; do case "$1" in
+  --fast) FAST=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;;
+  --only) [ $# -ge 2 ] || { echo "--only 에는 단계 목록이 필요하다 (예: --only 5p)" >&2; exit 2; }; ONLY=$2; shift;;
+  --only=*) ONLY=${1#*=};;
+esac; shift; done
+# --only: e2e_steps.py 의 단계 일부만 돌린다(개발 중 한 단계 확인용). 스택 기동과 준비는 같이 하고, 스케줄러·백업·롤백 구간은 생략하며 결과를 정본에 기록하지 않는다. 전체 합격이 아니다
+if [ -n "$ONLY" ]; then FAST=1; export DEPLOY_NO_RECORD=1; fi
 ID=$$; PROJECT=deploy-e2e-$ID; RPROJ=deploy-e2e-reg-$ID
 W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT=$PROJECT
@@ -49,7 +57,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[ "$FAST" = 1 ] && echo "!!! --fast 모드: 스케줄러, 백업·복구, 코드 축 롤백 구간을 생략한다. 전체 합격이 아니다(인도 전에는 옵션 없는 전체 모드 필수) !!!"
+[ -n "$ONLY" ] && echo "!!! --only $ONLY: 일부 단계만 돈다. 전체 합격이 아니다(기록 안 함) !!!"
+[ "$FAST" = 1 ] && [ -z "$ONLY" ] && echo "!!! --fast 모드: 스케줄러, 백업·복구, 코드 축 롤백 구간을 생략한다. 전체 합격이 아니다(인도 전에는 옵션 없는 전체 모드 필수) !!!"
 cat <<BANNER
 =============================================================================
  E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v2.0.2 (출고는 사람 승인, D53)
@@ -151,7 +160,7 @@ chk "survey-service 이미지의 io.openit.langgraph 라벨이 unknown이 아니
 sect "단계 1~8 (실제 서비스의 HTTP로 잇는다)"
 IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
 PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGW,\"ms\":$PMS}"
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id e2e-test | tee "$W/steps.log"
+"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id e2e-test ${ONLY:+--only "$ONLY"} | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 [ "$STEPS_RC" = 0 ] && res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고" || res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"
 chk "비밀 노출 점검: 환경 변수·inspect·exec env 에 secrets 값 없음 (check-secrets-hidden)" bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" "$PROJECT"

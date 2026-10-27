@@ -17,3 +17,7 @@
 | 9 | 모든 서비스가 Compose에서 이미지로 뜨고 주기 잡이 스케줄러로 돈다 | deploy | — | `/healthz`, digest 잠금으로 코드 축 롤백 |
 
 합격 조건: 1~9가 사람 손 없이 순서대로 실행되고, 모든 레코드가 계약 스키마와 해시 검증을 통과한다.
+
+## 단계 5p: PostgreSQL 컨테이너 재시작 (deploy 소유, 시나리오 9의 일부)
+
+`scripts/e2e_steps.py`의 `5p`. question-authoring에 자료를 등록해 쓴 뒤 postgres 컨테이너를 `docker stop`하고, 서비스 `/readyz`가 200이 아닌 상태가 되는 것(`/healthz`는 200 유지)을 관찰해 단계 출력에 코드와 경과 시간을 남긴다. `docker start`로 다시 띄우면 모든 서비스 `/readyz`가 200으로 돌아오는지, 재시작 전후 데이터베이스 행 지문(`pg-fingerprint.sh`)이 같은지, 복구 뒤 새 쓰기가 되는지 본다. 단계 8 뒤에 돈다. 단독 실행: `bash scripts/e2e.sh --only 5p`(활성 릴리스가 없어 survey-service는 제외). survey-service까지 보려면 활성 릴리스를 만드는 단계를 함께 준다: `--only 1,2,3,4,5p`. `--only`는 전체 합격이 아니며 `E2E_RESULTS.md`에 기록하지 않는다. 관찰에서 나온 영역 요청: [CR-D23](change-requests/CR-D23-survey-readyz-db-outage.md).

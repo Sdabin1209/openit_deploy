@@ -1003,7 +1003,67 @@ def demo_swap():
     STATE.setdefault("swaps", []).append({"release_id": rid, "packages": refs}); save()
     rec("demo_swap", "TEST-SUB", f"새 릴리스 {rid} 활성화(승인자는 스크립트가 대신함, TEST-SUB). model-serving 에서 LOADED. {', '.join(SWAP_SERVICES)} 컨테이너의 ID·StartedAt 불변")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+def step5p():
+    title("5p", "PostgreSQL 컨테이너 중지 -> 서비스 /readyz 비정상 관찰 -> 기동 -> /readyz 복구, 이전 데이터 보존, 새 쓰기 (D85)")
+    pg = f"{a.project}-postgres-1"
+    svcs = [("qa", "question-authoring"), ("gate", "release-gate"), ("ops", "ops-feedback-ingest"), ("survey", "survey-service")]
+    def ready(k):
+        try: return http("GET", k, "/readyz")
+        except Exception as e: return 0, f"{type(e).__name__}"
+    def healthy(k): return ready(k)[0] == 200
+    def pgfp(db):
+        return sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), db], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
+    has_release = "pointers" in STATE
+    if not has_release:
+        # 단독 실행: 활성 릴리스가 없으면 survey-service /readyz 는 DB 가 멀쩡해도 503 no_active_release 이다. 이 단계는 그 경우 survey-service 의 복구를 판정하지 못한다
+        svcs = [x for x in svcs if x[0] != "survey"]
+        print("  (활성 릴리스가 없어 survey-service 는 제외한다: 단계 4 를 포함해 돌려야 survey-service 복구도 확인된다)")
+    # 1) 서비스를 거쳐 데이터를 쓴다(question-authoring 자료 등록 -> 확인). 다른 데이터베이스는 행 지문으로 비교한다
+    qset = f"qs-{RID}-pgrestart"
+    form = (ROOT / "test/fixtures/question-form-v2.txt").read_text()
+    upload(qset, form, "pg1.txt")
+    before_v = [dict(v) for v in qa_reader().list_versions(qset)[0]]
+    assert len(before_v) == 1, before_v
+    dbs = ["qa", "gate", "ops_log", "ops_failure"] + (["survey"] if has_release else [])
+    fp0 = {d: pgfp(d) for d in dbs}
+    for k, n in svcs: assert healthy(k), f"{n} /readyz 가 처음부터 200 이 아니다: {ready(k)}"
+    # 2) 중지. /healthz(살아 있음)는 유지되고 /readyz 는 비정상이 되어야 한다
+    t0 = time.time(); sh([a.docker, "stop", pg])
+    obs = {}   # 서비스 -> (처음 비정상이 관찰된 시각, 코드, 본문 일부)
+    def all_down():
+        for k, n in svcs:
+            if k in obs: continue
+            c, b = ready(k)
+            if c != 200: obs[k] = (time.time() - t0, c, b if isinstance(b, str) else json.dumps(b, ensure_ascii=False)[:120])
+        return len(obs) == len(svcs)
+    wait(all_down, 90, "postgres 중지 뒤 모든 서비스의 /readyz 가 비정상(200 아님)", every=1)
+    for k, n in svcs:
+        sec, c, b = obs[k]; print(f"    {n:22} /readyz {c} ({sec:.0f}s 후) {b}")
+    for k, n in svcs:
+        hc = http("GET", k, "/healthz")[0]
+        assert hc == 200, f"{n} /healthz 가 DB 중지 중 {hc} (살아 있음 점검은 DB 와 무관해야 한다)"
+    # 3) 기동하고 복구를 기다린다
+    t1 = time.time(); sh([a.docker, "start", pg])
+    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+    t_pg = time.time() - t1
+    rec_t = {}
+    def all_up():
+        for k, n in svcs:
+            if k not in rec_t and healthy(k): rec_t[k] = time.time() - t1
+        return len(rec_t) == len(svcs)
+    wait(all_up, 180, "postgres 기동 뒤 모든 서비스의 /readyz 200 복구", every=1)
+    # 4) 데이터 보존과 새 쓰기
+    fp1 = {d: pgfp(d) for d in dbs}
+    diff = [d for d in dbs if fp0[d] != fp1[d]]
+    assert not diff, f"재시작 전후 행 지문이 다르다: {diff}"
+    after_v = [dict(v) for v in qa_reader().list_versions(qset)[0]]
+    assert after_v == before_v, ("문항 버전이 달라졌다", before_v, after_v)
+    upload(qset, form.replace("알려 주세요.", "들려 주세요."), "pg2.txt")
+    assert len(qa_reader().list_versions(qset)[0]) == 2, "복구 뒤 새 쓰기(버전 2)가 반영되지 않았다"
+    detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
+    rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:
