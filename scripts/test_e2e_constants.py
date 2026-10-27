@@ -44,6 +44,14 @@ class T(unittest.TestCase):
     def test_conn_refused_bound_is_far_below_header_limit(self):
         self.assertLess(const("GW_DIAL_PROXY_S") + const("DOCKER_DNS_FAIL_S") + 1.5, const("GW_HDR_GATE_S") / 2)
 
+    def test_release_gate_stop_grace_covers_hard_cap(self):
+        """compose 의 release-gate stop_grace_period 는 그 영역이 확정한 최악 종료 시간(하드 상한 35초, release-gate docs/adr/0008-timeouts.md) 이상이어야 한다."""
+        comp = (HERE.parent / "compose.yaml").read_text(encoding="utf-8")
+        blk = comp[comp.index("\n  release-gate:"):]
+        m = re.search(r"stop_grace_period:\s*(\d+)s", blk[:blk.index("\n  model-serving:")])
+        self.assertIsNotNone(m, "release-gate 에 stop_grace_period 가 없다")
+        self.assertGreaterEqual(int(m.group(1)), 35 + 5)
+
     def test_unused_constant_removed(self):
         self.assertNotIn("GW_PATIENT_CAP_S", STEPS)
 

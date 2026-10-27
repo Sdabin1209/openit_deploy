@@ -342,7 +342,7 @@ services:
     secrets: [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data]
     networks: [serving, release, db-gate]
-    stop_grace_period: 25s   # release-gate 종료 유예 GATE_SHUTDOWN_GRACE_SECONDS=20 + 여유 5초(처리 중 요청이 끝나기를 기다린 뒤 SIGKILL, release-gate CR-0008)
+    stop_grace_period: 40s   # release-gate 최악 종료 시간 하드 상한 35초(요청 소켓 30s 등, 근거 release-gate docs/adr/0008-timeouts.md, 측정 안 함) + 여유 5초 -> SIGKILL 전에 끝나게 한다. 값은 scripts/test_e2e_constants.py 가 35초와 대조한다
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
