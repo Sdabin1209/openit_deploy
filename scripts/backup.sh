@@ -16,6 +16,10 @@ UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK")
 STORES=${*:-gate-data models-data registry-data gateway-data}   # 세션·문항·로그·레지스트리 DB 는 PostgreSQL(D85)이라 pg-backup.sh 가 맡는다
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 umask 077   # 임시 평문 tar·partial 도 소유자 전용
+# 겹침 실행 방지(점검 M4): 같은 BACKUP_DIR 에서 두 번째 backup.sh 가 동시에 돌면 첫 번째의 진행 중 .partial 을 prune 이 지울 수 있다. 잠금을 못 잡으면 거부한다(종료 4)
+mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR" 2>/dev/null || true
+exec 9>"$BACKUP_DIR/.backup.lock"; flock -n 9 || { echo "CRIT: 다른 백업이 같은 BACKUP_DIR 에서 진행 중이다($BACKUP_DIR/.backup.lock): 겹쳐 돌리지 않는다" >&2; exit 4; }
+SKIPPED=""
 # 정리(점검 M1): 암호화 실패·중단·시그널 어느 경로에서도 평문 임시 파일(.tar-<시각>)과 partial(.partial-<시각>)을 지운다. 지우지 못하면 CRIT 로 남기고 비정상 종료(3)한다.
 CUR=""
 cleanup_tmp() {
@@ -31,7 +35,7 @@ trap cleanup_tmp EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
 vol_of() { case "$1" in registry-data) echo "${REGISTRY_PROJECT:-deploy-registry}_registry-data";; *) echo "${P}_$1";; esac; }
 for s in $STORES; do
   # gateway-data: gateway(Caddy) 내부 CA 루트와 비밀키(/data/caddy/pki). 잃으면 새 CA 가 만들어져 모든 키오스크·직원 PC가 다시 신뢰해야 한다(점검 M3). 비밀키라 평문으로는 백업하지 않는다(runbook 9-1)
-  if [ "$s" = gateway-data ] && [ "$BACKUP_CRYPT" = none ]; then echo "건너뜀: gateway-data(CA 비밀키)는 평문으로 백업하지 않는다(암호화 설정 필요)" >&2; continue; fi
+  if [ "$s" = gateway-data ] && [ "$BACKUP_CRYPT" = none ]; then echo "경고(WARN): gateway-data(CA 비밀키)는 평문으로 백업하지 않아 건너뛴다 -> 이 서버에는 CA 백업이 없다. 평문 모드(BACKUP_ALLOW_PLAINTEXT)는 시험 전용이다(암호화 설정 필요)" >&2; SKIPPED="$SKIPPED gateway-data"; continue; fi
   V=$(vol_of "$s")
   "$DOCKER" volume inspect "$V" >/dev/null 2>&1 || { case "$s" in registry-data) echo "건너뜀: 레지스트리 볼륨 $V 가 없다(레지스트리 프로젝트가 이 서버에 없음)"; continue;; *) die "볼륨이 없다: $V";; esac; }
   mkdir -p "$BACKUP_DIR/$s"; chmod 700 "$BACKUP_DIR/$s"
@@ -51,3 +55,4 @@ for s in $STORES; do
   echo "백업: $s -> $BACKUP_DIR/$s/$TS ($BACKUP_CRYPT)"
   backup_prune "$BACKUP_DIR/$s"
 done
+[ -z "$SKIPPED" ] || echo "요약 경고: 건너뛴 저장소:$SKIPPED (종료 코드 0이지만 백업이 빠졌다)" >&2

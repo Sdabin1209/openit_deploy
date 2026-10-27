@@ -77,11 +77,16 @@ N=$((N+1)); if [ ! -e "$W/backups/models-data/.tar-OLD" ]; then echo "  PASS bac
 echo "== gateway-data(내부 CA 루트·비밀키)도 암호화 백업된다 (점검 M3)"
 "$DOCKER" volume create "${P}_gateway-data" >/dev/null 2>&1
 UT=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-"$DOCKER" run --rm -v "${P}_gateway-data:/d" "$UT" sh -c 'mkdir -p /d/caddy/pki/authorities/local && echo FAKE-CA-PRIVATE-KEY-MARKER > /d/caddy/pki/authorities/local/root.key' >/dev/null 2>&1
+"$DOCKER" run --rm -v "${P}_gateway-data:/d" "$UT" sh -c 'mkdir -p /d/caddy/pki/authorities/local && echo FAKE-CA-PRIVATE-KEY-MARKER > /d/caddy/pki/authorities/local/root.key && chown -R 10001:10001 /d && chmod 600 /d/caddy/pki/authorities/local/root.key' >/dev/null 2>&1
 ok "backup.sh gateway-data (암호화)" bash "$DEPLOY_ROOT/scripts/backup.sh" gateway-data
 GD=$(ls -d "$W"/backups/gateway-data/2* | tail -1)
 ok "gateway-data 백업은 암호문이고 평문 표지가 없다" bash -c "ls '$GD'/*.gpg >/dev/null && ! grep -aq FAKE-CA-PRIVATE-KEY-MARKER '$GD'/*"
 ok "개인키(서버 밖)로 풀면 CA 비밀키 파일이 들어 있다(복원 시험)" bash -c "gpg --batch --quiet --decrypt '$GD'/gateway-data.tar.gpg 2>/dev/null | tar -tf - | grep -q 'caddy/pki/authorities/local/root.key'"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_ALLOW_PLAINTEXT=1\n' "$W/backups-plain" > "$W/bp.env"
 N=$((N+1)); BACKUP_CONFIG="$W/bp.env" bash "$DEPLOY_ROOT/scripts/backup.sh" gateway-data >/dev/null 2>&1; if ! ls "$W"/backups-plain/gateway-data/2* >/dev/null 2>&1; then echo "  PASS 평문 모드에서는 CA 비밀키를 백업하지 않는다"; else echo "  FAIL 평문 모드에서 CA 비밀키가 백업됐다"; FAILS=$((FAILS+1)); fi
+# 겹침 실행 방지(점검 M4): 다른 백업이 BACKUP_DIR 잠금을 쥐고 있으면 거부(종료 4)한다. (0600 파일 읽기: 위 가짜 root.key 를 uid 10001 소유 0600 으로 만들어 백업 도구(컨테이너 root)가 읽어 백업했다 = 위 복호 시험이 근거. 읽기 실패는 docker run 비정상 종료로 backup.sh 가 중단한다)
+exec 8>"$W/backups/.backup.lock"; flock -n 8
+rc "백업이 진행 중이면(잠금) 두 번째 backup.sh 는 거부 4" 4 bash "$DEPLOY_ROOT/scripts/backup.sh" models-data
+flock -u 8; exec 8>&-
+ok "잠금을 놓으면 다시 백업된다" bash "$DEPLOY_ROOT/scripts/backup.sh" models-data
 echo; [ $FAILS = 0 ] && echo "통과: 백업 자체 시험 $N건" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }
