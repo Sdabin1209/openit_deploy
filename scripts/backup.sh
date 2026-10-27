@@ -14,6 +14,19 @@ UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK")
 [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금 파일에 없다"
 STORES=${*:-gate-data models-data registry-data}   # 세션·문항·로그·레지스트리 DB 는 PostgreSQL(D85)이라 pg-backup.sh 가 맡는다
 TS=$(date -u +%Y%m%dT%H%M%SZ)
+umask 077   # 임시 평문 tar·partial 도 소유자 전용
+# 정리(점검 M1): 암호화 실패·중단·시그널 어느 경로에서도 평문 임시 파일(.tar-<시각>)과 partial(.partial-<시각>)을 지운다. 지우지 못하면 CRIT 로 남기고 비정상 종료(3)한다.
+CUR=""
+cleanup_tmp() {
+  local rc=$? s left=""
+  for s in $STORES; do
+    rm -rf "$BACKUP_DIR/$s/.tar-$TS" "$BACKUP_DIR/$s/.partial-$TS" 2>/dev/null
+    for f in "$BACKUP_DIR/$s/.tar-$TS" "$BACKUP_DIR/$s/.partial-$TS"; do [ -e "$f" ] && left="$left $f"; done
+  done
+  if [ -n "$left" ]; then echo "CRIT: 임시 평문/partial 파일을 지우지 못했다(수동 삭제 필요):$left" >&2; exit 3; fi
+  exit $rc
+}
+trap cleanup_tmp EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
 vol_of() { case "$1" in registry-data) echo "${REGISTRY_PROJECT:-deploy-registry}_registry-data";; *) echo "${P}_$1";; esac; }
 for s in $STORES; do
   V=$(vol_of "$s")
@@ -25,7 +38,7 @@ for s in $STORES; do
   P_DIR="$BACKUP_DIR/$s/.partial-$TS"
   if [ "$BACKUP_CRYPT" != none ]; then   # 디렉터리 -> tar -> 암호화. MANIFEST 는 평문 해시 목록이라 파일 이름·해시만 든다(내용 아님)
     tar -C "$P_DIR" -cf "$BACKUP_DIR/$s/.tar-$TS" . || die "tar 실패: $s"
-    rm -rf "$P_DIR"; mkdir -p "$P_DIR"
+    rm -rf "$P_DIR"; mkdir -p "$P_DIR"   # 평문 복사본(partial)은 tar 를 만든 즉시 지운다. 평문 tar 는 암호화 직후(성공 때는 backup_encrypt, 실패·중단 때는 위 trap)에 지워진다
     enc=$(backup_encrypt "$BACKUP_DIR/$s/.tar-$TS" "$P_DIR/$s.tar") || die "암호화 실패: $s"
     printf '{"store": "%s", "format": "tar", "encryption": "%s", "created_at": "%s", "stored_file": {"name": "%s", "sha256": "sha256:%s"}}\n' \
       "$s" "$BACKUP_CRYPT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$enc")" "$(sha256sum "$enc" | cut -d' ' -f1)" > "$P_DIR/MANIFEST.json"

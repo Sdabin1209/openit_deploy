@@ -66,4 +66,12 @@ ok "backup-restore-test.sh" bash "$DEPLOY_ROOT/scripts/backup-restore-test.sh"
 ok "임시 데이터베이스(rt_*)가 남지 않았다" bash -c "[ -z \"\$('$DOCKER' exec '$(C)' psql -U postgres -d postgres -Atqc \"SELECT datname FROM pg_database WHERE datname LIKE 'rt\\_%'\")\" ]"
 printf 'x' >> "$SN/survey.dump.gpg"
 rc "실제 백업 파일이 손상되면 복원 시험이 실패" 1 bash "$DEPLOY_ROOT/scripts/backup-restore-test.sh" survey
+echo "== 암호화 실패 시 평문·partial 이 남지 않는다 (점검 M1)"
+mkdir -p "$W/fakebin"; printf '#!/bin/sh\necho "가짜 gpg: 일부러 실패" >&2\nexit 2\n' > "$W/fakebin/gpg"; chmod +x "$W/fakebin/gpg"
+"$DOCKER" volume create "${P}_models-data" >/dev/null 2>&1
+rc "가짜 gpg 가 실패하면 backup.sh 도 비정상 종료" 1 env PATH="$W/fakebin:$PATH" bash "$DEPLOY_ROOT/scripts/backup.sh" models-data
+N=$((N+1)); if ! ls -a "$W/backups/models-data" 2>/dev/null | grep -qE '^\.(tar|partial)-'; then echo "  PASS 실패 뒤 평문 .tar-* 와 .partial-* 가 남지 않았다"; else echo "  FAIL 임시 파일이 남았다: $(ls -a "$W/backups/models-data" | tr '\n' ' ')"; FAILS=$((FAILS+1)); fi
+mkdir -p "$W/backups/models-data/.tar-OLD" ; touch -d '3 hours ago' "$W/backups/models-data/.tar-OLD"
+( source "$DEPLOY_ROOT/scripts/lib.sh"; source "$DEPLOY_ROOT/scripts/backup-lib.sh"; BACKUP_RETENTION_DAYS=14; backup_prune "$W/backups/models-data" ) >/dev/null 2>&1
+N=$((N+1)); if [ ! -e "$W/backups/models-data/.tar-OLD" ]; then echo "  PASS backup_prune 이 오래된 임시 파일(.tar-*)도 지운다"; else echo "  FAIL prune 이 임시 파일을 지우지 않았다"; FAILS=$((FAILS+1)); fi
 echo; [ $FAILS = 0 ] && echo "통과: 백업 자체 시험 $N건" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }

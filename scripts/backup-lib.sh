@@ -50,6 +50,8 @@ backup_encrypt() {
 backup_prune() {
   local dir=$1 old total d
   [ "$BACKUP_RETENTION_DAYS" -ge 0 ] || return 0
+  # 이 도구가 만든 임시 파일(.tar-*, .partial-*)이 접두사 때문에 영영 안 지워지는 일이 없게, 1시간이 지난 것은 지운다(실행 중인 백업은 건드리지 않는다; 점검 M1)
+  find "$dir" -mindepth 1 -maxdepth 1 \( -name '.tar-*' -o -name '.partial-*' \) -mmin +60 -exec rm -rf {} + 2>/dev/null || true
   mapfile -t old < <(find "$dir" -mindepth 1 -maxdepth 1 -type d -name '2*' -mtime +"$BACKUP_RETENTION_DAYS" | sort)
   total=$(find "$dir" -mindepth 1 -maxdepth 1 -type d -name '2*' | wc -l)
   for d in "${old[@]}"; do [ "$total" -gt 1 ] || break; rm -rf "$d"; total=$((total-1)); echo "보관 기간 경과로 삭제: $d"; done
