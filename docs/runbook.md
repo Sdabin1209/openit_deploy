@@ -83,7 +83,7 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 | 5개 데이터베이스 | `pg-backup.sh`: 병렬로 동시에 시작한 `pg_dump -Fc`, 파일마다 암호화 | `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump.age`(또는 `.gpg`) + `MANIFEST.json` | 각 데이터베이스 안에서는 단일 스냅샷. **데이터베이스 사이는 같은 시점이 아니다**: 덤프 시작 시각 차이는 가장 오래 걸리는 덤프 하나의 시간 이하이고 `MANIFEST.json`의 `dump_started/dump_finished`에 남는다. PostgreSQL은 여러 데이터베이스에 걸친 스냅샷을 지원하지 않는다. 정확히 같은 시점이 필요하면 쓰기 서비스(survey-service, question-authoring, ops-feedback-ingest, release-gate)를 멈추고 백업한다 |
 | gate-data(번들), models-data(모델 패키지), registry-data(레지스트리 이미지, 프로젝트 `deploy-registry`) | `backup.sh`: 복사 후 tar, 암호화 | `$BACKUP_DIR/<저장소>/<UTC 시각>/<저장소>.tar.age` | 볼륨 단위 |
 
-**이 백업에 들어 있지 않은 것: `secrets/`**(DB 암호, 비식별 salt `deid-salt`, 서비스 토큰). 서버를 잃으면 비밀 폴더를 별도로 보관한 사본에서 되돌려야 한다(보관 방법은 미정, 사용자 결정). salt를 잃으면 이후 비식별 값이 이전과 이어지지 않는다.
+`secrets/`(DB 암호, 비식별 salt `deid-salt`, 서비스 토큰, 계정 해시, 기기 토큰)는 DB 백업과 **별도 산출물**로 `backup-secrets.sh`가 같은 수신자 공개키로 암호화해 백업한다(4-6절). 서버를 잃으면 이것이 없으면 서비스가 다시 서지 못하고, salt를 잃으면 이후 비식별 값이 이전과 이어지지 않는다.
 
 `backup-all.sh`(스케줄러의 backup 잡, 매일)가 둘을 모두 돌린다. 레지스트리 볼륨이 이 서버에 없으면 건너뛴다고 출력한다.
 
@@ -109,6 +109,15 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 - **업그레이드 전에 백업한다**: `bash scripts/backup-all.sh`를 먼저 돌려 성공(종료 코드 0)을 확인하고 `up.sh`로 새 이미지를 적용한다. 실패하면 적용하지 않는다.
 - `rollback.sh`는 이미지 digest만 되돌린다(DB는 되돌리지 않는다). 새 이미지가 DB 스키마를 올렸다면 이전 이미지가 그 스키마를 읽는지는 **각 영역의 마이그레이션 정책에 달려 있다. deploy는 이를 확인하지 못했다(확인 못 함)**. 안전한 순서: (1) 업그레이드 전 백업, (2) 문제가 생기면 이미지 롤백, (3) 이전 이미지가 스키마 때문에 못 뜨면 업그레이드 전 백업으로 해당 데이터베이스를 복구(그 뒤에 쌓인 데이터는 사라진다). 영역에 하위 호환 마이그레이션(확장 후 정리) 정책이 있는지 해당 영역 문서를 확인한다.
 - PostgreSQL 주 버전(16 고정)은 덤프·복원 방식으로만 올린다(새 버전 서버에 복원). 볼륨을 새 주 버전 이미지에 그대로 붙이지 않는다.
+
+### 4-6. secrets/ 백업과 복구
+
+> **위험: 복호 개인키를 잃으면 이 백업(DB 백업 포함)은 영영 풀 수 없다.** 개인키는 서버에 없고(서버가 뚫려도 백업이 읽히지 않게 하려는 설계) 복구할 방법이 없다. 서로 다른 안전한 곳 2곳 이상(예: 금고의 오프라인 매체 + 담당자 비밀번호 관리자)에 보관하고, 담당자가 바뀔 때 인수인계 항목에 넣는다. 보관은 사람의 일이다.
+
+- `bash scripts/backup-secrets.sh`(backup 잡이 `backup-all.sh`로 매일 함께 돌린다): `secrets/` 전체를 tar로 묶어 수신자 공개키로 암호화한다. 대상은 `BACKUP_SECRETS_DIR`(없으면 `$BACKUP_DIR/secrets`, **DB 백업과 접근 권한이 다른 곳이 더 좋다**), 폴더 700·파일 600, 최신 `BACKUP_SECRETS_KEEP`개(기본 14, 근거 기록 없음)만 남긴다. 평문 모드에서는 거부한다. MANIFEST에는 값이 없다.
+- 복구(서버를 새로 세울 때): (1) 개인키를 가진 사람이 서버 밖에서 `age -d -i <키> -o secrets.tar secrets.tar.age`(또는 `gpg -d -o secrets.tar secrets.tar.gpg`)로 복호한다. (2) 새 서버에서 `bash scripts/restore-secrets.sh secrets.tar secrets --yes`(비어 있지 않은 폴더는 거부, `..`·절대 경로 tar는 거부, 모드는 `secret_mode`대로). (3) `bash scripts/check-secret-perms.sh secrets`. (4) 복호한 `secrets.tar`를 지운다. (5) DB는 4-3절로 복구한다. DB 암호가 같은 값으로 돌아오므로 `pg-roles.sh sync` 없이 서비스가 붙는다.
+- 이 복구 시험은 `bash scripts/test-backup-secrets.sh`(임시 키쌍으로 secrets/를 통째로 지우고 되살려 `deid-salt`가 같은 값으로 돌아오는지 확인)가 한다. 실제 키로 푸는 시험은 4-4절의 사람 시험에 secrets 복호도 포함한다.
+- 한계: secrets/가 백업된 시점 이후에 회전한 토큰은 사라진다(회전 뒤 즉시 `backup-secrets.sh`를 한 번 돌린다). 백업 파일 하나로 모든 비밀이 풀리므로 개인키는 그만큼 중요하다.
 
 ## 5. 주기 잡
 

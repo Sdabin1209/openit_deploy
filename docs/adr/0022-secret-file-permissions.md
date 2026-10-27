@@ -30,6 +30,11 @@
 - **Docker Swarm secrets**: uid/mode를 지원하나 swarm 도입은 이 구성의 규모에 과하다(ADR 0001-compose의 Swarm 항목).
 - **엔트리포인트가 시작 때 /run/secrets를 복사·chmod**: 이미지 엔트리포인트는 영역 소유라 deploy가 바꿀 수 없다.
 
+## 추가 검토(2026-10-28): 그룹 읽기(640) + `group_add`로 644를 없앨 수 있는가
+
+작은 격리 시험으로 확인했다(Engine 29.2.0, Compose 5.0.2). 호스트 사용자 소유·그룹 = 호스트 사용자의 주 그룹(gid 1000)인 **0640** 파일을 compose 파일 secret으로 마운트하고, `user: 10001:10001` 컨테이너에 `group_add: ["1000"]`을 주자 `id`에 groups=10001,1000이 나오고 파일을 **읽을 수 있었다**(READ_OK). 즉 이 버전에서 **된다**: chgrp(root 필요) 없이, 호스트 사용자의 주 그룹을 파일 그룹으로 쓰면 되기 때문이다. 남는 노출은 '그 그룹의 다른 호스트 사용자'(보통 개인 그룹이라 없음)로 644(모든 사용자)보다 좁다.
+**적용하지 않았다**: 서비스 약 13개의 `group_add`와 `gen-secrets.sh`의 모드 결정(`secret_mode`를 640으로, 호스트 gid 변수 `SECRETS_GID=$(id -g)`)을 한꺼번에 바꿔야 하는데, 이 변경은 병합 조율 중인 공용 파일(`compose.yaml`, `gen-secrets.sh`)을 건드린다. 적용 절차: (1) `x-hardening`에 `group_add: ["${SECRETS_GID:?}"]` (job-*와 `compose.inference.yaml`도), (2) `secret_mode`가 컨테이너 읽기 파일에 640을 돌려주고 파일의 그룹이 `SECRETS_GID`인지 `check-secret-perms.sh`가 확인, (3) 다른 호스트로 옮기는 추론 서버용 파일은 그 호스트의 gid를 따로 준다. 주의: 다른 호스트·CI에서 gid가 다르면 `SECRETS_GID` 지정이 필요하다. 전체 E2E에서 확인한 뒤 적용하는 것을 권한다.
+
 ## 결과
 
 - 얻는 것: 호스트 전용 비밀은 600, 평문 계정 암호는 운영에서 지울 수 있다, 권한 어긋남을 doctor가 잡는다, 회전 절차가 문서화됐다.
