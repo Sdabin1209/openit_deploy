@@ -642,7 +642,7 @@ def step5():
     assert gw_text("/staff/", OPERATOR())[0] == 403, "operator 계정이 직원 콘솔 화면을 연다"
     # 직원 개입은 서비스에 직접(내부 경로)만: 키오스크 토큰은 403, 직원 토큰은 멈추지 않은 세션에 409(PUBLIC_API.md)
     ib = {"session_id": sid, "decision": "RESUME", "turn_id": "i1"}
-    assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", TOK("survey-api-kiosk"), ib)[0] == 403, "키오스크 토큰으로 직원 개입이 열림"
+    assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", KDEV(), ib)[0] == 403, "키오스크 토큰으로 직원 개입이 열림"
     # D85: 서비스는 개입의 행위자를 게이트웨이가 붙인 X-Openit-User 로 정한다(없으면 401). 내부 직접 호출에는 헤더를 직접 붙인다
     def survey_intervene(user):
         rq = urllib.request.Request(URL("survey") + f"/v1/sessions/{sid}/intervention", data=json.dumps(ib).encode(), method="POST")
@@ -969,7 +969,7 @@ def step5r():
     c, tr = public_turn(sid, "rk-1", utter); assert c == 200, (c, tr)
     # (D) 위험 신호: risk-source 토큰으로 서비스에 직접. 다른 역할 토큰은 403, 게이트웨이에는 열려 있지 않다
     sig = {"signal_id": f"sig-{RID}-1", "source": "e2e-detector", "code": "TEST_RISK", "severity": "RISK"}
-    for lab, tk in (("kiosk", TOK("survey-api-kiosk")), ("staff", TOK("survey-api-staff")), ("result-reader", RES())):
+    for lab, tk in (("kiosk", KDEV()), ("staff", TOK("survey-api-staff")), ("result-reader", RES())):
         assert http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", tk, sig)[0] in (401, 403), f"{lab} 토큰으로 위험 신호 입력이 열림"
     assert http("POST", "gw", f"/v1/sessions/{sid}/risk-signals", KDEV(), sig)[0] in (403, 404), "위험 신호 입력이 게이트웨이를 통과함"
     c, r1 = http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 201, (c, r1)
@@ -998,7 +998,7 @@ def step5r():
     assert rs["subject_ref"] == subj and rs["status"].startswith("ENDED") and isinstance(rs["answers"], list), rs
     assert utter not in json.dumps(rs, ensure_ascii=False), "결과 조회 응답에 환자 발화 원문이 있다"
     c, lst = http("GET", "survey", f"/v1/results?subject_ref={subj}", RES()); assert c == 200 and any(x["session_id"] == sid for x in lst["items"]), (c, str(lst)[:150])
-    for lab, tk in (("kiosk", TOK("survey-api-kiosk")), ("staff", TOK("survey-api-staff")), ("risk-source", RSK())):
+    for lab, tk in (("kiosk", KDEV()), ("staff", TOK("survey-api-staff")), ("risk-source", RSK())):
         assert http("GET", "survey", f"/v1/results/{sid}", tk)[0] in (401, 403), f"{lab} 토큰으로 결과 조회가 열림"
     for pth in (f"/v1/results/{sid}", f"/v1/results?subject_ref={subj}"):
         assert gw_raw("GET", pth, basic=STAFF())[0] == 404 and gw_raw("GET", pth, basic=OPERATOR())[0] == 404, f"결과 조회 {pth} 가 게이트웨이에 열려 있다"
@@ -1041,7 +1041,7 @@ def step5f():
     rec("5b", "REAL", "프론트의 공개 API 호출 순서가 게이트웨이(같은 출처, 토큰 없이)를 거쳐 실제 survey-service에 통과: 세션 시작 -> 발화 2턴 -> state(SessionState 스키마, ACTIVE) -> 종료")
     # (c) 직원 경로 권한 분리
     c1 = http("GET", "gw", "/v1/staff/alerts", None)[0]; assert c1 in (401, 403), c1
-    c2 = http("GET", "survey", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
+    c2 = http("GET", "survey", "/v1/staff/alerts", KDEV())[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
     c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 in (401, 403), c3   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
