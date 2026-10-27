@@ -74,3 +74,15 @@
 | python urllib(E2E의 `gwk`) | 8.51 | 8.50 | 10.40 | 8.50 |
 
 확인한 것: gateway(Caddy)의 처리 시간은 두 환경 모두 설정값 8.50초로 정확하다. 연결·요청 전송 단계는 0.000초(클라이언트-게시 포트 사이)이고 지연은 응답을 기다리는 구간에 있다. gpu-dev에서만 클라이언트가 gateway보다 0.5초(curl) 또는 1.9초(python, 5회 중 2회)를 더 본다. 즉 초과분은 gateway가 응답을 쓴 뒤 호스트 클라이언트가 받기까지의 구간에서 생긴다. 이전 절의 "gpu-dev에서 Caddy 타이머가 약 1.065배" 해석은 이 계측으로 정정한다: curl로 잰 초과분이 같은 구간의 지연이었고 Caddy의 타이머는 정확했다. 추정(원인 미확인): Docker Desktop 4.50(WSL2)의 호스트 게시 포트 전달 계층이 오래 기다린 응답에 지연을 더한다. 같은 네트워크 안에서 부른 비교는 busybox wget의 재시도 때문에 깨끗하지 않아 결론에 쓰지 않았다. 이 PC(Docker Desktop 4.60.1)에서는 나타나지 않았다.
+
+## 단계 2: 학습 데이터 게시 (synthetic-data 게시기 모드)
+
+`scripts/e2e_steps.py`의 `step2`. synthetic-data가 `python -m synthetic_data import --config <설정>`로 입력 디렉터리의 jsonl 6개(`lora_{a,b}_{train,val,test}.jsonl`)를 v2 스키마로 행 단위 검증하고 건수·sha256을 기록해 게시한다. 이전의 생성 파이프라인 호출(G02: v1 내용이라 전부 제외돼 BLOCKED)은 이 단계에서 쓰지 않는다(단계 7의 시드 데이터셋 생성은 그대로 `run`을 쓴다).
+
+**상태: 배선 REAL, 데이터는 시험용.** 입력 `test/import-v2/*.jsonl` 6개는 데이터셋 담당의 실제 학습 데이터가 **아니다**. 이 E2E를 위해 `test/import-v2/make_rows.py`가 만든 아주 작은 모음(파일당 정상 4행)이고, 행 형식(`human_review`, `scenario_id`, `split`, `messages[system,user,assistant]`)은 synthetic-data 문서의 **추정**을 따랐다. user/assistant 내용은 boundary-contracts v2 스키마(`ActionExtractionInput`/`ActionExtraction`, `ResponseRequest`/`ResponseText`)로 생성 때 직접 검증했고 칸 키는 `test/fake-model/question_flow.json`의 실제 키다. 실제 데이터로 게시한 적은 없다.
+
+확인하는 것: (a) 일부러 넣은 위반 2행(`lora_a_train`의 v2 출력 위반 1, `lora_b_val`의 JSON 아님 1)이 허용 1행을 넘으면 게시하지 않는다(종료 코드 4, `REJECTED`, 저장소에 데이터셋이 생기지 않음). (b) 허용 2행이면 26행 중 24행이 통과해 DatasetManifest가 게시된다(스키마, 파일 해시, 보고서의 입력 sha256·줄 수가 파일과 일치, 분할 TRAIN/VALIDATION/EVAL, 샘플 24개). (c) 같은 입력 재실행은 `ALREADY_PUBLISHED`. 게시된 데이터셋 참조는 `STATE["dataset"]`로 단계 3(모델 패키지 계보)·4가 쓴다.
+
+못 보는 것: 의미 검사(targets, next_item, 건너뛰기 순서, save: 게시기가 아직 하지 않음, synthetic-data CR-006 2번), 실제 데이터 형식, 보지 못한 문항 세트(HELD_OUT) 평가 분리(이전 생성 경로가 확인하던 항목이었으나 이 입력에는 없다).
+
+CR-006의 미해결 항목을 deploy가 정하지 않고 임시로 채운 값: 문항 세트 출처는 단계 1이 만든 문항 세트 참조(id, version, content_hash)를 설정에 넣었고, `turn_engine_version`은 lib.sh의 기준 태그(e2e.sh가 넘기는 값)이며, `source_label`은 `deploy-e2e-test-data`, `generator_version`은 게시기가 정하는 값을 그대로 둔다. 미검수(`human_review: pending`) 행은 만들지 않았다(전부 `auto_only`).

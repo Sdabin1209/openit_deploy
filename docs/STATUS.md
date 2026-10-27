@@ -205,3 +205,8 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 - `scripts/probe-serving.py`: model-serving extract 측정 도구(GPU_HOLE H4에서 쓴다). 자체 시험 `scripts/test_probe_serving.py`.
 - 확인한 것(이 PC, 가짜 백엔드 데모): 시험용 어댑터 교체가 통과하고 다른 서비스 컨테이너의 StartedAt이 불변이며 새 릴리스가 LOADED. 기반 모델 불일치 어댑터는 거부되고 활성 릴리스는 그대로. probe는 데모의 model-serving에 돌아 표가 나온다.
 - 확인하지 못한 것: `--llm`(vLLM)에서의 교체, 실제 모델의 OUTPUT_INVALID 분포, 전체 E2E.
+
+## E2E 단계 2를 synthetic-data 게시기 모드로 (배선 REAL, 데이터는 시험용)
+
+- 한 일: 단계 2가 `synthetic_data import`로 `test/import-v2/`의 시험용 v2 jsonl 6개를 검증·게시한다(허용치 초과 거부 종료 4, 허용 안 게시, 재실행 멱등). 상세와 한계는 docs/E2E.md "단계 2". compose에는 synthetic-data 서비스가 없고(GPU 서버 몫, D40) 게시기도 호스트에서 돌리므로 compose 설정은 바꾸지 않았다.
+- 남은 것: 실제 학습 데이터 파일로 게시한 적 없음. 의미 검사와 CR-006 항목(문항 세트 출처, 버전 값, 미검수 행 정책)은 헤드/synthetic-data 결정을 기다린다.

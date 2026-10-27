@@ -61,7 +61,7 @@ bash scripts/demo.sh up                # 3) 화면을 눌러 보는 데모(프�
 
 확인된 것(모두 이 PC의 WSL2 + Docker Desktop 한 환경, docs/STATUS.md):
 - 가짜 모델 E2E(`scripts/e2e.sh`)의 통과 수는 `docs/E2E_RESULTS.md`가 정본이다(실행마다 e2e.sh가 한 줄을 자동으로 더하고, 과거 값은 근거와 함께 그 파일의 '과거 기록' 표에 있다). 이 문서에는 숫자를 옮겨 적지 않는다(check-all 규칙 10이 잡는다).
-- 단계 상태(STATUS.md 열다섯째 구간): 2단계 BLOCKED(G02), 직원 알림 화면 SKIPPED(G01), 3·6단계 일부 TEST-SUB(시험 대역). 즉 "전체 합격"이 아니라 "돌린 검사가 모두 통과"다.
+- 단계 상태(STATUS.md 열다섯째 구간): 2단계는 배선 REAL·데이터는 시험용(synthetic-data 게시기 모드, 실제 학습 데이터로 게시한 적 없음; docs/E2E.md), 직원 알림 화면 SKIPPED(G01), 3·6단계 일부 TEST-SUB(시험 대역). 즉 "전체 합격"이 아니라 "돌린 검사가 모두 통과"다.
 - 기준 태그: boundary-contracts v2.0.2, turn-engine v0.4.0, model-runtime v0.7.2 (`scripts/lib.sh`).
 - gpu-dev(12GB)에서 Qwen3-1.7B 적재와 형식 통과 확인, 단 키오스크 14턴은 학습 안 된 모델 탓에 모두 실패(OPEN_GAPS U01, U07. 이 세션은 확인하지 않고 대장을 옮겼다).
 

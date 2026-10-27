@@ -199,30 +199,48 @@ def read_manifest(out):
     root = WORK / "datasets" / f"ds-{RID}" / out["version"]
     m = json.loads((root / "manifest.json").read_text()); validate("DatasetManifest", m); return m, root
 
+IMPORT_DIR = ROOT / "test/import-v2"   # 이 E2E 를 위해 직접 만든 아주 작은 v2 형식 jsonl 6개(실제 학습 데이터가 아니다, test/import-v2/make_rows.py)
+def imp_config(name, max_invalid_rows, store_root):
+    q = STATE["qs"][-1]   # 문항 세트 출처: CR-006 미정이라 임시로 이 E2E 가 단계 1 에서 만든 문항 세트 참조를 적는다(deploy 가 정한 값이 아니다)
+    cfg = {"dataset_id": f"ds-{RID}", "input_dir": str(IMPORT_DIR), "survey_schema_dir": str(SD["schema"]),
+           "question_sets": [{"id": QS, "version": q["version"], "content_hash": q["content_hash"]}],
+           "source_label": "deploy-e2e-test-data", "turn_engine_version": a.turn_engine_version, "created_at": "2026-10-27T00:00:00Z",
+           "tolerance": {"max_invalid_rows": max_invalid_rows, "max_invalid_rate": 1.0},
+           "output": {"work_dir": str(WORK / f"sd-import-{name}"), "store": {"kind": "file", "root": str(store_root)}}}
+    p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
+
+def run_import(name, max_invalid_rows, store_root):
+    p = imp_config(name, max_invalid_rows, store_root)
+    r = subprocess.run([str(SD["venv"]), "-m", "synthetic_data", "import", "--config", str(p)], cwd=str(SD["src"]), capture_output=True, text=True,
+                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
+    return r.returncode, out, json.loads((WORK / f"sd-import-{name}" / "import_report.json").read_text())
+
 def step2():
-    title(2, "문항을 읽어 학습·평가 데이터를 만든다 (synthetic-data run-once를 호스트에서, 문항은 I1 HTTP)")
-    out = run_sd("1", seeds=False)
-    if out.get("status") == "NOTHING_TO_DO":
-        # OPEN_GAPS G02: synthetic-data 의 생성 파이프라인이 아직 v1 내용을 만들어 v2 스키마 검사에서 전부 빠진다(영역의 역할이 정해지기 전). 데이터셋이 게시되지 않는다.
-        rep_ = json.loads((WORK / "sd-work-1" / "report.json").read_text())
-        assert any("v2 스키마 위반" in n for n in rep_.get("notes", [])) and rep_.get("dropped", {}).get("schema_sample", 0) > 0, f"예상한 G02 상태가 아니다: {rep_}"
-        out2 = run_sd("1b", seeds=False); assert out2.get("status") == "NOTHING_TO_DO", f"재실행이 같은 결과가 아니다: {out2}"
-        # 이후 단계의 계보(lineage.dataset)에 쓸 자리표시 참조(TEST-SUB): 게시된 데이터셋이 아니다
-        STATE["dataset"] = {"id": f"ds-{RID}", "version": "0-test-sub", "content_hash": canonical.sha256_hash({"test-sub": "no dataset published (OPEN_GAPS G02)"})}; save()
-        rec(2, "BLOCKED", f"synthetic-data run-once(호스트, 문항은 I1 HTTP)는 돌았으나 데이터셋이 게시되지 않았다(status NOTHING_TO_DO, 합성 샘플 {rep_['dropped']['schema_sample']}건이 v2 스키마 위반으로 제외, 재실행도 같은 결과). 원인은 OPEN_GAPS G02(생성기가 v1 내용을 만든다, 영역 역할 미정)이며 deploy가 고칠 수 없다. 이후 단계의 lineage.dataset 은 자리표시 참조(TEST-SUB)로 대신한다"); return
-    assert out.get("status") in ("PUBLISHED", "ALREADY_PUBLISHED"), out
-    m, root = read_manifest(out)
-    files = {f["path"]: f for f in m["files"]}
+    title(2, "학습 데이터 게시 (synthetic-data 게시기 모드 import: 시험용 v2 jsonl 6개를 행 단위로 검증하고 허용치 안에서 게시) -- 배선 REAL, 데이터는 시험용")
+    print("  !! 입력은 데이터셋 담당의 실제 학습 데이터가 아니다: 이 E2E 를 위해 직접 만든 아주 작은 모음이고 행 형식은 추정이다(실제 데이터로 게시한 적 없음) !!")
+    files = sorted(IMPORT_DIR.glob("lora_*_*.jsonl")); assert len(files) == 6, [f.name for f in files]
+    # (a) 허용치 초과: 일부러 넣은 위반 2행이 허용 1행을 넘으면 게시하지 않는다(종료 코드 4, REJECTED, 저장소에 데이터셋이 생기지 않는다)
+    rc, o, rep = run_import("reject", 1, WORK / "datasets-rejected")
+    assert rc == 4 and o.get("status") == "REJECTED", f"허용치 초과가 게시 거부(종료 4)가 아니다: {rc} {o}"
+    assert not (WORK / "datasets-rejected" / f"ds-{RID}").exists(), "거부했는데 저장소에 데이터셋이 생겼다"
+    # (b) 허용치 안(2행): 게시. 위반 집계와 입력 해시를 보고서에서 확인한다
+    rc, o, rep = run_import("ok", 2, WORK / "datasets")
+    assert rc == 0 and o.get("status") in ("PUBLISHED", "ALREADY_PUBLISHED"), f"게시 실패: {rc} {o}"
+    cnt = o["counts"]; assert (cnt["rows_total"], cnt["rows_valid"], cnt["rows_invalid"]) == (26, 24, 2), cnt
+    assert sum(rep["invalid_reasons_by_file"]["lora_a_train.jsonl"].values()) >= 1 and sum(rep["invalid_reasons_by_file"]["lora_b_val.jsonl"].values()) == 1, rep["invalid_reasons_by_file"]
+    for f in files:
+        h = "sha256:" + hashlib.sha256(f.read_bytes()).hexdigest(); assert rep["inputs"][f.name]["sha256"] == h, f"입력 해시가 다르다 {f.name}"
+        assert rep["inputs"][f.name]["rows"] == len(f.read_text(encoding="utf-8").splitlines()), f.name
+    m, root = read_manifest(o)
     for f in m["files"]:
         assert canonical.file_hash(root / "files" / f["path"]) == f["content_hash"], f"파일 해시 불일치 {f['path']}"
-    ids = lambda f: {q["id"] for q in f.get("question_sets", [])}
-    unseen = [f for f in m["files"] if QSU in ids(f)]
-    assert unseen, "보지 못한 문항 세트 평가 파일이 없다"
-    assert all(f["split"] == "EVAL" for f in unseen) and all(QSU not in ids(f) for f in m["files"] if f["split"] in ("TRAIN", "VALIDATION")), "평가용 문항이 학습에 섞였다"
-    out2 = run_sd("1b", seeds=False)
-    assert out2["status"] == "ALREADY_PUBLISHED" and out2["version"] == out["version"], f"같은 입력 재실행이 같은 결과가 아니다: {out2}"
+    assert sum(f["sample_count"] for f in m["files"]) == 24 and {f["split"] for f in m["files"]} == {"TRAIN", "VALIDATION", "EVAL"}, [(f["path"], f["split"], f["sample_count"]) for f in m["files"]]
+    # (c) 같은 입력 재실행은 멱등
+    rc2, o2, _ = run_import("ok2", 2, WORK / "datasets")
+    assert rc2 == 0 and o2["status"] == "ALREADY_PUBLISHED" and o2["version"] == o["version"], f"같은 입력 재실행이 같은 결과가 아니다: {rc2} {o2}"
     STATE["dataset"] = {"id": m["dataset_id"], "version": m["version"], "content_hash": m["content_hash"]}; save()
-    rec(2, "REAL", f"synthetic-data run-once(호스트): DatasetManifest {m['dataset_id']}@{m['version']} 스키마·파일 해시 통과, 평가 파일 {len(unseen)}개가 보지 못한 문항 세트({QSU})를 사용, 학습과 겹치지 않음, 재실행은 ALREADY_PUBLISHED(멱등). 생성기는 규칙 기반(LLM 생성은 GPU 서버 몫)")
+    rec(2, "REAL", f"배선 REAL, 데이터는 시험용: synthetic-data import 모드(호스트)가 이 E2E 용으로 직접 만든 v2 형식 jsonl 6개(실제 학습 데이터 아님, 행 형식은 추정, 실제 데이터로 게시한 적 없음)를 행 단위로 검증: 26행 중 24 통과, 일부러 넣은 위반 2행(v2 출력 위반 1, JSON 아님 1)을 사유별로 집계. 허용 1행이면 게시 거부(종료 4, 저장소 무변화), 허용 2행이면 DatasetManifest {m['dataset_id']}@{m['version']} 게시(스키마·파일 해시·입력 sha256·건수 일치), 재실행은 ALREADY_PUBLISHED(멱등). 못 보는 것: 의미 검사(targets·next_item·건너뛰기 순서, CR-006), 실제 데이터의 형식, 보지 못한 문항 세트 평가 분리")
 
 def make_packages():
     """시험용 어댑터 + model-runtime FakeBackend 적재 + ModelPackageManifest 2건을 만든다."""
