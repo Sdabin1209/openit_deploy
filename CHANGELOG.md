@@ -1,5 +1,10 @@
 # 변경 이력
 
+## E2E·데모의 activate를 헤더 있는 HTTP 호출로 (release-gate D85 행위자 식별 반영)
+- release-gate가 activate·rollback에서 본문의 `requested_by_role`을 버리고 역할은 쓰기 토큰, 행위자는 `X-Openit-User`로 정한다(사람 역할 토큰에 헤더가 없으면 401). `GATE_SERVICE_ROLES`에 operator를 넣는 우회는 하지 않았다(더 엄격한 쪽). 이유: 감사 기록의 행위자는 서버가 정하고, 시험도 운영과 같은 경로를 탄다.
+- `e2e_steps.py`: `gate_ops`/`gate_activate`(urllib, 이웃 코드 import 없음)로 activate를 부른다. 새 단언: 헤더 없이 operator 토큰으로 activate하면 401이고 포인터가 안 바뀐다, 헤더가 있으면 통과하고 `GET /v1/active-pointer`의 `ext["release-gate"].requested_by`가 그 ID. `demo_up`·`demo_activate`·단계 4b·단계 8도 같은 호출. ops-feedback 자동 롤백은 서비스 역할이라 그대로.
+- 새 release-gate 이미지로는 아직 돌려 보지 못했다(이 변경은 그쪽 push 전이고 E2E는 이전 이미지로 한 번만 돌렸다). 이전 이미지에서는 이 단언(401)이 실패한다.
+
 ## 게이트웨이 개별 계정·키오스크 기기 인증, 스케줄러 주기, 잡 설정 파일 (D85)
 - 결정(사용자 지시 D85, 표준): 직원·운영자는 개별 계정으로 인증하고 `X-Openit-User`로 행위자를 전한다. 이유: 감사 기록에 누가 했는지가 남고, OIDC로 바꿔도 같은 헤더 규칙을 쓴다. 키오스크는 기기 토큰으로 인증한다. 이유: 게이트웨이에 닿는 누구나 키오스크 API를 부르는 상태를 없애고 기기별로 폐기할 수 있다.
 - `config/Caddyfile`: 인증 블록 `(authenticate)`와 `(role_matchers)`를 생성 파일로 분리(OIDC 교체 지점). staff/operator/release-approver/reviewer 역할 검사(403), 직원 개입 경로 포함. operator 계정만 여는 경로 넷(admin-console CR-004): `GET /v1/active-pointer`, `GET /v1/releases`(읽기 토큰 `gate-read-operator`)와 `POST /v1/activate`, `/v1/rollback`(쓰기 토큰 `gate-write-operator`), no-store. `gen-secrets.sh`가 release-gate 읽기 목록에 역할 operator를 더함. 키오스크 경로는 `@device_ok` 기기 토큰 대조 후 서비스 토큰으로 바꿔 붙이고 아니면 401, 클라이언트의 `X-Openit-User` 제거.

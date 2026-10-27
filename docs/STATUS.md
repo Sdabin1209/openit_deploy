@@ -1,3 +1,11 @@
+# STATUS (2026-10-27 최신 구간: PostgreSQL 기반, 게이트웨이 인증 D85)
+
+- 한 일: postgres 서비스·계정·백업(자체 시험 61건), 게이트웨이 개별 계정/역할·기기 토큰·운영자 경로, 스케줄러 주기(수집기 600/ops-feedback 3600/백업 86400, 실제 스택에서 세 잡이 OK로 도는 것 확인), `config/ops-feedback-job.yaml` 실제 파일화, check-all 규칙 11, E2E·데모의 activate를 X-Openit-User 헤더 HTTP로 변경. 자세한 것은 CHANGELOG.md.
+- 남은 일: (1) 새 release-gate 이미지로 E2E를 다시 돌려 헤더 단언(401, requested_by)을 확인한다. (2) kiosk-frontend가 기기 토큰을 보내도록 바뀌면 데모 브라우저 확인. (3) 서비스가 Postgres를 쓰도록 바뀐 뒤 e2e 백업 단계에 pg-backup 추가. (4) `config/backup.env`가 없으면 backup 잡은 거부(2)로 FAIL 보고: BACKUP_DIR·보관일 결정 필요. (5) OIDC 전환은 병원 IdP 결정 뒤.
+- 막힌 것: 없음(전체 E2E 모드는 이번 구간에서 돌리지 않았다).
+
+---
+
 # STATUS (2026-10-15, 둘째 구간: 영역 사이를 HTTP로 연결)
 
 ## 한 일

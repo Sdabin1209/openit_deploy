@@ -70,6 +70,23 @@ def http(method, k, path, token=None, body=None, raw=None, ctype="application/js
         b = e.read()
         try: return e.code, json.loads(b)
         except Exception: return e.code, b.decode(errors="replace")
+OPERATOR_ID = "operator-e2e-script"   # 시험용 운영자 ID: 게이트웨이가 계정 ID를 X-Openit-User 로 붙이는 것을 스크립트가 직접 흉내 낸다
+def gate_ops(path, body, user=OPERATOR_ID, token=None):
+    """release-gate 의 activate·rollback 을 HTTP 로 부른다(D85: 역할은 쓰기 토큰, 행위자는 X-Openit-User 헤더. SDK 는 헤더를 못 보낸다). (상태, JSON 본문)을 돌려준다.
+    user=None 이면 헤더를 붙이지 않는다. 본문의 requested_by_role 은 게이트가 무시한다(옛 게이트 호환을 위해 operator 로 넣는다)."""
+    req = urllib.request.Request(URL("gate") + path, data=json.dumps({"requested_by_role": "operator", **body}).encode(), method="POST")
+    req.add_header("Authorization", "Bearer " + (token or TOK("gate-write-operator"))); req.add_header("Content-Type", "application/json")
+    if user is not None: req.add_header("X-Openit-User", user)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
+    except urllib.error.HTTPError as e:
+        b = e.read()
+        try: return e.code, json.loads(b)
+        except Exception: return e.code, b.decode(errors="replace")
+def gate_activate(release_id, user=OPERATOR_ID):
+    c, b = gate_ops("/v1/activate", {"release_id": release_id}, user)
+    assert c == 200, f"activate {release_id} 실패 {c}: {str(b)[:200]}"
+    return b
 def sh(cmd, env=None, inp=None, check=True):
     r = subprocess.run(cmd, capture_output=True, text=True, input=inp, env={**os.environ, **(env or {})})
     if check: assert r.returncode == 0, f"{cmd[:3]} 실패({r.returncode}): {(r.stderr or r.stdout)[-600:]}"
@@ -404,7 +421,11 @@ def step4():
     validate("GateDecision", dict(d1)); assert any(c["kind"] == "HUMAN_APPROVAL" and c["result"] == "PASS" for c in d1["checks"])
     rid1 = d1.get("release_id"); rel1 = dict(gate_r.get_release(rid1)); validate("ReleaseManifest", rel1); assert canonical.content_hash(rel1) == rel1["content_hash"]
     bd = WORK / "bundles"; gate_r.load_bundle(rid1, dest=bd)
-    ap1 = dict(gate_op.activate(rid1, requested_by_role="operator")); validate("ActivePointer", ap1)
+    c401, b401 = gate_ops("/v1/activate", {"release_id": rid1}, user=None)
+    assert c401 == 401, f"헤더 없이 operator 토큰으로 activate 하면 401이어야 한다: {c401} {str(b401)[:100]}"
+    assert dict(gate_r.get_active_pointer() or {}).get("release_id") != rid1, "401인데 활성 포인터가 바뀌었다"
+    ap1 = dict(gate_activate(rid1)); validate("ActivePointer", ap1)
+    cur = dict(gate_r.get_active_pointer()); assert cur["ext"]["release-gate"]["requested_by"] == OPERATOR_ID, f"활성 포인터 조회의 requested_by 가 헤더의 ID가 아니다: {cur.get('ext')}"
     # 둘째 후보: 활성 릴리스와 같은 지표끼리 맞댄 보고서(comparisons), 활성화로 보고서가 바뀌면 이전 해시는 낡은 것
     rep2 = report_of(subs["2"]["submission_id"]); validate("ReviewReport", rep2)
     assert rep2["comparisons"], "활성 릴리스와의 비교가 비어 있다"
@@ -413,9 +434,8 @@ def step4():
     d2 = wait(lambda: next((d for d in decisions_for(gate_r, subj["2"]) if d["result"] == "PASS"), None), 30, "둘째 PASS 판정"); validate("GateDecision", dict(d2))
     rid2 = d2.get("release_id"); rel2 = dict(gate_r.get_release(rid2)); validate("ReleaseManifest", rel2); gate_r.load_bundle(rid2, dest=bd)
     STATE["containers_before_swap"] = container_ids(); save()   # 포인터 1 -> 2 활성화 직전(StartedAt, ID 만 읽는다)
-    ap2 = dict(gate_op.activate(rid2, requested_by_role="operator")); validate("ActivePointer", ap2); assert ap2["pointer_version"] > ap1["pointer_version"]
-    try: gate_op.activate(du.get("release_id") or "rel-none-x", requested_by_role="operator"); raise AssertionError("PASS가 아닌 릴리스가 활성화됨")
-    except bc.BoundaryError as e: assert e.code in ("NOT_FOUND", "FAILED_PRECONDITION"), e.code
+    ap2 = dict(gate_activate(rid2)); validate("ActivePointer", ap2); assert ap2["pointer_version"] > ap1["pointer_version"]
+    cx, bx = gate_ops("/v1/activate", {"release_id": du.get("release_id") or "rel-none-x"}); assert cx != 200 and isinstance(bx, dict) and bx.get("code") in ("NOT_FOUND", "FAILED_PRECONDITION"), ("PASS가 아닌 릴리스가 활성화됨", cx, str(bx)[:100])
     STATE["releases"] = {"1": rid1, "2": rid2}; STATE["pointers"] = [ap1, ap2]; save()
     rec("4b", "TEST-SUB", f"승인자를 스크립트가 대신한다(TEST-SUB). REAL: 자동 검사 통과 후 승인 요청 보고서(ReviewReport, 활성 릴리스와 비교), 승인 전 PASS 없음, operator의 승인 403, 낡은 report_hash 409, REJECT -> REJECT 판정(HUMAN_APPROVAL FAIL, CHECK_FAILED), APPROVE 재전송 멱등·번복 409, 승인 뒤 PASS(HUMAN_APPROVAL PASS)·ReleaseManifest(해시)·번들(해시)·활성화 x2(포인터 {ap1['pointer_version']}->{ap2['pointer_version']})")
 
@@ -807,7 +827,7 @@ def demo4():
     for k, sj in subj.items():
         d = wait(lambda sj=sj: next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
         rels[k] = d.get("release_id")
-    for k in sorted(rels): gate_op.activate(rels[k], requested_by_role="operator")
+    for k in sorted(rels): gate_activate(rels[k])
     STATE["releases"] = rels; save()
     rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 토큰으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
 
@@ -823,7 +843,7 @@ def demo_activate():
     if not rels: rec("demo_activate", "BLOCKED", "승인된(PASS) 제출이 아직 없다. /admin/ 에서 승인한 뒤 다시 실행한다"); return
     cur = gate_r.get_active_pointer()
     for k in sorted(rels):
-        if not cur or cur["release_id"] != rels[k]: cur = gate_op.activate(rels[k], requested_by_role="operator")
+        if not cur or cur["release_id"] != rels[k]: cur = gate_activate(rels[k])
     STATE["releases"] = rels; save()
     rec("demo_activate", "REAL", f"승인된 릴리스 활성화: {rels}, 현재 활성 {dict(cur)['release_id']}")
 
@@ -911,7 +931,7 @@ def demo_swap():
     rid = existing.get("release_id"); validate("ReleaseManifest", dict(gate_r.get_release(rid)))
     gate_r.load_bundle(rid, dest=WORK / "bundles")
     unchanged_pointer = before_ptr["release_id"] == rid
-    ap = dict(before_ptr) if unchanged_pointer else dict(gate_op.activate(rid, requested_by_role="operator")); validate("ActivePointer", ap)
+    ap = dict(before_ptr) if unchanged_pointer else dict(gate_activate(rid)); validate("ActivePointer", ap)
     r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == rid else None)(survey_ready()), 300, f"survey가 릴리스 {rid} 적재", every=3)
     tok = INF_TOK()
     st = wait(lambda: (lambda cs: cs[1] if cs[0] == 200 and cs[1].get("state") in ("LOADED", "FAILED") else None)(http("GET", "ms", f"/v1/releases/{rid}", tok)), 600, f"model-serving 이 {rid} 적재", every=3)
