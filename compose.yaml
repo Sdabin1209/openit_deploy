@@ -91,8 +91,8 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-token
   qa-gateway-tokens:
     file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-tokens
-  survey-api-kiosk:
-    file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-kiosk
+  survey-kiosk-device-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/survey-kiosk-device-tokens
   survey-api-staff:
     file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-staff
   gate-write-release-approver:
@@ -213,7 +213,7 @@ services:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
       - {source: gateway-accounts, target: /etc/caddy/accounts.caddy}
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
-    secrets: [qa-gateway-token, survey-api-kiosk, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer]
+    secrets: [qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
@@ -259,7 +259,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
     environment:   # 비밀은 파일 경로만(D84)
-      SURVEY_API_TOKEN_FILE: /run/secrets/survey-api-kiosk
+      SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 기기별 토큰 표(device_id=토큰). gateway 가 검증한 기기 토큰이 그대로 도착한다. 공유 키오스크 토큰(SURVEY_API_TOKEN)은 두지 않는다 -> /readyz 의 shared_kiosk_token 경고가 꺼진다
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
       SURVEY_TRACE_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
@@ -267,7 +267,7 @@ services:
       SURVEY_RESULT_READER_TOKEN_FILE: /run/secrets/survey-result-reader   # 결과 조회 API(result-reader 역할, 병원/의사 시스템용: 게이트웨이에 열지 않는다)
       SURVEY_RISK_SOURCE_TOKEN_FILE: /run/secrets/survey-risk-source       # 위험 신호 입력 API(risk-source 역할, 감지기용: 게이트웨이에 열지 않는다)
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
-    secrets: [survey-api-kiosk, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
+    secrets: [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
     networks: [edge, serving, db-survey]
     healthcheck:

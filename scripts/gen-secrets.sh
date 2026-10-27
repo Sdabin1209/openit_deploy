@@ -70,6 +70,8 @@ putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
 source "$(dirname "$0")/gateway-lib.sh"
 gw_write_accounts "$D"
 tok kiosk-device-e2e >/dev/null
+# E2E 단계 5d(기기 사이 세션 격리, 폐기): 시험 기기 a·b 와 폐기 시험용 c. 운영에서는 kiosk-add-device.sh 로 실제 기기만 만든다(이 시험 기기는 운영 비밀 폴더에서 remove 한다)
+for _d in e2e-a e2e-b e2e-c; do tok "kiosk-device-$_d" >/dev/null; done
 gw_write_devices "$D"
 old=$(cd "$D" && ls *.env 2>/dev/null | tr '\n' ' ') || true
 [ -z "$old" ] || echo "알림: 예전 방식의 비밀 env 파일이 남아 있다($old). 더는 쓰지 않는다(환경 변수로 평문이 노출됐다). 지워도 된다: (cd $D && rm -f $old)" >&2

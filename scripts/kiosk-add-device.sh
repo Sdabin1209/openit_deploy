@@ -33,5 +33,5 @@ case "$CMD" in
 esac
 gw_write_devices "$D"
 echo "게이트웨이 기기 목록을 다시 썼다($(gw_devices "$D" | wc -l)대)" >&2
-if [ $APPLY = 1 ]; then dc "${DEPLOY_PROJECT:-deploy}" restart gateway >/dev/null && echo "게이트웨이를 다시 시작했다" >&2
+if [ $APPLY = 1 ]; then dc "${DEPLOY_PROJECT:-deploy}" restart gateway survey-service >/dev/null && echo "gateway 와 survey-service 를 다시 시작했다(기기 목록·기기 토큰 표 반영)" >&2
 else echo "반영하려면 게이트웨이를 다시 시작한다: dc ... restart gateway (또는 --apply)" >&2; fi

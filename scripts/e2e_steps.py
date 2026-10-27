@@ -46,11 +46,11 @@ MS_CONTAINER = a.ms_container or f"{a.project}-model-serving-1"
 def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가 바뀔 수 있어 매번 Docker에게 묻는다
     out = subprocess.run([a.docker, "port", MS_CONTAINER, "8080/tcp"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
-def _dyn_port(svc, key):   # 멈췄다 다시 띄우는 단계(5q·5w·5u)가 있는 서비스는 Docker 배정 호스트 포트가 바뀔 수 있어 매번 묻는다
-    out = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1", "8080/tcp"], capture_output=True, text=True).stdout
+def _dyn_port(svc, key, cport="8080"):   # 멈췄다 다시 띄우는 단계(5q·5w·5u)가 있는 서비스는 Docker 배정 호스트 포트가 바뀔 수 있어 매번 묻는다
+    out = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1", f"{cport}/tcp"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS[key]
-DYN = {"survey": "survey-service", "gate": "release-gate", "ops": "ops-feedback-ingest"}
-URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"{'https' if (k == 'gw' and a.gw_ca) else 'http'}://127.0.0.1:{_ms_port() if k == 'ms' else _dyn_port(DYN[k], k) if k in DYN else PORTS[k]}"
+DYN = {"survey": "survey-service", "gate": "release-gate", "ops": "ops-feedback-ingest"}   # (gw 는 HTTPS 8443 이라 아래 URL 에서 따로)
+URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"{'https' if (k == 'gw' and a.gw_ca) else 'http'}://127.0.0.1:{_ms_port() if k == 'ms' else _dyn_port(DYN[k], k) if k in DYN else _dyn_port('gateway', 'gw', '8443') if k == 'gw' else PORTS[k]}"
 RESULTS = []; STATE_FILE = WORK / "state.json"
 STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
@@ -916,6 +916,48 @@ def step5a():
     assert c9 == 413 or isinstance(c9, str), ("8MiB 초과 본문이 거부되지 않았다", c9)
     rec("5a", "REAL", f"저자 경로(gateway 경유, 개별 계정): 인증 없음 401, 역할 없는 계정 403, author 계정의 자료 등록·미리보기·확인(문항 세트 {qset}@{ref['version']}), 저자의 자기 임상 승인 403(4-eyes), clinical-reviewer 계정의 승인 200(위조 X-Openit-User 는 무시되고 reviewer_id={CLINICAL()[0]} 가 기록됨), 승인 뒤 reviewed_only 최신 버전, I1 읽기 면 404, 9MiB 본문 거부({c9})")
 
+def dev_tok(d): return TOK(f"kiosk-device-{d}")
+def step5d():
+    title("5d", "기기별 키오스크 토큰(D88/U8): 기기 A가 만든 세션에 기기 B는 접근하지 못한다, 폐기된 기기 토큰은 거부, 공유 토큰 경고 없음")
+    if "pointers" not in STATE: rec("5d", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    wait_gw_ready(300)
+    sid = f"sess-{RID}-devA"; A, B = dev_tok("e2e-a"), dev_tok("e2e-b")
+    def gk(tok, method, path, body=None):
+        req = urllib.request.Request(URL("gw") + path, data=json.dumps(body).encode() if body is not None else None, method=method)
+        req.add_header("Authorization", "Bearer " + tok)
+        if body is not None: req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
+        except urllib.error.HTTPError as e:
+            b = e.read()
+            try: return e.code, json.loads(b)
+            except Exception: return e.code, b.decode(errors="replace")
+    print("  진단: 기기별 /v1/sessions 응답 코드 " + ", ".join(f"{d}={gk(dev_tok(d), 'POST', '/v1/sessions', {'session_id': 'sess-diag-' + d, 'kind': 'SESSION_START'})[0]}" for d in ("e2e", "e2e-a", "e2e-b", "e2e-c")))
+    c, st = gk(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, ("기기 A 세션 시작", c, st)
+    c, r = gk(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "dA-1"}); assert c == 200, ("기기 A 발화", c, r)
+    cs, _ = gk(A, "GET", f"/v1/sessions/{sid}/state"); assert cs in (200, 429), ("기기 A 상태 조회", cs)
+    # 기기 B 는 같은 session_id 로 상태·발화·종료를 시도해도 세션에 접근하지 못한다(계약상 404, 존재를 드러내지 않는다)
+    time.sleep(1)
+    for lab, m, pth, bd in (("상태", "GET", f"/v1/sessions/{sid}/state", None),
+                            ("발화", "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "아니요 없어요", "turn_id": "dB-1"}),
+                            ("종료", "POST", f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})):
+        cb, rb = gk(B, m, pth, bd); assert cb in (404, 403), (f"기기 B 가 기기 A 의 세션에 {lab} 접근이 허용됐다", cb, str(rb)[:100])
+    sv = staff_sv(sid); assert utt_count(sv, "아니요 없어요") == 0 and sv["status"] == "IN_PROGRESS", "기기 B 의 시도가 세션을 바꿨다"
+    c, r2 = gk(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "아니요 없어요", "turn_id": "dA-2"}); assert c == 200, ("기기 A 는 계속 정상이어야 한다", c, r2)
+    # 공유 서비스 토큰(survey-api-kiosk) 경로는 없다: 알림 없이 /readyz 에 shared_kiosk_token 이 켜져 있지 않다
+    rz = survey_ready()[1]; kt = rz.get("kiosk_tokens") or {}
+    assert kt.get("shared_kiosk_token") is False and (kt.get("device_tokens") or 0) >= 2, ("/readyz 의 기기 토큰 상태", kt)
+    # 폐기: 기기 c 를 remove --apply (gateway·survey 재시작) 하면 그 토큰은 거부된다
+    C = dev_tok("e2e-c"); c, _ = gk(C, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devC", "kind": "SESSION_START"}); assert c == 200, ("폐기 전 기기 C 는 정상이어야 한다", c)
+    env = {"SECRETS_DIR": a.secrets, "DEPLOY_PROJECT": a.project}
+    sh(["bash", str(ROOT / "scripts/kiosk-add-device.sh"), "remove", "e2e-c", "--apply"], env=env)
+    wait_gw_ready(300)
+    cc, _ = gk(C, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devC2", "kind": "SESSION_START"}); assert cc == 401, ("폐기된 기기 토큰이 거부되지 않는다", cc)
+    c, _ = gk(A, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devA2", "kind": "SESSION_START"}); assert c == 200, "다른 기기는 폐기의 영향을 받지 않는다"
+    # 폐기 뒤 시험이 쓰는 비밀 폴더에서 e2e-c 파일이 지워졌고 survey 표에서도 빠졌다
+    assert "e2e-c=" not in (pathlib.Path(a.secrets) / "tokens" / "survey-kiosk-device-tokens").read_text(), "survey 기기 토큰 표에 폐기된 기기가 남았다"
+    rec("5d", "REAL", "기기별 토큰: 기기 A 가 만든 세션에 기기 B 의 상태·발화·종료는 404/403 이고 세션은 바뀌지 않았다, 기기 A 는 계속 정상, /readyz kiosk_tokens.shared_kiosk_token=false(기기 토큰 표 사용), 기기 C 를 remove --apply 하자 그 토큰은 gateway 401 이고 survey 표에서도 빠졌다(gateway·survey 재시작). 못 보는 것: 폐기가 survey 에 반영되는 시점(재시작 필요, 재시작 전 gateway 가 먼저 막는다)")
+
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1390,7 +1432,7 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

@@ -259,3 +259,10 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 - 4-eyes는 서비스가 강제한다: 저자의 확인은 `clinical_basis_approved=false`이고 임상 근거 승인은 저자와 다른 `clinical-reviewer`가 `POST /v1/reviews`로 해야 `reviewed_only`에 나타난다(자기 승인 403).
 - 본문 상한은 사이트 기본 8MiB(자료 업로드). 응답 헤더 대기는 15초(`proxy_limits`, 시작값).
 - E2E 단계 `5a`가 gateway 경유로 위 흐름(401, 403, 등록·확인, 자기 승인 403, 위조 헤더 무시, 승인 뒤 `reviewed_only`, I1 404, 본문 상한)을 확인한다.
+
+### 9-5. 기기 토큰은 gateway가 survey-service에 그대로 넘긴다 (D88/U8)
+
+- gateway는 키오스크가 보낸 `Authorization: Bearer <기기 토큰>`을 기기 목록(`gateway-devices.caddy`)과 대조한 뒤, **헤더를 바꾸지 않고** survey-service에 넘긴다(직원·운영자·승인·검토·저자 경로는 예전처럼 서비스 토큰으로 바꿔 붙인다). survey-service는 같은 기기 토큰 표(`SURVEY_KIOSK_DEVICE_TOKENS_FILE` = `secrets/tokens/survey-kiosk-device-tokens`, 줄마다 `기기ID=토큰`)로 검증하고, 세션을 만든 기기만 그 세션에 접근하게 한다(다른 기기는 404). 별도 신뢰 헤더를 만들지 않아 gateway를 새 신뢰 경계로 만들지 않는다.
+- 공유 서비스 키오스크 토큰(`SURVEY_API_TOKEN`)은 compose에서 뺐다. `/readyz`의 `kiosk_tokens.shared_kiosk_token`은 false이고 `device_tokens`는 기기 수다(E2E 5d가 확인).
+- 기기 표는 `kiosk-add-device.sh add/remove/rotate/from-list/sync`가 gateway 목록과 함께 다시 쓴다. `--apply`는 gateway와 survey-service를 함께 다시 시작한다(survey가 표를 시작 때 읽는다). 폐기는 gateway에서 즉시(재시작 직후) 막히고 survey 표는 survey 재시작 뒤에 바뀐다.
+- 기기 목록이 2대 이상일 때 예전 생성기가 Caddy `header` 매처(값을 하나만 받는다)에 값을 여러 개 넘겨 목록이 동작하지 않았다. `expression {http.request.header.Authorization} in [...]`로 고쳤다(이 PC에서 4대로 확인, 자체 시험이 5대로 `caddy validate`).
