@@ -11,6 +11,7 @@ from boundary_contracts import canonical
 from boundary_contracts.clients import (HttpFailureStore, HttpGateService, HttpModelRegistry, HttpQuestionReader,
                                          HttpReleaseReader, HttpTraceIngest)
 import survey_schema, jsonschema
+import e2e_asserts as EA
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--project", required=True); ap.add_argument("--secrets", required=True)
@@ -405,6 +406,7 @@ def step4():
     a2 = dict(gate_ap.decide(sid2, "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="시험: 둘째 후보 검토함")); validate("GateApproval", a2)
     d2 = wait(lambda: next((d for d in decisions_for(gate_r, subj["2"]) if d["result"] == "PASS"), None), 30, "둘째 PASS 판정"); validate("GateDecision", dict(d2))
     rid2 = d2.get("release_id"); rel2 = dict(gate_r.get_release(rid2)); validate("ReleaseManifest", rel2); gate_r.load_bundle(rid2, dest=bd)
+    STATE["containers_before_swap"] = container_ids(); save()   # 포인터 1 -> 2 활성화 직전(StartedAt, ID 만 읽는다)
     ap2 = dict(gate_op.activate(rid2, requested_by_role="operator")); validate("ActivePointer", ap2); assert ap2["pointer_version"] > ap1["pointer_version"]
     try: gate_op.activate(du.get("release_id") or "rel-none-x", requested_by_role="operator"); raise AssertionError("PASS가 아닌 릴리스가 활성화됨")
     except bc.BoundaryError as e: assert e.code in ("NOT_FOUND", "FAILED_PRECONDITION"), e.code
@@ -450,7 +452,8 @@ def ms_call(path, body, token):
 
 # 가짜 백엔드의 출력(표준 서버 + MODEL_RUNTIME_FAKE_FLOW_FILE=test/fake-model/question_flow.json): A 는 입력 문항의 다음 문항으로 가는 유효한 ActionExtraction(값 없음), B 는 문장.
 # FLOW_FILE 이 없으면 기본 고정 출력(next_item=END)은 첫 문항에서도 END 라 서비스의 검증(validate_extraction)이 모든 턴을 반려한다. 문항 순서 사본이 survey-service 와 다르면 여기서 실패한다.
-FAKE_EXTRACTION = {"action": "NEXT", "next_item": "Q1.D04", "values": []}   # 아래 직접 호출의 입력 question_id 가 Q1.D03 이다
+# 0.7.1: 칸 정의(slots)가 있는 문항은 발화에서 첫 칸의 ANSWERED 값을 낸다. 아래 직접 호출은 Q1.D03(boolean, '아니' 없음 -> true)
+FAKE_EXTRACTION = {"action": "NEXT", "next_item": "Q1.D04", "values": [{"key": "Q1.D03.diagnosed", "precision": "exact", "save": True, "status": "ANSWERED", "value": True}]}
 FAKE_RESPONSE_TEXT = "(가짜 응답)"
 
 def model_server_v2_check(new, tok):
@@ -470,6 +473,32 @@ def model_server_v2_check(new, tok):
     c, info = http("GET", "ms", "/v1/info", tok)
     assert info.get("system_prompt_sha256") == STATE.get("system_prompt"), f"서버가 쓰는 시스템 프롬프트 해시가 패키지와 다르다: {info.get('system_prompt_sha256')} / {STATE.get('system_prompt')}"
     return "extract(JSON, ActionExtraction 스키마, X-Openit-Outcome ok) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
+
+SWAP_SERVICES = ["survey-service", "release-gate", "model-registry", "ops-feedback-ingest", "question-authoring", "gateway"]
+def container_ids():
+    """서비스별 (컨테이너 ID, StartedAt). docker inspect 의 두 필드만 읽는다(Env 등은 읽지 않는다)."""
+    out = {}
+    for svc in SWAP_SERVICES:
+        r = sh([a.docker, "inspect", "-f", "{{.Id}} {{.State.StartedAt}}", f"{a.project}-{svc}-1"], check=False)
+        parts = r.stdout.strip().split(" ", 1)
+        if r.returncode == 0 and len(parts) == 2: out[svc] = (parts[0], parts[1])
+    return out
+
+def fake_values_check(new, tok):
+    """가짜 A(칸 정의가 든 흐름 파일)가 값을 내고 건너뛰기를 적용하는지 추론 서버를 직접 불러 본다. 모델 정확성이 아니라 시험 구성의 확인이다."""
+    cases = [("Q4", "아니요", "Q4.answer", False, "Q5"),          # 건너뛰기: Q4.answer == false -> Q4_1 건너뜀
+             ("Q4", "네 있어요", "Q4.answer", True, "Q4_1"),
+             ("Q7", "네 안 마셔요", "Q7.does_not_drink", True, "Q8_1"),   # Q7_1, Q7_2 건너뜀
+             ("Q8_1", "없어요", "Q8_1.days", 0, "Q9_1"),          # Q8_2 건너뜀
+             ("Q8_1", "3일이요", "Q8_1.days", 3, "Q8_2"),
+             ("Q2.D01", "네 있어요", "Q2.D01.family_history", True, "Q2.D02")]
+    for qid, utt, key, val, nxt in cases:
+        ein = {"question_id": qid, "current_question": f"시험 문항 {qid}입니다.", "user_utterance": utt, "state": {}}
+        validate("ActionExtractionInput", ein)
+        c, body, h = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 200, (qid, c, body[:200])
+        out = json.loads(body); validate("ActionExtraction", out)
+        EA.check_fake_extraction(out, key, val, nxt, f"[{qid} '{utt}']")
+    return f"{len(cases)}건(Q4 아니요 -> Q4.answer=false·Q4_1 건너뜀, Q7 -> Q8_1, Q8_1 없어요 -> days=0·Q8_2 건너뜀 등)"
 
 def step5():
     title(5, "서비스가 새 포인터를 보고 새 세션부터 새 릴리스로 한 턴 이상을 처리한다 (공개 API, 게이트웨이 경유)")
@@ -493,6 +522,16 @@ def step5():
     assert http("GET", "ms", "/v1/info", None)[0] in (401, 403), "토큰 없이 추론 서버 /v1/가 열림"
     c, st_ = http("GET", "ms", f"/v1/releases/{new}", ms_tok); assert c == 200 and st_["state"] == "LOADED", (c, st_)
     v2chk = model_server_v2_check(new, ms_tok)
+    fvc = fake_values_check(new, ms_tok)
+    # 서비스를 거친 값 있는 턴: 가짜 A 가 매 턴 값(ANSWERED)을 내고, 서비스의 검증·저장을 통과해야 한다(실패 신호 없음, 추론 실패·형식 위반 증가 없음, Trace 전송)
+    sv = f"sess-{RID}-val"; assert kiosk("/v1/sessions", {"session_id": sv, "kind": "SESSION_START"})[0] == 200
+    rb = survey_ready()[1]; replies = []
+    for i, text in enumerate(("네 있어요", "아니요 없어요", "네 있어요"), 1):
+        c, rp = public_turn(sv, f"val-{i}", text); assert c == 200, (c, rp); validate_survey("FrontendInput", rp); replies.append(rp)
+    wait(lambda: survey_ready()[1]["trace_outbox"]["sent"] - rb["trace_outbox"]["sent"] >= len(replies) or None, 30, "값 있는 턴의 Trace 전송")
+    EA.check_turns_clean(replies, rb, survey_ready()[1])
+    kiosk(f"/v1/sessions/{sv}/end", {"session_id": sv, "kind": "SESSION_END"})
+    rec("5g", "REAL", f"가짜 A 의 값 추출(흐름 파일 slots/skips): 직접 호출 {fvc}. 서비스 경유 값 있는 3턴(Q1.D01~: '네 있어요','아니요 없어요','네 있어요'): 실패 신호 없음(검증 통과·쓰기 확정), /readyz inference 의 failures·output_invalid·retries·timeouts·outcome_fallback 증가 0, 턴마다 Trace 전송. 모델은 가짜(정확성 아님, 시험 구성 확인). 한계: 저장된 값을 돌려주는 공개 읽기 경로가 없고(PUBLIC_API 에 없음) ops-feedback 은 실패 사례만 노출하므로 저장 값 자체는 단언하지 않았다. 가짜 A 는 CORRECT 를 내지 않아 정정은 시험하지 않았다")
     rd = survey_ready()[1]; inf = rd.get("inference") or {}
     if not a.skip_ms_restart:
         # 추론 서버를 멈췄다 다시 띄운다: 그 턴만 실패하고 서비스는 산다, 다시 띄우면 복구(404 -> PUT 재적재)
@@ -521,6 +560,17 @@ def step5():
     sent = wait(lambda: (lambda cr: cr[1]["trace_outbox"]["sent"] if cr[1]["trace_outbox"]["sent"] >= 2 else None)(survey_ready()), 30, "Trace 전송")
     STATE["sess_a"] = sid; save()
     rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9 v2: 서비스 -> PUT 적재 -> extract(JSON) -> respond(text))를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 서버 직접 호출: {v2chk}. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
+
+def step5s():
+    title("5s", "어댑터 교체(포인터 1 -> 2)에서 다른 서비스는 그대로이고 새 릴리스가 LOADED 이다")
+    before = STATE.get("containers_before_swap")
+    if not before or "releases" not in STATE: rec("5s", "BLOCKED", "포인터 교체 전 스냅샷이 없다(단계 4)"); return
+    after = container_ids()
+    EA.check_unchanged({k: tuple(v) for k, v in before.items()}, after, SWAP_SERVICES)
+    new = STATE["releases"]["2"]
+    c, st = http("GET", "ms", f"/v1/releases/{new}", INF_TOK()); assert c == 200, (c, st)
+    EA.check_release_loaded(st, new)
+    rec("5s", "REAL", f"포인터 교체(활성화 2회째) 전후로 {', '.join(SWAP_SERVICES)} 컨테이너의 ID 와 StartedAt 이 같다(docker inspect 의 두 필드만 읽음). model-serving 의 /v1/releases/{new} 가 LOADED(오류 없음). 변경된 것은 model-serving 의 적재 릴리스뿐이다. 어댑터는 시험용 가짜(TEST-SUB)")
 
 def step5f():
     title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 직원 알림 입력원 없음 (kiosk-frontend)")
@@ -797,7 +847,7 @@ def diag():
     print(f"-- 상태 파일 요약: 릴리스 {STATE.get('releases')}, 제출 {STATE.get('demo_subs')}, llm 대조 {STATE.get('llm_cfg_vs_server')}")
     rec("diag", "REAL", "진단 출력만 했다(변경 없음)")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("6", step6), ("7", step7), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("diag", diag)]
 only = set(filter(None, a.only.split(",")))
 TIMES = []
 for n, fn in STEPS:

@@ -186,3 +186,7 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 - 현재 결과(읽기만으로 확인): kiosk-frontend(32f3dff)와 admin-console(f62869c)의 `Dockerfile`은 이미 v2.0.2여서 `bash scripts/check-versions.sh`가 통과한다(태그 표기 28건, 영역 10개). 두 영역의 작업 트리가 계약 정렬 중이면 값은 바뀔 수 있다.
 - 두 영역이 v1.3.x이면 이 점검은 실패하는 것이 올바른 출력이다. `scripts/test-check-versions.sh`가 두 영역에 v1.3.3을 넣은 임시 워크스페이스로 `kiosk-frontend/Dockerfile:2`, `admin-console/Dockerfile:2`가 `파일:줄`로 출력되며 종료 코드 1이 되는 것을 확인한다. 정렬이 끝나기 전에는 이 점검(E2E 단계 포함)이 실패하고, 두 영역이 표와 같은 태그가 된 뒤 통과해야 한다.
 - 자체 시험 `bash scripts/test-check-versions.sh`: 3개 ok / 0 FAIL, 종료 코드 0.
+
+## E2E 값 추출 경로 (U16)
+- 가짜 A 흐름 파일을 객체 형식(slots/skips)으로 확장하고 E2E에 단계 5g(값 추출·건너뛰기·서비스 경유 3턴)와 5s(어댑터 교체 시 다른 서비스 불변, 새 릴리스 LOADED)를 추가했다. 둘 다 REAL(모델은 가짜). 확인: `bash scripts/e2e.sh --fast --reuse-build` 65 PASS / 0 FAIL(전체 모드 아님), `scripts/test-check-all.sh` 통과.
+- 확인하지 못한 것: 저장된 값 내용(공개 읽기 경로 없음, ops-feedback은 실패 사례만 노출), CORRECT(가짜 A가 내지 않음), 전체 모드.
