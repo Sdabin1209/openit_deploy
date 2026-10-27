@@ -207,12 +207,14 @@ HTTP·기본 인증이라 시험용이다. `DEMO_BIND=0.0.0.0`으로 열어 두�
 | `INFERENCE_RELEASE_TOKEN_FILE` | 필수 | 파일 경로. 내용: 게이트 읽기 토큰 하나(`MODEL_RUNTIME_RELEASE_TOKEN`). 두 파일은 secrets로 `/run/secrets`에 마운트된다(환경 변수로 넣지 않는다). 컨테이너(uid 10001)가 읽을 수 있어야 한다(모드 644, 폴더 700) |
 | `INFERENCE_CONFIG_ENV_FILE` | 선택 | (비밀이 아닌) 모델 설정 env 파일(프로파일 등). 기본 `/dev/null`. 토큰을 넣지 않는다 |
 | `INFERENCE_BACKEND` | 선택 | 기본 `fake`. GPU 변형은 model-runtime이 정한 값 |
-| `INFERENCE_BIND` / `INFERENCE_PORT` | 선택 | 호스트 바인드(기본 0.0.0.0) / 포트(기본 8080, 빈 값이면 Docker 배정 -> `docker port`로 읽는다) |
+| `INFERENCE_BIND` / `INFERENCE_PORT` | 선택 | 호스트 바인드(기본 127.0.0.1: 다른 호스트가 닿게 하려면 사설 인터페이스 주소나 0.0.0.0을 명시하고 방화벽으로 호출자만 허용한다) / 포트(기본 8080, 빈 값이면 Docker 배정 -> `docker port`로 읽는다) |
 
 ```
+# INFERENCE_BIND 기본은 127.0.0.1 이라 다른 호스트의 호출자가 닿으려면 아래처럼 명시한다(방화벽으로 호출자만 허용)
 INFERENCE_IMAGE=<레지스트리>/openit/model-serving@sha256:... \
 RELEASE_URL=http://<release-gate 주소>:<포트> \
 INFERENCE_TOKENS_FILE=/안전한/경로/model-runtime-tokens INFERENCE_RELEASE_TOKEN_FILE=/안전한/경로/gate-read-model-serving \
+INFERENCE_BIND=<이 서버의 사설 인터페이스 주소> \
 docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
 ```
 

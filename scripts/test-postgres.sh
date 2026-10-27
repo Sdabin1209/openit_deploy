@@ -38,6 +38,12 @@ for a in $PG_DBS; do
   for b in $PG_DBS; do [ "$a" = "$b" ] || no "$a 계정이 $b 데이터베이스에 접속 못 함" sql "$a" "$b" "SELECT 1"; done
 done
 no "틀린 암호로는 접속 못 함" bash -c "'$DOCKER' exec -e PGPASSWORD=wrong '$(C)' psql -h 127.0.0.1 -U survey -d survey -Atqc 'SELECT 1'"
+echo "== 서버 설정: 로그에 SQL 값이 남지 않음, 연결 상한, pg_hba"
+ok "pg-config-check.sh (log_* 설정, 계정별 연결 상한, host 줄에 trust 없음)" bash -c "bash $DEPLOY_ROOT/scripts/pg-config-check.sh || { bash $DEPLOY_ROOT/scripts/pg-config-check.sh | grep -E \"FAIL|어긋남\" >&2; exit 1; }"
+no "중복 키 오류를 일으킨다(값을 담은 문장)" sql survey survey "INSERT INTO items VALUES (1, 'LOGLEAK_probe_value')"
+sleep 1
+ok "오류 로그에 문장과 값(LOGLEAK_probe_value)·DETAIL(Key (id)=)이 없다" bash -c "L=\$('$DOCKER' logs '$(C)' 2>&1); echo \"\$L\" | grep -q 'duplicate key' && ! echo \"\$L\" | grep -q 'LOGLEAK_probe_value' && ! echo \"\$L\" | grep -q 'Key (id)='"
+ok "계정별 연결 상한(기본 20)" bash -c "[ \"\$('$DOCKER' exec '$(C)' psql -U postgres -d postgres -Atqc \"SELECT rolconnlimit FROM pg_roles WHERE rolname='survey'\" | tr -d '\\r')\" = 20 ]"
 echo "== 백업·복구 왕복"
 for a in survey gate; do eval "FP_$a=\$(fp $a)"; done
 PF_before=$(bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" survey)

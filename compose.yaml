@@ -11,6 +11,8 @@ x-hardening: &hardening
   tmpfs: ["/tmp"]
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # 로그는 표준 출력. 회전만 여기서
 
+x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0004)
+
 x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 curl 없음)
   interval: 15s
   timeout: 3s
@@ -141,6 +143,9 @@ secrets:
 services:
   postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
     <<: *hardening
+    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${POSTGRES_CPUS:-2.0}
+    pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
     image: ${POSTGRES_IMAGE:?locks/images.lock}
     user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
     environment:
@@ -152,6 +157,26 @@ services:
       - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
     tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
     networks: [db-survey, db-qa, db-ops, db-gate]
+    shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0004)
+    # 서버 설정(docs/adr/0005-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
+    #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
+    #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
+    #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
+    #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_error_verbosity=terse
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+      - -c
+      - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
@@ -162,6 +187,9 @@ services:
 
   gateway:
     <<: *hardening
+    mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${GATEWAY_CPUS:-1.0}
+    pids_limit: ${GATEWAY_PIDS_LIMIT:-256}
     image: ${GATEWAY_IMAGE:?locks/images.lock}
     user: "10001:10001"
     cap_add: ["NET_BIND_SERVICE"]   # caddy 바이너리에 파일 권한이 있어 cap_drop ALL이면 실행이 거부된다. 실제로는 8080을 연다
@@ -186,17 +214,26 @@ services:
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     <<: *hardening
+    mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
+    pids_limit: ${KIOSK_FRONTEND_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
     networks: [edge]
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
     <<: *hardening
+    mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
+    pids_limit: ${ADMIN_CONSOLE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
     networks: [edge]
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5}
 
   survey-service:
     <<: *hardening
+    mem_limit: ${SURVEY_SERVICE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${SURVEY_SERVICE_CPUS:-1.0}
+    pids_limit: ${SURVEY_SERVICE_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
@@ -223,6 +260,9 @@ services:
 
   question-authoring:
     <<: *hardening
+    mem_limit: ${QUESTION_AUTHORING_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${QUESTION_AUTHORING_CPUS:-1.0}
+    pids_limit: ${QUESTION_AUTHORING_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
@@ -242,6 +282,9 @@ services:
 
   ops-feedback-ingest:
     <<: *hardening
+    mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${OPS_FEEDBACK_INGEST_CPUS:-1.0}
+    pids_limit: ${OPS_FEEDBACK_INGEST_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
@@ -262,6 +305,9 @@ services:
 
   release-gate:
     <<: *hardening
+    mem_limit: ${RELEASE_GATE_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${RELEASE_GATE_CPUS:-1.0}
+    pids_limit: ${RELEASE_GATE_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
@@ -282,6 +328,9 @@ services:
 
   model-serving:        # 추론 서버(model-runtime, CPU/fake 변형, 문진 스키마는 이미지에 내장 D72). survey-service가 I9(HTTP)로 부른다
     <<: *hardening
+    mem_limit: ${MODEL_SERVING_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${MODEL_SERVING_CPUS:-2.0}
+    pids_limit: ${MODEL_SERVING_PIDS_LIMIT:-512}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving@${MODEL_SERVING_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/model-serving.env
@@ -298,6 +347,9 @@ services:
 
   model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
     <<: *hardening
+    mem_limit: ${MODEL_REGISTRY_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${MODEL_REGISTRY_CPUS:-1.0}
+    pids_limit: ${MODEL_REGISTRY_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-registry@${MODEL_REGISTRY_DIGEST:?locks/images.lock}
     environment:
       MODEL_REGISTRY_READ_TOKENS_FILE: /run/secrets/model-registry-read-tokens
@@ -313,6 +365,9 @@ services:
   # 이웃 서비스와 같은 이미지·볼륨·네트워크를 쓰되 쓰기 주체는 같은 영역이다.
   job-ops-feedback:
     profiles: ["jobs"]
+    mem_limit: ${JOB_OPS_FEEDBACK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${JOB_OPS_FEEDBACK_CPUS:-1.0}
+    pids_limit: ${JOB_OPS_FEEDBACK_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     command: ["python", "-m", "ops_feedback.job", "--config", "/config/job.yaml"]
     environment:
@@ -328,10 +383,14 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
+    logging: *joblog
     tmpfs: ["/tmp", "/data"]
 
   job-release-gate-collect:     # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다
     profiles: ["jobs"]
+    mem_limit: ${JOB_RELEASE_GATE_COLLECT_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    cpus: ${JOB_RELEASE_GATE_COLLECT_CPUS:-1.0}
+    pids_limit: ${JOB_RELEASE_GATE_COLLECT_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     command: ["python", "-m", "release_gate", "collect"]
     env_file:
@@ -346,4 +405,5 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
+    logging: *joblog
     tmpfs: ["/tmp"]
