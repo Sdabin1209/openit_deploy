@@ -44,6 +44,7 @@ services:
       MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/model-runtime-release-token
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}
+      MODEL_RUNTIME_ALLOW_FAKE: "${INFERENCE_ALLOW_FAKE:-}"   # v0.7.3: fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험·개발 전용). vllm 에는 필요 없다
       MODEL_RUNTIME_RELEASE_URL: ${RELEASE_URL:?RELEASE_URL(release-gate 주소)이 필요하다}
     # 읽기 전용 루트의 캐시·홈 위치와 원격 측정 차단은 model-runtime v0.5.3 부터 이미지 ENV 기본값이다(여기서 다시 정하지 않는다).
     volumes:
