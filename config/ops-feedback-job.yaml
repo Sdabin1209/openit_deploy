@@ -1,0 +1,41 @@
+# ops-feedback 잡 설정(compose job-ops-feedback 이 /config/job.yaml 로 읽기 전용 마운트한다. run-job.sh 기본 경로). 형식은 ops-feedback 가 정한다.
+# 비식별 기준·분류체계는 보수적 시작값이고 사용자 결정이 아니다. rollback 과 retention 값은 사용자 결정 전이라 비워 둔다(null = 지정 안 함).
+storage:
+  log_db: /data/log.db
+  failure_db: /data/failures.db
+deid:
+  policy_id: conservative-v0
+  salt_env: OPS_DEID_SALT
+  pseudonymize_keys: [session_id, turn_id]
+  keep_string_keys: [question_id, slot_id, repeat_key, code, path, action, next_item]
+  scrub_string_keys: []
+  scrub_patterns: {}
+  unlisted_string_action: mask
+  mask_defs: [Value]
+  drop_defs: []   # v2 TurnTrace 에는 QuestionBank 정의가 없다(있으면 비식별이 실패로 닫힌다)
+  mask_value_keys: [value]
+  mask_number_keys: []
+  residual_patterns:
+    email: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    phone_kr: '0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}'
+    rrn_kr: '\d{6}[- ]?[1-4]\d{6}'
+detection:
+  detectors:
+    - type: rule
+      rules:
+        - {id: TURN_FAILURE_SIGNAL}
+        - {id: TURN_FAILED_STEPS}
+        - {id: COMMIT_ERROR}
+        - {id: GENERATOR_FALLBACK}
+        - {id: STAFF_ALERT_DELIVERY_FAILED}
+        - {id: INTERVENTION_FAILED}
+classification:
+  default_failure_type: UNCLASSIFIED
+  rule_to_type: {}
+  priority: [TURN_FAILURE_SIGNAL, COMMIT_ERROR, TURN_FAILED_STEPS]
+retention:
+  raw_days: null            # 보관 기간: 사용자 결정 전(null)
+rollback: null              # 롤백 기준: 사용자 결정 전(null)
+release_reader:
+  factory: "boundary_contracts.clients:HttpReleaseReader"
+  args: {base_url: "http://release-gate:8080", token: {env: OPS_GATE_READ_TOKEN}}

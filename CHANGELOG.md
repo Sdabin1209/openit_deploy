@@ -1,5 +1,15 @@
 # 변경 이력
 
+## 게이트웨이 개별 계정·키오스크 기기 인증, 스케줄러 주기, 잡 설정 파일 (D85)
+- 결정(사용자 지시 D85, 표준): 직원·운영자는 개별 계정으로 인증하고 `X-Openit-User`로 행위자를 전한다. 이유: 감사 기록에 누가 했는지가 남고, OIDC로 바꿔도 같은 헤더 규칙을 쓴다. 키오스크는 기기 토큰으로 인증한다. 이유: 게이트웨이에 닿는 누구나 키오스크 API를 부르는 상태를 없애고 기기별로 폐기할 수 있다.
+- `config/Caddyfile`: 인증 블록 `(authenticate)`와 `(role_matchers)`를 생성 파일로 분리(OIDC 교체 지점). staff/operator/release-approver/reviewer 역할 검사(403), 직원 개입 경로 포함. operator 계정만 여는 경로 넷(admin-console CR-004): `GET /v1/active-pointer`, `GET /v1/releases`(읽기 토큰 `gate-read-operator`)와 `POST /v1/activate`, `/v1/rollback`(쓰기 토큰 `gate-write-operator`), no-store. `gen-secrets.sh`가 release-gate 읽기 목록에 역할 operator를 더함. 키오스크 경로는 `@device_ok` 기기 토큰 대조 후 서비스 토큰으로 바꿔 붙이고 아니면 401, 클라이언트의 `X-Openit-User` 제거.
+- `config/gateway-accounts.conf`(계정↔역할), `scripts/gateway-lib.sh`, `gen-secrets.sh`(계정 암호·해시 파일, 시험 기기 `e2e`), `scripts/kiosk-add-device.sh add|remove|list|sync [--apply]`, 자체 시험 `scripts/test-gateway-auth.sh`(e2e.sh가 실행). 예전 `staff-console-password` 등 공용 암호 파일과 `gateway-staff-auth/human-auth.caddy`는 쓰지 않는다(남아 있어도 된다).
+- E2E(`e2e_steps.py`, `e2e.sh`)와 `demo.sh`: 키오스크 호출에 기기 토큰, 계정 이름 `staff-e2e`/`operator-e2e`/`trainer-e2e`/`reviewer-e2e`. 새 단언: 기기 토큰 없음·틀림·서비스 토큰은 401, 역할 밖 계정 403, 운영자 경로 인증 없이 401.
+- `config/jobs.yaml`: release-gate-collector 600초, ops-feedback-job 3600초, backup 86400초(표준 주기). 이유: 새 조합은 10분 안에 후보가 되고, Trace 비식별은 시간 단위, 백업은 하루 단위가 표준이다.
+- `config/ops-feedback-job.yaml`: root 소유 빈 디렉터리(Docker가 파일이 없을 때 만든 것)를 지우고 실제 파일로 둠. `rollback`, `retention.raw_days`는 사용자 결정 전이라 `null`.
+- check-all 규칙 11: compose 바인드 마운트 원본(확장자 있는 파일)이 실제 파일이 아니면 FAIL(재발 방지). 자체 시험 포함.
+
+
 ## PostgreSQL 기반: 서버 하나, 서비스마다 데이터베이스·최소 권한 계정 (서비스 설정은 아직 그대로)
 - 결정(사용자 지시: 빈 곳은 표준적인 방법): 영역별 SQLite 파일 대신 공식 `postgres:16` 서버 하나. 서비스마다 데이터베이스와 계정을 나눈다. 소유 서비스만 쓰고 이웃은 HTTP로만 읽는 규칙(D49·D50)은 그대로다.
   - 이유 1: 권한·암호화·백업·보존을 DB 계층 한 곳에서 걸 수 있다.

@@ -3,12 +3,17 @@
 	auto_https off
 }
 # 토큰은 환경 변수가 아니라 Caddy 표준 파일 치환 {file./run/secrets/<이름>} 으로 읽는다(D84; 설정을 읽을 때 한 번 치환되고 컨테이너 환경에 값이 없다).
-# 직원 콘솔 인증 조각. 비밀 파일(secrets/gateway-staff-auth.caddy)에 있다: 기본 인증(개발/E2E용). 운영 인증 방식(SSO, 사내망 제한 등)은 미정이다.
-import /etc/caddy/staff-auth.caddy
-# 사람 계정 인증 조각(secrets/gateway-human-auth.caddy): 기본 인증(개발/E2E용, 운영 방식 미정). 직원 콘솔 계정과 분리한다.
-# 이 파일이 (human_auth)(계정과 암호 해시)와 (role_matchers)(계정 -> 역할 release-approver / reviewer)를 정의한다. 계정·역할 값은 비밀 저장소에 있다(D71).
-import /etc/caddy/human-auth.caddy
+# 인증 블록(D85 E절): 직원·운영자·승인자·검토자를 개별 계정으로 인증한다. 계정과 해시, 계정 -> 역할은 생성된 비밀 파일(secrets/gateway-accounts.caddy)에 있다
+# (원본 목록은 config/gateway-accounts.conf, 만드는 것은 scripts/gen-secrets.sh). 이 파일이 두 조각을 정의한다:
+#   (authenticate)   인증 블록. 통과하면 {http.auth.user.id} 에 계정 ID 가 든다. 병원 IdP(OIDC)가 정해지면 **이 블록만** 교체한다(docs/RUN.md 4-1-2).
+#   (role_matchers)  @role_staff / @role_operator / @role_approver / @role_reviewer. 계정 -> 역할 매핑.
+# 이 Caddyfile 의 나머지는 위 두 조각의 이름만 안다(basic_auth 를 직접 쓰지 않는다).
+import /etc/caddy/accounts.caddy
+# 키오스크 기기 인증(D85 F절): (kiosk_devices) 가 @device_ok 를 정의한다. 기기 토큰 목록은 secrets/gateway-devices.caddy (scripts/kiosk-add-device.sh).
+import /etc/caddy/devices.caddy
 :8080 {
+	import role_matchers
+	import kiosk_devices
 	# 접근 로그: 요청 본문은 남기지 않는다(Caddy는 본문을 기록하지 않는다). Authorization 헤더는 Caddy가 REDACTED로 바꾼다.
 	log {
 		output stdout
@@ -20,22 +25,28 @@ import /etc/caddy/human-auth.caddy
 	handle /readyz {
 		respond "ok" 200
 	}
-	# 직원 API와 개입: 사람 인증 뒤에만 staff 역할 토큰을 붙인다. SSE는 버퍼링을 끄고 읽기 제한 시간을 길게, Last-Event-ID와 id는 그대로 전달한다.
+	# 직원 API와 개입: 개별 계정 인증 + staff 역할 뒤에만 staff 서비스 토큰을 붙인다. 인증된 계정 ID 를 X-Openit-User 로 붙이고(개입 기록의 staff_id, 클라이언트가 보낸 값은 덮어씀) 본문 값은 믿지 않는다.
+	# SSE는 버퍼링을 끄고 읽기 제한 시간을 길게, Last-Event-ID와 id는 그대로 전달한다.
 	@staffapi path /v1/staff/* /v1/sessions/*/intervention
 	handle @staffapi {
-		import staff_auth
-		reverse_proxy survey-service:8080 {
-			header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
-			flush_interval -1
-			transport http {
-				read_timeout 1h
+		import authenticate
+		handle @role_staff {
+			reverse_proxy survey-service:8080 {
+				header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				flush_interval -1
+				transport http {
+					read_timeout 1h
+				}
 			}
+		}
+		handle {
+			respond "forbidden: staff 역할이 아니다" 403
 		}
 	}
 	# 출고 승인 화면(admin-console): 사람 인증 뒤에만, release-gate의 승인 경로 네 개만 프록시한다: 읽기(GET) 두 경로는 release-approver **읽기** 토큰, 결정(POST /v1/approvals)은 release-approver **쓰기** 토큰을 붙인다(게이트는 읽기 면에서 쓰기 토큰을 403으로 거부한다).
-	# 열지 않는 것: POST /v1/submissions, /v1/activate, /v1/rollback, /v1/releases*  (아래 handle /v1/* 가 404).
+	# 열지 않는 것: POST /v1/submissions, /v1/releases/*  (아래 handle /v1/* 가 404). /v1/active-pointer, /v1/releases, /v1/activate, /v1/rollback 은 아래 운영자 블록에서만 연다.
 	# 인증된 사용자 ID를 X-Openit-User 로 붙이고 클라이언트가 보낸 같은 이름 헤더는 덮어쓴다(D69). 응답의 X-Openit-Report-Hash 는 그대로 통과하고 Cache-Control 은 no-store를 유지한다.
-	import role_matchers
 	@adminread {
 		method GET
 		path /v1/submissions /v1/submissions/*
@@ -45,7 +56,7 @@ import /etc/caddy/human-auth.caddy
 		path /v1/approvals
 	}
 	handle @adminread {
-		import human_auth
+		import authenticate
 		handle @role_approver {
 			reverse_proxy release-gate:8080 {
 				header_up Authorization "Bearer {file./run/secrets/gate-read-release-approver}"
@@ -58,7 +69,7 @@ import /etc/caddy/human-auth.caddy
 		}
 	}
 	handle @adminwrite {
-		import human_auth
+		import authenticate
 		handle @role_approver {
 			reverse_proxy release-gate:8080 {
 				header_up Authorization "Bearer {file./run/secrets/gate-write-release-approver}"
@@ -81,7 +92,7 @@ import /etc/caddy/human-auth.caddy
 		path /v1/cases/*/review
 	}
 	handle @reviewread {
-		import human_auth
+		import authenticate
 		handle @role_reviewer {
 			reverse_proxy ops-feedback-ingest:8080 {
 				header_up Authorization "Bearer {file./run/secrets/ops-read-reviewer}"
@@ -94,7 +105,7 @@ import /etc/caddy/human-auth.caddy
 		}
 	}
 	handle @reviewwrite {
-		import human_auth
+		import authenticate
 		handle @role_reviewer {
 			reverse_proxy ops-feedback-ingest:8080 {
 				header_up Authorization "Bearer {file./run/secrets/ops-review-reviewer}"
@@ -109,23 +120,73 @@ import /etc/caddy/human-auth.caddy
 	# 승인 화면 정적 파일: /admin/ 접두사를 떼고 전달한다(이미지는 /admin/ 을 모른다. 화면은 상대 경로 app.js·app.css 를 쓴다)
 	redir /admin /admin/ permanent
 	handle_path /admin/* {
-		import human_auth      # 화면은 어느 역할이든 열린다. API는 위에서 역할로 막힌다
+		import authenticate      # 화면은 어느 역할이든 열린다. API는 위에서 역할로 막힌다
 		reverse_proxy admin-console:8080
 	}
-	# 키오스크 공개 API(PUBLIC_API.md): 같은 출처의 /v1/sessions…에 kiosk 역할 토큰을 붙인다. /v1/staff 는 위에서만 staff 토큰을 받는다.
+	# 운영자 경로(D85 E절, admin-console CR-004): 릴리스 운영 화면이 부르는 게이트 경로 넷은 operator 역할 계정 뒤에서만 연다. 아니면 403(인증 없으면 401).
+	# 읽기(GET /v1/active-pointer, GET /v1/releases)는 operator **읽기** 토큰, 변경(POST /v1/activate, /v1/rollback)은 operator **쓰기** 토큰을 붙인다.
+	# X-Openit-User 는 인증된 계정으로 덮어쓰고(release-gate 가 행위자로 기록) Cache-Control 은 no-store 를 유지한다. 열지 않는 것: /v1/releases/* (번들, I9 PUT 포함), 그 밖의 /v1/*.
+	@operateread {
+		method GET
+		path /v1/active-pointer /v1/releases
+	}
+	@operatewrite {
+		method POST
+		path /v1/activate /v1/rollback
+	}
+	handle @operateread {
+		import authenticate
+		handle @role_operator {
+			reverse_proxy release-gate:8080 {
+				header_up Authorization "Bearer {file./run/secrets/gate-read-operator}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: operator 역할이 아니다" 403
+		}
+	}
+	handle @operatewrite {
+		import authenticate
+		handle @role_operator {
+			reverse_proxy release-gate:8080 {
+				header_up Authorization "Bearer {file./run/secrets/gate-write-operator}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: operator 역할이 아니다" 403
+		}
+	}
+	# 키오스크 공개 API(PUBLIC_API.md, D85 F절): 기기 토큰(Authorization: Bearer, 기기마다 파일 하나)을 목록과 대조한 뒤에만 서비스 kiosk 토큰으로 바꿔 붙인다.
+	# 토큰이 없거나 틀리면 401. 클라이언트가 보낸 X-Openit-User 는 지운다. /v1/staff 는 위에서만 staff 토큰을 받는다.
 	@kioskapi path /v1/sessions /v1/sessions/*
 	handle @kioskapi {
-		reverse_proxy survey-service:8080 {
-			header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"
+		handle @device_ok {
+			reverse_proxy survey-service:8080 {
+				header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"
+				header_up -X-Openit-User
+			}
+		}
+		handle {
+			header WWW-Authenticate "Bearer"
+			respond "unauthorized: 기기 토큰이 없거나 틀리다" 401
 		}
 	}
 	handle /v1/* {
 		respond "not found" 404
 	}
-	# 직원 콘솔 정적 화면: 사람 인증 뒤에만. HTTPS 종단은 운영 도메인이 정해지면 여기에 더한다(STT·웹 푸시는 보안 출처 필요, 미정).
+	# 직원 콘솔 정적 화면: 개별 계정 인증과 staff 역할 뒤에만. HTTPS 종단은 운영 도메인이 정해지면 여기에 더한다(STT·웹 푸시는 보안 출처 필요, 미정).
 	handle /staff/* {
-		import staff_auth
-		reverse_proxy kiosk-frontend:8080
+		import authenticate
+		handle @role_staff {
+			reverse_proxy kiosk-frontend:8080
+		}
+		handle {
+			respond "forbidden: staff 역할이 아니다" 403
+		}
 	}
 	handle {
 		reverse_proxy kiosk-frontend:8080

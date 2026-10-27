@@ -102,15 +102,17 @@ guide() {
 
  주소 (Docker가 배정한 포트): http://$host:$gw
    키오스크 화면      http://$host:$gw/
-   직원 콘솔          http://$host:$gw/staff/      계정 staff
-   승인·실패 사례 검토 http://$host:$gw/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e
+   직원 콘솔          http://$host:$gw/staff/      계정 staff-e2e (역할 staff)
+   승인·실패 사례 검토 http://$host:$gw/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
  (HTTP·기본 인증이라 시험용이다. 원격 서버면: ssh -L $gw:127.0.0.1:$gw <서버>  로 터널을 열고 http://127.0.0.1:$gw 로 본다)
 
  암호: 값은 출력하지 않는다. 비밀 파일을 열어 본다 (폴더 700, 저장소 밖 $W/secrets):
-   staff            $W/secrets/tokens/staff-console-password
-   trainer-e2e      $W/secrets/tokens/admin-console-password
-   reviewer-e2e     $W/secrets/tokens/reviewer-console-password
-   예: cat $W/secrets/tokens/staff-console-password
+   staff-e2e        $W/secrets/tokens/account-staff-e2e-password
+   operator-e2e     $W/secrets/tokens/account-operator-e2e-password
+   trainer-e2e      $W/secrets/tokens/account-trainer-e2e-password
+   reviewer-e2e     $W/secrets/tokens/account-reviewer-e2e-password
+   예: cat $W/secrets/tokens/account-staff-e2e-password
+ 키오스크 기기 토큰(D85 F절): $W/secrets/tokens/kiosk-device-e2e  (키오스크 API는 이 값을 Authorization: Bearer 로 보내야 통과한다. 키오스크 앱이 기기 토큰을 받는 방식은 kiosk-frontend 쪽 구현에 달렸고 이 데모에서 브라우저로는 확인하지 못했다)
 
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )
  $( [ $LLM = 1 ] && [ -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 기반 모델(프로파일 $LLM_PROFILE_NAME) + 학습 서버에서 가져온 LoRA-A/B(평가하지 않음, 릴리스 평가 보고서는 시험용 고정값) + 사용자가 준 시스템 프롬프트. 어댑터가 학습 때와 같은 프롬프트로 만든 것인지는 사용자가 보증한다. 첫 응답은 적재가 끝난 뒤부터 된다." )

@@ -40,10 +40,10 @@ volumes:          # 저장소마다 볼륨 하나, 쓰기는 소유 서비스만
 configs:
   gateway-caddyfile:
     file: ${CONFIG_DIR:-./config}/Caddyfile
-  gateway-staff-auth:
-    file: ${SECRETS_DIR:-./secrets}/gateway-staff-auth.caddy   # 직원 콘솔 기본 인증(비밀)
-  gateway-human-auth:
-    file: ${SECRETS_DIR:-./secrets}/gateway-human-auth.caddy   # 사람 계정 기본 인증과 계정 -> 역할(release-approver, reviewer) 매핑(비밀)
+  gateway-accounts:
+    file: ${SECRETS_DIR:-./secrets}/gateway-accounts.caddy   # 개별 계정 인증 블록(해시)과 계정 -> 역할(staff, operator, release-approver, reviewer) 매핑(비밀, D85 E절)
+  gateway-devices:
+    file: ${SECRETS_DIR:-./secrets}/gateway-devices.caddy    # 키오스크 기기 토큰 목록(비밀, D85 F절)
 
 # 비밀(D84): 토큰·salt는 환경 변수가 아니라 파일로 마운트한다(/run/secrets/<이름>, 읽기 전용). 서비스에는 NAME_FILE=/run/secrets/<이름> 경로만 환경 변수로 준다(경로는 비밀이 아니다).
 # 파일은 scripts/gen-secrets.sh 가 ${SECRETS_DIR}/tokens/<이름> 에 만든다(값 하나, 목록 값은 서비스가 받는 형식 그대로 한 줄).
@@ -81,6 +81,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-write-release-approver
   gate-read-release-approver:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-release-approver
+  gate-read-operator:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-operator
+  gate-write-operator:
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-write-operator
   ops-read-reviewer:
     file: ${SECRETS_DIR:-./secrets}/tokens/ops-read-reviewer
   ops-review-reviewer:
@@ -154,9 +158,9 @@ services:
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
     configs:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
-      - {source: gateway-staff-auth, target: /etc/caddy/staff-auth.caddy}
-      - {source: gateway-human-auth, target: /etc/caddy/human-auth.caddy}
-    secrets: [survey-api-kiosk, survey-api-staff, gate-write-release-approver, gate-read-release-approver, ops-read-reviewer, ops-review-reviewer]
+      - {source: gateway-accounts, target: /etc/caddy/accounts.caddy}
+      - {source: gateway-devices, target: /etc/caddy/devices.caddy}
+    secrets: [survey-api-kiosk, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}

@@ -308,8 +308,9 @@ def step3():
 def decisions_for(gate_read, subj):
     return gate_read.find_decisions(question_set=subj["question_set"], lora_a=subj["lora_a"], lora_b=subj["lora_b"])[0]
 
-ADMIN = lambda: ("trainer-e2e", TOK("admin-console-password"))
-REVIEWER = lambda: ("reviewer-e2e", TOK("reviewer-console-password"))   # 실패 사례 검토 화면 계정(역할 reviewer)   # 승인 화면 기본 인증 시험 계정(운영 인증 방식은 미정)
+ADMIN = lambda: ("trainer-e2e", TOK("account-trainer-e2e-password"))   # 개별 계정(config/gateway-accounts.conf, D85 E절)
+OPERATOR = lambda: ("operator-e2e", TOK("account-operator-e2e-password"))   # 역할 operator: /v1/activate, /v1/rollback
+REVIEWER = lambda: ("reviewer-e2e", TOK("account-reviewer-e2e-password"))   # 실패 사례 검토 화면 계정(역할 reviewer)   # 승인 화면 기본 인증 시험 계정(운영 인증 방식은 미정)
 
 def gw_raw(method, path, body=None, basic=None, headers=None):
     data = json.dumps(body).encode() if body is not None else None
@@ -422,15 +423,16 @@ def survey_ready():
     c, r = http("GET", "survey", "/readyz"); return c, r
 
 def kiosk(path, body):
-    # 브라우저처럼 토큰 없이 같은 출처로 부른다: 게이트웨이가 kiosk 역할 토큰을 붙인다
-    return http("POST", "gw", path, None, body)
+    # 키오스크 앱처럼 기기 토큰(Authorization: Bearer)으로 부른다: 게이트웨이가 대조한 뒤 kiosk 역할 토큰으로 바꿔 붙인다(D85 F절)
+    return http("POST", "gw", path, KDEV(), body)
 
-STAFF = lambda: ("staff", TOK("staff-console-password"))   # 직원 콘솔 기본 인증(개발/E2E용)
+KDEV = lambda: TOK("kiosk-device-e2e")   # 시험 기기 토큰(scripts/gen-secrets.sh)
+STAFF = lambda: ("staff-e2e", TOK("account-staff-e2e-password"))   # 직원 콘솔 기본 인증(개발/E2E용)
 def state_of(sid):
     """GET /v1/sessions/{id}/state. 서버가 0.5초보다 잦은 조회를 429(UNAVAILABLE)로 막으므로 간격을 두고 재시도한다(키오스크는 2초 간격 폴링)."""
     for _ in range(8):
         time.sleep(0.7)
-        c, r = http("GET", "gw", f"/v1/sessions/{sid}/state")
+        c, r = http("GET", "gw", f"/v1/sessions/{sid}/state", KDEV())
         if c != 429: return c, r
     return c, r
 
@@ -555,11 +557,32 @@ def step5():
         assert cu == 200 and not (isinstance(ru, dict) and ru.get("turn_failure_signal")) and "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
         kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
+    # D85 F절: 기기 토큰 없음·틀린 토큰·서비스 kiosk 토큰을 기기 토큰으로 쓰기는 모두 401, 올바른 기기 토큰은 통과
+    for lab, tk in (("토큰 없음", None), ("틀린 토큰", "0" * 48), ("서비스 kiosk 토큰", TOK("survey-api-kiosk"))):
+        assert http("POST", "gw", "/v1/sessions", tk, {"session_id": f"sess-{RID}-nodev", "kind": "SESSION_START"})[0] == 401, f"기기 토큰 없이 키오스크 API가 열려 있다({lab})"
+    # D85 E절: 개별 계정과 역할. 직원 개입·직원 API는 staff 계정만(다른 역할 403), 운영자 경로는 operator 계정만(없으면 401, 다른 역할 403)
+    assert gw_raw("GET", "/v1/staff/alerts", basic=OPERATOR())[0] == 403, "operator 계정이 직원 API를 부를 수 있다"
+    assert gw_raw("GET", "/v1/staff/alerts", basic=ADMIN())[0] == 403, "승인자 계정이 직원 API를 부를 수 있다"
+    assert gw_raw("POST", "/v1/activate", {})[0] == 401 and gw_raw("POST", "/v1/rollback", {})[0] == 401, "운영자 경로가 인증 없이 열려 있다"
+    for nm, acct in (("staff", STAFF()), ("release-approver", ADMIN()), ("reviewer", REVIEWER())):
+        assert gw_raw("POST", "/v1/activate", {}, basic=acct)[0] == 403 and gw_raw("POST", "/v1/rollback", {}, basic=acct)[0] == 403, f"{nm} 계정이 운영자 경로를 부를 수 있다"
+    for pth in ("/v1/activate", "/v1/rollback"):
+        c, b, _ = gw_raw("POST", pth, {}, basic=OPERATOR())
+        assert c not in (401, 403) and not isinstance(b, str), f"operator 계정의 {pth} 가 게이트까지 가지 않았다: {c} {str(b)[:80]}"   # 게이트웨이의 404는 평문 'not found', 게이트의 오류는 JSON
+    assert gw_raw("GET", "/v1/activate", basic=OPERATOR())[0] == 404, "GET /v1/activate 가 열려 있다"
+    # CR-004: 조회 두 경로도 operator 계정만(없으면 401, 다른 역할 403), 번들 경로는 닫혀 있다
+    for pth in ("/v1/active-pointer", "/v1/releases"):
+        assert gw_raw("GET", pth)[0] == 401, f"{pth} 가 인증 없이 열려 있다"
+        assert gw_raw("GET", pth, basic=ADMIN())[0] == 403 and gw_raw("GET", pth, basic=STAFF())[0] == 403, f"{pth} 가 operator 밖 계정에 열려 있다"
+        c, b, hd = gw_raw("GET", pth, basic=OPERATOR()); assert c == 200 and not isinstance(b, str), f"operator 의 {pth} 조회 실패 {c} {str(b)[:80]}"
+        assert hd.get("Cache-Control", "").lower() == "no-store", f"{pth} 응답의 Cache-Control 이 no-store 가 아니다: {hd.get('Cache-Control')}"
+    assert gw_raw("GET", "/v1/releases/x/bundle", basic=OPERATOR())[0] == 404, "번들 경로가 열려 있다"
+    assert gw_text("/staff/", OPERATOR())[0] == 403, "operator 계정이 직원 콘솔 화면을 연다"
     # 직원 개입은 서비스에 직접(내부 경로)만: 키오스크 토큰은 403, 직원 토큰은 멈추지 않은 세션에 409(PUBLIC_API.md)
     ib = {"session_id": sid, "decision": "RESUME", "turn_id": "i1"}
     assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", TOK("survey-api-kiosk"), ib)[0] == 403, "키오스크 토큰으로 직원 개입이 열림"
     assert http("POST", "survey", f"/v1/sessions/{sid}/intervention", TOK("survey-api-staff"), ib)[0] == 409, "멈추지 않은 세션의 개입이 409가 아님"
-    assert http("GET", "gw", f"/v1/sessions/{sid}/turns", TOK("survey-api-kiosk"))[0] in (404, 405)
+    assert http("GET", "gw", f"/v1/sessions/{sid}/turns", KDEV())[0] in (404, 405)
     c, en = kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"}); assert c == 200, (c, en); validate_survey("FrontendInput", en)
     # 서비스가 턴마다 Trace를 I6로 보냈는지(outbox 전송 수)
     sent = wait(lambda: (lambda cr: cr[1]["trace_outbox"]["sent"] if cr[1]["trace_outbox"]["sent"] >= 2 else None)(survey_ready()), 30, "Trace 전송")

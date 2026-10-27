@@ -1,19 +1,19 @@
 # 주기 잡 정의(D39). scripts/scheduler.py 가 읽는다.
-# interval_seconds 는 사용자 결정이다(O16과 각 영역의 주기). null 이면 이 스케줄러는 그 잡을 실행하지 않고 "주기 미정"으로 보고한다.
+# interval_seconds: 사용자 결정(D85, 표준 주기). 수집기 600초, ops-feedback 3600초, 백업 86400초. null 이면 이 스케줄러는 그 잡을 실행하지 않고 "주기 미정"으로 보고한다.
 # where: serving 은 이 서버의 Compose에서 도는 잡. gpu-external 은 서빙 서버 밖의 GPU 서버에서 도는 잡(D40)이라 이 스케줄러·Compose가 실행하지 않는다.
 jobs:
   - name: ops-feedback-job            # Trace 비식별, 실패 사례 게시, 롤백 평가(ops-feedback run-once)
     where: serving
     command: ["scripts/run-job.sh", "job-ops-feedback"]
-    interval_seconds: null
+    interval_seconds: 3600
   - name: backup                      # 저장소 백업. 설정(config/backup.env)이 없으면 거부한다
     where: serving
     command: ["scripts/backup.sh"]
-    interval_seconds: null
+    interval_seconds: 86400
   - name: release-gate-collector      # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다(멱등)
     where: serving
     command: ["scripts/run-job.sh", "job-release-gate-collect"]
-    interval_seconds: null
+    interval_seconds: 600
   - name: release-gate-worker         # 승인 평가 워커(GPU 필요)
     where: gpu-external
     interval_seconds: null

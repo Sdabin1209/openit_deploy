@@ -55,7 +55,7 @@ bash scripts/demo.sh reset                       # down 후 up
 
 - 처음에는 이미지 빌드가 들어가 오래 걸릴 수 있다(측정 안 함). E2E 단계 1~8 구간은 약 45초(STATUS.md).
 - **출력 읽는 법.** 끝에 "데모 접속 안내" 블록이 나온다: 주소(Docker가 배정한 포트), 화면별 경로(`/` 키오스크, `/staff/` 직원 콘솔, `/admin/` 승인·검토), 계정 이름, 암호 파일 위치, 위험 문구. 암호 값은 출력하지 않는다.
-- **계정.** 직원 콘솔 `staff`, 승인자 `trainer-e2e`(역할 release-approver), 검토자 `reviewer-e2e`(역할 reviewer). 암호는 각각 `state/demo/secrets/tokens/staff-console-password`, `admin-console-password`, `reviewer-console-password` 파일에 있다(`cat`으로 연다).
+- **계정.** 직원 `staff-e2e`(역할 staff), 운영자 `operator-e2e`(operator), 승인자 `trainer-e2e`(release-approver), 검토자 `reviewer-e2e`(reviewer). 암호는 각각 `state/demo/secrets/tokens/account-<계정>-password` 파일에 있다(`cat`으로 연다). 키오스크 기기 토큰은 `tokens/kiosk-device-e2e`(4-1-2).
 - **직원 알림.** 입력원이 비어 있어(OPEN_GAPS G01) 알림이 만들어지지 않는다. 위험 문구로 정지시키는 시험은 없다. survey-service `/readyz`의 `staff_alert_source.active`가 `false`로 드러내며 고장이 아니다.
 - **가짜 모델.** 시험 구성의 model-serving은 표준 model-runtime 서버(v0.7.1)에 `MODEL_RUNTIME_BACKEND=fake`와 `MODEL_RUNTIME_FAKE_FLOW_FILE`(`test/fake-model/question_flow.json`, survey-service `question_flow`의 문항 순서 사본, 순서가 다르면 E2E가 실패한다)만 준 것이다: A는 입력 문항의 다음 문항으로 가는 유효한 ActionExtraction(`NEXT`)이고, 흐름 파일이 객체 형식이라 칸 정의(`slots`)가 있는 문항에서는 발화로 첫 칸의 ANSWERED 값(boolean: '아니' 포함 여부, integer: 첫 숫자 또는 '없'·'아니'면 0)을 내며 `skips`로 next_item을 정한다(칸 키·타입은 survey-service `schema/data/question_flow.json`의 순서·건너뛰기 7규칙과 boundary-contracts V2_DRAFT.md의 칸 형태에서 가져왔고 Q3와 Q4_1 등 문자열 칸 문항은 칸 정의가 없어 값 없이 NEXT). B는 `(가짜 응답)`. 모델 정확성은 시험하지 않는다. E2E 단계 5g(가짜 A 값 추출·건너뛰기 직접 확인, 서비스 경유 값 있는 3턴이 검증·저장을 통과)와 5s(포인터 1->2 전후 다른 서비스 컨테이너 StartedAt·ID 불변, 새 릴리스 LOADED)가 이를 단언한다. 저장된 값 자체를 돌려주는 읽기 경로는 없어 값 내용은 단언하지 않는다(OPEN_GAPS U16).
 - 이 데이터는 **시험용 대체**다(가짜 모델, 시험용 어댑터·평가 보고서, 시험용 승인자 스크립트). 실제 모델·실제 승인이 아니다.
@@ -108,6 +108,20 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 
 **확인하지 못한 것.** TLS(서버 안 암호화)는 켜지 않았다(내부 네트워크 한정, 서버가 나뉘면 필요). 저장 시 디스크 암호화와 보존 기간 정책(PITR, WAL 보관)은 정하지 않았다(O16). 서비스가 실제로 붙는 경로는 영역 쪽 작업 뒤에 E2E로 본다.
 
+## 4-1-2. 게이트웨이 인증: 개별 계정과 키오스크 기기 토큰 (D85)
+
+**결정(사용자 지시 D85, boundary-contracts `PUBLIC_API.md` 추가 인터페이스 E·F절).** 표준: 직원·운영자는 개별 계정으로 인증하고 행위자를 서비스에 전한다. 키오스크는 기기 토큰으로 인증한다. 이유: 누가 했는지가 감사 기록에 남고(공용 암호로는 못 남긴다), 게이트웨이에 닿는 누구나 키오스크 API를 부르는 상태를 없애며, 기기 하나를 다른 기기에 영향 없이 폐기할 수 있다.
+
+**계정과 역할(E절).** 계정 목록은 `config/gateway-accounts.conf`(`<계정> <역할[,역할]>`, 비밀 아님). 역할: `staff`(직원 콘솔 `/staff/`, `/v1/staff/*`, 개입), `operator`(릴리스 운영 화면의 `GET /v1/active-pointer`, `GET /v1/releases`, `POST /v1/activate`, `POST /v1/rollback`), `release-approver`(출고 승인 경로), `reviewer`(실패 사례 검토). `scripts/gen-secrets.sh`가 계정마다 `tokens/account-<계정>-password`(암호)와 `-hash`(bcrypt, caddy 이미지로 만듦)를 만들고 `secrets/gateway-accounts.caddy`를 쓴다. 기존 파일은 바꾸지 않는다(암호를 바꾸려면 두 파일을 지우고 다시 실행). 값은 출력하지 않는다. 역할이 맞지 않으면 403, 인증이 없으면 401.
+- 게이트웨이는 인증된 계정 ID를 `X-Openit-User`로 붙인다(직원 API·개입, 운영자 경로, 승인·검토 경로). 클라이언트가 보낸 같은 이름의 헤더는 덮어쓰거나(인증 경로) 지운다(키오스크 경로). 서비스는 본문 값이 아니라 이 헤더를 행위자로 쓴다.
+- 위 operator 경로 네 개는 operator 계정 뒤에서만 열린다(읽기 둘은 게이트의 operator 읽기 토큰 `gate-read-operator`, 변경 둘은 쓰기 토큰 `gate-write-operator`. 두 토큰은 gen-secrets가 만들어 release-gate 목록의 역할 `operator`에 넣는다). 응답은 `Cache-Control: no-store`. `/v1/releases/*`(번들, I9)와 그 밖의 `/v1/*`는 404. release-gate가 헤더로 행위자를 기록하게 바뀌는 일은 그쪽 영역의 일이다.
+- **병원 IdP가 정해지면 이 블록만 교체한다.** `config/Caddyfile`은 `(authenticate)`(인증 블록)와 `(role_matchers)`(`@role_staff/@role_operator/@role_approver/@role_reviewer`)라는 이름만 안다. OIDC로 바꿀 때는 `secrets/gateway-accounts.caddy`의 `(authenticate)`를 OIDC 인증 조각으로 바꿔 인증 뒤 `{http.auth.user.id}`가 계정 ID가 되게 하고, 역할을 IdP 클레임에서 얻으면 `(role_matchers)`도 그에 맞게 바꾼다. `X-Openit-User` 규칙과 역할별 경로는 그대로다. (OIDC 모듈은 이 단계에서 넣지 않았다: 미검증.)
+
+**키오스크 기기 인증(F절).** 키오스크 API(`/v1/sessions`, `/v1/sessions/*`)는 `Authorization: Bearer <기기 토큰>`이 없거나 목록에 없으면 401이다. 통과하면 게이트웨이가 서비스 kiosk 토큰으로 바꿔 붙인다(기기 토큰은 서비스로 가지 않는다). 기기 토큰은 기기마다 파일 하나(`tokens/kiosk-device-<ID>`), `secrets/gateway-devices.caddy`가 그 목록이다. 기본으로 시험 기기 `e2e` 하나가 만들어진다.
+- 기기 추가: `bash scripts/kiosk-add-device.sh add <기기 ID> [--apply]`. 토큰 값은 출력하지 않고 파일 경로만 알린다. 기기에는 그 값을 기기 설정이나 시작 URL 조각(`#`)으로 한 번 전한다(URL 쿼리 금지).
+- 폐기: `kiosk-add-device.sh remove <ID> --apply`(또는 파일을 지우고 `sync`). **Caddy는 설정을 읽을 때 한 번 치환하므로 게이트웨이를 다시 시작해야 반영된다**(`--apply`가 `compose restart gateway`). 이 시험은 자체 시험(`scripts/test-gateway-auth.sh`)에서 목록 갱신까지 확인했고, 실행 중인 게이트웨이의 재시작 반영은 확인하지 못했다.
+- 키오스크 앱(kiosk-frontend)이 기기 토큰을 받아 보내는 구현은 그 영역의 일이다. 그 전에는 브라우저 데모의 키오스크 화면이 API를 부르지 못한다(401). 병원 내부망 제한은 배포 설정으로 병행한다.
+
 ## 4-2. 버전 표 (드리프트 점검)
 
 경계 계약·turn-engine·model-runtime의 태그 기준은 `scripts/lib.sh`의 표 한 곳이다. 형제 영역(survey-service, release-gate, model-lab, ops-feedback, question-authoring, synthetic-data, turn-engine, model-runtime)의 requirements/lock/pyproject/Dockerfile/스크립트에 손으로 적힌 같은 태그가 표와 다르면 `bash scripts/check-versions.sh`가 실패하고 `파일:줄`을 알려 준다(읽기 전용, 문서·시험·변경 이력 제외). 점검기 자체의 시험은 `bash scripts/test-check-versions.sh`, 비밀 점검기는 `bash scripts/test-check-secrets-hidden.sh`. 태그를 바꿀 때는 표를 먼저 고치고 이 점검이 가리키는 곳을 영역 세션에서 맞춘다.
@@ -116,7 +130,7 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 
 영역 단위 시험은 영역 사이 어긋남을 못 본다. `bash scripts/check-all.sh`는 실행 없이 읽어서 아는 어긋남을 E2E(6분) 앞에서 잡는다. `e2e.sh`가 시작할 때 자동으로 부르고 FAIL이면 E2E를 시작하지 않는다(`DEPLOY_SKIP_CHECK_ALL=1`로 건너뛸 수 있으나 개발 중에만 쓴다).
 
-- 규칙: 0 대상 열거(처리 방법을 모르는 영역·예시는 `모르는 대상`으로 FAIL), 1 버전표, 2 계약 예시 키 순서(대상은 scripts/check-all-ordered-schemas.txt), 3 완화 정책이 규칙을 빼지 않는지, 4 삭제된 이름의 잔존, 5 박은 `pipeline_schema_version`, 6 설정의 인라인 비밀, 7 compose의 환경 변수 비밀, 8 영역별 시험 수집, 9 영역 README 필수 절(정의는 scripts/check_all.py 주석과 출력에 있다).
+- 규칙(0~11): 0 대상 열거(처리 방법을 모르는 영역·예시는 `모르는 대상`으로 FAIL), 1 버전표, 2 계약 예시 키 순서(대상은 scripts/check-all-ordered-schemas.txt), 3 완화 정책이 규칙을 빼지 않는지, 4 삭제된 이름의 잔존, 5 박은 `pipeline_schema_version`, 6 설정의 인라인 비밀, 7 compose의 환경 변수 비밀, 8 영역별 시험 수집, 9 영역 README 필수 절(정의는 scripts/check_all.py 주석과 출력에 있다), 11 compose 바인드 마운트의 원본(확장자가 있는 설정 파일)이 실제 파일인지(없으면 Docker가 root 소유 빈 디렉터리를 만들어 서비스가 설정을 못 읽는다).
 - 규칙 10(E2E 통과 수는 정본에만): 모든 영역의 `*.md`에서 E2E 문맥의 통과 수 표기(`N PASS`, `PASS N`, `N 통과`)를 찾아 `docs/E2E_RESULTS.md`와 각 영역 `CHANGELOG.md` 밖에서 발견되면 FAIL. 문맥 판정은 `scripts/check-all-e2e-claims.txt`(claim/context/notcontext/allowed), 거짓 양성은 notcontext를 고치거나 `check-all-allow.txt`에 `10|경로|이유`로 적는다. 결과 줄은 e2e.sh가 끝에서 `scripts/record-e2e.sh`로 정본에 더한다.
 - 출력: 규칙마다 PASS/FAIL/SKIP과 `검증됨 N/M, 어긋남, 대상 아님(이유), 검증 안 함(이유)`. 검증에서 빠진 것을 통과로 세지 않는다. SKIP은 어긋남은 없지만 검증 안 함이 있다는 뜻이다. FAIL이면 종료 코드 1이고 `영역/파일:줄` 근거를 낸다. 값·비밀은 출력하지 않는다.
 - 예외: 정당한 언급은 `scripts/check-all-allow.txt`(규칙|경로 글롭|이유), 영역·예시를 점검에서 빼려면 `scripts/check-all.exclude`(`종류:이름 | 이유`, 이유 필수, 종류는 area/example/service). 두 목록은 출력에 그대로 나온다.

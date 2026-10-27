@@ -83,7 +83,7 @@ bash scripts/up.sh deploy
 ```
 
 - cron 예: `* * * * * cd /srv/deploy && .venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json tick >> state/scheduler.log 2>&1`
-- `interval_seconds: null`은 "주기 미정"이라 실행하지 않는다. 주기는 사용자가 정한 뒤 `config/jobs.yaml`에 적는다.
+- 주기(D85, 표준): release-gate-collector 600초, ops-feedback-job 3600초, backup 86400초. `interval_seconds: null`은 "주기 미정"이라 실행하지 않는다. backup 잡은 `config/backup.env`(BACKUP_DIR, BACKUP_RETENTION_DAYS)가 없으면 거부(종료 코드 2)해 FAIL로 보고된다.
 - 잡 하나를 지금 실행: `bash scripts/run-job.sh job-ops-feedback`(설정 파일 `OPS_JOB_CONFIG`가 있어야 한다. 없으면 거부).
 - `gpu-external` 잡은 GPU 서버에서 돈다(D40). 서빙 서버의 Compose·스케줄러가 실행하지 않는다.
 

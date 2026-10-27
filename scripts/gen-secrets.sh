@@ -32,7 +32,7 @@ gen_db
 [ "$ONLY_DB" = 0 ] || { echo "PostgreSQL 비밀 위치: $D/tokens (리포지토리에 커밋하지 않는다)"; exit 0; }
 
 # 서버가 받는 목록 값(역할=토큰,...): 값 하나짜리 파일로 만든다
-GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver)
+GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver operator)
 GATE_W=$(roles gate write operator ops-feedback question-authoring model-lab release-gate-collector release-approver)
 QA_R=$(roles qa read release-gate synthetic-data model-lab)
 OPS_R=$(roles ops read synthetic-data model-lab question-authoring reviewer)
@@ -42,7 +42,7 @@ QA_AUTHOR=$(tok qa-author-e2e)
 # 개별 토큰(compose.yaml 의 secrets 와 같은 이름). 클라이언트(역할)와 서버가 같은 파일 값을 쓴다
 for t in gate-read-survey-service ops-ingest-survey-service survey-api-kiosk survey-api-staff inference-survey-service qa-read-release-gate \
          model-registry-read-release-gate deid-salt gate-read-ops-feedback gate-write-ops-feedback ops-read-question-authoring gate-read-model-serving \
-         gate-write-release-approver gate-read-release-approver ops-read-reviewer ops-review-reviewer staff-console-password admin-console-password reviewer-console-password; do
+         gate-write-release-approver gate-read-release-approver ops-read-reviewer ops-review-reviewer; do
   tok "$t" >/dev/null
 done
 # 목록 값 파일: 서비스가 받는 형식 그대로 한 줄. 토큰이 이미 있으면 내용이 같아서 다시 써도 같다(다르면 갱신한다).
@@ -56,22 +56,13 @@ putlist ops-review-tokens "reviewer=$(tok ops-review-reviewer)"
 putlist qa-author-tokens "$QA_AUTHOR:author-e2e:question-author"
 putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
 
-# 게이트웨이(Caddy)는 위의 개별 토큰 파일을 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 없음). 직원 콘솔은 기본 인증(개발/E2E용, 운영 방식은 미정)
-if [ ! -s "$D/gateway-staff-auth.caddy" ]; then
-  GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
-  HASH=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok staff-console-password)" | tr -d '\r')
-  [ -n "$HASH" ] || die "caddy hash-password 실패"
-  printf '(staff_auth) {\n\tbasic_auth {\n\t\tstaff %s\n\t}\n}\n' "$HASH" > "$D/gateway-staff-auth.caddy"; chmod 644 "$D/gateway-staff-auth.caddy"   # 게이트웨이(uid 10001)가 읽는다. bcrypt 해시만 있다
-fi
-# 사람 계정(승인 화면 /admin/): 기본 인증(개발/E2E용 시험 계정 두 개, 운영 방식은 미정). 계정 -> 역할 매핑도 이 파일에 둔다.
-#   trainer-e2e = release-approver (승인 경로 4개), reviewer-e2e = reviewer (실패 사례 검토 경로). 다른 역할의 경로는 403
-if [ ! -s "$D/gateway-human-auth.caddy" ]; then
-  GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
-  H1=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok admin-console-password)" | tr -d '\r')
-  H2=$("$DOCKER" run --rm "$GW_IMG" caddy hash-password --plaintext "$(tok reviewer-console-password)" | tr -d '\r')
-  [ -n "$H1" ] && [ -n "$H2" ] || die "caddy hash-password 실패"
-  printf '(human_auth) {\n\tbasic_auth {\n\t\ttrainer-e2e %s\n\t\treviewer-e2e %s\n\t}\n}\n(role_matchers) {\n\t@role_approver expression `{http.auth.user.id} in ["trainer-e2e"]`\n\t@role_reviewer expression `{http.auth.user.id} in ["reviewer-e2e"]`\n}\n' "$H1" "$H2" > "$D/gateway-human-auth.caddy"; chmod 644 "$D/gateway-human-auth.caddy"
-fi
+# 게이트웨이(Caddy): 개별 계정 인증(D85 E절)과 키오스크 기기 토큰(F절). 서비스 토큰은 위의 개별 토큰 파일을 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 없음).
+#   계정/역할: config/gateway-accounts.conf -> secrets/gateway-accounts.caddy (암호·해시는 tokens/account-<id>-password / -hash). 개발/E2E용 시험 계정, 운영 방식(OIDC)은 병원 IdP 가 정해진 뒤 교체
+#   기기: tokens/kiosk-device-<id> -> secrets/gateway-devices.caddy. 기본으로 시험 기기 e2e 하나. 더하려면 scripts/kiosk-add-device.sh add <id>
+source "$(dirname "$0")/gateway-lib.sh"
+gw_write_accounts "$D"
+tok kiosk-device-e2e >/dev/null
+gw_write_devices "$D"
 old=$(cd "$D" && ls *.env 2>/dev/null | tr '\n' ' ') || true
 [ -z "$old" ] || echo "알림: 예전 방식의 비밀 env 파일이 남아 있다($old). 더는 쓰지 않는다(환경 변수로 평문이 노출됐다). 지워도 된다: (cd $D && rm -f $old)" >&2
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

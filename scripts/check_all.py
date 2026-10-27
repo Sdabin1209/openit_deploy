@@ -794,6 +794,48 @@ def rule_e2e_claims() -> R:
     return r
 
 
+# ---------- 규칙 11 ----------
+def rule_mount_sources() -> R:
+    """compose 의 바인드 마운트 원본 중 확장자가 있는 것(설정 파일)은 실제 파일이어야 한다.
+    파일이 없는 채로 마운트하면 Docker 가 그 자리에 빈 디렉터리를 만들고(root 소유) 서비스가 설정을 못 읽는다(config/ops-feedback-job.yaml 결함의 재발 방지)."""
+    r = R()
+    if not yaml_ok():
+        r.un.append(("모든 compose 마운트", "PyYAML 을 쓸 수 없다"))
+        return r
+    import yaml
+    for repo in known_areas():
+        for f in files(repo):
+            if not COMPOSE_FILE.search(f):
+                continue
+            rel = f"{repo}/{f}"
+            base = (WS / repo / f).parent
+            try:
+                doc = yaml.safe_load((WS / repo / f).read_text(encoding="utf-8")) or {}
+            except Exception:
+                r.fail(rel, f"{rel}:1: 읽지 못했다(문법 오류)")
+                continue
+            for sname, svc in ((doc.get("services") or {}) if isinstance(doc, dict) else {}).items():
+                for v in (svc or {}).get("volumes") or []:
+                    src = (v.get("source") if v.get("type") == "bind" else None) if isinstance(v, dict) else (default_path(v).split(":")[0] if isinstance(v, str) else None)
+                    if not src:
+                        continue
+                    src = default_path(src)
+                    if "${" in src or not (src.startswith("./") or src.startswith("../") or src.startswith("/")):
+                        continue   # 이름 있는 볼륨이거나 값을 알 수 없는 변수
+                    tgt = f"{rel}:{sname}:{src}"
+                    if not os.path.splitext(src)[1]:
+                        r.na.append((tgt, "확장자가 없어 디렉터리로 본다"))
+                        continue
+                    p = Path(src) if src.startswith("/") else base / src
+                    if p.is_file():
+                        r.ok.append(tgt)
+                    elif p.is_dir():
+                        r.fail(tgt, f"{rel}: 서비스 {sname} 의 마운트 원본 {src} 가 파일이 아니라 디렉터리다(파일이 없을 때 Docker 가 만든 빈 디렉터리일 수 있다: 지우고 실제 파일을 둔다)")
+                    else:
+                        r.fail(tgt, f"{rel}: 서비스 {sname} 의 마운트 원본 {src} 가 없다(없는 채로 기동하면 Docker 가 디렉터리를 만든다)")
+    return r
+
+
 RULES = [
     ("0", "대상 열거(모르는 대상)", rule_enumerate),
     ("1", "버전표 일치", rule_versions),
@@ -806,6 +848,7 @@ RULES = [
     ("8", "영역별 시험 수집", rule_collect),
     ("9", "영역 README 필수 절", rule_readme),
     ("10", "E2E 통과 수는 정본에만", rule_e2e_claims),
+    ("11", "compose 마운트 원본이 실제 파일", rule_mount_sources),
 ]
 
 

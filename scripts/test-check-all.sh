@@ -128,6 +128,13 @@ printf '# 상태\nE2E 전체 모드 88 PASS\n' > "$W/head/docs/STATUS.md"; print
 OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=10 CHECK_ALL_ALLOW="$W/allow.txt" CHECK_ALL_EXCLUDE=/dev/null bash "$HERE/check-all.sh" 2>&1); RC=$?; expect "허용 목록(이유 포함)에 적은 파일은 통과하고 건너뛴 이유를 출력한다" PASS "허용 목록(check-all-allow.txt)"
 printf '' > "$W/empty-rules.txt"; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=10 CHECK_ALL_ALLOW=/dev/null CHECK_ALL_EXCLUDE=/dev/null CHECK_ALL_E2E_CLAIMS="$W/empty-rules.txt" bash "$HERE/check-all.sh" 2>&1); RC=$?; expect "판정 규칙 파일이 비면 조용히 통과하지 않고 FAIL" FAIL "판정 규칙 파일"
 
+echo "== 11 compose 마운트 원본이 실제 파일"
+mk deploy; mkdir -p "$W/deploy/config"; printf 'services:\n  j:\n    image: x\n    volumes:\n      - ${J:-./config/job.yaml}:/config/job.yaml:ro\n' > "$W/deploy/compose.yaml"
+run 11; expect "원본 파일이 없으면 FAIL" FAIL "가 없다"
+mkdir "$W/deploy/config/job.yaml"; run 11; expect "원본이 (Docker 가 만든) 디렉터리면 FAIL" FAIL "디렉터리다"
+rmdir "$W/deploy/config/job.yaml"; echo "a: 1" > "$W/deploy/config/job.yaml"; run 11; expect "실제 파일이면 PASS" PASS "검증됨 1/1"
+printf 'services:\n  j:\n    image: x\n    volumes:\n      - data:/data\n      - ./dir:/d\n' > "$W/deploy/compose.yaml"; run 11; expect "이름 있는 볼륨·확장자 없는 경로는 대상 아님" PASS
+
 echo "== record-e2e.sh (정본에 한 줄 더하기)"
 RF="$T/E2E_RESULTS.md"; cp "$ROOT/docs/E2E_RESULTS.md" "$RF"
 printf -- '-- 결과: FAIL 0, SKIP 0, PASS 11 / 규칙 11개, 소요 2.5s\n' > "$T/ca.out"
