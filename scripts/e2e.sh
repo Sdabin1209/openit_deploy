@@ -102,10 +102,14 @@ for pair in "gateway:$PGW" "question-authoring:$PQA" "release-gate:$PGATE" "ops-
   n=${pair%%:*}; p=${pair##*:}
   chk "/healthz $n" getj "$p" /healthz
   [ "$n" = survey-service ] && continue
+  [ "$n" = gateway ] && continue   # gateway /readyz 는 survey-service 를 반영한다(아래에서 따로)
   chk "/readyz $n" getj "$p" /readyz
 done
 survey_noactive() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' "http://127.0.0.1:$PSURVEY/readyz"); echo "$o" | grep -q 'no_active_release' && echo "$o" | grep -q '\[503\]' && echo "활성 릴리스가 없어 503 no_active_release (정상: 아직 게이트에 PASS 릴리스가 없다)"; }
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
+gw_mirrors() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' "http://127.0.0.1:$PGW/readyz"); echo "$o" | grep -q '\[503\]' && ! echo "$o" | grep -q 'survey' && echo "gateway /readyz 는 survey-service 를 반영한다: 활성 릴리스 전 503, 본문에 내부 정보 없음 ($o)"; }
+chk "/readyz gateway: 정적 200 이 아니라 환자 경로 survey-service 를 반영(활성 릴리스 전 503, 내부 정보 없음)" gw_mirrors
+chk "/healthz gateway: 상류와 무관하게 200" getj "$PGW" /healthz
 chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
 no_auto_pass() { getj "$PGATE" /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass

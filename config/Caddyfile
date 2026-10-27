@@ -22,8 +22,25 @@ import /etc/caddy/devices.caddy
 	handle /healthz {
 		respond "ok" 200
 	}
+	# /readyz: 환자 경로의 survey-service /readyz 를 반영한다(FAULT_POLICY 5). 2xx 면 "ok" 200, 아니면 서비스의 상태 코드를 그대로 두되 본문은 {"ready":false} 만(서비스의 내부 문제 목록은 밖에 내지 않는다).
+	# 상류에 닿지 못하면 아래 handle_errors 가 503/504 와 UPSTREAM_UNAVAILABLE 을 준다. /healthz 는 상류와 무관한 정적 200.
 	handle /readyz {
-		respond "ok" 200
+		reverse_proxy survey-service:8080 {
+			lb_try_duration 0
+			transport http {
+				dial_timeout 1s
+				response_header_timeout 2s
+			}
+			@up status 2xx
+			handle_response @up {
+				respond "ok" 200
+			}
+			handle_response {
+				header Content-Type application/json
+				header Cache-Control no-store
+				respond `{"ready":false}` {rp.status_code}
+			}
+		}
 	}
 	# 직원 API와 개입: 개별 계정 인증 + staff 역할 뒤에만 staff 서비스 토큰을 붙인다. 인증된 계정 ID 를 X-Openit-User 로 붙이고(개입 기록의 staff_id, 클라이언트가 보낸 값은 덮어씀) 본문 값은 믿지 않는다.
 	# SSE는 버퍼링을 끄고 읽기 제한 시간을 길게, Last-Event-ID와 id는 그대로 전달한다.
@@ -35,7 +52,10 @@ import /etc/caddy/devices.caddy
 				header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
 				header_up X-Openit-User "{http.auth.user.id}"
 				flush_interval -1
+				lb_try_duration 0
 				transport http {
+					dial_timeout 2s
+					response_header_timeout 10s
 					read_timeout 1h
 				}
 			}
@@ -170,9 +190,16 @@ import /etc/caddy/devices.caddy
 	@kioskapi path /v1/sessions /v1/sessions/*
 	handle @kioskapi {
 		handle @device_ok {
+			# 마감: 서버 턴 총 마감(FAULT_POLICY 3, 기본 8초)보다 길고 키오스크 대기(10초)보다 짧은 9초까지 응답 헤더를 기다린다. 연결은 2초 안에 맺어야 한다.
+			# 재시도 없음(lb_try_duration 0): 같은 요청을 게이트웨이가 다시 보내지 않는다. 키오스크가 같은 turn_id 로 다시 보낸다.
 			reverse_proxy survey-service:8080 {
 				header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"
 				header_up -X-Openit-User
+				lb_try_duration 0
+				transport http {
+					dial_timeout 2s
+					response_header_timeout 9s
+				}
 			}
 		}
 		handle {
@@ -187,13 +214,41 @@ import /etc/caddy/devices.caddy
 	handle /staff/* {
 		import authenticate
 		handle @role_staff {
-			reverse_proxy kiosk-frontend:8080
+			reverse_proxy kiosk-frontend:8080 {
+				transport http {
+					dial_timeout 2s
+					response_header_timeout 10s
+				}
+			}
 		}
 		handle {
 			respond "forbidden: staff 역할이 아니다" 403
 		}
 	}
 	handle {
-		reverse_proxy kiosk-frontend:8080
+		reverse_proxy kiosk-frontend:8080 {
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 10s
+			}
+		}
+	}
+	# 상류 장애(FAULT_POLICY 6): Caddy 는 연결 거부·이름 해석 실패를 502, 시간 초과를 504 로 낸다(관찰: docs/E2E.md 5q·5w). 이를 연결 거부 = 503, 시간 초과 = 504 로 바꾸고
+	# JSON 본문 {"code":"UPSTREAM_UNAVAILABLE"} 와 Retry-After 를 준다. 본문에 상류 주소·오류 문구를 넣지 않는다(Caddy 의 {http.error.*} 를 쓰지 않는다).
+	handle_errors {
+		@refused expression {http.error.status_code} in [502, 503]
+		@timedout expression {http.error.status_code} == 504
+		handle @refused {
+			header Content-Type application/json
+			header Retry-After 2
+			header Cache-Control no-store
+			respond `{"code":"UPSTREAM_UNAVAILABLE"}` 503
+		}
+		handle @timedout {
+			header Content-Type application/json
+			header Retry-After 2
+			header Cache-Control no-store
+			respond `{"code":"UPSTREAM_UNAVAILABLE"}` 504
+		}
 	}
 }

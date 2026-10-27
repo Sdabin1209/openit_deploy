@@ -29,3 +29,9 @@
 ## 단계 5p: PostgreSQL 컨테이너 재시작 (deploy 소유, 시나리오 9의 일부)
 
 `scripts/e2e_steps.py`의 `5p`. question-authoring에 자료를 등록해 쓴 뒤 postgres 컨테이너를 `docker stop`하고, 서비스 `/readyz`가 200이 아닌 상태가 되는 것(`/healthz`는 200 유지)을 관찰해 단계 출력에 코드와 경과 시간을 남긴다. `docker start`로 다시 띄우면 모든 서비스 `/readyz`가 200으로 돌아오는지, 재시작 전후 데이터베이스 행 지문(`pg-fingerprint.sh`)이 같은지, 복구 뒤 새 쓰기가 되는지 본다. 단계 8 뒤에 돈다. 단독 실행: `bash scripts/e2e.sh --only 5p`(활성 릴리스가 없어 survey-service는 제외). survey-service까지 보려면 활성 릴리스를 만드는 단계를 함께 준다: `--only 1,2,3,4,5p`. `--only`는 전체 합격이 아니며 `E2E_RESULTS.md`에 기록하지 않는다. 관찰에서 나온 영역 요청: [CR-D23](change-requests/CR-D23-survey-readyz-db-outage.md).
+
+## gateway(Caddy)의 상류 장애 응답과 /readyz (FAULT_POLICY 5·6, deploy 소유)
+
+`config/Caddyfile`. Caddy v2.11.7(`locks/images.lock`의 digest 이미지, `caddy validate`는 `scripts/test-gateway-auth.sh`가 돌린다). 설정에 명시한 것: 상류 연결 2초(`dial_timeout`), 응답 헤더 대기(환자 API 9초: 서버 턴 총 마감 8초보다 길고 키오스크 대기 10초보다 짧게 / 직원·정적 화면 10초 / `/readyz` 2초), 재시도 없음(`lb_try_duration 0`). `handle_errors`가 Caddy의 502·503을 `503`, 504를 `504`로 바꾸고 둘 다 본문 `{"code":"UPSTREAM_UNAVAILABLE"}`, `Content-Type: application/json`, `Retry-After: 2`, `Cache-Control: no-store`를 준다. Caddy의 `{http.error.*}`를 쓰지 않으므로 본문에 상류 주소·오류 문구가 없다. gateway `/healthz`는 상류와 무관한 정적 200이고, `/readyz`는 survey-service `/readyz`를 프록시해 2xx면 `ok` 200, 아니면 서비스의 상태 코드와 `{"ready":false}`(서비스의 내부 문제 목록은 밖에 내지 않는다)를 준다.
+
+**Caddy 기본 동작의 관찰(추정이 아니라 설정 없이 돌려 본 값, 이 PC, 같은 이미지, `docker stop`/`pause` 한 python 서버 앞에서).** 설정 없는 `reverse_proxy`: 이름 해석 실패 502(3.0초 뒤), 상류 컨테이너 중지 502(3.1초 뒤), 상류 무응답(pause)은 60초를 기다려도 응답이 없었다(시간 제한 없음, 호출자가 먼저 끊음). 위 설정을 단 같은 구성: 중지 503(2.0초 뒤), 무응답 504(응답 헤더 대기를 3초로 둔 시험에서 3.0초 뒤). 즉 기본 상태에서는 "연결 거부는 503, 시간 초과는 504"가 저절로 되지 않고 무응답에는 마감이 없어서 명시 설정이 필요하다.
