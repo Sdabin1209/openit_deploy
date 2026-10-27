@@ -9,7 +9,7 @@
 #   --db-only : PostgreSQL 비밀만 만든다(caddy 이미지가 필요 없다. 시험·개발용).  사용: gen-secrets.sh [--db-only] [디렉터리]
 # 권한: 디렉터리 700(호스트 다른 사용자 차단). 파일은 secret_mode(lib.sh): 컨테이너가 읽는 것은 644, 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본)은 600.
 #   컨테이너가 읽는 파일을 600 으로 만들지 못하는 이유: compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않아(측정함),
-#   uid 10001 인 컨테이너가 호스트 사용자 소유 600 파일을 읽지 못한다. docs/adr/0003. 이미 있는 파일의 모드도 실행할 때마다 바로잡는다.
+#   uid 10001 인 컨테이너가 호스트 사용자 소유 600 파일을 읽지 못한다. docs/adr/0022-secret-file-permissions.md. 이미 있는 파일의 모드도 실행할 때마다 바로잡는다.
 #   --drop-plaintext : 해시가 있는 계정의 평문 암호 파일(account-<id>-password)을 지운다(운영: 전달한 뒤 평문을 디스크에 남기지 않는다). 회전은 scripts/rotate-account.sh
 set -euo pipefail
 ONLY_DB=0; DROP_PLAIN=0

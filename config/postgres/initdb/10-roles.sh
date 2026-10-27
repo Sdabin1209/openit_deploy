@@ -8,7 +8,7 @@
 set -Eeuo pipefail
 ACCOUNTS=${PG_INIT_ACCOUNTS:-"survey qa ops_log ops_failure gate"}
 SDIR=${PG_INIT_SECRETS_DIR:-/run/secrets}
-# 계정별 동시 연결 상한: 한 서비스의 연결 폭주가 다른 서비스를 막지 않게 한다. 값은 측정 안 함(시작값, docs/adr/0005). PG_ROLE_CONN_LIMIT 로 바꾼다.
+# 계정별 동시 연결 상한: 한 서비스의 연결 폭주가 다른 서비스를 막지 않게 한다. 값은 측정 안 함(시작값, docs/adr/0024-postgres-logging-and-limits.md). PG_ROLE_CONN_LIMIT 로 바꾼다.
 LIMIT=${PG_ROLE_CONN_LIMIT:-20}
 [[ "$LIMIT" =~ ^[0-9]+$ ]] || { echo "10-roles: PG_ROLE_CONN_LIMIT 가 정수가 아니다: '$LIMIT'" >&2; exit 1; }
 psql_() { psql -v ON_ERROR_STOP=1 --no-psqlrc -X -q -U "${POSTGRES_USER:-postgres}" -d postgres "$@"; }

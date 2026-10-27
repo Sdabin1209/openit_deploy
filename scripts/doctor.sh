@@ -136,13 +136,13 @@ if [ $UP_ONLY = 0 ]; then
   # --- 고정 포트 금지
   if grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT/compose.test.yaml" >/dev/null 2>&1; then fail "compose.test.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
 fi
-# --- 비밀 파일 권한(docs/adr/0003): 비밀 폴더가 있으면 점검한다(없으면 아직 gen-secrets.sh 전이다: 이 점검은 건너뛴다)
+# --- 비밀 파일 권한(docs/adr/0022-secret-file-permissions.md): 비밀 폴더가 있으면 점검한다(없으면 아직 gen-secrets.sh 전이다: 이 점검은 건너뛴다)
 SDIR="${SECRETS_DIR:-$DEPLOY_ROOT/secrets}"
 if [ $UP_ONLY = 1 ] && [ -d "$SDIR" ]; then
   echo "== 비밀 파일 권한"
   PO=$(bash "$(dirname "$0")/check-secret-perms.sh" "$SDIR" 2>&1); PRC=$?
   if [ $PRC = 0 ]; then ok "$(echo "$PO" | tail -1)"; else
-    while IFS= read -r l; do case "$l" in FAIL*) fail "${l#FAIL }" "bash scripts/gen-secrets.sh 를 다시 실행하면 모드를 바로잡는다 (docs/adr/0003-secret-file-permissions.md)";; esac; done <<<"$PO"; fi
+    while IFS= read -r l; do case "$l" in FAIL*) fail "${l#FAIL }" "bash scripts/gen-secrets.sh 를 다시 실행하면 모드를 바로잡는다 (docs/adr/0022-secret-file-permissions.md)";; esac; done <<<"$PO"; fi
 fi
 # --- 백업 필수(D88 U6): 설정이 없으면 backup 잡이 CRIT 로 실패한다. 기동 전에 막는다. 규칙의 정본은 scripts/backup-lib.sh
 if [ $CHECK_BACKUP = 1 ]; then

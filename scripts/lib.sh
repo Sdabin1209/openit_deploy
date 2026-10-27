@@ -116,7 +116,7 @@ pg_container() {
 }
 PG_DBS="survey qa ops_log ops_failure gate"   # 데이터베이스 = 계정 이름(config/postgres/initdb/10-roles.sh 의 기본값과 같다)
 
-# 비밀 파일 모드(docs/adr/0003-secret-file-permissions.md). compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않는다
+# 비밀 파일 모드(docs/adr/0022-secret-file-permissions.md). compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않는다
 # (측정함: 호스트 소유자 600 파일은 컨테이너 uid 10001 이 읽지 못한다). 그래서 컨테이너가 읽는 파일(compose.yaml 의 secrets/configs 가 가리키는 이름)은 644(폴더 700 안),
 # 호스트에서만 쓰는 파일(계정 암호·해시, 기기 토큰 원본)은 600 이다. secret_mode <이름> -> 600|644
 secret_mode() {

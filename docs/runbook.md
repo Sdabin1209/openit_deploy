@@ -56,13 +56,13 @@ docker compose -p deploy logs -f survey-service                 # 로그는 표�
 curl -s http://127.0.0.1:$(docker port deploy-gateway-1 8080/tcp | sed 's/.*://')/healthz
 ```
 
-컨테이너가 **실제로** 비root·읽기 전용·cap_drop ALL·자원 한도를 갖는지는 `bash scripts/check-containers.sh [프로젝트...]`(기본 deploy, deploy-registry)가 `docker inspect`로 읽어 FAIL/WARN으로 알린다(읽기 전용). compose 파일에 적은 것이 아니라 떠 있는 컨테이너를 본다. 자체 시험 `bash scripts/test-check-containers.sh`. 자원 한도 변수는 `config/resource-limits.env.example`(값은 측정 안 함, [adr/0004](adr/0004-compose-resource-limits.md)).
+컨테이너가 **실제로** 비root·읽기 전용·cap_drop ALL·자원 한도를 갖는지는 `bash scripts/check-containers.sh [프로젝트...]`(기본 deploy, deploy-registry)가 `docker inspect`로 읽어 FAIL/WARN으로 알린다(읽기 전용). compose 파일에 적은 것이 아니라 떠 있는 컨테이너를 본다. 자체 시험 `bash scripts/test-check-containers.sh`. 자원 한도 변수는 `config/resource-limits.env.example`(값은 측정 안 함, [adr/0023-compose-resource-limits.md](adr/0023-compose-resource-limits.md)).
 
 각 서비스의 `/readyz` 해석은 영역 런북을 본다(survey: `problems`, gate: `can_pass`·`judging`).
 
 ## 4. 백업과 복구 (PostgreSQL 기준)
 
-저장소는 PostgreSQL 한 서버(5개 데이터베이스: survey, qa, ops_log, ops_failure, gate)와 파일 볼륨(gate-data 번들, models-data 모델 패키지, 레지스트리 볼륨)이다. 근거와 한계: [adr/0001-backup-tool-and-encryption.md](adr/0001-backup-tool-and-encryption.md).
+저장소는 PostgreSQL 한 서버(5개 데이터베이스: survey, qa, ops_log, ops_failure, gate)와 파일 볼륨(gate-data 번들, models-data 모델 패키지, 레지스트리 볼륨)이다. 근거와 한계: [adr/0020-backup-tool-and-encryption.md](adr/0020-backup-tool-and-encryption.md).
 
 ### 4-1. 설정과 규칙 (백업 없이 운영하지 않는다, D88 U6)
 
@@ -82,6 +82,8 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 |---|---|---|---|
 | 5개 데이터베이스 | `pg-backup.sh`: 병렬로 동시에 시작한 `pg_dump -Fc`, 파일마다 암호화 | `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump.age`(또는 `.gpg`) + `MANIFEST.json` | 각 데이터베이스 안에서는 단일 스냅샷. **데이터베이스 사이는 같은 시점이 아니다**: 덤프 시작 시각 차이는 가장 오래 걸리는 덤프 하나의 시간 이하이고 `MANIFEST.json`의 `dump_started/dump_finished`에 남는다. PostgreSQL은 여러 데이터베이스에 걸친 스냅샷을 지원하지 않는다. 정확히 같은 시점이 필요하면 쓰기 서비스(survey-service, question-authoring, ops-feedback-ingest, release-gate)를 멈추고 백업한다 |
 | gate-data(번들), models-data(모델 패키지), registry-data(레지스트리 이미지, 프로젝트 `deploy-registry`) | `backup.sh`: 복사 후 tar, 암호화 | `$BACKUP_DIR/<저장소>/<UTC 시각>/<저장소>.tar.age` | 볼륨 단위 |
+
+**이 백업에 들어 있지 않은 것: `secrets/`**(DB 암호, 비식별 salt `deid-salt`, 서비스 토큰). 서버를 잃으면 비밀 폴더를 별도로 보관한 사본에서 되돌려야 한다(보관 방법은 미정, 사용자 결정). salt를 잃으면 이후 비식별 값이 이전과 이어지지 않는다.
 
 `backup-all.sh`(스케줄러의 backup 잡, 매일)가 둘을 모두 돌린다. 레지스트리 볼륨이 이 서버에 없으면 건너뛴다고 출력한다.
 
@@ -188,7 +190,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 `scripts/gen-secrets.sh`가 `secrets/`에 만든다(없는 것만). 이미지·리포지토리에 넣지 않는다. 서비스는 compose `secrets:`로 자기 파일만 `/run/secrets`에 받는다(D84, [RUN.md](RUN.md) "비밀 파일").
 
-**권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 644(폴더 700 안; compose가 파일 secrets의 모드를 바꾸지 못하기 때문, [adr/0003](adr/0003-secret-file-permissions.md)). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
+**권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 644(폴더 700 안; compose가 파일 secrets의 모드를 바꾸지 못하기 때문, [adr/0022-secret-file-permissions.md](adr/0022-secret-file-permissions.md)). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
 
 **평문 암호 최소화.** 게이트웨이 계정은 bcrypt 해시만 Caddy 파일에 들어간다. 평문 암호 파일(`account-<id>-password`, 600)은 해시를 만들 때만 생기고 E2E 시험 계정이 쓴다. 운영에서는 계정 암호를 사람에게 전달한 뒤 `bash scripts/gen-secrets.sh --drop-plaintext`로 평문 파일을 지운다(해시가 남아 로그인은 그대로). 지운 평문은 되살리지 않는다. 운영 계정은 OIDC 도입 전까지 아래 회전 절차로 관리한다.
 
@@ -208,5 +210,5 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 | `push` 가 connection refused (Docker Desktop) | 데몬이 VM 안이라 `127.0.0.1` 게시 포트에 못 닿는다 | 시험에서는 `REGISTRY_HOST_BIND=0.0.0.0`, 지정 포트. 리눅스 서버는 해당 없음 |
 | 새 잠금을 적용해도 컨테이너가 안 바뀜 | 셸에 같은 이름의 `*_DIGEST` 변수가 남아 있나 | `dc`가 지우지만 compose를 직접 부를 때는 `env -u`로 지운다 |
 | 컨테이너가 `operation not permitted`로 안 뜸 | `cap_drop: ALL`과 파일 권한이 있는 바이너리 | 필요한 capability만 `cap_add` (gateway의 `NET_BIND_SERVICE`) |
-| `pg_dump`/`pg_restore` 실패, 접속 거부 | postgres 컨테이너가 떠 있나(`docker compose -p deploy ps postgres`), 복구 대상 DB에 다른 접속이 있나 | 서비스를 멈추고 다시. 복구는 4-3절. (SQLite는 개발·시험용이며 운영 저장소가 아니다: adr/0002) |
+| `pg_dump`/`pg_restore` 실패, 접속 거부 | postgres 컨테이너가 떠 있나(`docker compose -p deploy ps postgres`), 복구 대상 DB에 다른 접속이 있나 | 서비스를 멈추고 다시. 복구는 4-3절. (SQLite는 개발·시험용이며 운영 저장소가 아니다: adr/0021-postgres-single-container-sqlite-dev-only.md) |
 | 빌드가 `error getting credentials … docker-credential-desktop.exe: exec format error` 로 실패 | interop이 꺼진 WSL에서 `~/.docker/config.json`의 `credsStore`가 윈도 도우미를 가리킨다 | 환경 설정 문제: `credsStore` 항목을 직접 지우거나 interop을 켠다(SETUP.md B절). doctor가 미리 FAIL로 알려 준다 |

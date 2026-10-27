@@ -3,7 +3,7 @@
 #  환경: DEPLOY_PROJECT(기본 deploy), BACKUP_CONFIG(기본 config/backup.env), REGISTRY_PROJECT(기본 deploy-registry: 레지스트리 볼륨은 별도 프로젝트 소유)
 # 설정(BACKUP_DIR, BACKUP_RETENTION_DAYS, 수신자 공개키)이 없거나 비어 있으면 CRIT 로 거부한다(종료 코드 2, 코드에 기본값 없음). 설정·암호화는 backup-lib.sh.
 # 저장소마다 스냅샷을 tar 하나로 묶어 암호화한다(복원 시 풀어서 restore.sh 에 준다). 암호화를 쓰지 않는 시험 모드(BACKUP_ALLOW_PLAINTEXT=1)에서는 예전처럼 디렉터리 그대로.
-# registry-data 를 넣은 이유: 이미지는 CI 로 다시 만들 수 있으나 digest 로 고정된 운영 이미지를 레지스트리가 잃으면 롤백이 불가능하다(docs/adr/0001).
+# registry-data 를 넣은 이유: 이미지는 CI 로 다시 만들 수 있으나 digest 로 고정된 운영 이미지를 레지스트리가 잃으면 롤백이 불가능하다(docs/adr/0020-backup-tool-and-encryption.md).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/backup-lib.sh"

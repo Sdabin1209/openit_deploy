@@ -11,7 +11,7 @@ x-hardening: &hardening
   tmpfs: ["/tmp"]
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # 로그는 표준 출력. 회전만 여기서
 
-x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0004)
+x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0023-compose-resource-limits.md)
 
 x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 curl 없음)
   interval: 15s
@@ -143,7 +143,7 @@ secrets:
 services:
   postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
     <<: *hardening
-    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
     image: ${POSTGRES_IMAGE:?locks/images.lock}
@@ -157,8 +157,8 @@ services:
       - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
     tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
     networks: [db-survey, db-qa, db-ops, db-gate]
-    shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0004)
-    # 서버 설정(docs/adr/0005-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
+    shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
+    # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
     #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
     #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
     #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
@@ -187,7 +187,7 @@ services:
 
   gateway:
     <<: *hardening
-    mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${GATEWAY_CPUS:-1.0}
     pids_limit: ${GATEWAY_PIDS_LIMIT:-256}
     image: ${GATEWAY_IMAGE:?locks/images.lock}
@@ -214,7 +214,7 @@ services:
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     <<: *hardening
-    mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
     pids_limit: ${KIOSK_FRONTEND_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
@@ -222,7 +222,7 @@ services:
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
     <<: *hardening
-    mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
     pids_limit: ${ADMIN_CONSOLE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
@@ -231,7 +231,7 @@ services:
 
   survey-service:
     <<: *hardening
-    mem_limit: ${SURVEY_SERVICE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${SURVEY_SERVICE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${SURVEY_SERVICE_CPUS:-1.0}
     pids_limit: ${SURVEY_SERVICE_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
@@ -260,7 +260,7 @@ services:
 
   question-authoring:
     <<: *hardening
-    mem_limit: ${QUESTION_AUTHORING_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${QUESTION_AUTHORING_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${QUESTION_AUTHORING_CPUS:-1.0}
     pids_limit: ${QUESTION_AUTHORING_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
@@ -282,7 +282,7 @@ services:
 
   ops-feedback-ingest:
     <<: *hardening
-    mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${OPS_FEEDBACK_INGEST_CPUS:-1.0}
     pids_limit: ${OPS_FEEDBACK_INGEST_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
@@ -305,7 +305,7 @@ services:
 
   release-gate:
     <<: *hardening
-    mem_limit: ${RELEASE_GATE_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${RELEASE_GATE_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${RELEASE_GATE_CPUS:-1.0}
     pids_limit: ${RELEASE_GATE_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
@@ -328,7 +328,7 @@ services:
 
   model-serving:        # 추론 서버(model-runtime, CPU/fake 변형, 문진 스키마는 이미지에 내장 D72). survey-service가 I9(HTTP)로 부른다
     <<: *hardening
-    mem_limit: ${MODEL_SERVING_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${MODEL_SERVING_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${MODEL_SERVING_CPUS:-2.0}
     pids_limit: ${MODEL_SERVING_PIDS_LIMIT:-512}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-serving@${MODEL_SERVING_DIGEST:?locks/images.lock}
@@ -347,7 +347,7 @@ services:
 
   model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
     <<: *hardening
-    mem_limit: ${MODEL_REGISTRY_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${MODEL_REGISTRY_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${MODEL_REGISTRY_CPUS:-1.0}
     pids_limit: ${MODEL_REGISTRY_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-registry@${MODEL_REGISTRY_DIGEST:?locks/images.lock}
@@ -365,7 +365,7 @@ services:
   # 이웃 서비스와 같은 이미지·볼륨·네트워크를 쓰되 쓰기 주체는 같은 영역이다.
   job-ops-feedback:
     profiles: ["jobs"]
-    mem_limit: ${JOB_OPS_FEEDBACK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${JOB_OPS_FEEDBACK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${JOB_OPS_FEEDBACK_CPUS:-1.0}
     pids_limit: ${JOB_OPS_FEEDBACK_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
@@ -388,7 +388,7 @@ services:
 
   job-release-gate-collect:     # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다
     profiles: ["jobs"]
-    mem_limit: ${JOB_RELEASE_GATE_COLLECT_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0004-compose-resource-limits.md
+    mem_limit: ${JOB_RELEASE_GATE_COLLECT_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${JOB_RELEASE_GATE_COLLECT_CPUS:-1.0}
     pids_limit: ${JOB_RELEASE_GATE_COLLECT_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}

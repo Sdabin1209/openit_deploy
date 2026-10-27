@@ -20,7 +20,7 @@ volumes:
     name: ${HF_CACHE_VOLUME:-deploy-llm-hf-cache}   #   docker volume create deploy-llm-hf-cache   (demo.sh up --llm 이 만든다). 지우기: down.sh --purge-hf-cache
 services:
   model-serving:
-    mem_limit: ${MODEL_SERVING_LLM_MEM_LIMIT:-16g}   # 실제 LLM 은 fake(기본 1g)보다 훨씬 크다. 측정 안 함(H1 실측 뒤 재정): 값을 낮게 잡아 OOM 으로 죽이지 않으려 넉넉히 둔다(adr/0004)
+    mem_limit: ${MODEL_SERVING_LLM_MEM_LIMIT:-16g}   # 실제 LLM 은 fake(기본 1g)보다 훨씬 크다. 측정 안 함(H1 실측 뒤 재정): 값을 낮게 잡아 OOM 으로 죽이지 않으려 넉넉히 둔다(adr/0023-compose-resource-limits.md)
     cpus: ${MODEL_SERVING_LLM_CPUS:-4.0}
     pids_limit: ${MODEL_SERVING_LLM_PIDS_LIMIT:-2048}
     environment:

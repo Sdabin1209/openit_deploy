@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 비밀 파일 권한 점검(읽기 전용, 값은 읽지도 출력하지도 않는다). 사용: check-secret-perms.sh [비밀 폴더]   (기본 $SECRETS_DIR 또는 secrets/)
-# 규칙(docs/adr/0003): 폴더 700. 호스트 전용 파일(lib.sh secret_mode 가 600)은 600/400. 컨테이너가 읽는 파일은 644(폴더 700 안)까지.
+# 규칙(docs/adr/0022-secret-file-permissions.md): 폴더 700. 호스트 전용 파일(lib.sh secret_mode 가 600)은 600/400. 컨테이너가 읽는 파일은 644(폴더 700 안)까지.
 # 그룹·기타 쓰기 비트는 어디서든 FAIL. 호스트 전용인데 644 이면 FAIL(평문 계정 암호 등). 컨테이너가 읽는데 600 이면 FAIL(서비스가 못 읽는다).
 # 종료 코드 0 통과, 1 어긋남 있음, 2 비밀 폴더 없음. doctor.sh 가 --up 에서 부른다.
 set -uo pipefail

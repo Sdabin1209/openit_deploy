@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 백업 공통(backup.sh, pg-backup.sh, backup-check.sh, backup-restore-test.sh 가 source 한다). 설정 읽기·검증과 암호화.
-# 왜 이 구조인가: docs/adr/0001-backup-tool-and-encryption.md. 설정 키는 config/backup.env.example 이 설명한다.
+# 왜 이 구조인가: docs/adr/0020-backup-tool-and-encryption.md. 설정 키는 config/backup.env.example 이 설명한다.
 # source 하는 쪽이 lib.sh(die, DEPLOY_ROOT)를 먼저 source 해야 한다.
 
 # 설정을 읽고 검증한다. 문제가 있으면 "CRIT: ..." 를 표준 오류로 내고 종료 코드 2(D88 U6: 경고가 아니라 실패).
