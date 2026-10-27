@@ -1,5 +1,16 @@
 # 변경 이력
 
+## PostgreSQL 기반: 서버 하나, 서비스마다 데이터베이스·최소 권한 계정 (서비스 설정은 아직 그대로)
+- 결정(사용자 지시: 빈 곳은 표준적인 방법): 영역별 SQLite 파일 대신 공식 `postgres:16` 서버 하나. 서비스마다 데이터베이스와 계정을 나눈다. 소유 서비스만 쓰고 이웃은 HTTP로만 읽는 규칙(D49·D50)은 그대로다.
+  - 이유 1: 권한·암호화·백업·보존을 DB 계층 한 곳에서 걸 수 있다.
+  - 이유 2: 서버가 여러 대로 나뉘어도 같은 방식으로 동작한다(접속 문자열만 바뀐다).
+- `compose.yaml` `postgres`: 볼륨 `pg-data`, 호스트 포트 없음(internal 네트워크 `db`), 비루트(999), 읽기 전용 루트, `pg_isready` healthcheck, `POSTGRES_PASSWORD_FILE`(D84, 평문 환경 변수 없음), `--data-checksums`. 이미지는 `locks/images.lock`의 `POSTGRES_IMAGE`(digest 고정, `lock-third-party.sh`가 기록).
+- `config/postgres/initdb/10-roles.sh`: 공식 `/docker-entrypoint-initdb.d`. 멱등. 계정 `survey qa ops_log ops_failure gate`, 각 계정은 자기 데이터베이스만 접속, 슈퍼유저 권한 없음, 루프백 TCP의 trust 제거.
+- `gen-secrets.sh`: 계정 암호 파일(`db-<이름>-password`)과 DSN 파일(`db-<이름>-dsn`), `postgres-password`. `--db-only` 옵션. 이름 규칙 표는 `docs/RUN.md` 4-1-1.
+- `pg-backup.sh`, `pg-restore.sh`, `pg-roles.sh sync`, `dev-postgres.sh up|down`(영역 개발용, 포트는 Docker가 배정, 암호는 일회용), 자체 시험 `test-postgres.sh`.
+- `record-e2e.sh`: 환경 칸이 gpu-dev도 '이 PC (WSL2)'로 적던 버그를 고쳤다. `DEPLOY_ENV_NAME`이 있으면 그것, 없으면 hostname으로 식별(`gpu-dev*`만 gpu-dev, 원문 hostname은 기록하지 않음). 자체 시험은 `test-check-all.sh`.
+- 이 단계에서 하지 않은 것: 서비스 컨테이너 설정 변경, `e2e.sh` 백업 단계에 Postgres 넣기, TLS, 디스크 암호화·WAL 보관 정책.
+
 ## demo.sh swap-adapters, 추론 서버 측정 도구 probe-serving.py (OPEN_GAPS U08)
 - `demo.sh swap-adapters [--adapter-a/-b DIR --prompt-a/-b FILE]`: 떠 있는 데모에서 새 모델 패키지를 게시, 자동 검사, 시험용 승인자(스크립트) 승인, 활성화해 model-serving만 새 번들을 적재시킨다. 어댑터 인자는 `up --llm`과 같은 사전 검사를 거치고 거부되면 아무것도 게시하지 않는다. 전후 컨테이너 StartedAt(Env는 읽지 않음)과 새 release_id의 LOADED를 출력한다. 이전에는 `reset`(데모 전체 재생성)뿐이었다.
 - `scripts/e2e_steps.py`: 단계 3의 게시·재확인을 `publish_packages()`로 뽑아 단계 3과 새 단계 `demo_swap`이 같이 쓴다(`demo_active`는 활성 포인터 읽기). 두 단계는 demo 전용이라 E2E 기본 실행에 들어가지 않는다. 단계 3의 동작은 같고, 어댑터 열기 위치만 패키지 ID가 들어간 폴더로 바뀌었다.

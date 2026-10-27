@@ -208,7 +208,7 @@ case "$CMD" in
       fi
       if hf_cache_exists; then echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 재사용 (모델을 다시 받지 않는다)"; else echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 생성 (프로젝트 밖 볼륨: down 해도 남는다)"; hf_cache_ensure; fi
     fi
-    grep -E '^(GATEWAY|REGISTRY|UTIL)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+    grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
     echo "== 임시 레지스트리와 digest 잠금(이 데모 전용)"
     bash "$DEPLOY_ROOT/scripts/registry.sh" up || die "레지스트리 기동 실패 (데몬이 닿지 못하면 DEMO_REGISTRY_BIND=0.0.0.0 으로 다시, 끝나면 down)"
     bash "$DEPLOY_ROOT/scripts/publish-images.sh" $( [ $LLM = 1 ] && echo $SERVICES ) || die "게시 실패"   # --llm: GPU 이미지는 게시하지 않는다(이름 지정으로 제외)

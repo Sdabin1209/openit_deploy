@@ -3,7 +3,7 @@
 # 사용: scripts/record-e2e.sh [옵션] <로그 파일>...        (e2e.sh 가 끝에서 부른다. 파일은 이어 붙여 읽는다)
 #   로그에 있어야 하는 것: 'PASS n / FAIL m' 줄, 'E2E 결과' 줄(모드·종료), '== 요약 (단계 1~8)' 표, check-all 의 '-- 결과: FAIL a, SKIP b, PASS c' 줄.
 #   하나라도 파싱하지 못하면 아무것도 더하지 않고 종료 코드 2 로 실패한다.
-#   --when 'YYYY-MM-DD HH:MM'  기본은 지금.   --env 텍스트  기본은 WSL2 또는 Linux(E2E_ENV 로도 지정).   --source 텍스트  기본 'e2e.sh 로그 자동 기록'.
+#   --when 'YYYY-MM-DD HH:MM'  기본은 지금.   --env 텍스트  기본은 DEPLOY_ENV_NAME, 없으면 hostname 으로 식별(gpu-dev / 이 PC (WSL2) / Linux. 원문 hostname 은 쓰지 않는다. E2E_ENV 로도 지정).   --source 텍스트  기본 'e2e.sh 로그 자동 기록'.
 #   --manual  로그 없이 값을 직접 준다(헤드가 직접 돌린 기록처럼 로그 파일이 이 리포에 없을 때). 필수: --source --commit --mode 전체|--fast --pass --fail --exit
 #             --ca-fail --ca-skip --ca-pass.  --blocked --test-sub 는 모르면 생략('미기록').
 #   --file PATH   기본 docs/E2E_RESULTS.md (시험용).
@@ -47,7 +47,17 @@ else
   COMMIT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null) || die "git 커밋 해시를 읽지 못했다"
   if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no -- . ':!docs/E2E_RESULTS.md' 2>/dev/null)" ]; then COMMIT="$COMMIT+dirty"; fi
   [ -n "$SRC" ] || SRC="e2e.sh 로그 자동 기록"
-  if [ -z "$ENVT" ]; then if grep -qi microsoft /proc/version 2>/dev/null; then ENVT="이 PC (WSL2)"; else ENVT="Linux"; fi; fi
+fi
+# 환경 칸: --env / E2E_ENV 가 최우선. 없으면 DEPLOY_ENV_NAME(있으면 그 이름 그대로), 없으면 hostname 으로 식별한다.
+# hostname 원문은 기록에 쓰지 않는다: 'gpu-dev*' 만 gpu-dev 로 알아보고, 그 밖은 WSL2 면 '이 PC (WSL2)', 아니면 'Linux'.
+# (예전에는 WSL2 이기만 하면 gpu-dev 도 '이 PC (WSL2)' 로 적혔다.) RECORD_E2E_HOSTNAME 은 자체 시험이 hostname 을 바꿔 넣는 자리다.
+if [ -z "$ENVT" ]; then
+  if [ -n "${DEPLOY_ENV_NAME:-}" ]; then ENVT="$DEPLOY_ENV_NAME"
+  else
+    HN=$(printf '%s' "${RECORD_E2E_HOSTNAME:-$(hostname 2>/dev/null)}" | tr 'A-Z' 'a-z')
+    case "$HN" in gpu-dev|gpu-dev[-.]*) ENVT="gpu-dev";;
+      *) if [ -n "${RECORD_E2E_PROC_VERSION:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then ENVT="이 PC (WSL2)"; else ENVT="Linux"; fi;; esac
+  fi
 fi
 for v in "$P" "$F" "$EX" "$CAF" "$CAS" "$CAP"; do isnum "$v" || die "숫자가 아닌 값: '$v'"; done
 [ "$MODE" = "전체" ] || [ "$MODE" = "--fast" ] || die "모드는 전체 또는 --fast"

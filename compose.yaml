@@ -25,6 +25,8 @@ networks:
     internal: true
   logs:       # 로그 저장소(원본 Trace) 접근
     internal: true
+  db:         # PostgreSQL 서버 접근. 호스트로 열지 않는다. 서비스는 자기 영역이 PostgreSQL로 바뀔 때 이 네트워크에 붙는다
+    internal: true
 
 volumes:          # 저장소마다 볼륨 하나, 쓰기는 소유 서비스만(이웃은 HTTP와 토큰, 백업은 읽기 전용 마운트)
   survey-data:    # SURVEY_SESSION_DB, SURVEY_OUTBOX_DB, 릴리스 작업 폴더
@@ -33,6 +35,7 @@ volumes:          # 저장소마다 볼륨 하나, 쓰기는 소유 서비스만
   gate-data:      # 릴리스 레지스트리 registry.sqlite3 + releases/
   serving-data:   # model-serving: 게이트에서 받은 번들 캐시(다시 받을 수 있어 백업 대상 아님)
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
+  pg-data:        # postgres: 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 볼륨 복사가 아니라 scripts/pg-backup.sh(pg_dump)
 
 configs:
   gateway-caddyfile:
@@ -45,7 +48,31 @@ configs:
 # 비밀(D84): 토큰·salt는 환경 변수가 아니라 파일로 마운트한다(/run/secrets/<이름>, 읽기 전용). 서비스에는 NAME_FILE=/run/secrets/<이름> 경로만 환경 변수로 준다(경로는 비밀이 아니다).
 # 파일은 scripts/gen-secrets.sh 가 ${SECRETS_DIR}/tokens/<이름> 에 만든다(값 하나, 목록 값은 서비스가 받는 형식 그대로 한 줄).
 # env_file 로 토큰을 넣지 않는다: docker inspect / docker exec env 로 평문이 읽히기 때문이다. scripts/check-secrets-hidden.sh 가 이를 검사한다.
+# PostgreSQL: postgres-password(슈퍼유저)와 db-<이름>-password(계정 암호)는 postgres 서비스만 마운트한다(초기화 스크립트가 읽는다).
+#   db-<이름>-dsn(접속 문자열)은 소유 서비스가 영역이 PostgreSQL로 바뀔 때 마운트한다(이름 규칙은 docs/RUN.md 4-1-1).
 secrets:
+  postgres-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/postgres-password
+  db-survey-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-password
+  db-qa-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-qa-password
+  db-ops-log-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-password
+  db-ops-failure-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-password
+  db-gate-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-password
+  db-survey-dsn:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-dsn
+  db-qa-dsn:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-qa-dsn
+  db-ops-log-dsn:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-dsn
+  db-ops-failure-dsn:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-dsn
+  db-gate-dsn:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-dsn
   survey-api-kiosk:
     file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-kiosk
   survey-api-staff:
@@ -98,6 +125,27 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/model-registry-write-tokens
 
 services:
+  postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
+    <<: *hardening
+    image: ${POSTGRES_IMAGE:?locks/images.lock}
+    user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    secrets: [postgres-password, db-survey-password, db-qa-password, db-ops-log-password, db-ops-failure-password, db-gate-password]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
+    networks: [db]
+    stop_grace_period: 30s
+    healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+
   gateway:
     <<: *hardening
     image: ${GATEWAY_IMAGE:?locks/images.lock}

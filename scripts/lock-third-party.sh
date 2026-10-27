@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 외부 이미지(caddy, registry, python 유틸)를 받아 digest를 locks/images.lock 의 고정 줄로 기록한다. 이미 있으면 바꾸지 않는다.
+# 외부 이미지(caddy, registry, python 유틸, postgres)를 받아 digest를 locks/images.lock 의 고정 줄로 기록한다. 이미 있으면 바꾸지 않는다.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 LOCK="$DEPLOY_ROOT/locks/images.lock"; mkdir -p "$DEPLOY_ROOT/locks"; touch "$LOCK"
@@ -13,3 +13,4 @@ pin() { # pin <변수> <이름:태그>
 pin GATEWAY_IMAGE caddy:2-alpine
 pin REGISTRY_IMAGE registry:2
 pin UTIL_IMAGE python:3.12-slim
+pin POSTGRES_IMAGE postgres:16   # 공식 이미지. 서비스마다 DB·계정을 나눈 하나의 서버(compose.yaml postgres)

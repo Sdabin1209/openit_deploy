@@ -140,6 +140,18 @@ printf 'garbage\n' > "$T/bad.txt"; rec fail "PASS 줄을 파싱하지 못하면 
 rec fail "--manual 은 출처 없이는 실패" --manual --commit abc1234 --mode 전체 --pass 1 --fail 0 --exit 0 --ca-fail 0 --ca-skip 0 --ca-pass 1
 rec ok "--manual 은 출처를 '수동 입력'으로 표시해 더한다" --manual --source "시험" --commit abc1234 --mode 전체 --pass 1 --fail 0 --exit 0 --ca-fail 0 --ca-skip 0 --ca-pass 1 --when "2026-01-02 00:00"
 N=$((N+1)); grep -q '수동 입력: 시험' "$RF" && echo "  ok   수동 입력 표시" || { echo "  FAIL 수동 입력 표시가 없다"; FAILS=$((FAILS+1)); }
+# 환경 칸: hostname 으로 gpu-dev 를 알아본다(WSL2 위의 gpu-dev 가 '이 PC (WSL2)' 로 적히던 버그). 원문 hostname 은 기록에 쓰지 않는다
+envrow() { # envrow <when> <기대 환경 칸> <설명> [환경 변수 ...]  (DEPLOY_ENV_NAME, E2E_ENV 는 지정한 것만 남긴다)
+  local when=$1 want=$2 desc=$3; shift 3; N=$((N+1))
+  env -u DEPLOY_ENV_NAME -u E2E_ENV RECORD_E2E_PROC_VERSION=microsoft "$@" bash "$HERE/record-e2e.sh" --file "$RF" --manual --source "환경 시험" --commit abc1234 --mode 전체 --pass 1 --fail 0 --exit 0 --ca-fail 0 --ca-skip 0 --ca-pass 1 --when "$when" >/dev/null 2>&1
+  if grep -qF "| $when | abc1234 | $want | 전체 |" "$RF"; then echo "  ok   $desc"; else echo "  FAIL $desc (기대: $want)"; FAILS=$((FAILS+1)); fi
+}
+envrow "2026-02-01 00:00" "gpu-dev" "WSL2 위에서도 hostname gpu-dev 는 gpu-dev 로 적는다" RECORD_E2E_HOSTNAME=gpu-dev
+envrow "2026-02-01 00:01" "gpu-dev" "gpu-dev-01 처럼 접미사가 붙어도 gpu-dev" RECORD_E2E_HOSTNAME=GPU-DEV-01
+envrow "2026-02-01 00:02" "이 PC (WSL2)" "다른 hostname 의 WSL2 는 이 PC (WSL2)" RECORD_E2E_HOSTNAME=my-laptop
+N=$((N+1)); if grep -q 'my-laptop' "$RF"; then echo "  FAIL hostname 원문이 기록에 들어갔다"; FAILS=$((FAILS+1)); else echo "  ok   hostname 원문은 기록에 쓰지 않는다"; fi
+envrow "2026-02-01 00:03" "서버-A" "DEPLOY_ENV_NAME 이 있으면 그것을 쓴다(hostname 보다 우선)" RECORD_E2E_HOSTNAME=gpu-dev DEPLOY_ENV_NAME=서버-A
+envrow "2026-02-01 00:04" "직접 지정" "E2E_ENV 가 가장 우선" RECORD_E2E_HOSTNAME=gpu-dev DEPLOY_ENV_NAME=서버-A E2E_ENV=직접\ 지정
 
 echo
 [ $FAILS = 0 ] && echo "통과: 자체 시험 $N건 + 값 비출력 확인" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }

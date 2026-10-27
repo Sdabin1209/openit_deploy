@@ -74,6 +74,40 @@ bash scripts/demo.sh reset                       # down 후 up
 
 **이미 secrets/가 있는 경우.** 예전 `secrets/*.env`는 더는 쓰지 않는다(지워도 된다; gen-secrets.sh가 알려 준다). `gen-secrets.sh`를 다시 실행하면 기존 토큰은 그대로 두고 목록 값 파일(`gate-read-tokens` 등)만 새로 만든다. 토큰 파일 모드는 644로 바뀐다. 클라이언트(E2E, demo.sh)는 같은 경로 `secrets/tokens/<이름>`을 읽는다.
 
+## 4-1-1. PostgreSQL (서비스마다 데이터베이스·계정 분리)
+
+**결정(사용자 지시: 빈 곳은 표준적인 방법).** 영역별 SQLite 파일 대신 **PostgreSQL 서버 하나(공식 이미지 `postgres:16`, digest는 `locks/images.lock`의 `POSTGRES_IMAGE`)**를 `compose.yaml`의 `postgres` 서비스로 둔다. 서비스마다 데이터베이스와 최소 권한 계정을 따로 만든다. 소유 서비스만 쓰고 이웃은 HTTP로만 읽는 규칙(D49·D50)은 그대로다: 계정은 자기 데이터베이스에만 접속할 수 있다. 이유: 권한·암호화·백업·보존을 DB 계층 한 곳에서 걸 수 있고, 서버가 여러 대로 나뉘어도 같은 방식으로 동작한다.
+
+**상태(이 단계는 기반만).** 서버·계정·비밀·백업은 준비됐다. 서비스 컨테이너는 아직 SQLite 볼륨을 쓴다. 서비스가 Postgres를 쓰도록 바꾸는 일은 각 영역 에이전트가 따로 한다(바꿀 때 해당 서비스를 `db` 네트워크에 붙이고 아래 DSN 비밀을 마운트한다). model-registry는 파일 레지스트리(어댑터 tar)라 데이터베이스를 만들지 않았다.
+
+**이름 규칙(확정).** 서비스는 `boundary_contracts.read_secret(<환경 변수 이름>)`으로 읽는다. compose는 `<환경 변수 이름>_FILE=/run/secrets/<비밀 이름>`만 준다. 값은 `postgresql://<계정>:<암호>@postgres:5432/<데이터베이스>` 한 줄이다.
+
+| 영역(저장소) | 환경 변수 이름 | 비밀 이름(`secrets/tokens/…`, `/run/secrets/…`) | 데이터베이스 = 계정 | 담는 것 |
+|---|---|---|---|---|
+| survey-service | `SURVEY_DATABASE_URL` | `db-survey-dsn` | `survey` | 세션, outbox, 알림 |
+| question-authoring | `QA_DATABASE_URL` | `db-qa-dsn` | `qa` | 문항 |
+| ops-feedback | `OPS_LOG_DATABASE_URL` | `db-ops-log-dsn` | `ops_log` | 원본 Trace 로그 |
+| ops-feedback | `OPS_FAILURE_DATABASE_URL` | `db-ops-failure-dsn` | `ops_failure` | 실패 사례 |
+| release-gate | `GATE_DATABASE_URL` | `db-gate-dsn` | `gate` | 릴리스 레지스트리 |
+
+암호 파일은 `db-<이름>-password`(이름의 `_`는 `-`), 슈퍼유저 암호는 `postgres-password`다. 암호 파일은 `postgres` 서비스만 마운트하고(초기화 스크립트가 읽는다), DSN 파일은 소유 서비스만 마운트한다. 호스트 이름 `postgres`는 compose의 서비스 이름이고 `db` 네트워크(internal, 호스트 포트 없음)에서만 닿는다. `gen-secrets.sh`가 위 파일을 만든다(모드 644, 폴더 700, 값은 출력하지 않는다). `bash scripts/gen-secrets.sh --db-only [폴더]`는 이 비밀만 만든다(caddy 이미지 불필요). 암호를 바꾸면 DSN도 다시 쓰이고, 이어 `bash scripts/pg-roles.sh sync`가 서버의 계정 암호를 바꾼다.
+
+**초기화.** 공식 이미지의 `/docker-entrypoint-initdb.d`(`config/postgres/initdb/10-roles.sh`)가 빈 볼륨에서 한 번 돈다. 계정마다 `CREATE ROLE`(LOGIN, 슈퍼유저·DB생성·역할생성·복제 없음), 같은 이름의 데이터베이스(소유자 = 그 계정), `PUBLIC`의 CONNECT 회수(다른 계정의 데이터베이스와 `postgres`·`template1`에는 접속 불가), 루프백 TCP의 `trust`를 암호 요구(scram-sha-256)로 교체. 스크립트는 멱등이라 다시 돌려도 안전하다(`pg-roles.sh sync`). 계정 암호는 비밀 파일에서 `psql`의 `\set … \`cat\``로 읽어 인자·환경 변수·로그에 나오지 않는다. 암호 없이 닿는 길은 컨테이너 안 유닉스 소켓(`docker exec`)뿐이다.
+
+**백업·복구.** `pg-data` 볼륨을 파일째 복사하지 않는다(쓰는 중에는 일관되지 않다).
+- `bash scripts/pg-backup.sh [db ...]`: 설정·거부 규칙·보관 기간은 `backup.sh`와 같다(`config/backup.env`). 데이터베이스의 소유 계정으로 `pg_dump -Fc`(한 시점의 일관된 스냅샷, 서버가 떠 있어도 된다)해 `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump` + `MANIFEST.json`(sha256, 크기, 서버 버전)을 만든다. 덤프는 파일 600, 폴더 700.
+- `bash scripts/pg-restore.sh <db> <스냅샷 폴더> --yes`: 해시 검증(불일치면 종료 코드 3), 그 데이터베이스에 다른 접속이 있으면 거부(서비스를 먼저 멈춘다), 그다음 `pg_restore --clean --if-exists --single-transaction`. 볼륨을 잃었다면 `postgres`를 먼저 띄운다(초기화가 빈 데이터베이스와 계정을 만든다). 그다음 복구한다.
+- 이 단계에서 `e2e.sh`의 백업 단계(SQLite 볼륨)는 건드리지 않았다. 서비스가 Postgres로 옮겨 가면 그 단계에 `pg-backup.sh`/`pg-restore.sh`를 넣는다. 지금은 `bash scripts/test-postgres.sh`(서버 단독 자체 시험: 기동, 최소 권한, 비밀 비노출, 백업·복구 왕복, 볼륨을 잃은 뒤 복구)가 대신한다.
+
+**영역 개발용 서버(`scripts/dev-postgres.sh`).** 영역 에이전트가 자기 시험에 쓰는 일회용 서버다. 개발은 컨테이너 밖에서 하므로 서비스는 호스트에서 접속한다.
+```
+export SURVEY_DATABASE_URL=$(bash <deploy>/scripts/dev-postgres.sh up survey)   # stdout 한 줄: postgresql://survey:<일회용 암호>@127.0.0.1:<Docker가 배정한 포트>/survey
+bash <deploy>/scripts/dev-postgres.sh down survey                                  # 컨테이너와 임시 비밀 지우기
+```
+데이터베이스 이름은 위 표의 이름(`survey qa ops_log ops_failure gate`). 운영과 같은 초기화 스크립트를 쓰므로 권한도 같다. 데이터는 메모리(tmpfs)라 down하면 사라진다. 포트는 고정하지 않는다. 이미 떠 있으면 같은 문자열을 다시 낸다. 같은 데이터베이스를 여럿 띄우려면 `DEV_PG_SUFFIX=<구분>`. 컨테이너 이름은 `deploy-devpg-<db>[-<구분>]`, `dev-postgres.sh status`로 목록을 본다. 접속 문자열은 암호를 담으므로 로그·커밋에 남기지 않는다. 서비스 쪽은 환경 변수 `…_DATABASE_URL_FILE`(운영)과 `…_DATABASE_URL`(개발) 둘 다 `read_secret`으로 읽힌다.
+
+**확인하지 못한 것.** TLS(서버 안 암호화)는 켜지 않았다(내부 네트워크 한정, 서버가 나뉘면 필요). 저장 시 디스크 암호화와 보존 기간 정책(PITR, WAL 보관)은 정하지 않았다(O16). 서비스가 실제로 붙는 경로는 영역 쪽 작업 뒤에 E2E로 본다.
+
 ## 4-2. 버전 표 (드리프트 점검)
 
 경계 계약·turn-engine·model-runtime의 태그 기준은 `scripts/lib.sh`의 표 한 곳이다. 형제 영역(survey-service, release-gate, model-lab, ops-feedback, question-authoring, synthetic-data, turn-engine, model-runtime)의 requirements/lock/pyproject/Dockerfile/스크립트에 손으로 적힌 같은 태그가 표와 다르면 `bash scripts/check-versions.sh`가 실패하고 `파일:줄`을 알려 준다(읽기 전용, 문서·시험·변경 이력 제외). 점검기 자체의 시험은 `bash scripts/test-check-versions.sh`, 비밀 점검기는 `bash scripts/test-check-secrets-hidden.sh`. 태그를 바꿀 때는 표를 먼저 고치고 이 점검이 가리키는 곳을 영역 세션에서 맞춘다.

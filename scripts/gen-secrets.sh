@@ -4,15 +4,32 @@
 # secrets/tokens/<이름> : 비밀 값 하나가 파일 하나(개별 토큰, 서버가 받는 목록 값 "역할=토큰,...", salt, 콘솔 암호).
 #   compose.yaml 의 최상위 secrets 가 이 파일을 /run/secrets/<이름> 에 마운트하고, 서비스는 NAME_FILE 경로로만 읽는다(D84).
 #   예전 방식 secrets/<서비스>.env(환경 변수로 토큰 주입)는 없앴다: 남아 있으면 지워도 된다(아래에서 알려 준다).
+# PostgreSQL: tokens/postgres-password(슈퍼유저), tokens/db-<이름>-password(서비스 계정 암호), tokens/db-<이름>-dsn(접속 문자열 한 줄,
+#   postgresql://<계정>:<암호>@postgres:5432/<데이터베이스>). 이름 규칙은 docs/RUN.md 4-1-1. DSN 은 암호가 바뀌면 같이 갱신된다.
+#   --db-only : PostgreSQL 비밀만 만든다(caddy 이미지가 필요 없다. 시험·개발용).  사용: gen-secrets.sh [--db-only] [디렉터리]
 # 권한: 디렉터리 700(호스트 다른 사용자 차단), 파일 644. 컨테이너는 uid 10001 로 실행되는데 compose 의 파일 secrets 는 호스트 소유자·모드를
 #   그대로 마운트하므로(uid/gid/mode 옵션은 swarm 전용) 600 이면 서비스가 읽지 못한다.
 set -euo pipefail
+ONLY_DB=0; [ "${1:-}" = "--db-only" ] && { ONLY_DB=1; shift; }
+[ "$ONLY_DB" = 1 ] && DEPLOY_NO_DOCKER=1   # --db-only 는 docker 를 쓰지 않는다
 source "$(dirname "$0")/lib.sh"
 D=${1:-$DEPLOY_ROOT/secrets}; mkdir -p "$D/tokens"; chmod 700 "$D" "$D/tokens"
 rnd() { python3 -c 'import secrets;print(secrets.token_hex(24))'; }
 tok() { [ -s "$D/tokens/$1" ] || rnd > "$D/tokens/$1"; chmod 644 "$D/tokens/$1"; cat "$D/tokens/$1"; }
 putlist() { local f="$D/tokens/$1"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || printf '%s\n' "$2" > "$f"; chmod 644 "$f"; }
 roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="${out:+,}$r=$(tok "$srv-$kind-$r")"; done; echo "$out"; }
+
+# PostgreSQL 계정: 이름 = 데이터베이스 = 계정. 환경 변수 이름은 docs/RUN.md 4-1-1 표(SURVEY_DATABASE_URL 등)
+gen_db() {
+  tok postgres-password >/dev/null
+  local a n
+  for a in survey qa ops_log ops_failure gate; do
+    n=${a//_/-}; tok "db-$n-password" >/dev/null
+    putlist "db-$n-dsn" "postgresql://$a:$(cat "$D/tokens/db-$n-password")@postgres:5432/$a"
+  done
+}
+gen_db
+[ "$ONLY_DB" = 0 ] || { echo "PostgreSQL 비밀 위치: $D/tokens (리포지토리에 커밋하지 않는다)"; exit 0; }
 
 # 서버가 받는 목록 값(역할=토큰,...): 값 하나짜리 파일로 만든다
 GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver)
