@@ -20,8 +20,8 @@ echo "$*" >> "$FAKE_LOG"
 case "$1" in
   image) [ "$2" = inspect ] && { case " $FAKE_HAVE " in *" $3 "*)
       # `--format '{{json .Config.Labels}}'` 요청에는 계약 ImageLabels 를 따르는 라벨을 낸다(게시 전 검증, ADR 0035). FAKE_BAD_LABELS=1 이면 계약을 어기는 값(turn-engine=none)을 낸다
-      case "$*" in *Config.Labels*) if [ "${FAKE_BAD_LABELS:-0}" = 1 ]; then echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.2.0","io.openit.contracts.survey-schema":"1","io.openit.turn-engine":"none"}'
-        else echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.2.0","io.openit.contracts.survey-schema":"1","io.openit.turn-engine":"n/a","io.openit.model-runtime":"n/a"}'; fi;; esac
+      case "$*" in *Config.Labels*) if [ "${FAKE_BAD_LABELS:-0}" = 1 ]; then echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.2.2","io.openit.contracts.survey-schema":"1","io.openit.turn-engine":"none"}'
+        else echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.2.2","io.openit.contracts.survey-schema":"1","io.openit.turn-engine":"n/a","io.openit.model-runtime":"n/a"}'; fi;; esac
       exit 0;; esac; echo "Error: No such image: $3" >&2; exit 1; };;
   tag) case " $FAKE_HAVE " in *" $2 "*) exit 0;; esac; echo "Error response from daemon: No such image: $2" >&2; exit 1;;
   push) echo "latest: digest: sha256:$(printf 'a%.0s' $(seq 64)) size: 1"; exit 0;;

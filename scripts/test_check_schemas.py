@@ -6,7 +6,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import check_schemas as cs
 
 ROOT = cs.ROOT
-GOOD_ROW = {"name": "survey-service", "image": "deploy-build/survey-service:85b3552", "commit": "85b3552", "tags": "bc=v2.2.0,mr=v0.8.1"}
+GOOD_ROW = {"name": "survey-service", "image": "deploy-build/survey-service:85b3552", "commit": "85b3552", "tags": "bc=v2.2.2,mr=v0.9.0"}
 D = "sha256:" + "a" * 64
 
 
@@ -28,7 +28,7 @@ class T(unittest.TestCase):
         self.assertEqual(errs("images-env", {k: v for k, v in GOOD_ROW.items() if k != "tags"}), [])   # 4열은 선택
         for bad in ({**GOOD_ROW, "commit": "HEAD"}, {**GOOD_ROW, "tags": "bc=2.1.1"}, {**GOOD_ROW, "extra": ["x"]}, {k: v for k, v in GOOD_ROW.items() if k != "image"}):
             self.assertTrue(errs("images-env", bad), bad)
-        self.assertEqual(cs.parse_images_env("# 주석\n\nsurvey-service img abc1234 bc=v2.2.0,mr=v0.8.1\n")[0][1]["tags"], "bc=v2.2.0,mr=v0.8.1")
+        self.assertEqual(cs.parse_images_env("# 주석\n\nsurvey-service img abc1234 bc=v2.2.2,mr=v0.9.0\n")[0][1]["tags"], "bc=v2.2.2,mr=v0.9.0")
 
     def test_lock_rejects_typos_and_bad_values(self):
         base = {"GATEWAY_IMAGE": "docker.io/library/caddy@" + D, "REGISTRY_IMAGE": "docker.io/library/registry@" + D, "UTIL_IMAGE": "docker.io/library/python@" + D, "POSTGRES_IMAGE": "docker.io/library/postgres@" + D}

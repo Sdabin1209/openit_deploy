@@ -247,6 +247,8 @@ services:
     pids_limit: ${KIOSK_FRONTEND_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
     networks: [ui]
+    cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
     <<: *hardening
@@ -255,6 +257,7 @@ services:
     pids_limit: ${ADMIN_CONSOLE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
     networks: [ui]
+    cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   survey-service:

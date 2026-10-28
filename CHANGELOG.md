@@ -1,5 +1,9 @@
 # 변경 이력
 
+## 기준 표 boundary-contracts v2.2.2, 정적 화면 이미지(Caddy)에 맞춘 compose
+- `scripts/lib.sh`: `DEPLOY_BC_TAG` v2.2.2(waitress가 앱 앞에서 내는 413/414/431을 계약 클라이언트가 INVALID_RECORD로 읽는다). 시험 값(v2.2.0 예시, mr=v0.8.1)도 현재 표로 올렸다.
+- `compose.yaml`: kiosk-frontend·admin-console에 `cap_add: NET_BIND_SERVICE`(공식 caddy 바이너리의 파일 권한 때문에 `cap_drop ALL` + no-new-privileges에서 exec가 거부됨, 측정함. gateway와 같은 처리)와 `/healthz` healthcheck(kiosk에는 없었다)를 더했다.
+
 ## 단위 4a-4: 직원 계정 발급·회전 스크립트 -> 조직이 주는 bcrypt 계정 파일 (D111, ADR 0039)
 - 운영 직원 계정의 원본은 조직이 주는 `secrets/staff-accounts.conf`(`<계정> <역할> <bcrypt 해시>`, 형식 `config/staff-accounts.conf.example`). 새 `scripts/apply-accounts.sh [--apply]`가 형식·역할·bcrypt를 검사하고 게이트웨이 계정 조각을 다시 쓴다(검사 실패면 기존 조각 유지, 해시는 출력하지 않음).
 - 삭제: `scripts/rotate-account.sh`, `config/gateway-accounts.conf`, 운영 계정의 무작위 암호·해시 생성. 시험 계정(`*-e2e`)은 `--test-fixtures`에서만 기존대로 만든다.
