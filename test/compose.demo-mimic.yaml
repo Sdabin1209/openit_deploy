@@ -1,7 +1,7 @@
 # 데모 전용(운영·E2E에 쓰지 않는다). 모델 서빙 자리의 LoRA-A/LoRA-B 만 모방 백엔드로 바꾸고 나머지는 진짜 코드다(작업 지시서 2, 데모 요구).
 # compose.test.yaml 의 fake 를 덮는다(파일 순서: compose.test.yaml 뒤). E2E 는 계속 test/compose.fake-model.yaml(fake)을 쓴다.
 # 왜 환경 변수 이름이 이렇게: 헤드 지시(MODEL_RUNTIME_BACKEND=mimic, MODEL_RUNTIME_ALLOW_FAKE=1, MODEL_RUNTIME_FAKE_FLOW_FILE). 모방기의 동작과 흐름 파일의 내용은 model-runtime 이 정한다.
-# 흐름 파일은 DEMO_MIMIC_FLOW_FILE(scripts/demo.sh --mimic-flow-file 이 정한다, 기본 test/fake-model/question_flow.json)을 읽기 전용으로 마운트한다.
+# 흐름 파일은 DEMO_MIMIC_FLOW_FILE(scripts/demo.sh --mimic-flow-file 이 정한다, 기본 test/fake-model/question_flow.json)을 읽기 전용으로 마운트한다. 기본값을 compose 안에 두지 않는다(demo.sh 가 항상 정한다).
 services:
   model-serving:
     environment:
@@ -9,4 +9,4 @@ services:
       MODEL_RUNTIME_ALLOW_FAKE: "1"
       MODEL_RUNTIME_FAKE_FLOW_FILE: /test-mimic/question_flow.json
     volumes:
-      - ${DEMO_MIMIC_FLOW_FILE:-./test/fake-model/question_flow.json}:/test-mimic/question_flow.json:ro
+      - ${DEMO_MIMIC_FLOW_FILE:?scripts/demo.sh 가 정한다}:/test-mimic/question_flow.json:ro
