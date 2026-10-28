@@ -34,7 +34,7 @@ mk deploy; mkschema; echo '{"a":"1"}' > "$W/$BC/examples/Bar.json"; mkdir -p "$W
 unset EXC
 
 echo "== 1 버전표"
-mk survey-service release-gate model-lab ops-feedback question-authoring synthetic-data turn-engine model-runtime kiosk-frontend admin-console; run 1 CHECK_ALL_VERSIONS_CMD=true; expect "버전표 일치(대리 명령 성공)" PASS "검증됨 10/10"
+mk survey-service release-gate model-lab ops-feedback question-authoring synthetic-data turn-engine model-runtime kiosk-frontend admin-console; run 1 CHECK_ALL_VERSIONS_CMD=true; expect "버전표 일치(대리 명령 성공)" PASS "검증됨 9/10"
 run 1 CHECK_ALL_VERSIONS_CMD=false; expect "버전표 불일치(대리 명령 실패)는 FAIL" FAIL
 
 echo "== 2 예시 키 순서"
