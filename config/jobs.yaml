@@ -33,7 +33,7 @@ jobs:
   - name: release-gate-worker         # 승인 평가 워커(GPU 필요)
     where: gpu-external
     interval_seconds: null
-  - name: synthetic-data              # 데이터 생성(LLM 생성은 GPU). 게시기(import) 모드는 CPU만 쓰지만 입력 jsonl의 출처·주기가 미정이라 이 Compose에 서비스를 두지 않는다(E2E 단계 2는 호스트에서 실행)
+  - name: synthetic-data              # 게시기(import)·시드(run) 잡. 게시 대상은 dataset-store(I2 HTTP)다: 잡 설정 output.store = {"kind":"http","base_url":"<dataset-store 주소>"}, 쓰기 토큰은 환경 변수 DATASET_STORE_WRITE_TOKEN_FILE(단수, 잡 쪽)에 secrets/tokens/dataset-store-write-synthetic-data 경로를 준다(서버 쪽 DATASET_STORE_WRITE_TOKENS_FILE 복수와 다르다, synthetic-data ADR 0013). 입력 jsonl의 출처·주기가 미정이고 GPU 호스트에서 돌 수 있어 이 Compose에 서비스를 두지 않는다(E2E 단계 2는 호스트에서 실행, 단계 7d가 같은 입력을 HTTP로 게시). 운영에서 이 잡이 dataset-store에 닿는 경로(datasets 네트워크는 internal이라 호스트 밖에서 닿지 않는다)는 미정: ADR 0032
     where: gpu-external
     interval_seconds: null
   - name: model-lab-pipeline          # 학습·평가·패키징·게시

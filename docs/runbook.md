@@ -131,6 +131,16 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 - 잡 하나를 지금 실행: `bash scripts/run-job.sh job-ops-feedback`(설정 파일 `OPS_JOB_CONFIG`가 있어야 한다. 없으면 거부).
 - `gpu-external` 잡은 GPU 서버에서 돈다(D40). 서빙 서버의 Compose·스케줄러가 실행하지 않는다.
 
+### 5-0. synthetic-data 잡의 게시 대상 설정 (dataset-store, D100)
+
+잡(import·run)은 compose 밖(호스트 또는 GPU 호스트)에서 돈다. 게시 대상은 dataset-store(I2 HTTP)다. 설정 예(`output.store`만, 나머지는 영역 README):
+
+```json
+"output": {"work_dir": "<임시 경로>", "store": {"kind": "http", "base_url": "http://<dataset-store 주소>:<포트>", "timeout": 60}}
+```
+
+쓰기 토큰은 설정이 아니라 환경 변수 `DATASET_STORE_WRITE_TOKEN_FILE`(단수, 잡 쪽)에 파일 경로로 준다: `secrets/tokens/dataset-store-write-synthetic-data`. 서버 쪽 `DATASET_STORE_WRITE_TOKENS_FILE`(복수, 역할=토큰 목록)과 이름이 다르다(synthetic-data ADR 0013). 요구: 잡 실행 환경의 boundary-contracts 가 v2.1.0 이상. 닿는 경로: `datasets` 네트워크는 internal 이라 호스트 밖에서 닿지 않는다. 시험 구성(`compose.test.yaml`)은 `127.0.0.1` 임의 포트를 연다. 운영에서 GPU 호스트가 닿는 방법은 정하지 않았다(ADR 0032 "검토한 대안"). E2E 단계 7d 가 호스트에서 잡을 이 설정으로 돌려 확인한다.
+
 ## 5-1. 상태 감시 (FAULT_POLICY 13·14)
 
 서버 밖 감시가 gateway `/healthz`(살아 있음)와 `/readyz`(환자 경로 survey-service 반영)를 본다. 서버 안에서 읽을 수 있는 상태는 다음이다.
