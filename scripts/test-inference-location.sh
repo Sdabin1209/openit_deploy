@@ -107,12 +107,16 @@ bash "$DEPLOY_ROOT/scripts/up.sh" "$P" --external-inference "http://host.docker.
 chk "본 구성에 model-serving 컨테이너가 없다(프로필로 꺼짐)" test -z "$("$DOCKER" ps -a -q --filter "name=^$P-model-serving")"
 
 port() { port_of "$P-$1-1" 8080; }
-PORTS="{\"qa\":$(port question-authoring),\"gate\":$(port release-gate),\"ops\":$(port ops-feedback-ingest),\"survey\":$(port survey-service),\"mr\":$(port model-registry),\"gw\":$(port gateway),\"ms\":$IPORT}"
+# 게이트웨이는 HTTPS 필수(D88/U5)라 평문 8080 은 /healthz 만 답하고 나머지는 308 이다. e2e.sh 와 같은 방식으로 게이트웨이의 내부 CA 루트를 컨테이너에서 꺼내
+# 그것만 신뢰해 TLS 포트(8443)를 부른다. 시스템 신뢰 저장소를 고치거나 검증을 끄지 않는다(표준: 사설 CA 루트를 클라이언트가 명시적으로 신뢰).
+for _i in 1 2 3 4 5 6 7 8 9 10; do "$DOCKER" cp "$P-gateway-1:/data/caddy/pki/authorities/local/root.crt" "$W/gateway-ca.crt" >/dev/null 2>&1 && break; sleep 1; done
+[ -s "$W/gateway-ca.crt" ] || bail "gateway 내부 CA 루트를 가져오지 못했다"
+PORTS="{\"qa\":$(port question-authoring),\"gate\":$(port release-gate),\"ops\":$(port ops-feedback-ingest),\"survey\":$(port survey-service),\"mr\":$(port model-registry),\"gw\":$(port_of "$P-gateway-1" 8443),\"ms\":$IPORT}"
 IMG=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   echo "{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}" )
 echo "== E2E 단계 1~5 (추론 서버는 외부; 중단·복구는 건너뜀: 서버 재시작 뒤 Docker 배정 포트가 바뀔 수 있다)"
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$P" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMG" --docker "$DOCKER" \
-  --root "$DEPLOY_ROOT" --work "$W/work" --run-id loc-test --only 1,2,3,4,5 --skip-ms-restart \
+E2E_NO_LAST_PASS=1 "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$P" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMG" --docker "$DOCKER" \
+  --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --run-id loc-test --only 1,2,3,4,5 --skip-ms-restart \
   --ms-url "http://127.0.0.1:$IPORT" --ms-token-file "$INFERENCE_TOKEN_FILE" --ms-container "$INF-model-serving-1"
 RC=$?
 [ $RC = 0 ] && { PASS=$((PASS+1)); echo "  [PASS] 단계 1~5 (외부 추론 서버로 한 턴 이상 통과)"; } || { FAIL=$((FAIL+1)); echo "  [FAIL] 단계 1~5 (종료 코드 $RC)"; }

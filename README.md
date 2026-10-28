@@ -128,3 +128,4 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0024 PostgreSQL 로그에 값이 남지 않게, 연결 상한, 로컬 인증](docs/adr/0024-postgres-logging-and-limits.md)
 - [0025 로컬 레지스트리 강화: 비root, 읽기 전용, cap_drop ALL](docs/adr/0025-registry-hardening.md)
 - [0030 E2E: 선행 실패는 SKIP, 단계 입력 선언과 해시 기록, 전체 E2E는 최종 관문](docs/adr/0030-e2e-skip-and-input-hash.md)
+- [0031 서비스 사이 내부 TLS를 쓰지 않는다: 범위는 compose 내부 네트워크 한정](docs/adr/0031-no-internal-tls-between-services.md)

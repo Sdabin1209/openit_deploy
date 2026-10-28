@@ -24,7 +24,10 @@ bash "$DEPLOY_ROOT/scripts/publish-images.sh" >/dev/null 2>&1 && ok "publish-ima
 echo "== 2) deploy 리포의 커밋된 내용만 빈 폴더에 clone (형제 리포·build/·.venv 없음)"
 git clone -q --no-hardlinks "$DEPLOY_ROOT" "$T/deploy" && ok "clone ($T/deploy)" || { ng clone; exit 1; }
 [ ! -e "$T/deploy/build" ] && [ ! -e "$T/deploy/.venv" ] && [ -z "$(ls "$T" | grep -v -E '^(deploy|images.lock|registry.env|images.lock.lock|history)$')" ] && ok "사본 옆에 형제 리포·build/·.venv 가 없다" || ng "사본 환경이 깨끗하지 않다"
-echo "== 3) 사본에서 비밀 생성 -> up.sh (compose.yaml만, 시험 덮어쓰기 없음)"
+# 왜 덮어쓰기: 운영 기본의 추론 서버는 fake 백엔드(config/model-serving.env)인데 model-runtime v0.7.3부터 MODEL_RUNTIME_ALLOW_FAKE=1 없이는 시작을 거부한다(의도된 안전장치).
+# 이 점검이 보는 것은 "워크스페이스 없이 서비스가 뜬다"이지 모델 품질이 아니므로 이 한 값만 시험 표시로 준다. 운영 compose.yaml 은 바꾸지 않는다(L-후속: GPU 변형은 GPU 서버 몫).
+printf 'services:\n  model-serving:\n    environment:\n      MODEL_RUNTIME_ALLOW_FAKE: "1"\n' > "$T/allow-fake.yaml"; export COMPOSE_EXTRA="$T/allow-fake.yaml"
+echo "== 3) 사본에서 비밀 생성 -> up.sh (compose.yaml + fake 허용 한 값)"
 ( cd "$T/deploy" && bash scripts/gen-secrets.sh "$SECRETS_DIR" >/dev/null 2>&1 ) && ok "gen-secrets.sh" || { ng "gen-secrets.sh"; exit 1; }
 ( cd "$T/deploy" && bash scripts/up.sh "$P" > "$T/up.log" 2>&1 ) && ok "up.sh: 모든 서비스 healthy (워크스페이스 없이)" || { ng "up.sh"; tail -5 "$T/up.log"; }
 BAD=$( cd "$T/deploy" && dc "$P" ps -a --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -v -E 'healthy|Exited \(0\)' ); [ -z "$BAD" ] && ok "컨테이너가 모두 healthy (일회성 작업은 Exited 0)" || { ng "healthy 가 아닌 컨테이너: $BAD"; }
