@@ -1,9 +1,9 @@
-# STATUS (2026-10-28, 계약 v2.1.0 준비)
+# STATUS (2026-10-28)
 
 - E2E 단계 5n 을 선언·구현했다(`scripts/e2e_steps.py`, 선언 `scripts/e2e_plan.py`): 직원 호출 재알림·실패 기록·`pause_reason=RISK`. 새 survey-service 이미지가 들어오기 전에는 실행하지 않았다(구문·자체 시험만 확인).
 - `pause_reason=REASK_LIMIT` 은 E2E 로 만들 수 없다: 가짜 A(model-runtime fake)는 NEXT 만 내고 REASK 를 내는 설정이 없다. 단계 5n 이 BLOCKED 행(`5n-reask`)으로 남긴다. 풀려면 model-runtime 쪽 변경(가짜 A 가 지정 문구에 REASK)이 필요하다(미정, 변경 요청 대상).
-- I2 dataset-store(synthetic-data 8514220, D100): compose.yaml·compose.test.yaml 에 서비스, 전용 internal 네트워크 `datasets`, 볼륨 `datasets-data`, 읽기/쓰기 토큰 파일(gen-secrets.sh), `lib.sh` SERVICES·`DEPLOY_BC_TAG_DS`, build-images.sh 빌드(이 PC 에서 이미지가 빌드되는 것까지 확인), backup/복구 대상, e2e.sh 도달·차단·라벨 점검, E2E 단계 7d 를 더했다. 이유: docs/adr/0032-dataset-store-boundary.md. 전체 E2E·check-containers·백업 왕복은 아직 돌리지 않았다. `locks/images.lock` 에는 레지스트리에 게시되기 전이라 DATASET_STORE_DIGEST 가 없다. 잡의 HTTP 게시 설정은 구현됐다(CR-D26 은 synthetic-data b850f95 로 구현됨, 단계 7d 가 잡 경유 게시를 확인한다. 호스트 잡 환경의 boundary-contracts 가 2.1.0 이상일 때만).
-- 기준 태그를 v2.1.0 으로 올리는 일은 태그가 push 된 뒤에 한다(준비 목록은 이 구간의 커밋 메시지·보고).
+- I2 dataset-store(synthetic-data 8514220, D100): compose.yaml·compose.test.yaml 에 서비스, 전용 internal 네트워크 `datasets`, 볼륨 `datasets-data`, 읽기/쓰기 토큰 파일(gen-secrets.sh), `lib.sh` SERVICES, build-images.sh 빌드(이 PC 에서 이미지가 빌드되는 것까지 확인), backup/복구 대상, e2e.sh 도달·차단·라벨 점검, E2E 단계 7d 를 더했다. 이유: docs/adr/0032-dataset-store-boundary.md. 전체 E2E·check-containers·백업 왕복은 아직 돌리지 않았다. `locks/images.lock` 에는 레지스트리에 게시되기 전이라 DATASET_STORE_DIGEST 가 없다. 잡의 HTTP 게시 설정은 구현됐다(CR-D26 은 synthetic-data b850f95 로 구현됨, 단계 7d 가 잡 경유 게시를 확인한다. 호스트 잡 환경의 boundary-contracts 가 2.1.0 이상일 때만).
+- 기준 태그(계약·turn-engine·model-runtime)는 `scripts/lib.sh` 의 표 한 곳이다. 값을 이 문서에 옮겨 적지 않는다.
 
 ---
 

@@ -103,7 +103,7 @@ trap cleanup EXIT
 [ "$FAST" = 1 ] && [ -z "$ONLY" ] && echo "!!! --fast 모드: 스케줄러, 백업·복구, 코드 축 롤백 구간을 생략한다. 전체 합격이 아니다(인도 전에는 옵션 없는 전체 모드 필수) !!!"
 cat <<BANNER
 =============================================================================
- E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 v2.0.2 (출고는 사람 승인, D53)
+ E2E 합격 시나리오 실행 (프로젝트 $PROJECT)   경계 계약 $DEPLOY_BC_TAG (출고는 사람 승인, D53)
  !! 시험 대역 사용 표시 !!
    - 승인자: 사람 대신 이 스크립트가 시험용 승인자 토큰(release-approver)으로 POST /v1/approvals 를 호출한다. 시험용 정책·실행기는 없다(게이트에서 삭제됨)
    - 단계 3 모델: GPU 없이 시험용 어댑터(test/fixtures/e2e-test-adapter)와 시험용 EvaluationReport(고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시한다(E2E_GPU=1이면 gpu-dev 경로, 기본 끔)

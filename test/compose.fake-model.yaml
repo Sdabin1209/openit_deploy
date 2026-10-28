@@ -1,10 +1,10 @@
-# 시험 전용(E2E·데모의 fake 모델): 표준 model-serving 서버(model-runtime v0.7.3)의 fake 백엔드가 입력 문항 기준으로 유효한 ActionExtraction 을 내게 한다.
+# 시험 전용(E2E·데모의 fake 모델): 표준 model-serving 서버(model-runtime, 기준 태그는 scripts/lib.sh)의 fake 백엔드가 입력 문항 기준으로 유효한 ActionExtraction 을 내게 한다.
 # 문항 순서 파일(test/fake-model/question_flow.json)은 survey-service 의 question_flow 와 같은 순서의 시험용 사본이다. 달라지면 E2E 가 실패해 알려 준다.
 # 운영 compose.yaml 에 넣지 않는다. 실제 LLM 모드(compose.llm.yaml)에는 붙이지 않는다(vllm 백엔드).
 services:
   model-serving:
     environment:
-      MODEL_RUNTIME_ALLOW_FAKE: "1"   # v0.7.3: fake 백엔드는 이 값이 1이 아니면 시작을 거부한다(model-runtime ADR 0009). 시험 전용 표시
+      MODEL_RUNTIME_ALLOW_FAKE: "1"   # fake 백엔드는 이 값이 1이 아니면 시작을 거부한다(model-runtime ADR 0009). 시험 전용 표시
       MODEL_RUNTIME_FAKE_FLOW_FILE: /test-fake-model/question_flow.json
     volumes:
       - ./test/fake-model:/test-fake-model:ro

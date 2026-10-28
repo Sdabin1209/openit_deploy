@@ -114,7 +114,8 @@ class T(unittest.TestCase):
 
     def test_stale_images_with_fake_git_and_docker(self):
         import json, tempfile
-        tags = {"DEPLOY_BC_TAG": "v2.0.2", "DEPLOY_TE_TAG": "v0.4.0", "DEPLOY_MR_TAG": "v0.7.3"}
+        tags = v.lib_tags()   # 기준 표(scripts/lib.sh)에서 읽는다. 숫자를 시험에 적지 않는다
+        st = f"bc={tags['DEPLOY_BC_TAG']},te={tags['DEPLOY_TE_TAG']},mr={tags['DEPLOY_MR_TAG']}"
         class P:  # subprocess.CompletedProcess 대용
             def __init__(s, out="", rc=0): s.stdout, s.returncode = out, rc
         def fake_run(argv, cwd=None):
@@ -122,7 +123,7 @@ class T(unittest.TestCase):
                 return P("bbb2222\n" if "model-lab" in argv[2] else "aaa1111\n")   # model-lab 만 소스가 바뀌었다
             return P("{}")   # docker image inspect 성공
         with tempfile.TemporaryDirectory() as d:
-            env = Path(d) / "build"; env.mkdir(); (env / "images.env").write_text("survey-service img:1 aaa1111 bc=v2.0.2,te=v0.4.0,mr=v0.7.3\nmodel-registry img:2 aaa1111 bc=v2.0.2,te=v0.4.0,mr=v0.7.3\n")
+            env = Path(d) / "build"; env.mkdir(); (env / "images.env").write_text("survey-service img:1 aaa1111 " + st + "\nmodel-registry img:2 aaa1111 " + st + "\n")
             old = (v._run, v.lib_tags, v.DEPLOY_ROOT)
             v._run, v.lib_tags, v.DEPLOY_ROOT = fake_run, lambda: tags, Path(d)
             try:

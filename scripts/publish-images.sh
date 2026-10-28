@@ -24,7 +24,9 @@ while read -r area img commit _; do   # 4번째 열(bc=..,te=..,mr=.. 빌드 태
   ref="$DEPLOY_REGISTRY/openit/$area:build-$commit"
   "$DOCKER" tag "$img" "$ref"
   curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "http://${DEPLOY_REGISTRY}/v2/" || die "레지스트리가 응답하지 않는다(${PROBE_T}초): ${DEPLOY_REGISTRY}"
-  out=$(timeout "$PUSH_T" "$DOCKER" push "$ref" 2>&1) || { echo "$out"; die "push 실패: $ref"; }
+  out=$(timeout "$PUSH_T" "$DOCKER" push "$ref" 2>&1); prc=$?
+  if [ $prc = 124 ]; then echo "$out" | tail -3; die "push 시간 초과(${PUSH_T}초, timeout 종료 코드 124): $ref (PUBLISH_PUSH_TIMEOUT 로 바꿀 수 있다)"; fi
+  [ $prc = 0 ] || { echo "$out"; die "push 실패(종료 코드 $prc): $ref"; }
   digest=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
   [ -n "$digest" ] || { echo "$out"; die "digest를 읽지 못했다: $ref"; }
   # 레지스트리가 같은 digest를 아는지 확인한다.

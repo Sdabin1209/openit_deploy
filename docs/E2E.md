@@ -99,7 +99,7 @@ CR-006의 미해결 항목을 deploy가 정하지 않고 임시로 채운 값: �
 
 관찰과 정책 단언: 실패 응답은 `200` + `turn_failure_signal`(`NOT_COMMITTED`)이고, 실패한 턴의 발화는 대화 기록에 남는다(값은 저장되지 않음). 이 턴을 **같은 `turn_id`로 재전송**하면 model-serving이 돌아온 뒤에도 같은 실패 응답이 계속 온다(20회, 약 60초). FAULT_POLICY 원칙 1·2의 기대(NOT_COMMITTED 턴의 재전송은 확정)와 달라서 정책 단언 `POLICY-PENDING`으로 두었다. 기다리는 변경: survey-service([CR-D25](change-requests/CR-D25-survey-notcommitted-turn-id-replay.md)).
 
-**model-runtime 요청 상한 코드가 이 E2E 이미지에 들어 있는가: 아니다(확인).** 가짜 모델 서버 이미지(`model-serving`)는 `DEPLOY_MR_TAG`(현재 v0.7.2) 시점의 소스로 빌드된다. model-runtime 73e79f9(`MODEL_RUNTIME_REQUEST_DEADLINE_S` 3.5초, 엔진 멈춤·사망 시 `/readyz` 503, `ENGINE_TIMEOUT`)는 v0.7.2 태그에 없다(`git grep REQUEST_DEADLINE v0.7.2`가 0건, 이후 커밋에만 있고 그것을 포함하는 태그가 없다). 그래서 위 5m의 4.03초는 서버 상한이 아니라 survey의 읽기 timeout이다. model-runtime이 새 태그를 내면 `scripts/lib.sh`의 `DEPLOY_MR_TAG`(와 영역 문서의 기준 표기)를 올려야 이 코드가 E2E에 들어온다. 엔진 멈춤 시 `/readyz` 503은 `pause`로는 볼 수 없다(컨테이너가 통째로 얼어 `/readyz`도 응답하지 못한다): 그것을 보려면 가짜 백엔드에 지연·고장을 주입하는 방법이 model-runtime 쪽에 있어야 하며 지금은 확인하지 못했다.
+**model-runtime 요청 상한 코드가 이 E2E 이미지에 들어 있는가: 아니다(확인).** 가짜 모델 서버 이미지(`model-serving`)는 `DEPLOY_MR_TAG`(값은 `scripts/lib.sh`) 시점의 소스로 빌드된다. model-runtime 73e79f9(`MODEL_RUNTIME_REQUEST_DEADLINE_S` 3.5초, 엔진 멈춤·사망 시 `/readyz` 503, `ENGINE_TIMEOUT`)는 확인 당시의 기준 태그에 없었다(`git grep REQUEST_DEADLINE v0.7.2`가 0건, 이후 커밋에만 있고 그것을 포함하는 태그가 없다). 그래서 위 5m의 4.03초는 서버 상한이 아니라 survey의 읽기 timeout이다. model-runtime이 새 태그를 내면 `scripts/lib.sh`의 `DEPLOY_MR_TAG`(와 영역 문서의 기준 표기)를 올려야 이 코드가 E2E에 들어온다. 엔진 멈춤 시 `/readyz` 503은 `pause`로는 볼 수 없다(컨테이너가 통째로 얼어 `/readyz`도 응답하지 못한다): 그것을 보려면 가짜 백엔드에 지연·고장을 주입하는 방법이 model-runtime 쪽에 있어야 하며 지금은 확인하지 못했다.
 
 ## 영역 하나가 바뀌었을 때: verify-area (전체 합격이 아니다)
 

@@ -12,7 +12,7 @@
 | --- | --- |
 | 각 영역 이미지 | 영역 리포지토리 HEAD를 `git archive`로 꺼내 deploy가 빌드하고 digest를 잠근다(CI가 생기면 영역 CI가 digest를 제출, D24) |
 | 영역의 환경 변수·포트·볼륨·헬스체크 | 아래 3절. 각 영역 boundary/runbook/Dockerfile이 출처 |
-| boundary-contracts | E2E의 검증기로만(`boundary_contracts.validator`, `scripts/lib.sh`의 `DEPLOY_BC_TAG`가 정한 태그, 현재 v2.0.2). 이미지 안의 버전은 영역이 정한다 |
+| boundary-contracts | E2E의 검증기로만(`boundary_contracts.validator`, `scripts/lib.sh`의 `DEPLOY_BC_TAG`가 정한 태그). 이미지 안의 버전은 영역이 정한다 |
 | 문진 스키마 | E2E의 QuestionBank 검증(`openit-survey-schema` wheel, 정수 버전 1) |
 
 ## 3. 서비스 9개와 잡 2개(아래 표는 영역 서비스 5개, 그 뒤에 model-serving·게이트웨이·정적 화면 2개): 환경 변수, 포트, 볼륨, 헬스체크
