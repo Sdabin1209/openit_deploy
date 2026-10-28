@@ -2,7 +2,7 @@
 
 - E2E 단계 5n 을 선언·구현했다(`scripts/e2e_steps.py`, 선언 `scripts/e2e_plan.py`): 직원 호출 재알림·실패 기록·`pause_reason=RISK`. 새 survey-service 이미지가 들어오기 전에는 실행하지 않았다(구문·자체 시험만 확인).
 - `pause_reason=REASK_LIMIT` 은 E2E 로 만들 수 없다: 가짜 A(model-runtime fake)는 NEXT 만 내고 REASK 를 내는 설정이 없다. 단계 5n 이 BLOCKED 행(`5n-reask`)으로 남긴다. 풀려면 model-runtime 쪽 변경(가짜 A 가 지정 문구에 REASK)이 필요하다(미정, 변경 요청 대상).
-- I2 dataset-store(synthetic-data, D100): synthetic-data 에 `Dockerfile` 이 아직 없다(확인: `git -C ../synthetic-data log` 와 파일 목록). `scripts/build-images.sh` 에 그 파일이 생기면 `dataset-store` 이미지를 빌드하는 조건부 블록만 넣었다(없으면 건너뜀). compose 서비스·비밀 파일(synthetic-data 쓰기/model-lab 읽기 토큰)·`/healthz` 점검·`locks/images.lock` 항목·`check-containers.sh` 규칙·`lib.sh` SERVICES 는 이미지가 실제로 뜨는 것을 확인한 뒤 더한다(model-registry 가 있는 곳과 같은 위치: compose.yaml, compose.test.yaml, gen-secrets.sh, publish-image.sh, lib.sh, verify-areas.yaml). 미확인.
+- I2 dataset-store(synthetic-data 8514220, D100): compose.yaml·compose.test.yaml 에 서비스, 전용 internal 네트워크 `datasets`, 볼륨 `datasets-data`, 읽기/쓰기 토큰 파일(gen-secrets.sh), `lib.sh` SERVICES·`DEPLOY_BC_TAG_DS`, build-images.sh 빌드(이 PC 에서 이미지가 빌드되는 것까지 확인), backup/복구 대상, e2e.sh 도달·차단·라벨 점검, E2E 단계 7d 를 더했다. 이유: docs/adr/0032-dataset-store-boundary.md. 전체 E2E·check-containers·백업 왕복은 아직 돌리지 않았다. `locks/images.lock` 에는 레지스트리에 게시되기 전이라 DATASET_STORE_DIGEST 가 없다. synthetic-data 잡 설정의 `output.store.kind` 는 file/memory 뿐이라 잡이 HTTP 로 게시하는 설정은 그 영역 변경이 필요하다(docs/change-requests/CR-D26-job-http-publish.md).
 - 기준 태그를 v2.1.0 으로 올리는 일은 태그가 push 된 뒤에 한다(준비 목록은 이 구간의 커밋 메시지·보고).
 
 ---
