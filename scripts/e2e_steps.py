@@ -983,6 +983,74 @@ def step5d():
     assert "e2e-c=" not in (pathlib.Path(a.secrets) / "tokens" / "survey-kiosk-device-tokens").read_text(), "survey 기기 토큰 표에 폐기된 기기가 남았다"
     rec("5d", "REAL", "기기별 토큰: 기기 A 가 만든 세션에 기기 B 의 상태·발화·종료는 404/403 이고 세션은 바뀌지 않았다, 기기 A 는 계속 정상, /readyz kiosk_tokens.shared_kiosk_token=false(기기 토큰 표 사용), 기기 C 를 remove --apply 하자 그 토큰은 gateway 401 이고 survey 표에서도 빠졌다(gateway·survey 재시작). 못 보는 것: 폐기가 survey 에 반영되는 시점(재시작 필요, 재시작 전 gateway 가 먼저 막는다)")
 
+def _validate_if_known(name, obj):
+    """계약 v2.1.0 의 새 스키마(StaffCallRetryResult 등)는 설치된 boundary-contracts 가 v2.1.0 이상일 때만 있다. 없으면 필드 단언만 한다(BOUNDARY_TAG 를 올리기 전에도 구문·자체 시험이 돈다)."""
+    try: bc.validator(name)
+    except Exception: return False
+    validate(name, obj); return True
+
+def step5n():
+    title("5n", "직원 호출 재알림·실패 기록·정지 사유 (계약 v2.1.0 PUBLIC_API G·H절, CR-H001·H002, 가짜 모델)")
+    if "pointers" not in STATE: rec("5n", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    wait(lambda: survey_ready()[0] == 200, 300, "survey-service 가 활성 릴리스를 적재(/readyz 200)", every=3)
+    def tcall(tok, method, path, body=None):   # 지정한 토큰으로 게이트웨이 경유 호출: (상태, 본문, 소문자 헤더)
+        req = urllib.request.Request(URL("gw") + path, data=json.dumps(body).encode() if body is not None else None, method=method)
+        if tok: req.add_header("Authorization", "Bearer " + tok)
+        if body is not None: req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r: raw, code, hd = r.read(), r.status, dict(r.headers)
+        except urllib.error.HTTPError as e: raw, code, hd = e.read(), e.code, dict(e.headers)
+        try: b = json.loads(raw or b"null")
+        except ValueError: b = raw.decode(errors="replace")
+        return code, b, {k.lower(): v for k, v in hd.items()}
+    # (a) 위험 발화로 정지(단계 5f 의 방식: survey-service 기본 목록의 문구). 이 구성에는 직원 콘솔 구독자가 없어 전달은 DELIVERY_FAILED 로 끝나는 것이 정상이다(survey-service alerts.py 머리말). 구독자가 있으면 DELIVERED 일 수 있고 그래도 아래 호출은 OPEN 알림이 있으므로 성립한다
+    sid = f"sess-{RID}-n"; phrase, _r = risk_phrase_from_defaults()
+    A = dev_tok("e2e-a"); B = dev_tok("e2e-b")
+    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, ("기기 A 세션 시작", c, st)
+    c, rr, _h = tcall(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": f"저는 {phrase} 있어요", "turn_id": "n-1"}); assert c == 200, (c, rr)
+    fs = rr.get("turn_failure_signal") or {}; first_status = fs.get("staff_alert")
+    assert first_status in ("DELIVERED", "DELIVERY_FAILED"), ("위험 발화인데 직원 알림 신호가 없다", rr)
+    # (b) 정지 사유: /state 의 pause_reason 은 RISK (SessionState, 정지일 때만 의미)
+    c, stt = state_of(sid); assert c == 200 and stt["state"] == "PAUSED_RISK", (c, stt)
+    assert stt.get("pause_reason") == "RISK", ("위험 정지인데 /state 의 pause_reason 이 RISK 가 아니다(계약 v2.1.0 H절)", stt)
+    _validate_if_known("SessionState", stt)
+    # (c) 재알림: 응답 필드, 같은 turn_id 멱등, 간격 안의 다른 turn_id 는 429
+    c, r1, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-1"}); assert c == 200, ("재알림", c, str(r1)[:200])
+    assert r1["alert_id"] and r1["staff_alert"] in ("DELIVERED", "DELIVERY_FAILED") and isinstance(r1["delivery_attempts"], int) and r1["delivery_attempts"] >= 2 and r1["retry_after_s"] > 0, ("StaffCallRetryResult 필드", r1)
+    _validate_if_known("StaffCallRetryResult", r1)
+    c, r1b, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-1"}); assert c == 200 and r1b == r1, ("같은 turn_id 재전송이 같은 응답이 아니다(시도 횟수도 늘면 안 된다)", c, r1b, r1)
+    c, r2, h2 = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-2"}); assert c == 429, ("간격(retry_after_s) 안의 새 turn_id 재알림이 429 가 아니다", c, str(r2)[:200])
+    assert "retry-after" in h2, ("429 에 Retry-After 헤더가 없다", h2)
+    # (d) 다른 기기·위조·직원 토큰은 거부된다
+    cb, rb, _h = tcall(B, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-b"}); assert cb in (404, 403), ("다른 기기 토큰의 재알림이 허용됐다", cb, str(rb)[:100])
+    cbr, _r, _h = tcall(B, "POST", f"/v1/sessions/{sid}/staff-call/report", {"outcome": "NOT_NOTIFIED", "turn_id": "n-rep-b"}); assert cbr in (404, 403), ("다른 기기 토큰의 실패 기록이 허용됐다", cbr)
+    cf, _r, _h = tcall("forged-" + "x" * 24, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cf in (401, 403), ("위조 토큰의 재알림이 허용됐다", cf)
+    cn, _r, _h = tcall(None, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cn in (401, 403), ("토큰 없는 재알림이 허용됐다", cn)
+    cs = http("POST", "survey", f"/v1/sessions/{sid}/staff-call/retry", TOK("survey-api-staff"), {"turn_id": "n-retry-s"})[0]; assert cs == 403, ("직원 토큰으로 서비스에 직접 재알림이 403 이 아니다", cs)
+    assert tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-2"})[0] in (200, 429), "거부 시도 뒤 기기 A 의 호출이 깨졌다"
+    # (e) 실패 기록: StaffAlert 에 manual_notice_* 가 남고 직원 알림 목록에서 보인다. 같은 turn_id 같은 outcome 은 멱등, 다른 outcome 은 409
+    c, rep, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/report", {"outcome": "STAFF_NOTIFIED_MANUALLY", "turn_id": "n-rep-1"}); assert c == 200, ("실패 기록", c, str(rep)[:200])
+    assert rep["alert_id"] == r1["alert_id"] and rep.get("manual_notice_outcome") == "STAFF_NOTIFIED_MANUALLY" and rep.get("manual_notice_reported_at"), ("StaffAlert 에 manual_notice_* 가 없다", rep)
+    _validate_if_known("StaffAlert", rep)
+    c, rep2, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/report", {"outcome": "STAFF_NOTIFIED_MANUALLY", "turn_id": "n-rep-1"}); assert c == 200 and rep2 == rep, ("같은 turn_id 실패 기록이 멱등이 아니다", c, rep2)
+    c, _r, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/report", {"outcome": "NOT_NOTIFIED", "turn_id": "n-rep-1"}); assert c == 409, ("같은 turn_id 에 다른 outcome 이 409 가 아니다", c)
+    c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
+    mine = [x for x in pg["items"] if x["session_id"] == sid and x["alert_id"] == r1["alert_id"]]
+    assert mine and mine[0].get("manual_notice_outcome") == "STAFF_NOTIFIED_MANUALLY" and mine[0].get("manual_notice_reported_at"), ("직원 알림 목록에 manual_notice_* 가 없다", mine)
+    assert mine[0].get("delivery_attempts", 0) >= 2 and mine[0].get("last_delivery_status") in ("DELIVERED", "DELIVERY_FAILED"), ("StaffAlert 의 delivery_attempts·last_delivery_status", mine[0])
+    assert mine[0].get("pause_reason") in (None, "RISK"), ("StaffAlert.pause_reason", mine[0])
+    sv = staff_sv(sid); assert sv["status"] == "PAUSED_RISK", ("실패 기록은 세션을 풀지 않는다(직원이 개입으로 풀 때까지 PAUSED_RISK)", sv["status"])
+    # (f) 직원이 풀어 알림이 OPEN 이 아니게 되면 재알림은 409 NO_OPEN_ALERT
+    c, iv, _h = gw_raw("POST", f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "n-iv-1"}, basic=STAFF()); assert c == 200, (c, iv)
+    c, nr, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-3"})
+    assert c == 409 and ((nr.get("error") or nr).get("details") or {}).get("reason") == "NO_OPEN_ALERT", ("OPEN 알림이 없을 때 409 NO_OPEN_ALERT 가 아니다", c, str(nr)[:200])
+    c, st3 = state_of(sid); assert c == 200 and not st3.get("pause_reason"), ("정지가 풀렸는데 pause_reason 이 남았다(정지일 때만 의미)", st3)
+    tcall(A, "POST", f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
+    rec("5n", "REAL", f"위험 발화 정지(첫 전달 {first_status}) -> /state pause_reason=RISK -> staff-call/retry(필드·같은 turn_id 멱등·간격 안 새 turn_id 429+Retry-After) -> 다른 기기·위조·무토큰·직원 토큰 거부 -> staff-call/report(StaffAlert manual_notice_*, 멱등, 다른 outcome 409, 직원 알림 목록에 보임, 세션은 PAUSED_RISK 유지) -> 개입 뒤 재알림 409 NO_OPEN_ALERT")
+    # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT)는 가짜 A 로 만들 수 없다: fake 백엔드는 env 로 고정 출력을 받지 못하고(MODEL_RUNTIME_FAKE_FLOW_FILE 은 NEXT 만 낸다) REASK 를 내는 설정이 없다(model-runtime backends.py make_default_responder). 지어내지 않고 한계로 둔다
+    rz = survey_ready()[1]
+    rec("5n-reask", "BLOCKED", f"pause_reason=REASK_LIMIT: 가짜 A 가 REASK 를 연속으로 내는 구성이 없다(model-runtime fake 는 NEXT 만, 고정 출력 env 없음) -> model-runtime 변경 요청 대상(deploy/docs/change-requests). 서비스 설정은 /readyz reask_limit={rz.get('reask_limit')} 로만 본다")
+
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1474,7 +1542,7 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []

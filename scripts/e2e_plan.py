@@ -47,6 +47,7 @@ STEP_DECLS = {
     "5u": Decl(("release-gate", "survey-service") + _GW, UNKNOWN, "step5u 는 STATE 를 읽지 않는다. 활성 릴리스가 있어야 하는지는 코드를 읽어 확정하지 못했다"),
     "5m": Decl(("survey-service", "model-runtime", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽고 model-serving 을 pause 한다. " + _P4),
     "5r": Decl(("survey-service", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽는다. " + _P4),
+    "5n": Decl(("survey-service", "kiosk-frontend", "boundary-contracts") + _GW, ("4",), "STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 위험 문구는 빌드 사본의 survey-service risk_rules.py 에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4),
     "6": Decl(("ops-feedback", "survey-service", "boundary-contracts"), ("1", "4"), "step6 은 STATE['qs'](step1)·['releases'](step4)를 읽는다"),
     "7": Decl(("synthetic-data", "ops-feedback", "question-authoring", "boundary-contracts") + _GW, ("1", "2", "6"), "step7 은 STATE['cases'],['extract_input'](step6)·['dataset'](step2)·['qs'](step1)를 읽는다"),
     "8": Decl(("release-gate", "survey-service", "kiosk-frontend", "boundary-contracts"), ("1", "4", "6"), "step8 은 STATE['cases'](step6)·['pointers'],['releases'](step4)·['qs'](step1)를 읽는다"),
