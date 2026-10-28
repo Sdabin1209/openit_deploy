@@ -1748,6 +1748,17 @@ def _ready_code(k):
     try: return http("GET", k, "/readyz")[0]
     except Exception: return 0
 
+def _outbox_drained(timeout=120):
+    """survey-service 의 Trace outbox 가 비기를 기다리고 그때의 전송 수(sent)를 돌려준다(계약 SurveyReadyz.trace_outbox.pending/sent).
+    왜: ops_log 에는 잡뿐 아니라 ops-feedback-ingest(outbox 가 보낸 Trace)도 쓴다. 앞 단계의 DB 장애로 밀린 Trace 가 백오프 뒤 전송되면 ops_log 가 잡과 무관하게 바뀐다.
+    /readyz 가 503(활성 릴리스 없음 등)이어도 본문의 trace_outbox 는 계약상 필수라 읽는다. 상한 120초는 측정값이 아니다(outbox 백오프 상한을 deploy 가 알지 못해 넉넉히 잡은 시작값)."""
+    def drained():
+        try: c, r = survey_ready()
+        except Exception: return None
+        ob = r.get("trace_outbox") if isinstance(r, dict) else None
+        return (ob["sent"],) if ob and ob["pending"] == 0 else None
+    return wait(drained, timeout, "survey-service trace_outbox.pending == 0(밀린 Trace 전송 끝)", every=1)[0]
+
 def _run_ops_job():   # run-job.sh 는 5p/스케줄러와 같은 경로(compose run --rm). 설정은 e2e.sh 가 내보낸 OPS_JOB_CONFIG
     r = sh(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], env={"DEPLOY_PROJECT": a.project}, check=False)
     return r.returncode, ((r.stdout or "") + (r.stderr or ""))[-300:]
@@ -1793,6 +1804,10 @@ def step5pj():
     title("5pj", "DB 중지 중 job-ops-feedback run-once: 실패가 드러나고(조용히 성공 안 함) 복구 뒤 재실행이 멱등으로 성공 (FAULT_MATRIX D1 F1·F4)")
     # FAULT_POLICY 14: 스케줄러/잡 실패는 상태 파일 또는 종료 코드로 드러난다. 원칙 4: DB 는 connect_timeout 이 있어 무한 대기하지 않는다. 원칙 12: 복구 뒤 재전송/재실행이 안전하다
     pg = f"{a.project}-postgres-1"
+    # 잡의 멱등만 보려면 기준(fp0)과 비교(fp1) 사이에 ops_log 의 다른 쓰기 주체(ingest)가 쓰지 않아야 한다. 지문 대상을 잡의 테이블로 좁히는 방식은 쓰지 않았다:
+    # 잡도 ops_log 에 쓰고(compose 의 job-ops-feedback 에 OPS_LOG_DATABASE_URL_FILE), 어느 테이블을 쓰는지는 ops-feedback 내부라 deploy 가 정하면 그 영역 스키마에 묶인다.
+    # 대신 밀린 Trace 가 다 전송된 뒤 첫 잡이 그것을 처리하고 기준을 잡으며, fp1 에서 전송 수가 그대로임(새 Trace 없음)을 확인한다.
+    sent0 = _outbox_drained()
     rc0, tail0 = _run_ops_job(); assert rc0 == 0, f"사전 조건: DB 정상일 때 잡이 성공하지 않는다({rc0}): {tail0}"
     fp0 = sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), "ops_log"], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
     sh([a.docker, "stop", pg]); notes = []
@@ -1817,6 +1832,8 @@ def step5pj():
     for i in (1, 2):   # 같은 입력으로 두 번: 둘 다 성공하고 행 지문이 같다(멱등)
         rc, tail = _run_ops_job(); assert rc == 0, f"복구 뒤 재실행 {i} 이 실패했다({rc}): {tail}"
     fp1 = sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), "ops_log"], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
+    sent1 = _outbox_drained()
+    assert sent1 == sent0, f"5pj 도중 survey-service 가 새 Trace 를 보냈다(sent {sent0}->{sent1}): ops_log 지문 비교가 잡의 멱등만 보지 못한다(시험 전제 위반)"
     assert fp0 == fp1, "실패한 실행 뒤 재실행으로 ops_log 행 지문이 바뀌었다(멱등이 아니다)"
     rec("5pj", "REAL", "job-ops-feedback run-once: " + "; ".join(notes) + "; 복구 뒤 재실행 2회 모두 0 이고 ops_log 행 지문 불변(멱등).")
 

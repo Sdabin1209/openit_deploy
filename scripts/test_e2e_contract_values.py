@@ -52,5 +52,29 @@ class RuntimeVersionNotHardcoded(unittest.TestCase):
         self.assertIn('"model_runtime_version": mr.RUNTIME_VERSION', src)
 
 
+class Step5pjMeasuresOnlyTheJob(unittest.TestCase):
+    """5pj 는 '잡의 멱등'을 ops_log 지문으로 본다. ops_log 에는 잡 말고 ops-feedback-ingest(survey-service outbox 의 Trace 전송)도 쓴다(compose 의 OPS_LOG_DATABASE_URL_FILE 이 둘 다에 있다).
+    앞 단계(5p·5pn)의 DB 장애로 밀린 Trace 가 5pj 도중에 전송되면 지문이 잡과 무관하게 바뀐다(gpu-dev e2e-bc220-run1 의 5pj 실패).
+    그래서 첫 잡 실행·fp0 전에 survey outbox 가 비기를 기다리고(계약 SurveyReadyz.trace_outbox.pending == 0), fp1 에서 전송 수가 그대로인지 확인해야 한다."""
+    def _body(self):
+        fn = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == "step5pj")
+        return ast.get_source_segment(SRC, fn)
+
+    def test_drains_outbox_before_baseline(self):
+        b = self._body()
+        self.assertIn("_outbox_drained(", b, "5pj 가 기준 지문 전에 outbox 가 비기를 기다리지 않는다")
+        self.assertLess(b.index("_outbox_drained("), b.index("fp0 ="), "outbox 대기가 fp0 보다 뒤에 있다")
+        self.assertLess(b.index("_outbox_drained("), b.index("rc0, tail0 = _run_ops_job()"), "outbox 대기가 첫 잡 실행보다 뒤에 있다(밀린 Trace 를 잡이 처리하기 전에 기준을 잡는다)")
+
+    def test_checks_no_new_traces_between_fingerprints(self):
+        b = self._body()
+        self.assertRegex(b, r"sent1\s*==\s*sent0", "fp0~fp1 사이에 새 Trace 가 들어오지 않았음을 확인하지 않는다")
+
+    def test_helper_uses_contract_field(self):
+        fn = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == "_outbox_drained")
+        b = ast.get_source_segment(SRC, fn)
+        self.assertIn('"trace_outbox"', b); self.assertIn('["pending"] == 0', b); self.assertIn('["sent"]', b)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
