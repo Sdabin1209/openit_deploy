@@ -140,6 +140,7 @@ chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3
 chk "e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지)" python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 chk "데모 구성 자기 점검 (모방 백엔드·키오스크 /config.json 배선, 운영 구성 불변)" bash "$DEPLOY_ROOT/scripts/test-demo-kiosk.sh"
 chk "e2e turn-engine 버전 한 출처 점검 (DEPLOY_TE_TAG 만 읽는다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_turn_engine_version.py"
+chk "deploy 내부 스키마 자기 점검 (images.env·images.lock·jobs·verify-areas 가 schemas/ 와 맞는다)" python3 -I "$DEPLOY_ROOT/scripts/test_check_schemas.py"
 abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null

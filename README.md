@@ -130,3 +130,4 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0025 로컬 레지스트리 강화: 비root, 읽기 전용, cap_drop ALL](docs/adr/0025-registry-hardening.md)
 - [0030 E2E: 선행 실패는 SKIP, 단계 입력 선언과 해시 기록, 전체 E2E는 최종 관문](docs/adr/0030-e2e-skip-and-input-hash.md)
 - [0031 서비스 사이 내부 TLS를 쓰지 않는다: 범위는 compose 내부 네트워크 한정](docs/adr/0031-no-internal-tls-between-services.md)
+- [0034 영역 안 컴포넌트 사이 파일 형식(images.env, images.lock, jobs.yaml, verify-areas.yaml)을 JSON Schema로 둔다](docs/adr/0034-deploy-internal-schemas.md)

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openit.local/deploy/images-env.schema.json",
+  "title": "build/images.env 한 줄",
+  "description": "build-images.sh(생산자)가 쓰고 publish-images.sh·demo.sh·e2e.sh(소비자)가 읽는 한 줄. 파일은 공백으로 나뉜 4열 텍스트이고 scripts/check_schemas.py 가 줄을 이 객체로 풀어 검증한다. 4열은 선택(옛 기록에는 없다). deploy 내부 스키마(R5, audit DP-15).",
+  "type": "object",
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "서비스 이름(publish-image.sh 의 서비스 이름 목록과 같은 집합 + model-serving-gpu)"},
+    "image": {"type": "string", "minLength": 1, "pattern": "^\\S+$", "description": "로컬 이미지 참조 deploy-build/<이름>:<태그>"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{7,40}$", "description": "소스 커밋(짧은 해시)"},
+    "tags": {"type": "string", "pattern": "^bc=v[0-9]+\\.[0-9]+\\.[0-9]+,te=v[0-9]+\\.[0-9]+\\.[0-9]+,mr=v[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "선택 4열: 빌드에 쓴 태그 기록(bc=계약, te=turn-engine, mr=model-runtime). --reuse-build 가 현재 lib.sh 표와 비교한다"}
+  },
+  "required": ["name", "image", "commit"],
+  "additionalProperties": false
+}
