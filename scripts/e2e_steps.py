@@ -233,7 +233,7 @@ def step1():
 
 def sd_config(name, seeds, failure=False, version=None):
     cfg = {"dataset_id": f"ds-{RID}", "seed": 20261015, "created_at": "2026-10-15T00:00:00Z",
-           "turn_engine_version": "0.2.0", "survey_schema_dir": str(SD["schema"]),
+           "turn_engine_version": a.turn_engine_version, "survey_schema_dir": str(SD["schema"]),
            "adapters": {"question_reader": {"factory": "synthetic_data.adapters:http_question_reader", "kwargs": {"base_url": URL("qa"), "token_env": "SD_QA_TOKEN"}}},
            "question_sets": [{"id": QS, "version": STATE["qs"][-1]["version"], "usage": "TRAIN_POOL"}, {"id": QSU, "usage": "HELD_OUT_EVAL"}],
            "reviewed_only": True, "seeds": {"enabled": seeds},
