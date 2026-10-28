@@ -76,13 +76,15 @@ touch "$DEPLOY_ROOT/build/images.env"
 record() { local vrc=0 vout; set -- "$1" "$(apply_test_label "$2")" "$3"   # 시험 ID 가 있으면 새 이미지 이름(<이름>-<ID>)을 쓴다. 원래 이미지는 그대로 둔다
   vout=$(validate_image_labels "$2" "$1" 2>&1) || vrc=$?; [ $vrc = 0 ] || { echo "$vout" >&2; die "이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다: $1 ($2)"; }
   sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
+# 영역이 빌드 산출물(build/ 아래)로 내는 값 파일을 읽는다. 없거나 비면 빌드를 멈춘다(빈 라벨 값으로 게시 단계에서 늦게 실패하지 않게). 영역 소스 트리의 내부 경로는 읽지 않는다(구조 규칙: 영역은 서로의 구조를 모른다)
+req_file() { local v; v=$(tr -d '[:space:]' < "$1" 2>/dev/null) || true; [ -n "$v" ] || die "영역의 빌드 산출물 값 파일이 없거나 비었다: ${1#$CTX/}"; echo "$v"; }
 commit_of() { git -C "$WORKSPACE/$1" rev-parse --short HEAD; }
 
 if want survey-service; then
   ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" REPO_BASE="$CTX/repos" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   set -a; source "$CTX/survey-service/build/wheels/VERSIONS.env"; set +a
-  # io.openit.langgraph 라벨: 이미지에 설치되는 잠금 파일(requirements.lock)의 langgraph 버전
-  LG=$(sed -n 's/^langgraph==\(.*\)$/\1/p' "$CTX/survey-service/requirements.lock" | head -1); [ -n "$LG" ] || { echo "requirements.lock 에서 langgraph 버전을 못 읽었다" >&2; exit 1; }
+  # io.openit.langgraph 라벨: 영역의 build_wheels.sh 가 VERSIONS.env 에 내는 LANGGRAPH_VERSION(잠금 파일 경로를 deploy 가 알지 않는다)
+  LG=${LANGGRAPH_VERSION:-}; [ -n "$LG" ] || { echo "survey-service build/wheels/VERSIONS.env 에 LANGGRAPH_VERSION 이 없다" >&2; exit 1; }
   c=$(commit_of survey-service); img="deploy-build/survey-service:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$BOUNDARY_TAG" \
     --build-arg SCHEMA_CONTRACT_VERSION="$SCHEMA_CONTRACT_VERSION" \
@@ -100,7 +102,7 @@ if want ops-feedback; then
   ( cd "$CTX/ops-feedback" && BOUNDARY_TAG="$BC" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   c=$(commit_of ops-feedback); img="deploy-build/ops-feedback:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg CONTRACTS_VERSION="$(cat "$CTX/ops-feedback/build/wheels/BOUNDARY_TAG")" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(cat "$CTX/ops-feedback/src/ops_feedback/_schemas/survey/v1/CONTRACT_VERSION")" \
+    --build-arg SURVEY_SCHEMA_VERSION="$(req_file "$CTX/ops-feedback/build/wheels/SURVEY_SCHEMA_VERSION")" \
     --build-arg TURN_ENGINE_VERSION=n/a --build-arg MODEL_RUNTIME_VERSION=n/a "$CTX/ops-feedback" >/dev/null
   record ops-feedback "$img" "$c"
 fi
@@ -158,7 +160,7 @@ if want model-serving; then
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}"); img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MS")")" "$MS" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MS")")" "$MS" >/dev/null
   record model-serving "$img" "$c"
 fi
 
@@ -166,7 +168,7 @@ if want kiosk-frontend; then
   # 키오스크 앱+직원 콘솔 정적 이미지(태그 없음 = main). 빌드 컨텍스트는 git archive 사본
   KF="$CTX/kiosk-frontend"; AV=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$KF/package.json" | head -1)
   c=$(commit_of kiosk-frontend); img="deploy-build/kiosk-frontend:$c"
-  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA=1 --build-arg APP_VERSION="${AV:-unknown}" "$KF" >/dev/null
+  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA="$(ss_major "$DEPLOY_SS_TAG")" --build-arg APP_VERSION="${AV:-unknown}" "$KF" >/dev/null
   record kiosk-frontend "$img" "$c"
 fi
 
@@ -187,7 +189,7 @@ if want_gpu; then
   echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MSG")")" "$MSG" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MSG")")" "$MSG" >/dev/null
   record model-serving-gpu "$img" "$c"
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
   OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)
