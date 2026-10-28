@@ -8,7 +8,7 @@ FAILS=0; ok() { local n=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $n"; e
 export DEPLOY_LOCK=$T/images.lock DEPLOY_REGISTRY_ENV=$T/registry.env SECRETS_DIR=$T/secrets
 COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.demo-mimic.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml"
 test_lock_copy "$DEPLOY_LOCK"; echo "DEPLOY_REGISTRY=127.0.0.1:5000" > "$DEPLOY_REGISTRY_ENV"
-bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null 2>&1
+bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null 2>&1
 bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add e2e >/dev/null 2>&1
 export DEMO_MIMIC_FLOW_FILE=$DEPLOY_ROOT/test/fake-model/question_flow.json DEMO_CADDYFILE=$T/Caddyfile.demo DEMO_KIOSK_CONFIG=$SECRETS_DIR/kiosk-config/e2e.json
 

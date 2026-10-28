@@ -57,7 +57,7 @@ grep -E '^[A-Z0-9_]+_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 echo "== 임시 레지스트리·게시·비밀"
 bash "$DEPLOY_ROOT/scripts/registry.sh" up || bail "레지스트리 기동 실패 (데몬이 닿지 못하면 LOC_REGISTRY_BIND=0.0.0.0 으로 다시)"
 bash "$DEPLOY_ROOT/scripts/publish-images.sh" || bail "게시 실패"
-bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null || bail "비밀 생성 실패"
+bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null || bail "비밀 생성 실패"
 
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_LOCK")
 cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 644 "$W/inference-token"

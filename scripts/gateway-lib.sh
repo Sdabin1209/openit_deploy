@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 게이트웨이 인증 비밀 만들기(gen-secrets.sh, kiosk-add-device.sh 가 source 한다). 암호·해시·토큰 값은 출력하지 않는다.
-#  gw_write_accounts <비밀 폴더>  : config/gateway-accounts.conf 의 계정마다 암호(account-<id>-password)와 bcrypt 해시(account-<id>-hash)를 보장하고
+#  gw_write_accounts <비밀 폴더>  : config/gateway-accounts.conf(운영 계정; GW_TEST_FIXTURES=1 이면 gateway-accounts.test.conf 의 시험 계정도)의 계정마다 암호(account-<id>-password)와 bcrypt 해시(account-<id>-hash)를 보장하고
 #                                   secrets/gateway-accounts.caddy 를 쓴다. (authenticate) = 인증 블록, (role_matchers) = 계정 -> 역할.
 #                                   OIDC 로 바꿀 때 교체하는 것은 이 파일의 (authenticate) 블록(그리고 역할을 IdP 클레임에서 얻으면 (role_matchers))뿐이다.
 #  gw_write_devices <비밀 폴더>   : tokens/kiosk-device-<id> 파일마다 한 기기. secrets/gateway-devices.caddy 의 (kiosk_devices) 가 @device_ok 를 정의한다.
@@ -9,28 +9,33 @@
 GW_ROLES="staff operator release-approver reviewer author clinical-reviewer"
 gw_rnd() { python3 -c 'import secrets;print(secrets.token_hex(24))'; }
 gw_accounts_conf() { echo "${GATEWAY_ACCOUNTS_CONF:-$DEPLOY_ROOT/config/gateway-accounts.conf}"; }
+gw_test_accounts_conf() { echo "${GATEWAY_TEST_ACCOUNTS_CONF:-$DEPLOY_ROOT/config/gateway-accounts.test.conf}"; }   # 시험 계정: GW_TEST_FIXTURES=1 일 때만 더해 읽는다
 gw_parse_accounts() { # 줄마다 "<id> <역할,역할>" 을 낸다. 규칙 위반이면 실패
-  local conf; conf=$(gw_accounts_conf); [ -f "$conf" ] || die "계정 설정이 없다: $conf"
-  python3 -I - "$conf" "$GW_ROLES" <<'PY'
+  local conf confs; conf=$(gw_accounts_conf); [ -f "$conf" ] || die "계정 설정이 없다: $conf"
+  confs=("$conf"); if [ "${GW_TEST_FIXTURES:-0}" = 1 ]; then confs+=("$(gw_test_accounts_conf)"); [ -f "${confs[1]}" ] || die "시험 계정 설정이 없다: ${confs[1]}"; fi
+  # 계정이 하나도 없어도 오류가 아니다: 운영 기본은 빈 목록이고 (authenticate)는 모두 거부한다(gw_write_accounts)
+  python3 -I - "$GW_ROLES" "${confs[@]}" <<'PY'
 import re, sys
-roles = set(sys.argv[2].split()); seen = set(); n = 0
-for i, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
+roles = set(sys.argv[1].split()); seen = set()
+for path in sys.argv[2:]:
+  for i, line in enumerate(open(path, encoding="utf-8"), 1):
     s = line.split("#", 1)[0].split()
     if not s: continue
-    if len(s) != 2: sys.exit(f"{sys.argv[1]}:{i}: '<계정> <역할[,역할]>' 형식이 아니다")
+    if len(s) != 2: sys.exit(f"{path}:{i}: '<계정> <역할[,역할]>' 형식이 아니다")
     acc, rs = s[0], s[1].split(",")
-    if not re.fullmatch(r"[a-z][a-z0-9._-]{1,31}", acc): sys.exit(f"{sys.argv[1]}:{i}: 계정 ID 규칙 위반 '{acc}'")
-    if acc in seen: sys.exit(f"{sys.argv[1]}:{i}: 계정이 겹친다 '{acc}'")
+    if not re.fullmatch(r"[a-z][a-z0-9._-]{1,31}", acc): sys.exit(f"{path}:{i}: 계정 ID 규칙 위반 '{acc}'")
+    if acc in seen: sys.exit(f"{path}:{i}: 계정이 겹친다 '{acc}'")
     bad = [r for r in rs if r not in roles]
-    if bad: sys.exit(f"{sys.argv[1]}:{i}: 모르는 역할 {bad} (가능: {sorted(roles)})")
-    seen.add(acc); n += 1; print(acc, ",".join(rs))
-if n == 0: sys.exit("계정이 하나도 없다")
+    if bad: sys.exit(f"{path}:{i}: 모르는 역할 {bad} (가능: {sorted(roles)})")
+    seen.add(acc); print(acc, ",".join(rs))
 PY
 }
 gw_write_accounts() {
-  local D=$1 acc rs f GW_IMG list; list=$(gw_parse_accounts) || exit 1
+  local D=$1 acc rs f GW_IMG list; [ -e "$D/.test-fixtures" ] && GW_TEST_FIXTURES=1   # 시험 비밀 폴더(gen-secrets.sh --test-fixtures 가 표시)는 재실행·회전에서도 시험 계정을 유지한다
+  list=$(gw_parse_accounts) || exit 1
   local body="" roles_body="" r ids
   while read -r acc rs; do
+    [ -n "$acc" ] || continue   # 계정이 없으면 빈 줄 하나가 들어온다
     # 평문 암호는 해시가 아직 없을 때만 만든다(이미 해시가 있고 평문을 지웠다면 되살리지 않는다: 평문이 디스크에 남는 것을 최소화). 호스트 전용이라 600
     [ -s "$D/tokens/account-$acc-hash" ] || { [ -s "$D/tokens/account-$acc-password" ] || ( umask 077; gw_rnd > "$D/tokens/account-$acc-password" ); chmod 600 "$D/tokens/account-$acc-password"; }
     if [ ! -s "$D/tokens/account-$acc-hash" ]; then
@@ -44,11 +49,13 @@ gw_write_accounts() {
   done <<<"$list"
   for r in $GW_ROLES; do
     ids=$(awk -v r="$r" '{n=split($2,a,","); for(i=1;i<=n;i++) if(a[i]==r) printf "%s\"%s\"", (c++?",":""), $1}' <<<"$list")
-    roles_body+=$'\t@role_'"${r//release-/}"' expression `{http.auth.user.id} in ['"$ids"']`'$'\n'
+    if [ -n "$ids" ]; then roles_body+=$'\t@role_'"${r//release-/}"' expression `{http.auth.user.id} in ['"$ids"']`'$'\n'
+    else roles_body+=$'\t@role_'"${r//release-/}"' expression false'$'\n'; fi
   done
   [ -e "$D/gateway-accounts.caddy" ] || : > "$D/gateway-accounts.caddy"
   { printf '# 생성됨(scripts/gen-secrets.sh, 계정 목록은 config/gateway-accounts.conf). 직접 고치지 않는다. 해시만 있고 암호는 없다.\n'
-    printf '(authenticate) {\n\tbasic_auth {\n%s\t}\n}\n' "$body"
+    if [ -n "$body" ]; then printf '(authenticate) {\n\tbasic_auth {\n%s\t}\n}\n' "$body"
+    else printf '(authenticate) {\n\trespond "unauthorized: 등록된 계정이 없다" 401\n}\n'; fi   # 빈 basic_auth 블록은 Caddy 가 거부한다. 계정이 없으면 모두 401
     printf '(role_matchers) {\n%s}\n' "$roles_body"; } > "$D/gateway-accounts.caddy"
   chmod 644 "$D/gateway-accounts.caddy"
 }

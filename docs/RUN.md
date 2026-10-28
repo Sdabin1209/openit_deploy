@@ -26,7 +26,7 @@ cd <루트>/deploy
 bash scripts/registry.sh up        # 로컬 레지스트리 기동(주소를 state/registry.env 에 기록)
 bash scripts/build-images.sh       # 8개 영역 이미지를 현재 HEAD 소스로 빌드
 bash scripts/publish-images.sh     # 이미지를 레지스트리에 올리고 digest를 locks/images.lock 에 기록
-bash scripts/gen-secrets.sh        # 토큰·계정 암호를 secrets/ 에 만든다(값은 출력 안 함)
+bash scripts/gen-secrets.sh        # 운영 토큰을 secrets/ 에 만든다(값은 출력 안 함). 시험 기기·*-e2e 계정은 --test-fixtures 에서만 만든다(E2E·데모가 넘긴다)
 bash scripts/up.sh deploy          # compose 기동, healthy 확인
 ```
 
@@ -55,7 +55,7 @@ bash scripts/demo.sh reset                       # down 후 up
 
 - 처음에는 이미지 빌드가 들어가 오래 걸릴 수 있다(측정 안 함). E2E 단계 1~8 구간은 약 45초(STATUS.md).
 - **출력 읽는 법.** 끝에 "데모 접속 안내" 블록이 나온다: 주소(Docker가 배정한 포트), 화면별 경로(`/` 키오스크, `/staff/` 직원 콘솔, `/admin/` 승인·검토), 계정 이름, 암호 파일 위치, 위험 문구. 암호 값은 출력하지 않는다.
-- **계정.** 직원 `staff-e2e`(역할 staff), 운영자 `operator-e2e`(operator), 승인자 `trainer-e2e`(release-approver), 검토자 `reviewer-e2e`(reviewer). 암호는 각각 `state/demo/secrets/tokens/account-<계정>-password` 파일에 있다(`cat`으로 연다). 키오스크 기기 토큰은 `tokens/kiosk-device-e2e`(4-1-2).
+- **계정.** (데모는 `gen-secrets.sh --test-fixtures`로 만든 시험 자격을 쓴다. 계정 목록은 `config/gateway-accounts.test.conf`. 운영 구성에는 이 계정과 시험 기기가 없고, `doctor.sh --up --production`(운영 프로젝트 `up.sh deploy`가 자동으로 건다)이 시험 자격이 든 비밀 폴더를 FAIL로 막는다.) 직원 `staff-e2e`(역할 staff), 운영자 `operator-e2e`(operator), 승인자 `trainer-e2e`(release-approver), 검토자 `reviewer-e2e`(reviewer). 암호는 각각 `state/demo/secrets/tokens/account-<계정>-password` 파일에 있다(`cat`으로 연다). 키오스크 기기 토큰은 `tokens/kiosk-device-e2e`(4-1-2).
 - **직원 알림.** 입력원이 비어 있어(OPEN_GAPS G01) 알림이 만들어지지 않는다. 위험 문구로 정지시키는 시험은 없다. survey-service `/readyz`의 `staff_alert_source.active`가 `false`로 드러내며 고장이 아니다.
 - **가짜 모델.** 시험 구성의 model-serving은 표준 model-runtime 서버(기준 태그는 `scripts/lib.sh`)에 `MODEL_RUNTIME_BACKEND=fake`와 `MODEL_RUNTIME_FAKE_FLOW_FILE`(`test/fake-model/question_flow.json`, survey-service `question_flow`의 문항 순서 사본, 순서가 다르면 E2E가 실패한다)만 준 것이다: A는 입력 문항의 다음 문항으로 가는 유효한 ActionExtraction(`NEXT`)이고, 흐름 파일이 객체 형식이라 칸 정의(`slots`)가 있는 문항에서는 발화로 첫 칸의 ANSWERED 값(boolean: '아니' 포함 여부, integer: 첫 숫자 또는 '없'·'아니'면 0)을 내며 `skips`로 next_item을 정한다(칸 키·타입은 survey-service `schema/data/question_flow.json`의 순서·건너뛰기 7규칙과 boundary-contracts V2_DRAFT.md의 칸 형태에서 가져왔고 Q3와 Q4_1 등 문자열 칸 문항은 칸 정의가 없어 값 없이 NEXT). B는 `(가짜 응답)`. 모델 정확성은 시험하지 않는다. E2E 단계 5g(가짜 A 값 추출·건너뛰기 직접 확인, 서비스 경유 값 있는 3턴이 검증·저장을 통과)와 5s(포인터 1->2 전후 다른 서비스 컨테이너 StartedAt·ID 불변, 새 릴리스 LOADED)가 이를 단언한다. 저장된 값 자체를 돌려주는 읽기 경로는 없어 값 내용은 단언하지 않는다(OPEN_GAPS U16).
 - 이 데이터는 **시험용 대체**다(가짜 모델, 시험용 어댑터·평가 보고서, 시험용 승인자 스크립트). 실제 모델·실제 승인이 아니다.

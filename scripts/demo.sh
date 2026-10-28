@@ -238,7 +238,7 @@ case "$CMD" in
     bash "$DEPLOY_ROOT/scripts/registry.sh" up || die "레지스트리 기동 실패 (데몬이 닿지 못하면 DEMO_REGISTRY_BIND=0.0.0.0 으로 다시, 끝나면 down)"
     bash "$DEPLOY_ROOT/scripts/publish-images.sh" $( [ $LLM = 1 ] && echo $SERVICES ) || die "게시 실패"   # --llm: GPU 이미지는 게시하지 않는다(이름 지정으로 제외)
     bash "$DEPLOY_ROOT/scripts/check-compose.sh" || exit 1
-    bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null || die "비밀 생성 실패"
+    bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null || die "비밀 생성 실패"
     demo_kiosk_prepare
     if [ $LLM = 1 ]; then
       echo "== 기동 직전 병합 검증 (실제 잠금·레지스트리·로컬 GPU 이미지 태그)"

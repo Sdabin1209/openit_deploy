@@ -3,6 +3,7 @@
 # 사용: scripts/doctor.sh [--up] [--inference <URL>]
 #   --llm              실제 LLM(GPU) 준비: GPU 컨테이너 접근, 프로파일 VRAM 대 GPU VRAM, 도커 디스크, huggingface.co 도달 (환경 변수 DEMO_LLM_PROFILE)
 #   --inference <URL>  외부 추론 서버(D72)에 이 호스트에서 닿는지: /healthz, /readyz, 토큰이 있으면 /v1/info (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE, 값은 출력하지 않는다)
+#   --production       운영 프로젝트 기동 점검: 비밀 폴더에 시험 자격(시험 기기·*-e2e 계정)이 있으면 FAIL(check-test-fixtures.sh)
 #   --backup           운영 백업 설정 점검(D88 U6): config/backup.env 의 대상 폴더·보관 일수·암호화 수신자 공개키. 없거나 불완전하면 FAIL(백업 없이 운영하지 않는다). up.sh 가 운영 프로젝트(deploy)에서 붙인다
 #   기본: 빌드·E2E 에 필요한 전부(소스 워크스페이스 포함).  --up: 서버에서 띄우기만 할 때(git·형제 리포·태그·빌드 의존 점검을 건너뛴다)
 # e2e.sh / up.sh 는 시작에서 이것을 부르고 FAIL 이 있으면 멈춘다. 건너뛰기: DEPLOY_SKIP_DOCTOR=1
@@ -10,15 +11,16 @@
 set -uo pipefail
 DEPLOY_NO_DOCKER=1
 source "$(dirname "$0")/lib.sh"
-UP_ONLY=0; INF_URL=""; LLM=0; CHECK_BACKUP=0
+UP_ONLY=0; INF_URL=""; LLM=0; CHECK_BACKUP=0; PROD=0
 while [ $# -gt 0 ]; do case "$1" in
   --up) UP_ONLY=1; shift;;
   --backup) CHECK_BACKUP=1; shift;;
+  --production) PROD=1; shift;;
   --llm) LLM=1; shift;;
   --inference) [ $# -ge 2 ] || { echo "--inference 에는 URL이 필요하다" >&2; exit 2; }; INF_URL=$2; shift 2;;
   --inference=*) INF_URL=${1#*=}; shift;;
   -h|--help) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--backup] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
+  *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--backup] [--production] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
 case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
 FAILS=0; WARNS=0; UNABLES=0; UNREAD=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
@@ -149,6 +151,13 @@ if [ $UP_ONLY = 1 ] && [ -d "$SDIR" ]; then
   PO=$(bash "$(dirname "$0")/check-secret-perms.sh" "$SDIR" 2>&1); PRC=$?
   if [ $PRC = 0 ]; then ok "$(echo "$PO" | tail -1)"; else
     while IFS= read -r l; do case "$l" in FAIL*) fail "${l#FAIL }" "bash scripts/gen-secrets.sh 를 다시 실행하면 모드를 바로잡는다 (docs/adr/0022-secret-file-permissions.md)";; esac; done <<<"$PO"; fi
+fi
+# --- 운영 구성에 시험 자격이 없는가(head 결정표 2절): 시험 기기 토큰·*-e2e 계정이 든 비밀로 운영 gateway 를 띄우지 않는다
+if [ $PROD = 1 ] && [ -d "$SDIR" ]; then
+  echo "== 시험 자격 분리"
+  TO=$(bash "$(dirname "$0")/check-test-fixtures.sh" "$SDIR" 2>&1); TRC=$?
+  if [ $TRC = 0 ]; then ok "$(echo "$TO" | tail -1)"; else
+    while IFS= read -r l; do case "$l" in FAIL*) fail "${l#FAIL }" "운영 비밀 폴더를 gen-secrets.sh(--test-fixtures 없이)로 새로 만들거나, 시험 기기는 kiosk-add-device.sh remove <ID>, 시험 계정은 config 에서 빼고 gen-secrets.sh 를 다시 실행한다";; esac; done <<<"$TO"; fi
 fi
 # --- 백업 필수(D88 U6): 설정이 없으면 backup 잡이 CRIT 로 실패한다. 기동 전에 막는다. 규칙의 정본은 scripts/backup-lib.sh
 if [ $CHECK_BACKUP = 1 ]; then

@@ -9,6 +9,7 @@ source "$(dirname "$0")/lib.sh"; source "$(dirname "$0")/gateway-lib.sh"
 D=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}; ID=${1:-}; APPLY=0; [ "${2:-}" = --apply ] && APPLY=1
 [ -d "$D/tokens" ] || die "비밀 폴더가 없다: $D/tokens"
 [[ "$ID" =~ ^[a-z][a-z0-9._-]{1,31}$ ]] || die "사용: rotate-account.sh <계정 ID> [--apply] (config/gateway-accounts.conf 의 계정)"
+[ -e "$D/.test-fixtures" ] && GW_TEST_FIXTURES=1
 gw_parse_accounts | awk -v a="$ID" '$1==a{f=1} END{exit !f}' || die "config/gateway-accounts.conf 에 없는 계정: $ID"
 GW_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
 PW=$(gw_rnd)

@@ -6,12 +6,12 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; export SECRETS_DIR=$T
 GW=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 FAILS=0; ok() { local n=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $n"; else echo "  FAIL $n"; FAILS=$((FAILS+1)); fi; }
 val() { docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$T/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$T/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$T/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile; }
-OUT=$(bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$T" 2>&1); ok "gen-secrets.sh 성공" test -s "$T/gateway-accounts.caddy"
+OUT=$(bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$T" 2>&1); ok "gen-secrets.sh 성공" test -s "$T/gateway-accounts.caddy"
 ok "출력에 암호·해시·토큰 값이 없다" bash -c '! grep -qE "[0-9a-f]{40}|\$2[aby]\$" <<<"$1"' _ "$OUT"
 ok "계정마다 암호·해시 파일(호스트 전용이라 모드 600, adr/0022)" bash -c 'for a in staff-e2e operator-e2e trainer-e2e reviewer-e2e; do for k in password hash; do [ "$(stat -c %a $1/tokens/account-$a-$k)" = 600 ] || exit 1; done; done' _ "$T"
 ok "accounts.caddy 에 암호 평문이 없고 해시만 있다" bash -c '! grep -qF "$(cat $1/tokens/account-staff-e2e-password)" $1/gateway-accounts.caddy && grep -qF "\$2a\$" $1/gateway-accounts.caddy' _ "$T"
 ok "역할 매핑: operator-e2e 는 @role_operator 에만" bash -c 'grep -q "@role_operator .*\"operator-e2e\"" $1/gateway-accounts.caddy && ! grep "@role_staff" $1/gateway-accounts.caddy | grep -q operator-e2e' _ "$T"
-ok "다시 실행해도 암호·해시가 안 바뀐다(멱등)" bash -c 'a=$(cat $1/tokens/account-staff-e2e-hash); bash $2/scripts/gen-secrets.sh $1 >/dev/null 2>&1; [ "$a" = "$(cat $1/tokens/account-staff-e2e-hash)" ]' _ "$T" "$DEPLOY_ROOT"
+ok "다시 실행해도 암호·해시가 안 바뀐다(멱등)" bash -c 'a=$(cat $1/tokens/account-staff-e2e-hash); bash $2/scripts/gen-secrets.sh --test-fixtures $1 >/dev/null 2>&1; [ "$a" = "$(cat $1/tokens/account-staff-e2e-hash)" ]' _ "$T" "$DEPLOY_ROOT"
 ok "Caddyfile + 생성 조각이 caddy validate 통과" val
 bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add lobby-2 >/dev/null 2>&1
 ok "기기 추가: 기본 시험 기기 4대(e2e, e2e-a, e2e-b, e2e-c) + 1대 = 5대, devices.caddy 에 토큰 5개, survey 기기 토큰 표에도 5줄(device_id=토큰)" bash -c '[ "$(bash $2/scripts/kiosk-add-device.sh list | wc -l)" = 5 ] && [ "$(grep -o Bearer $1/gateway-devices.caddy | wc -l)" = 5 ] && [ "$(grep -c "^[a-z0-9-]*=[0-9a-f]\{16,\}$" $1/tokens/survey-kiosk-device-tokens)" = 5 ]' _ "$T" "$DEPLOY_ROOT"
@@ -20,7 +20,9 @@ ok "기기 파일을 지우고 sync 하면 폐기된다(토큰 4개, survey 표�
 ok "잘못된 기기 ID 는 거부" bash -c '! bash $1/scripts/kiosk-add-device.sh add "Bad ID" >/dev/null 2>&1' _ "$DEPLOY_ROOT"
 ok "기기가 0대여도 설정이 유효(모두 거부)" bash -c 'rm $1/tokens/kiosk-device-*; bash $2/scripts/kiosk-add-device.sh sync >/dev/null 2>&1; grep -q "expression false" $1/gateway-devices.caddy' _ "$T" "$DEPLOY_ROOT"
 ok "0대일 때 caddy validate 통과" val
-GATEWAY_ACCOUNTS_CONF=/dev/stdin bash -c 'source "$1/scripts/gateway-lib.sh"; gw_parse_accounts' _ "$DEPLOY_ROOT" <<<"x-1 superuser" >/dev/null 2>&1 && { echo "  FAIL 모르는 역할을 받아들였다"; FAILS=$((FAILS+1)); } || echo "  PASS 모르는 역할은 거부"
+# 파일로 준다(/dev/stdin 은 here-string 이 파이프일 때 읽히지 않아, 예전 시험은 "계정이 하나도 없다" 오류로 우연히 통과했다. 빈 계정 목록은 이제 오류가 아니다)
+printf 'x-1 superuser\n' > "$T/bad-role.conf"
+GATEWAY_ACCOUNTS_CONF="$T/bad-role.conf" bash -c 'source "$1/scripts/lib.sh"; source "$1/scripts/gateway-lib.sh"; gw_parse_accounts' _ "$DEPLOY_ROOT" >/dev/null 2>&1 && { echo "  FAIL 모르는 역할을 받아들였다"; FAILS=$((FAILS+1)); } || echo "  PASS 모르는 역할은 거부"
 # 교차 사이트 요청 방어(점검 M2)의 실제 동작: 가짜 비밀로 gateway 를 띄우고 헤더 조합별 응답을 본다. 인증이 없으면 401 이므로 "403 + 교차 출처 문구"는 이 규칙만의 응답이다. (Docker·Caddy 필요)
 CN=gwauth-csrf-$$; docker rm -f $CN >/dev/null 2>&1
 docker run -d --name $CN -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$T/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$T/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$T/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null 2>&1
