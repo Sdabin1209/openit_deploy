@@ -526,7 +526,12 @@ def truth_templates():
         if items is None:
             return None, f"{rel}:1: _USER 의 값이 읽을 수 있는 dict 리터럴이 아니다"
         for k, val in items:
-            if not (isinstance(val, ast.Name) and val.id in funcs):
+            # 값은 함수 이름 하나이거나, 역할별 함수의 dict 리터럴이다(model-runtime 0.7.7: LORA_A/LORA_B 컴포넌트 분리). 어느 쪽이든 함수가 이 파일에 정의돼 있어야 한다.
+            ok = isinstance(val, ast.Name) and val.id in funcs
+            if not ok:
+                sub = _dict_items(val)
+                ok = bool(sub) and all(isinstance(v2, ast.Name) and v2.id in funcs for _, v2 in sub)
+            if not ok:
                 return None, f"{rel}:1: _USER[{k!r}] 에 대응하는 템플릿 함수가 이 파일에 없다(정본이 거짓이다)"
             keys.add(k)
     return keys, ""
