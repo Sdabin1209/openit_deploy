@@ -137,6 +137,10 @@ class T(unittest.TestCase):
                 v._run, v.lib_tags, v.DEPLOY_ROOT = old
         self.assertEqual(got, ["model-registry", "release-gate"])   # 바뀐 소스, 기록 없는 이미지는 낡음. survey-service 는 재사용
 
+    def test_admin_console_runs_gen_schemas_check(self):   # D101: 생성된 계약 검증기가 낡으면 잡는다
+        cmds, _ = v.test_command(self.cfg["areas"]["admin-console"], Path("/ws"), "admin-console")
+        self.assertIn(("node", "scripts/gen-schemas.mjs", "--check"), cmds)
+
     def test_image_src_matches_build_images_sh(self):
         src = (HERE / "build-images.sh").read_text(encoding="utf-8")
         m = re.search(r"declare -A SRC=\((.*?)\)\n", src)

@@ -92,7 +92,8 @@ areas:
       "5f": {why: "gateway 경유 정적 화면과 공개 API 호출 순서, 직원 경로 권한 분리"}
   admin-console:
     image: [admin-console]
-    tests: {kind: npm}
+    # 왜 also: 계약 검증기(generated/)는 boundary-contracts 스키마에서 생성한다(admin-console ADR 0002, D101). 스키마가 바뀌었는데 생성물이 낡으면 npm test 만으로는 못 잡을 수 있어 --check 를 같이 돌린다
+    tests: {kind: npm, also: [["node", "scripts/gen-schemas.mjs", "--check"]]}
     e2e:
       "5f": {why: "gateway 경유 정적 화면 제공과 접근 구분"}
       "4":  {why: "승인 화면이 쓰는 release-gate API 계약(브라우저 렌더링은 E2E에서 볼 수 없다: 4x BLOCKED)"}

@@ -127,7 +127,7 @@ def test_command(spec, ws, area):
         py = ws / area / ".venv" / "bin" / "python"
         return [(str(py), "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider")], ws / area
     if t["kind"] == "npm":
-        return [("npm", "test", "--silent")], ws / area
+        return [("npm", "test", "--silent")] + [tuple(c) for c in t.get("also", [])], ws / area   # also: 같은 폴더에서 이어 돌릴 명령(예: 생성물이 최신인지)
     return [tuple(c) for c in t["commands"]], DEPLOY_ROOT
 
 
