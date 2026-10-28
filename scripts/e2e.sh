@@ -141,6 +141,7 @@ chk "check-health 자체 점검 (실패 상태 파일·디스크 한계·감시 
 chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
 chk "e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지)" python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 chk "데모 구성 자기 점검 (모방 백엔드·키오스크 /config.json 배선, 운영 구성 불변)" bash "$DEPLOY_ROOT/scripts/test-demo-kiosk.sh"
+chk "이미지 라벨 검사기 자체 점검 (계약 ImageLabels: 필수 4개, n/a 하나, revision unknown 거부)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_image_labels.py"
 chk "e2e 인증 실패 기대 점검 (토큰 없음/틀림 = 401 + Bearer, 권한 부족만 403: 계약 CONVENTIONS.md 6절)" python3 "$DEPLOY_ROOT/scripts/test_e2e_auth_expectations.py"
 chk "e2e turn-engine 버전 한 출처 점검 (DEPLOY_TE_TAG 만 읽는다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_turn_engine_version.py"
 chk "deploy 내부 스키마 자기 점검 (images.env·images.lock·jobs·verify-areas 가 schemas/ 와 맞는다)" python3 -I "$DEPLOY_ROOT/scripts/test_check_schemas.py"
@@ -232,7 +233,7 @@ chk "보존 정리 잡이 Compose 에서 실행된다: question-authoring purge(
 chk "컨테이너 격리 실제 확인(check-containers: 비루트·읽기 전용·cap_drop ALL·no-new-privileges·자원 한도·로그 회전)" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$PROJECT"
 nonroot() { [ "$("$DOCKER" exec "${PROJECT}-$1-1" id -u | tr -d '\r')" != 0 ]; }
 bydigest() { "$DOCKER" inspect "${PROJECT}-$1-1" --format '{{.Config.Image}}' | tr -d '\r' | grep -E '@sha256:[0-9a-f]{64}$'; }
-labels6() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.turn-engine io.openit.model-runtime; do echo "$L" | grep -q "\"$k\"" || { echo "라벨 누락 $k"; return 1; }; done; echo "$L" | cut -c1-230; }
+labels6() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.turn-engine io.openit.model-runtime; do echo "$L" | grep -q "\"$k\"" || { echo "라벨 누락 $k"; return 1; }; done; echo "$L" | cut -c1-230; validate_image_labels "$1" >/dev/null; }   # 계약 ImageLabels 검사 포함(wo8)
 for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry dataset-store model-serving kiosk-frontend admin-console; do
   chk "비root 실행 $s" nonroot "$s"
   chk "컨테이너가 digest로 만들어짐 $s" bydigest "$s"

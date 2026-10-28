@@ -40,7 +40,7 @@
         "deploy(publish-image.sh, e2e.sh, demo.sh, check_versions.py)"
       ],
       "unknown_keys": "reject",
-      "note": "io.openit.* 의 모르는 키만 거부하고 다른 접두사(org.opencontainers.* 등)는 무시한다. io.openit.jobs/exposure 는 contentSchema 가 주석이라 검증기가 강제하지 않으므로 호출자가 풀어서 JobsDeclaration/Exposure 로 한 번 더 검증한다(validate.py 가 한다). survey-service 의 image-labels 초안과의 차이와 통합 가능성, 그리고 실제 이미지 라벨이 이 스키마를 어기는 곳은 README.md. 예시: real-* 는 로컬 deploy-build 이미지에서 docker image inspect 로 뽑은 라벨(이미지가 최신 빌드인지는 확인하지 않았다), 나머지는 초안에서 옮긴 것. 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다)."
+      "note": "헤드 결정(wo8): 필수는 publish-image.sh 가 보던 4개(service, revision, contracts.boundary, contracts.survey-schema). turn-engine·model-runtime·langgraph 는 해당 서비스에만(선택), 값 없음은 `n/a` 하나, revision `unknown` 거부. 서비스별 추가 제약(survey-service 의 langgraph 필수·service 상수 등)은 영역의 allOf 프로필. deploy 의 build-images.sh, publish-image.sh, publish-images.sh, e2e.sh 가 이 스키마로 게시 전에 검증한다(scripts/check_image_labels.py: 계약 패키지에 ImageLabels 가 오르면 그것을, 아니면 이 사본을 읽는다). io.openit.* 의 모르는 키만 거부하고 다른 접두사는 무시한다. io.openit.jobs/exposure 는 contentSchema 가 주석이라 호출자가 풀어서 JobsDeclaration/Exposure 로 한 번 더 검증한다. 실제 이미지 라벨의 이탈은 README.md. 예시: real-* 는 이 PC 의 deploy-build 이미지에서 docker image inspect 로 뽑은 라벨(최신 빌드인지 확인 안 함), 나머지는 초안에서 옮기거나 위 결정으로 만든 것. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다)."
     },
     {
       "name": "JobsDeclaration",

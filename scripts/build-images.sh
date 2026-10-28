@@ -52,6 +52,9 @@ for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
 # 왜: 이미지 라벨 io.openit.model-runtime 의 정본은 model-runtime 의 pyproject version 이다(D50). 태그 문자열에서 추측하지 않고 빌드 컨텍스트(태그 시점 소스)의 파일을 파서로 읽는다
+# 값 없음 표기는 `n/a` 하나, 버전은 v 접두사 포함(계약 ImageLabels). 영역 Dockerfile 이 인자 기본값으로 none/unknown 을 달지 않게 deploy 가 넘기는 값은 형식을 맞춘다
+semver_v() { case "$1" in v*) echo "$1";; *) echo "v$1";; esac; }
+ss_major() { sed -n 's/^survey-schema-v\([0-9][0-9]*\)\..*/\1/p' <<<"$1" | grep . || echo "$1"; }   # survey-schema-v1.0.0 -> 1 (맞지 않으면 그대로 넘겨 검사가 잡는다)
 mr_version() { python3 -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1]+"/pyproject.toml","rb"))["project"]["version"])' "$1"; }
 declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [dataset-store]=synthetic-data [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend [admin-console]=admin-console )
 # survey-service는 태그(survey-schema-v1.0.0)도 읽혀야 하므로 작업 트리가 있는 사본(clone, HEAD)으로 둔다
@@ -64,7 +67,9 @@ for n in "${!SRC[@]}"; do
 done
 touch "$DEPLOY_ROOT/build/images.env"
 # 네 번째 열(의존 태그 도장)은 e2e.sh --reuse-build 가 이미지를 다시 써도 되는지 판정하는 데 쓴다(verify_area.py). 이미지 라벨은 영역마다 표기가 달라(v 접두, none, n/a) 비교에 쓸 수 없다
-record() { sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,te=$TE,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
+# 빌드 직후 라벨 검사(계약 ImageLabels): 게시 단계(publish-image(s).sh)에서 실패하기 전에 빌드에서 알린다
+record() { local vrc=0 vout; vout=$(validate_image_labels "$2" "$1" 2>&1) || vrc=$?; [ $vrc = 0 ] || { echo "$vout" >&2; die "이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다: $1 ($2)"; }
+  sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,te=$TE,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
 commit_of() { echo "$(git -C "$WORKSPACE/$1" rev-parse --short HEAD)$SUFFIX"; }
 
 if want survey-service; then
@@ -82,14 +87,15 @@ if want question-authoring; then
   ( cd "$CTX/question-authoring" && CONTRACTS_TAG="$BC" PYTHON="$PY" bash scripts/build_wheels.sh >/dev/null )
   c=$(commit_of question-authoring); img="deploy-build/question-authoring:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$(cat "$CTX/question-authoring/build/contracts.tag")" \
-    --build-arg SURVEY_SCHEMA_TAG="$(cat "$CTX/question-authoring/build/survey-schema.tag")" "$CTX/question-authoring" >/dev/null
+    --build-arg SURVEY_SCHEMA_TAG="$(ss_major "$(cat "$CTX/question-authoring/build/survey-schema.tag")")" "$CTX/question-authoring" >/dev/null
   record question-authoring "$img" "$c"
 fi
 if want ops-feedback; then
   ( cd "$CTX/ops-feedback" && BOUNDARY_TAG="$BC" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   c=$(commit_of ops-feedback); img="deploy-build/ops-feedback:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg CONTRACTS_VERSION="$(cat "$CTX/ops-feedback/build/wheels/BOUNDARY_TAG")" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(cat "$CTX/ops-feedback/src/ops_feedback/_schemas/survey/v1/CONTRACT_VERSION")" "$CTX/ops-feedback" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION="$(cat "$CTX/ops-feedback/src/ops_feedback/_schemas/survey/v1/CONTRACT_VERSION")" \
+    --build-arg TURN_ENGINE_VERSION=n/a --build-arg MODEL_RUNTIME_VERSION=n/a "$CTX/ops-feedback" >/dev/null
   record ops-feedback "$img" "$c"
 fi
 if want release-gate; then
@@ -123,7 +129,7 @@ if want dataset-store; then
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$DSS"
   c=$(commit_of synthetic-data); img="deploy-build/dataset-store:$c"
   "$DOCKER" build -q -t "$img" --build-context "wheels=$DSW" --build-context "survey_schema=$DSS/schema" --build-arg "BC_SPEC=/wheels/$whl" \
-    --build-arg "BC_VERSION=$DEPLOY_BC_TAG" --build-arg "REVISION=$c" "$DS" >/dev/null
+    --build-arg "BC_VERSION=$DEPLOY_BC_TAG" --build-arg "REVISION=$c" --build-arg "SURVEY_SCHEMA_VERSION=$(ss_major "$DEPLOY_SS_TAG")" "$DS" >/dev/null
   record dataset-store "$img" "$c"
 fi
 
@@ -146,7 +152,7 @@ if want model-serving; then
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}")$SUFFIX; img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(mr_version "$MS")" "$MS" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MS")")" "$MS" >/dev/null
   record model-serving "$img" "$c"
 fi
 
@@ -175,7 +181,7 @@ if want_gpu; then
   echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(mr_version "$MSG")" "$MSG" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MSG")")" "$MSG" >/dev/null
   record model-serving-gpu "$img" "$c"
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
   OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)

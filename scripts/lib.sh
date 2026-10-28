@@ -4,6 +4,13 @@ DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(cd "$DEPLOY_ROOT/.." && pwd)"
 VENV="$DEPLOY_ROOT/.venv"
 die() { echo "오류: $*" >&2; exit 1; }
+# 이미지 라벨이 계약 ImageLabels 스키마를 따르는지 게시 전에 검사한다(헤드 결정 wo8: 스키마 정본은 계약 패키지의 ImageLabels, 릴리스 전에는 docs/change-requests/contract-ready 사본; scripts/check_image_labels.py).
+# 사용: validate_image_labels <이미지> [표시 이름]  -> 0 통과, 1 어긋남(사유를 표준 출력에), 2 검사를 못 함(jsonschema 없음 등: 통과로 세지 않는다).
+# 왜 파이썬: 스키마(JSON Schema 2020-12) 검증을 셸로 다시 구현하지 않는다. 파이썬은 LABELS_PYTHON, 없으면 deploy .venv, 없으면 python3.
+validate_image_labels() {
+  local py=${LABELS_PYTHON:-$DEPLOY_ROOT/.venv/bin/python}; [ -x "$py" ] || py=python3
+  "$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r' | "$py" -W ignore "$DEPLOY_ROOT/scripts/check_image_labels.py" --name "${2:-$1}"
+}
 # docker: 표준 `docker` CLI 하나와 설정된 데몬(DOCKER_HOST 또는 docker context) 하나의 경로만 쓴다. 다른 실행 파일은 환경 변수 DOCKER 로 지정한다.
 # 환경 문제(데몬 꺼짐, 권한, 연동, 자격증명 도우미)는 코드로 숨기지 않는다: 데몬에 닿지 않으면 명확한 오류로 멈추고, 원인 진단과 고치는 법은
 # scripts/doctor.sh 와 docs/SETUP.md 가 안내한다. docker 가 필요 없는 스크립트는 source 하기 전에 DEPLOY_NO_DOCKER=1 을 둔다.

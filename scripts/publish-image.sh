@@ -5,7 +5,7 @@
 #   서비스 이름: survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console
 #   레지스트리: --registry, 없으면 환경 변수 DEPLOY_REGISTRY, 없으면 state/registry.env
 #   환경: DEPLOY_LOCK (기본 locks/images.lock)
-# 종료 코드: 0 성공(또는 이미 같은 digest), 1 Docker 실행 파일/데몬에 닿지 않음, 2 사용법/서비스 이름이 목록에 없음, 3 필수 라벨 누락, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패
+# 종료 코드: 0 성공(또는 이미 같은 digest), 1 Docker 실행 파일/데몬에 닿지 않음, 2 사용법/서비스 이름이 목록에 없음, 3 필수 라벨 누락 또는 라벨 값이 계약 ImageLabels 를 어김, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패
 # 표준 출력 마지막 줄(기계가 읽는다): PUBLISHED <서비스> <digest> <revision> | UNCHANGED <서비스> <digest> <revision>
 # 멱등: 같은 이미지를 다시 올리면 같은 digest이고 잠금·history는 바뀌지 않는다. 잠금은 flock 으로 직렬화하고 임시 파일에 쓴 뒤 바꿔 넣는다.
 # 잠금 파일 형식은 publish-images.sh 와 같다: 머리말 한 줄 + 정렬된 KEY=value (<서비스>_DIGEST, <서비스>_REVISION, 외부 이미지 줄 유지).
@@ -53,6 +53,9 @@ for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.op
   v=$(label "$k"); { [ -n "$v" ] && [ "$v" != "<no value>" ]; } || { echo "거부: 필수 라벨 없음 또는 빈 값: $k" >&2; exit 3; }
 done
 REV=$(label io.openit.revision); case "$REV" in unknown|"") echo "거부: io.openit.revision 이 unknown 이다" >&2; exit 3;; esac
+# 라벨 값 검사(계약 ImageLabels): 필수 4개의 존재만 보던 위 검사로는 none/unknown/v 접두사 없음/오타 키가 통과했다. 종료 코드 3 으로 거부한다(검사를 못 한 경우도 통과가 아니다)
+vrc=0; vout=$(validate_image_labels "$IMG" "$SVC" 2>&1) || vrc=$?
+[ $vrc = 0 ] || { echo "$vout" >&2; echo "거부: 이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다(종료 코드 3): $SVC" >&2; exit 3; }
 TAGREV=$(echo "$REV" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-100)
 
 # 레지스트리 호출 상한(FAULT_POLICY 4: 의존 호출에 연결·읽기 timeout, 무한 대기 금지). 값은 측정한 것이 아니라 판단이다(측정 안 함), 환경 변수로 바꾼다.

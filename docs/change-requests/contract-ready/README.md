@@ -1,7 +1,7 @@
 # 계약 승격 준비물 (deploy, 2026-10-29, wo6)
 
 헤드의 `head/docs/audit/boundary-schema-promotion-2026-10-29.md` 표 deploy 행에 따라 CR-D27 초안 8개를 계약 이름으로 정리했다. 코드는 바꾸지 않았다.
-`schemas/`(8개, `$id` = `<이름>.schema.json`, 2020-12), `examples/valid`, `examples/invalid`, `examples/observed`, `MANIFEST.json`, 검증 스크립트 `validate.py`.
+`schemas/`(8개, `$id` = `<이름>.schema.json`, 2020-12), `examples/valid`, `examples/invalid`, `examples/observed`(새 스키마를 어기는 실제 라벨), `MANIFEST.json`, 검증 스크립트 `validate.py`.
 검증: `python3 -W ignore docs/change-requests/contract-ready/validate.py`(jsonschema 4.x와 referencing 필요. `_common.schema.json`은 형제 `boundary-contracts`에서 읽는다, 읽기 전용).
 
 ## 한 일과 바꾼 것
@@ -12,30 +12,32 @@
 
 ## ImageLabels와 survey-service 초안의 차이 (survey-service/docs/change-requests/schemas/image-labels.schema.json, 읽기 전용)
 
-| 항목 | deploy ImageLabels | survey-service 초안 |
+| 항목 | deploy ImageLabels (wo8 결정 반영) | survey-service 초안 |
 |---|---|---|
 | io.openit.service | 이름 패턴 `^[a-z][a-z0-9-]*$` | `const: survey-service` |
-| revision | 7~40자 hex, `unknown` 불가 | hex 또는 `unknown` 허용 |
+| revision | 7~40자 hex, `unknown` 거부 | hex 또는 `unknown` 허용 |
 | survey-schema | 숫자 또는 `n/a` | 숫자만 |
-| turn-engine, model-runtime | `vX.Y.Z` 또는 `n/a` | `vX.Y.Z`만(필수, n/a 없음) |
+| turn-engine, model-runtime | 선택. `vX.Y.Z` 또는 `n/a` | 필수 `vX.Y.Z`(n/a 없음) |
 | langgraph | 선택, minLength 1 | 필수, `X.Y.Z`(v 없음) |
-| 허용하는 io.openit.* 키 | 11개(variant, app-version, jobs, exposure 포함) | 7개 |
+| 허용하는 io.openit.* 키 | 11개 | 7개 |
 | 다른 접두사 | 무시 | 무시(값은 문자열) |
 
-두 스키마를 같은 예시에 실제로 돌려 본 결과(`jsonschema`): survey 초안의 valid 예시는 ImageLabels도 통과, invalid 예시는 둘 다 거부. 그러나 deploy의 `real-admin-console`(n/a 값)과 `with-declarations`(jobs/exposure 라벨)는 survey 초안이 거부한다.
+**통합(결정 wo8)**: 계약은 `ImageLabels` 하나다. survey-service의 추가 제약(service 상수, langgraph 필수·형식, turn-engine·model-runtime 필수)은 survey-service가 자기 CI에서 `allOf: [ImageLabels, {그 제약}]` 프로필로 둔다. survey 초안의 `revision: unknown` 허용은 통합 때 버린다(`publish-image.sh`가 거부하던 값). langgraph의 v 접두사 표기 통일은 아직 열려 있다(survey 초안 `1.2.15`, 다른 버전 라벨 `v0.7.6`).
 
-**통합 판단(제안)**: 하나로 통합할 수 있다. survey-service 초안은 ImageLabels의 부분집합이 아니라 **서비스별 추가 제약**(service const, langgraph 필수·`X.Y.Z`, turn-engine·model-runtime 필수 실버전, survey-schema 숫자)이므로, 계약은 `ImageLabels` 하나를 두고 survey-service는 자기 CI에서 `allOf: [ImageLabels, {그 제약}]` 같은 프로필을 영역 몫으로 둔다(규칙 6: 읽는 쪽 부분집합을 계약으로 두지 않는다). 확인할 두 가지: (1) survey 초안이 `revision: unknown`을 허용하는 것은 deploy `publish-image.sh`가 거부하는 값이라(`io.openit.revision 이 unknown 이다`) 통합 때 허용하지 않는 쪽으로 맞춰야 한다. (2) langgraph의 `v` 접두사 없음(`1.2.15`)이 다른 버전 라벨(`v0.7.6`)과 표기가 다르다. 어느 쪽으로 통일할지는 헤드 판단이다.
+## 실제 이미지 라벨의 이탈 (이 PC의 deploy-build/* 최신 빌드로 확인, 새 스키마 기준)
 
-## 실제 이미지 라벨이 초안 스키마를 어기는 곳 (examples/observed, 기대 없음)
+| 영역 | 이탈 | 라벨을 정하는 곳 | 고치는 쪽 |
+|---|---|---|---|
+| ops-feedback | turn-engine·model-runtime = `none` | Dockerfile ARG 기본값 `none`을 deploy가 덮지 않았다 | deploy(wo8에서 `n/a`를 넘긴다) |
+| dataset-store | survey-schema = `unknown` | Dockerfile ARG 기본값을 deploy가 넘기지 않았다 | deploy(wo8에서 DEPLOY_SS_TAG의 주 버전을 넘긴다) |
+| model-serving | model-runtime 에 v 접두사 없음(`0.7.7`) | deploy가 `pyproject` 버전을 그대로 넘겼다 | deploy(wo8에서 v 접두사) |
+| question-authoring | survey-schema = `survey-schema-v1.0.0` | deploy가 영역 파일의 태그 문자열을 그대로 넘겼다 | deploy(wo8에서 주 버전 `1`로 변환) |
+| question-authoring | turn-engine·model-runtime = `none` | Dockerfile의 LABEL에 `none`이 박혀 있다(ARG 없음) | 영역(변경 요청) |
+| release-gate | boundary `2.1.1`, turn-engine `0.4.2`, model-runtime `0.7.x`: v 접두사 없음 | 영역의 `scripts/build_image.sh`가 wheel 파일 이름에서 버전을 뽑아 넘긴다(`ver()`) | 영역(변경 요청) |
+| model-serving | `io.openit.service` = `model-runtime`(이미지 이름 `model-serving`) | Dockerfile LABEL 상수 | 영역 판단: 스키마는 통과시키지만 게시 이름과 다르다(검사하지 않음, 헤드가 정한다) |
+| kiosk-frontend | turn-engine·model-runtime 없음 | - | 이탈 아님(wo8 결정으로 선택) |
 
-이 PC의 로컬 `deploy-build/*` 이미지 8개에서 `docker image inspect`로 뽑은 라벨이다(이미지가 최신 빌드인지는 확인하지 않았다). survey-service, admin-console만 통과한다(`valid/real-*`). 나머지는 `validate.py`가 INFO로 보인다.
-
-- `n/a`가 아닌 `none`을 쓴다: ops-feedback, question-authoring(turn-engine, model-runtime). 스키마는 `n/a`.
-- 버전 `v` 접두사 없음: release-gate(`2.1.1`, `0.7.6`, `0.4.2`), model-serving model-runtime(`0.7.6`).
-- survey-schema: question-authoring은 `survey-schema-v1.0.0`, dataset-store는 `unknown`. 스키마는 숫자 또는 `n/a`.
-- turn-engine·model-runtime 라벨이 없다: kiosk-frontend. `publish-image.sh`는 이 둘을 선택으로 두는데(해당 없으면 없어도 된다) 초안 스키마는 필수 `n/a`다. 둘 중 하나를 헤드가 정해야 한다(스키마를 완화하거나 영역이 `n/a`를 단다).
-- model-serving 이미지의 `io.openit.service`는 `model-runtime`이다(서비스 이름은 `model-serving`). 패턴은 통과하지만 `PublishRequest.service`/이미지 이름과 다르다.
-- `publish-image.sh`는 필수 4개(service, revision, contracts.boundary, contracts.survey-schema)만 비어 있지 않은지 본다. 그래서 위 값들이 게시를 통과한다. 스키마 검증으로 바꾸면 이 영역들이 실패한다.
+survey-service, admin-console, model-registry는 통과한다. 위 deploy 쪽 수정은 Dockerfile ARG에 값을 넘기는 방식이라 영역 코드를 건드리지 않는다. 영역 쪽 둘이 고쳐질 때까지 `build-images.sh`·`publish-images.sh`는 question-authoring과 release-gate에서 멈춘다(의도).
 
 ## 예시의 출처
 

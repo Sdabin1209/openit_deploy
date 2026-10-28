@@ -20,6 +20,9 @@ while read -r area img commit _; do   # 4번째 열(bc=..,te=..,mr=.. 빌드 태
   if [ "$only" = "  " ] && [[ " $SERVICES_OPTIONAL " == *" $area "* ]]; then echo "건너뜀: $area (선택 이미지, 이름을 줄 때만 게시)"; continue; fi
   if [ "$area" = model-serving-gpu ]; then gpu_record_valid "$DEPLOY_ROOT/build/images.env" >/dev/null || die "GPU 이미지 기록이 유효하지 않다: $(gpu_record_valid "$DEPLOY_ROOT/build/images.env" 2>&1 >/dev/null | tail -1)"; fi
   "$DOCKER" image inspect "$img" >/dev/null 2>&1 || die "이미지가 이 호스트에 없다: $img (다시 빌드: bash scripts/build-images.sh $area)"
+  # 게시 전 라벨 검사(계약 ImageLabels). 어긋나면 올리지 않는다
+  vrc=0; vout=$(validate_image_labels "$img" "$area" 2>&1) || vrc=$?
+  [ $vrc = 0 ] || { echo "$vout"; die "이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다: $area ($img). 라벨을 붙이는 쪽을 고친다(docs/runbook.md 이미지 라벨)"; }
   var=$(echo "$area" | tr 'a-z-' 'A-Z_')
   ref="$DEPLOY_REGISTRY/openit/$area:build-$commit"
   "$DOCKER" tag "$img" "$ref"
