@@ -14,7 +14,7 @@
 
 서비스 이름은 다음 중 하나다: `survey-service`, `question-authoring`, `ops-feedback`, `release-gate`, `model-registry`(model-lab 소스), `model-serving`(model-runtime 소스), `kiosk-frontend`, `admin-console`. 목록에 없으면 종료 코드 2로 거부한다(새 서비스는 deploy가 `scripts/lib.sh`의 목록과 `compose.yaml`에 먼저 등록한다).
 
-## 2. `publish-image.sh` 인터페이스 (확인함: `bash scripts/test-publish.sh` 전 항목 통과)
+## 2. `publish-image.sh` 인터페이스 (자체 시험 `bash scripts/test-publish.sh`: 2026-10-28 이 PC에서 실행해 전부 통과한 것을 확인. 영구 보증이 아니니 바꾼 뒤에는 다시 돌린다)
 
 | 항목 | 내용 |
 | --- | --- |

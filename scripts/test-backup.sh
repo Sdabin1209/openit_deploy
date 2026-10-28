@@ -7,6 +7,7 @@ source "$(dirname "$0")/lib.sh"
 ID=$$; P=deploy-bktest-$ID; W="$DEPLOY_ROOT/state/bktest-$ID"; mkdir -p "$W/backups"; chmod 700 "$W"
 export DEPLOY_PROJECT=$P SECRETS_DIR="$W/secrets" DEPLOY_REGISTRY_ENV="$W/registry.env" REGISTRY_PROJECT=deploy-bkreg-$ID
 echo "DEPLOY_REGISTRY=127.0.0.1:1" > "$DEPLOY_REGISTRY_ENV"
+source "$(dirname "$0")/testlib.sh"; test_lock_copy "$W/images.lock"; export DEPLOY_LOCK="$W/images.lock"   # 커밋된 잠금이 불완전해도 compose 가 해석되게(scripts/testlib.sh)
 cleanup() { dc "$P" down -v --remove-orphans >/dev/null 2>&1; "$DOCKER" volume rm -f "${REGISTRY_PROJECT}_registry-data" >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
 FAILS=0; N=0
