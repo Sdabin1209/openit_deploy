@@ -32,13 +32,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--ws"); ap.add_argument("--file")
     ap.add_argument("--kind", default=""); ap.add_argument("--train", action="store_true"); ap.add_argument("--except", dest="exc", default="")
-    ap.add_argument("--sections", action="store_true")
     a = ap.parse_args()
     f = a.file or (str(Path(a.ws) / "head" / "shared" / "areas.json") if a.ws else None)
     try:
-        if a.sections:
-            print("\n".join(load(f)["readme_sections"]))
-        else:
+        if True:
             print(" ".join(names(f, set(filter(None, a.kind.split(","))), a.train, set(filter(None, a.exc.split(","))))))
     except (OSError, ValueError, KeyError) as e:
         print(f"영역 목록을 읽지 못했다: {e}", file=sys.stderr); sys.exit(1)

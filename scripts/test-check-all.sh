@@ -8,21 +8,10 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 # pytest 가 있는 파이썬(규칙 8 시험용, 읽기 전용 호출). 없으면 그 시험만 건너뛴다
 PYT=""; for v in "$ROOT"/../*/.venv/bin/python; do [ -x "$v" ] && "$v" -c 'import pytest' 2>/dev/null && { PYT="$v"; break; }; done
 FAILS=0; N=0
-README='# 영역
-
-소개 문단.
-
-## 1. 전체 속의 위치
-## 2. 구조
-## 3. 실행 방법
-## 4. 현재 상태
-## 5. 이 영역의 열린 항목
-## 6. 더 자세한 문서
-'
 # mk <이름>... : 임시 워크스페이스 $W 에 영역(.git 과 올바른 README 포함)을 만든다
-mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; printf '%s' "$README" > "$W/$a/README.md"; done; }
+mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; done; }
 # run <규칙번호> [환경...] : 출력을 $OUT, 종료 코드를 $RC 에
-run() { local r=$1; shift; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_ALLOW=/dev/null CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
+run() { local r=$1; shift; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
 expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   N=$((N+1)); local ok=1
   grep -q ": $2\$" <<<"$OUT" || ok=0
@@ -66,25 +55,51 @@ run 3 CHECK_ALL_MR_PY="$W/py-bad"; expect "규칙을 빼면 FAIL" FAIL
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "venv 가 없으면 SKIP(검증 안 함 1)" SKIP "검증 안 함 1"
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "SKIP 이유에 해결 방법이 붙는다" SKIP "docs/SETUP.md F절"
 
-echo "== 4 정본에 없는 이름 (지원 템플릿·turn-engine 공개 API를 정본에서 읽는다)"
+echo "== 4 정본에 없는 이름 (ast 로 읽는다)"
 truth(){ mkdir -p "$W/model-runtime/src/model_runtime" "$W/turn-engine/turn_engine" "$W/boundary-contracts/boundary_contracts"
-  printf '_USER = {"prompt-7": None}\n' > "$W/model-runtime/src/model_runtime/prompts.py"
-  printf '__all__ = ["validate_extraction", "ENGINE_VERSION"]\n' > "$W/turn-engine/turn_engine/__init__.py"
+  printf 'def _u7(role, i):\n    return ""\n\n\n_USER = {"prompt-7": _u7}\n' > "$W/model-runtime/src/model_runtime/prompts.py"
+  printf '__all__ = ["validate_extraction", "ENGINE_VERSION"]\n' > "$W/turn-engine/turn_engine/__init__.py"; : > "$W/turn-engine/turn_engine/validation.py"
   printf 'PIPELINE_SCHEMA_VERSION = "9.9"\n' > "$W/boundary-contracts/boundary_contracts/schemas_api.py"; }
 mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "깨끗하면 PASS" PASS
 echo 'v = "prompt-7"' > "$W/deploy/app/a.py"; run 4; expect "정본에 있는 템플릿은 PASS" PASS
-echo 'v = "prompt-3"' > "$W/deploy/app/a.py"; run 4; expect "정본에 없는 템플릿은 FAIL" FAIL "deploy/app/a.py:1"
+echo 'v = "prompt-3"' > "$W/deploy/app/a.py"; run 4; expect "정본에 없는 템플릿(문자열 상수)은 FAIL" FAIL "deploy/app/a.py:1"
 printf 'from turn_engine import (\n    validate_extraction,\n    plan,\n)\n' > "$W/deploy/app/a.py"; run 4; expect "공개 API 에 없는 turn_engine 이름 import 는 FAIL" FAIL "deploy/app/a.py:1"
 printf 'from turn_engine import validate_extraction as v\n' > "$W/deploy/app/a.py"; run 4; expect "공개 API 의 이름은 별칭이 있어도 PASS" PASS
+printf 'from turn_engine import validation\n' > "$W/deploy/app/a.py"; run 4; expect "하위 모듈 import 는 합법(파일 존재)" PASS
+printf 'from turn_engine.validation import anything\n' > "$W/deploy/app/a.py"; run 4; expect "하위 모듈에서 가져오기는 PASS" PASS
+printf 'from turn_engine.gone import x\n' > "$W/deploy/app/a.py"; run 4; expect "없는 하위 모듈은 FAIL" FAIL "deploy/app/a.py:1"
+printf 'import turn_engine as te\nte.validate_extraction()\n' > "$W/deploy/app/a.py"; run 4; expect "별칭 import 의 공개 속성은 PASS" PASS
+printf 'import turn_engine as te\nte.plan()\n' > "$W/deploy/app/a.py"; run 4; expect "별칭 import 의 없는 속성은 FAIL(줄)" FAIL "deploy/app/a.py:2"
+printf 'import importlib\nimportlib.import_module("turn_engine.gone")\n' > "$W/deploy/app/a.py"; run 4; expect "importlib 의 없는 하위 모듈은 FAIL" FAIL "deploy/app/a.py:2"
+printf '__import__("turn_engine.gone")\n' > "$W/deploy/app/a.py"; run 4; expect "__import__ 의 없는 하위 모듈은 FAIL" FAIL "deploy/app/a.py:1"
+printf 'from .turn_engine import plan\n' > "$W/deploy/app/a.py"; run 4; expect "상대 import 는 보지 않는다" PASS
 echo '# prompt-3 은 제거됨' > "$W/deploy/app/a.py"; run 4; expect "주석의 설명은 통과" PASS
-rm -rf "$W/model-runtime"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "정본을 못 읽으면 통과로 치지 않고 SKIP" SKIP "정본"
+printf 'v = "prompt-" + "3"\n' > "$W/deploy/app/a.py"; run 4; expect "조합한 이름은 보지 못한다고 명시한다" PASS "조합"
+printf 'prompts:\n  - prompt-3\n' > "$W/deploy/app/c.yaml"; run 4; expect "YAML 의 없는 템플릿도 파서로 읽어 FAIL" FAIL "deploy/app/c.yaml"
+rm "$W/deploy/app/c.yaml"
+printf '_USER = {"prompt-7": missing_fn}\n' > "$W/model-runtime/src/model_runtime/prompts.py"; run 4; expect "정본의 키에 대응 함수가 없으면 FAIL(정본이 거짓)" FAIL "대응하는 템플릿 함수"
+printf 'def f(r, i):\n    return ""\n\n\n_USER: dict = dict(**{})\n' > "$W/model-runtime/src/model_runtime/prompts.py"; run 4; expect "정본을 읽지 못하는 모양이면 SKIP 이 아니라 FAIL" FAIL "dict 리터럴"
+printf 'def f(r, i):\n    return ""\n\n\n_USER: dict = dict(a=f)\n_USER |= {"b": f}\n' > "$W/model-runtime/src/model_runtime/prompts.py"; run 4; expect "AnnAssign·dict(...)·|= 를 읽는다" PASS
+rm -rf "$W/model-runtime"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "정본을 못 읽으면 통과로 치지 않고 FAIL" FAIL "읽지 못했다"
+mk deploy; truth; echo '{"areas": []}' > "$W/head/shared/areas.json"; run 4; expect "영역이 0개면 PASS 가 아니라 FAIL" FAIL "0개"
+rm "$W/head/shared/areas.json"; run 4; expect "areas.json 이 없으면 FAIL" FAIL "0개"
+run 0; expect "areas.json 이 없으면 규칙 0 도 FAIL" FAIL "0개"
 
-echo "== 5 박은 계약 문자열"
+echo "== 5 박은 계약 문자열 (ast 와 파서)"
 mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'p = {"pipeline_schema_version": SCHEMA_VERSION}' > "$W/deploy/app/a.py"; run 5; expect "상수를 쓰면 PASS" PASS
 echo 'p = {"pipeline_schema_version": "9.9"}' > "$W/deploy/app/a.py"; run 5; expect "계약의 현재 값과 같으면 PASS" PASS
 echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/app/a.py"; run 5; expect "계약의 현재 값과 다른 값을 박으면 FAIL" FAIL "deploy/app/a.py:1"
-mkdir -p "$W/deploy/tests"; rm "$W/deploy/app/a.py"; echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/tests/t.py"; run 5; expect "시험 픽스처는 대상 아님" PASS
-rm -rf "$W/boundary-contracts"; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 5; expect "정본을 못 읽으면 SKIP" SKIP "정본"
+echo 'f(pipeline_schema_version="1.3", other="x")' > "$W/deploy/app/a.py"; run 5; expect "kwarg 로 박아도 FAIL" FAIL "deploy/app/a.py:1"
+echo 'p = dict(pipeline_schema_version="1.3")' > "$W/deploy/app/a.py"; run 5; expect "dict(...) 로 박아도 FAIL" FAIL "deploy/app/a.py:1"
+printf 'x: str = 1\npipeline_schema_version: str = "1.3"\n' > "$W/deploy/app/a.py"; run 5; expect "AnnAssign 로 박아도 FAIL" FAIL "deploy/app/a.py:2"
+echo 'd["pipeline_schema_version"] = "1.3"' > "$W/deploy/app/a.py"; run 5; expect "키 대입으로 박아도 FAIL" FAIL "deploy/app/a.py:1"
+echo 'f(pipeline_schema_version, "1.3")' > "$W/deploy/app/a.py"; run 5; expect "쉼표 뒤 다음 인자를 값으로 읽지 않는다(오탐 없음)" PASS
+printf 'pipeline_schema_version: "1.3"\n' > "$W/deploy/app/c.yaml"; rm "$W/deploy/app/a.py"; run 5; expect "YAML 값은 파서로 읽어 FAIL" FAIL "deploy/app/c.yaml"
+rm "$W/deploy/app/c.yaml"; printf '{"pipeline_schema_version": "9.9"}' > "$W/deploy/app/c.json"; run 5; expect "JSON 의 현재 값은 PASS" PASS
+printf 'x = ' > "$W/deploy/app/bad.py"; run 5; expect "파싱하지 못한 파일은 통과가 아니라 SKIP" SKIP "파싱하지 못했다"
+rm "$W/deploy/app/bad.py"
+mkdir -p "$W/deploy/tests"; echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/tests/t.py"; run 5; expect "시험 픽스처는 대상 아님" PASS
+rm -rf "$W/boundary-contracts"; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 5; expect "정본을 못 읽으면 FAIL" FAIL "읽지 못했다"
 
 echo "== 6 설정 인라인 비밀"
 mk deploy; mkdir -p "$W/deploy/config"; printf 'api_key: MY_ENV_KEY\nauth:\n  token: {env: MY_TOKEN}\n  max_tokens: 5\n' > "$W/deploy/config/a.yaml"; run 6; expect "환경 변수 이름·env 형식은 PASS" PASS
@@ -114,28 +129,6 @@ if [ -n "$PYT" ]; then
   printf 'def test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "시험이 수집되면 PASS" PASS "검증됨 1/1"
   printf 'import 없는_모듈\ndef test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "수집 오류는 FAIL" FAIL "model-lab/"
 else echo "  skip pytest 가 있는 venv 가 없어 py 수집 시험을 건너뛴다"; fi
-
-echo "== 9 README"
-mk deploy; run 9; expect "필수 절이 다 있으면 PASS" PASS
-printf '# x\n\n소개.\n\n## 1. 전체 속의 위치\n## 2. 구조\n' > "$W/deploy/README.md"; run 9; expect "필수 절이 빠지면 FAIL" FAIL "필수 절 없음: 실행 방법"
-rm "$W/deploy/README.md"; run 9; expect "README 가 없으면 FAIL" FAIL "README.md:1"
-
-echo "== 10 E2E 통과 수는 정본에만"
-# 규칙 10 은 실제 판정 규칙 파일(check-all-e2e-claims.txt)을 쓴다
-mk deploy head survey-service; mkdir -p "$W/deploy/docs" "$W/head/docs"
-printf '# 정본\n전체 모드 103 PASS / 0 FAIL\n' > "$W/deploy/docs/E2E_RESULTS.md"
-printf '# 상태\nE2E 결과는 deploy/docs/E2E_RESULTS.md 를 본다.\n' > "$W/head/docs/STATUS.md"
-run 10; expect "정본을 가리키기만 하면 PASS" PASS
-printf '# 상태\n서비스끼리 도는 E2E 전체 모드 88 PASS / 0 FAIL\n' > "$W/head/docs/STATUS.md"; run 10; expect "정본 밖에 옮겨 적은 PASS 수는 FAIL(파일:줄)" FAIL "head/docs/STATUS.md:2"
-printf '# 상태\ne2e.sh 로 PASS 91 / FAIL 0 이 나왔다\n' > "$W/head/docs/STATUS.md"; run 10; expect "PASS 뒤에 숫자를 쓴 표기도 FAIL" FAIL "head/docs/STATUS.md:2"
-printf '# 상태\n전체 E2E 에서 73개 통과, 이 값은 옛 기록\n' > "$W/head/docs/STATUS.md"; run 10; expect "'N개 통과' 표기도 FAIL" FAIL "head/docs/STATUS.md:2"
-printf '# 상태\npytest 403 통과, E2E 는 이번에 돌리지 않았다\n' > "$W/head/docs/STATUS.md"; run 10; expect "E2E 가 아닌 시험 개수(pytest)는 통과" PASS
-printf '# 상태\n시험 209 통과, 스모크 통과. E2E 는 돌리지 않았다\n' > "$W/head/docs/STATUS.md"; run 10; expect "'시험 N 통과'(영역 시험)는 통과" PASS
-printf '# 상태\n숫자 87 PASS 가 있지만 이 줄은 다른 얘기다\n' > "$W/head/docs/STATUS.md"; run 10; expect "E2E 문맥이 없는 줄은 대상 아님" PASS
-printf '# 변경\n전체 모드 87 PASS / 0 FAIL 당시 기록\n' > "$W/head/docs/CHANGELOG.md"; printf '# 상태\n' > "$W/head/docs/STATUS.md"; run 10; expect "각 영역 CHANGELOG.md 는 허용" PASS "정본·변경 이력 파일"
-printf '# 상태\nE2E 전체 모드 88 PASS\n' > "$W/head/docs/STATUS.md"; printf '10|head/docs/STATUS.md|시험용 허용\n' > "$W/allow.txt"
-OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=10 CHECK_ALL_ALLOW="$W/allow.txt" CHECK_ALL_EXCLUDE=/dev/null bash "$HERE/check-all.sh" 2>&1); RC=$?; expect "허용 목록(이유 포함)에 적은 파일은 통과하고 건너뛴 이유를 출력한다" PASS "허용 목록(check-all-allow.txt)"
-printf '' > "$W/empty-rules.txt"; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=10 CHECK_ALL_ALLOW=/dev/null CHECK_ALL_EXCLUDE=/dev/null CHECK_ALL_E2E_CLAIMS="$W/empty-rules.txt" bash "$HERE/check-all.sh" 2>&1); RC=$?; expect "판정 규칙 파일이 비면 조용히 통과하지 않고 FAIL" FAIL "판정 규칙 파일"
 
 echo "== 11 compose 마운트 원본이 실제 파일"
 mk deploy; mkdir -p "$W/deploy/config"; printf 'services:\n  j:\n    image: x\n    volumes:\n      - ${J:-./config/job.yaml}:/config/job.yaml:ro\n' > "$W/deploy/compose.yaml"

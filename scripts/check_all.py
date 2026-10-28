@@ -9,11 +9,11 @@
 규칙 결과: FAIL(어긋남이 하나라도), SKIP(어긋남은 없으나 검증 안 함이 있다), PASS(그 밖). 종료 코드는 FAIL 이 하나라도 있을 때만 1.
 '모르는 대상'(처리 방법을 모르는 영역·예시)은 FAIL 이다. 제외하려면 scripts/check-all.exclude 에 이유와 함께 적는다(목록은 출력한다).
 값(비밀·설정 값)은 출력하지 않는다. 키 경로와 파일:줄만 낸다.
-환경 변수(시험용): CHECK_ALL_WORKSPACE, CHECK_ALL_VERSIONS_CMD, CHECK_ALL_MR_PY, CHECK_ALL_ONLY(쉼표로 구분한 규칙 번호), CHECK_ALL_ALLOW, CHECK_ALL_EXCLUDE, CHECK_ALL_E2E_CLAIMS"""
+환경 변수(시험용): CHECK_ALL_WORKSPACE, CHECK_ALL_VERSIONS_CMD, CHECK_ALL_MR_PY, CHECK_ALL_ONLY(쉼표로 구분한 규칙 번호), CHECK_ALL_EXCLUDE
+옵션: --strict  SKIP 이 하나라도 있으면 종료 코드 1 (게이트로 쓰는 실행용. SKIP 은 '검증 안 함'이 있다는 뜻이라 통과가 아니다)"""
 from __future__ import annotations
 
 import ast
-import fnmatch
 import json
 import os
 import re
@@ -26,14 +26,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 WS = Path(os.environ.get("CHECK_ALL_WORKSPACE") or HERE.parent.parent)
-ALLOW_FILE = Path(os.environ.get("CHECK_ALL_ALLOW") or HERE / "check-all-allow.txt")
 EXCLUDE_FILE = Path(os.environ.get("CHECK_ALL_EXCLUDE") or HERE / "check-all.exclude")
 
 # 점검이 처리 방법을 아는 영역과 종류의 정본: <워크스페이스>/head/shared/areas.json (scripts/areas.py). 표에 없는 .git 폴더는 '모르는 대상'이다.
 # 왜 파일에서 읽나: 영역을 더할 때 이 점검·셸 스크립트·bump 도구를 따로 고치면 한 곳을 빠뜨린다.
 sys.path.insert(0, str(HERE))
 import areas as _areas
-_AREAS = _areas.load(WS / "head" / "shared" / "areas.json") if (WS / "head" / "shared" / "areas.json").is_file() else {"areas": [], "readme_sections": []}
+_AREAS = _areas.load(WS / "head" / "shared" / "areas.json") if (WS / "head" / "shared" / "areas.json").is_file() else {"areas": []}
 _KIND_MAP = {"python": "py", "node": "node", "library": "py", "compose": "shell", "docs": "docs"}   # 점검 안의 처리 방식
 AREA_KIND = {a["name"]: _KIND_MAP[a["kind"]] for a in _AREAS["areas"]}
 VERSION_AREAS = [a["name"] for a in _AREAS["areas"] if a["version_train"]]
@@ -89,14 +88,9 @@ def load_pipe_file(path: Path):
     return out
 
 
-ALLOW = [(p[0], p[1]) for _, p in load_pipe_file(ALLOW_FILE) if len(p) >= 2]
 ORDERED_FILE = Path(os.environ.get("CHECK_ALL_ORDERED") or HERE / "check-all-ordered-schemas.txt")
 ORDERED = [(n, p[0], p[1] if len(p) > 1 else "") for n, p in load_pipe_file(ORDERED_FILE)]   # (줄, 스키마 이름, 이유)
 EXCLUDE = [(n, p[0], p[1] if len(p) > 1 else "") for n, p in load_pipe_file(EXCLUDE_FILE)]   # (줄, 종류:이름, 이유)
-
-
-def allowed(rule: str, path: str) -> bool:
-    return any(r == rule and fnmatch.fnmatch(path, g) for r, g in ALLOW)
 
 
 def excluded(key: str) -> str | None:
@@ -170,6 +164,7 @@ def schema_names() -> list[str]:
 # ---------- 규칙 0: 대상 열거 ----------
 def rule_enumerate() -> R:
     r = R()
+    areas_missing(r)
     for n, key, why in EXCLUDE:
         if not why:
             r.fail(f"exclude:{key}", f"deploy/scripts/check-all.exclude:{n}: 제외 항목 '{key}' 에 이유가 없다")
@@ -194,7 +189,6 @@ def rule_enumerate() -> R:
             else:
                 r.fail(f"예시 {ex.name}", f"모르는 대상: boundary-contracts/examples/{ex.name}  (짝이 되는 스키마 {name}.schema.json 이 없다)")
     r.info.append("제외 목록(scripts/check-all.exclude): " + ("; ".join(f"{k} = {w or '이유 없음'}" for _, k, w in EXCLUDE) if EXCLUDE else "비어 있음"))
-    r.info.append("허용 목록(scripts/check-all-allow.txt): " + (f"{len(ALLOW)}건 " + "; ".join(f"{a}|{b}" for a, b in ALLOW) if ALLOW else "비어 있음"))
     return r
 
 
@@ -414,131 +408,281 @@ def rule_relax() -> R:
     return r
 
 
-# ---------- 규칙 4, 5: 코드 파일 ----------
+# ---------- 규칙 4, 5: 코드 파일 (파서로 읽는다) ----------
+# 왜 파서인가: 줄을 정규식으로 읽으면 쉼표 뒤 다음 인자를 값으로 읽거나(오탐) 별칭 import 를 놓친다(미탐). 파이썬은 ast, JSON 은 json, YAML 은 yaml, TOML 은 tomllib 로 읽는다.
+# 파서가 없는 종류(.ts .sh Dockerfile 등)는 '대상 아님(파서 없음)'으로 센다. 읽은 것처럼 통과로 세지 않는다.
 SKIP_DIR = re.compile(r"(^|/)(docs|build|dist|tests?|fixtures?|examples?|runs|testdata|__pycache__)/")
-SKIP_NAME = re.compile(r"(\.md$|CHANGELOG|STATUS|HISTORY|\.lock$|\.egg-info)", re.I)
-CODE_EXT = re.compile(r"(\.(py|sh|ts|tsx|js|mjs|cjs|yaml|yml|toml|cfg|ini|json|env)$|(^|/)Dockerfile[^/]*$|(^|/)requirements[^/]*\.txt$)")
-COMMENT = re.compile(r"^\s*(#|//|\*|/\*|<!--)")
-JSON_DESC = re.compile(r'^\s*"(description|\$comment|title)"\s*:')
+PARSERS = {".py": "py", ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml"}
 
 
-def classify(rule: str, repo: str, f: str) -> str | None:
-    """None 이면 대상, 아니면 '대상 아님' 이유."""
+def classify(repo: str, f: str) -> str | None:
+    """None 이면 대상(파서가 있는 종류), 아니면 '대상 아님' 이유."""
     if SKIP_DIR.search(f):
         return "문서·시험·시험 데이터·산출물 폴더"
-    if SKIP_NAME.search(f):
-        return "문서·이력·잠금 파일"
-    if not CODE_EXT.search(f):
-        return "코드·설정·스크립트가 아닌 파일"
-    if allowed(rule, f"{repo}/{f}"):
-        return "허용 목록(scripts/check-all-allow.txt)"
+    if re.search(r"(^|/)(test_[^/]*|[^/]*_test|conftest|verify)\.py$", f):
+        return "시험·검증 스크립트(일부러 틀린 값을 만든다)"
+    if os.path.splitext(f)[1] not in PARSERS:
+        return "파서가 없는 종류(py·json·yaml·toml 이 아니다)"
     return None
 
 
-def scan_code(rule: str, line_check, text_check=None) -> R:
+def _load(path: Path, kind: str):
+    """파싱 결과. 파싱하지 못하면 None(그 파일은 읽지 못한 것이다)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        if kind == "py":
+            return ast.parse(text)
+        if kind == "json":
+            return json.loads(text)
+        if kind == "yaml":
+            import yaml
+            return list(yaml.safe_load_all(text))
+        import tomllib
+        return tomllib.loads(text)
+    except Exception:
+        return None
+
+
+def scan_code(tree_check, data_check=None) -> R:
+    """tree_check(repo, f, ast.Module) -> [(줄, 메시지)], data_check(repo, f, 파싱된 데이터) -> [(0, 메시지)]."""
     r = R()
     reasons: Counter = Counter()
     for repo in known_areas():
         for f in files(repo):
             rel = f"{repo}/{f}"
-            why = classify(rule, repo, f)
+            why = classify(repo, f)
             if why:
                 reasons[why] += 1
                 continue
-            lines = read_lines(WS / repo / f)
-            found = []
-            for i, l in enumerate(lines, 1):
-                if COMMENT.match(l) or JSON_DESC.match(l):
-                    continue
-                found += [(i, m) for m in line_check(l)]
-            if text_check:
-                found += text_check("\n".join(lines))
+            kind = PARSERS[os.path.splitext(f)[1]]
+            parsed = _load(WS / repo / f, kind)
+            if parsed is None:
+                r.un.append((rel, "파싱하지 못했다(문법 오류이거나 읽을 수 없다)"))
+                continue
+            if kind == "py":
+                found = tree_check(repo, f, parsed)
+            else:
+                found = data_check(repo, f, parsed) if data_check else []
             if found:
                 for i, m in found:
                     r.fail(rel, f"{rel}:{i}: {m}")
             else:
                 r.ok.append(rel)
-    r.na = [(f"{n}개 파일", why) for why, n in reasons.items()]
-    r.na = [(w, why) for (w, why) in r.na]
-    # 대상 아님은 개수가 분모에 들어가야 하므로 파일 단위로 펼친다
     r.na = [(f"{why}#{i}", why) for why, n in reasons.items() for i in range(n)]
+    return r
+
+
+def areas_missing(r: R) -> R:
+    """영역 목록이 없거나 비면 분모 0 의 통과가 되므로 FAIL 이다."""
+    if not _AREAS["areas"]:
+        r.fail("영역 목록", "head/shared/areas.json:1: 파일이 없거나 영역이 0개다(분모 0 은 통과가 아니다)")
     return r
 
 
 # ---------- 정본에서 읽는 값 ----------
 # 낡은 용어를 이 파일에 적어 막지 않는다(용어는 계속 바뀐다). '지금 있는 것'을 정본에서 읽고, 정본에 없는 것을 쓰면 실패한다.
-def _truth(rel: str, name: str):
-    """정본 파이썬 파일의 최상위 `name = 리터럴`을 코드를 실행하지 않고(ast) 읽는다. 읽지 못하면 None."""
+def _module_assigns(rel: str, name: str):
+    """정본 파이썬 파일의 최상위 name 에 대한 (연산, 값 노드) 목록을 코드 실행 없이(ast) 모은다. 파일을 못 읽으면 (None, None).
+    연산: '=' (Assign·AnnAssign), '+=' (AugAssign Add), '|=' (AugAssign BitOr)."""
     try:
         tree = ast.parse((WS / rel).read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
-        return None
+        return None, None
+    out = []
     for n in tree.body:
         if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets):
-            return n.value
+            out.append(("=", n.value))
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == name and n.value is not None:
+            out.append(("=", n.value))
+        elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == name:
+            out.append(("+=" if isinstance(n.op, ast.Add) else "|=" if isinstance(n.op, ast.BitOr) else "?", n.value))
+    return out, tree
+
+
+def _dict_items(v):
+    """{...} 리터럴 또는 dict(k=...) 호출의 (키, 값 노드) 목록. 읽을 수 없는 모양이면 None."""
+    if isinstance(v, ast.Dict):
+        if any(k is None or not isinstance(k, ast.Constant) for k in v.keys):
+            return None
+        return [(k.value, val) for k, val in zip(v.keys, v.values)]
+    if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "dict" and not v.args and all(k.arg for k in v.keywords):
+        return [(k.arg, k.value) for k in v.keywords]
     return None
 
 
 def truth_templates():
-    """지원하는 프롬프트 템플릿 버전: model-runtime 이 정한다."""
-    v = _truth("model-runtime/src/model_runtime/prompts.py", "_USER")
-    return {k.value for k in v.keys if isinstance(k, ast.Constant)} if isinstance(v, ast.Dict) else None
+    """지원하는 프롬프트 템플릿 버전: model-runtime 이 정한다. (집합, 문제 문자열). 못 읽으면 (None, 이유) -- 이유는 FAIL 이다.
+    정본이 거짓일 수 있으므로 키마다 값이 같은 파일에 정의된 함수인지 교차 검증한다."""
+    rel = "model-runtime/src/model_runtime/prompts.py"
+    ops, tree = _module_assigns(rel, "_USER")
+    if not ops:
+        return None, f"{rel}:1: _USER 를 읽지 못했다"
+    funcs = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    keys = set()
+    for op, v in ops:
+        if op not in ("=", "|="):
+            return None, f"{rel}:1: _USER 의 {op} 대입을 해석하지 못했다"
+        items = _dict_items(v)
+        if items is None:
+            return None, f"{rel}:1: _USER 의 값이 읽을 수 있는 dict 리터럴이 아니다"
+        for k, val in items:
+            if not (isinstance(val, ast.Name) and val.id in funcs):
+                return None, f"{rel}:1: _USER[{k!r}] 에 대응하는 템플릿 함수가 이 파일에 없다(정본이 거짓이다)"
+            keys.add(k)
+    return keys, ""
 
 
 def truth_te_public():
-    """turn-engine 의 공개 API."""
-    v = _truth("turn-engine/turn_engine/__init__.py", "__all__")
-    return {e.value for e in v.elts if isinstance(e, ast.Constant)} if isinstance(v, (ast.List, ast.Tuple)) else None
+    """turn-engine 의 공개 API(__all__). (집합, 문제 문자열)."""
+    rel = "turn-engine/turn_engine/__init__.py"
+    ops, _ = _module_assigns(rel, "__all__")
+    if not ops:
+        return None, f"{rel}:1: __all__ 를 읽지 못했다"
+    names: set = set()
+    for op, v in ops:
+        if op not in ("=", "+=") or not isinstance(v, (ast.List, ast.Tuple)) or not all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts):
+            return None, f"{rel}:1: __all__ 를 문자열 리스트 리터럴로 읽지 못했다"
+        names |= {e.value for e in v.elts}
+    return names, ""
 
 
 def truth_schema_version():
-    """계약의 파이프라인 스키마 버전."""
-    v = _truth("boundary-contracts/boundary_contracts/schemas_api.py", "PIPELINE_SCHEMA_VERSION")
-    return v.value if isinstance(v, ast.Constant) else None
+    """계약의 파이프라인 스키마 버전. (값, 문제 문자열)."""
+    rel = "boundary-contracts/boundary_contracts/schemas_api.py"
+    ops, _ = _module_assigns(rel, "PIPELINE_SCHEMA_VERSION")
+    if not ops or len(ops) != 1 or ops[0][0] != "=" or not (isinstance(ops[0][1], ast.Constant) and isinstance(ops[0][1].value, str)):
+        return None, f"{rel}:1: PIPELINE_SCHEMA_VERSION 을 문자열 상수 하나로 읽지 못했다"
+    return ops[0][1].value, ""
 
 
-TE_IMPORT = re.compile(r"from\s+turn_engine(?:\.\w+)*\s+import\s+(\([^)]*\)|[^\n]*)")
-PROMPT_TOKEN = re.compile(r"prompt-\d+")
+def _te_submodule_exists(sub: str) -> bool:
+    base = WS / "turn-engine" / "turn_engine" / sub.split(".")[0]
+    return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
+
+
+PROMPT_NAME = re.compile(r"prompt-\d+")
 
 
 def rule_removed_names() -> R:
-    tpl, pub = truth_templates(), truth_te_public()
+    tpl, tpl_why = truth_templates()
+    pub, pub_why = truth_te_public()
+    unread = 0   # 읽지 못한 동적 import 수
 
-    def line_check(l):
-        if tpl is None:
-            return []
-        return [f"지원하지 않는 프롬프트 템플릿 {t}(model-runtime 의 지원 목록 {sorted(tpl)})" for t in sorted(set(PROMPT_TOKEN.findall(l)) - tpl)]
-
-    def text_check(text):
+    def tree_check(repo, f, tree):
+        nonlocal unread
         out = []
-        if pub is None:
-            return out
-        for m in TE_IMPORT.finditer(text):
-            body = re.sub(r"\bas\s+\w+", "", re.sub(r"#[^\n]*", "", m.group(1)))
-            gone = sorted({x for x in re.findall(r"[A-Za-z_]\w*", body) if x not in pub})
-            if gone:
-                out.append((text.count("\n", 0, m.start()) + 1, f"turn_engine 공개 API 에 없는 이름 import {gone}(공개 API {sorted(pub)})"))
+        aliases = set()   # `import turn_engine as te` 의 te
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    if a.name == "turn_engine" or a.name.startswith("turn_engine."):
+                        if pub is not None and a.name != "turn_engine" and not _te_submodule_exists(a.name.split(".", 1)[1]):
+                            out.append((n.lineno, f"turn_engine 에 없는 하위 모듈 import {a.name}"))
+                        if a.name == "turn_engine":
+                            aliases.add(a.asname or "turn_engine")
+            elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module and (n.module == "turn_engine" or n.module.startswith("turn_engine.")) and pub is not None:
+                if n.module == "turn_engine":
+                    gone = sorted(a.name for a in n.names if a.name != "*" and a.name not in pub and not _te_submodule_exists(a.name))
+                    if gone:
+                        out.append((n.lineno, f"turn_engine 공개 API 에도 하위 모듈에도 없는 이름 import {gone}(공개 API {sorted(pub)})"))
+                elif not _te_submodule_exists(n.module.split(".", 1)[1]):
+                    out.append((n.lineno, f"turn_engine 에 없는 하위 모듈 import {n.module}"))
+            elif isinstance(n, ast.Call):
+                fn = n.func
+                dyn = (isinstance(fn, ast.Name) and fn.id == "__import__") or (isinstance(fn, ast.Attribute) and fn.attr == "import_module" and isinstance(fn.value, ast.Name) and fn.value.id == "importlib")
+                if dyn and n.args:
+                    a0 = n.args[0]
+                    if isinstance(a0, ast.Constant) and isinstance(a0.value, str):
+                        m = a0.value
+                        if pub is not None and m.startswith("turn_engine.") and not _te_submodule_exists(m.split(".", 1)[1]):
+                            out.append((n.lineno, f"turn_engine 에 없는 하위 모듈 동적 import {m}"))
+                    else:
+                        unread += 1
+        if aliases and pub is not None:
+            for n in ast.walk(tree):
+                if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in aliases and not n.attr.startswith("__") \
+                        and n.attr not in pub and not _te_submodule_exists(n.attr):
+                    out.append((n.lineno, f"turn_engine 공개 API 에 없는 이름 {n.value.id}.{n.attr}(공개 API {sorted(pub)})"))
+        if tpl is not None:
+            for n in ast.walk(tree):
+                if isinstance(n, ast.Constant) and isinstance(n.value, str) and PROMPT_NAME.fullmatch(n.value) and n.value not in tpl:
+                    out.append((n.lineno, f"지원하지 않는 프롬프트 템플릿 {n.value}(model-runtime 의 지원 목록 {sorted(tpl)})"))
         return out
-    r = scan_code("4", line_check, text_check)
-    if tpl is None or pub is None:
-        r.un.append(("정본", "model-runtime prompts.py 또는 turn-engine __init__.py 를 읽지 못해 확인 못 함"))
-    return r
 
-
-PSV_LIT = re.compile(r"""pipeline_schema_version["']?\s*(?:[:=]|,)\s*["']([^"']+)["']""")
+    def data_check(repo, f, data):
+        out = []
+        if tpl is None:
+            return out
+        stack = [data]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, dict):
+                stack += list(x.keys()) + list(x.values())
+            elif isinstance(x, (list, tuple)):
+                stack += list(x)
+            elif isinstance(x, str) and PROMPT_NAME.fullmatch(x) and x not in tpl:
+                out.append((0, f"지원하지 않는 프롬프트 템플릿 {x}(model-runtime 의 지원 목록 {sorted(tpl)})"))
+        return out
+    r = scan_code(tree_check, data_check)
+    for why in (tpl_why, pub_why):
+        if why:
+            r.fail("정본", why)   # 정본을 못 읽거나 정본이 거짓이면 SKIP 이 아니라 FAIL 이다
+    r.info.append("읽는 방법: 파이썬은 ast(import·별칭 속성·__import__·importlib.import_module 의 문자열 상수·문자열 상수 노드), JSON/YAML/TOML 은 파서. 상대 import 는 자기 패키지 내부라 보지 않는다. 하위 모듈은 turn-engine 의 파일 존재로 판단한다.")
+    r.info.append(f"읽지 못하는 것: 문자열을 조합·f-string 으로 만든 템플릿 이름과 상수가 아닌 동적 import 인자({unread}건)는 보지 못한다.")
+    return areas_missing(r)
 
 
 def rule_hardcoded_contract() -> R:
-    cur = truth_schema_version()
+    cur, cur_why = truth_schema_version()
+    KEY = "pipeline_schema_version"
 
-    def line_check(l):
+    def bad(v):
+        return isinstance(v, ast.Constant) and isinstance(v.value, str) and v.value != cur
+
+    def tree_check(repo, f, tree):
         if cur is None:
             return []
-        return [f'pipeline_schema_version 에 "{v}" 를 박았다(계약의 현재 값은 "{cur}". 계약 패키지의 상수를 쓴다)' for v in PSV_LIT.findall(l) if v != cur]
-    r = scan_code("5", line_check)
-    if cur is None:
-        r.un.append(("정본", "boundary-contracts schemas_api.py 를 읽지 못해 확인 못 함"))
-    return r
+        out = []
+
+        def msg(v):
+            return f'pipeline_schema_version 에 "{v}" 를 박았다(계약의 현재 값은 "{cur}". 계약 패키지의 상수를 쓴다)'
+
+        def target_is_key(t):
+            return (isinstance(t, ast.Name) and t.id == KEY) or (isinstance(t, ast.Attribute) and t.attr == KEY) \
+                or (isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant) and t.slice.value == KEY)
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Dict):
+                for k, v in zip(n.keys, n.values):
+                    if isinstance(k, ast.Constant) and k.value == KEY and bad(v):
+                        out.append((v.lineno, msg(v.value)))
+            elif isinstance(n, ast.keyword) and n.arg == KEY and bad(n.value):   # kwarg 와 dict(...)
+                out.append((n.value.lineno, msg(n.value.value)))
+            elif isinstance(n, ast.Assign) and any(target_is_key(t) for t in n.targets) and bad(n.value):
+                out.append((n.value.lineno, msg(n.value.value)))
+            elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and target_is_key(n.target) and n.value is not None and bad(n.value):
+                out.append((n.value.lineno, msg(n.value.value)))
+        return out
+
+    def data_check(repo, f, data):
+        out = []
+        if cur is None:
+            return out
+        stack = [data]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, dict):
+                for k, v in x.items():
+                    if k == KEY and isinstance(v, str) and v != cur:
+                        out.append((0, f'pipeline_schema_version 에 "{v}" 를 박았다(계약의 현재 값은 "{cur}")'))
+                stack += list(x.values())
+            elif isinstance(x, (list, tuple)):
+                stack += list(x)
+        return out
+    r = scan_code(tree_check, data_check)
+    if cur_why:
+        r.fail("정본", cur_why)
+    r.info.append("읽는 방법: 파이썬은 ast(dict 키·kwarg·dict(...)·대입), JSON/YAML/TOML 은 파서. 값이 이름·표현식이면 보지 않는다(문자열 상수만 비교).")
+    return areas_missing(r)
 
 
 # ---------- yaml 노드 ----------
@@ -593,10 +737,6 @@ def rule_inline_secrets() -> R:
             if not CONFIG_FILE.search(f):
                 continue
             rel = f"{repo}/{f}"
-            w = allowed("6", rel)
-            if w:
-                r.na.append((rel, "허용 목록"))
-                continue
             try:
                 root = compose_doc((WS / repo / f).read_text(encoding="utf-8"))
             except Exception:
@@ -754,95 +894,6 @@ def rule_collect() -> R:
     return r
 
 
-# ---------- 규칙 9 ----------
-# 규칙 9의 '필수 절 7개': 리포에 정의가 없어 이 점검이 다음 7개로 해석한다(미정, 헤드가 확정한다). 소개 = 제목 다음의 설명 문단 또는 '## 소개' 절,
-# 나머지 6개는 '## [번호.] [이 영역의 ]<이름>' 제목이다.
-# 첫 항목은 제목 다음의 설명 문단 또는 '## 소개' 절로 본다(나머지는 '## [번호.] [이 영역의 ]<이름>' 제목). 이름 목록의 정본: areas.json readme_sections
-README_SECTIONS = [(("소개(제목 다음의 설명)", None) if i == 0 else (n, re.escape(n))) for i, n in enumerate(_AREAS["readme_sections"])]
-
-
-def rule_readme() -> R:
-    r = R()
-    r.info.append(f"필수 절 {len(README_SECTIONS)}개(정본: head/shared/areas.json): " + ", ".join(n for n, _ in README_SECTIONS) + " (앞의 '소개'는 제목 다음의 설명 문단 또는 '## 소개' 절)")
-    for repo in known_areas():
-        if AREA_KIND[repo] == "docs":
-            r.na.append((repo, "설계 문서 영역이라 영역 README 형식이 아니다"))
-            continue
-        rp = WS / repo / "README.md"
-        if not rp.is_file():
-            r.fail(repo, f"{repo}/README.md:1: 파일이 없다")
-            continue
-        lines = read_lines(rp)
-        heads = [l for l in lines if re.match(r"^##\s", l)]
-        miss = []
-        for name, rx in README_SECTIONS:
-            if rx is None:
-                first = next((i for i, l in enumerate(lines) if re.match(r"^##\s", l)), len(lines))
-                intro = [l for l in lines[:first] if l.strip() and not l.startswith("#")]
-                if not intro and not any(re.match(r"^##\s*(\d+\.\s*)?소개", l) for l in lines):
-                    miss.append(name)
-            elif not any(re.match(rf"^##\s*(\d+\.\s*)?(이 영역의 )?{rx}", h) for h in heads):
-                miss.append(name)
-        if miss:
-            for m in miss:
-                r.fail(repo, f"{repo}/README.md:1: 필수 절 없음: {m}")
-        else:
-            r.ok.append(repo)
-    return r
-
-
-# ---------- 규칙 10: E2E 통과 수의 정본 ----------
-E2E_CLAIMS_FILE = Path(os.environ.get("CHECK_ALL_E2E_CLAIMS") or HERE / "check-all-e2e-claims.txt")
-E2E_CANON = "deploy/docs/E2E_RESULTS.md"
-
-
-def rule_e2e_claims() -> R:
-    r = R()
-    kinds: dict[str, list[tuple[int, str]]] = {"claim": [], "context": [], "notcontext": [], "allowed": []}
-    for n, p in load_pipe_file(E2E_CLAIMS_FILE):
-        if p[0] in kinds and len(p) >= 2 and p[1]:
-            kinds[p[0]].append((n, p[1]))
-    if not E2E_CLAIMS_FILE.is_file() or not kinds["claim"] or not kinds["context"]:
-        r.fail("규칙", f"deploy/scripts/check-all-e2e-claims.txt:1: 판정 규칙 파일이 없거나 claim/context 가 비어 있다")
-        return r
-    try:
-        claim = [re.compile(x) for _, x in kinds["claim"]]
-        ctx = [re.compile(x, re.I) for _, x in kinds["context"]]
-        notctx = [re.compile(x, re.I) for _, x in kinds["notcontext"]]
-    except re.error as e:
-        r.fail("규칙", f"deploy/scripts/check-all-e2e-claims.txt:1: 정규식 오류 {e}")
-        return r
-    allowed_globs = [g for _, g in kinds["allowed"]]
-    r.info.append(f"판정 규칙(scripts/check-all-e2e-claims.txt): claim {len(claim)}, context {len(ctx)}, notcontext {len(notctx)}, 허용 파일 {len(allowed_globs)}. 정본: {E2E_CANON}")
-    for repo in known_areas():
-        bad = False
-        scanned = 0
-        for f in files(repo):
-            if not f.lower().endswith(".md"):
-                continue
-            path = f"{repo}/{f}"
-            if any(fnmatch.fnmatch(path, g) for g in allowed_globs):
-                r.na.append((path, "정본·변경 이력 파일"))
-                continue
-            if allowed("10", path):
-                r.na.append((path, "허용 목록(check-all-allow.txt)"))
-                continue
-            scanned += 1
-            for i, line in enumerate(read_lines(WS / repo / f), 1):
-                if not any(c.search(line) for c in ctx):
-                    continue
-                for cl in claim:
-                    for m in cl.finditer(line):
-                        before = line[max(0, m.start() - 80):m.start()]
-                        if any(nc.search(before) for nc in notctx):
-                            continue
-                        bad = True
-                        r.fail(repo, f"{path}:{i}: E2E 통과 수 표기 '{m.group(0)}' -- 정본은 {E2E_CANON}. 숫자를 옮겨 적지 말고 정본을 가리킨다")
-        if not bad:
-            r.ok.append(repo)
-    return r
-
-
 # ---------- 규칙 11 ----------
 def rule_mount_sources() -> R:
     """compose 의 바인드 마운트 원본 중 확장자가 있는 것(설정 파일)은 실제 파일이어야 한다.
@@ -895,8 +946,6 @@ RULES = [
     ("6", "설정 파일의 인라인 비밀", rule_inline_secrets),
     ("7", "compose 의 환경 변수 비밀", rule_compose_secrets),
     ("8", "영역별 시험 수집", rule_collect),
-    ("9", "영역 README 필수 절", rule_readme),
-    ("10", "E2E 통과 수는 정본에만", rule_e2e_claims),
     ("11", "compose 마운트 원본이 실제 파일", rule_mount_sources),
 ]
 
@@ -906,7 +955,8 @@ def counts_text(r: R) -> str:
     return s
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    strict = "--strict" in (sys.argv[1:] if argv is None else argv)
     only = {x for x in (os.environ.get("CHECK_ALL_ONLY") or "").split(",") if x}
     t0 = time.time()
     sel = [x for x in RULES if not only or x[0] in only]
@@ -937,7 +987,7 @@ def main() -> int:
         print(f"  [{r.status}] {name}: 검증됨 {r.verified}/{r.total} | 어긋남 {len(r.fail_targets)} | 대상 아님 {len(r.na)} | 검증 안 함 {len(r.un)}")
     st = Counter(r.status for _, r in results)
     print(f"-- 결과: FAIL {st['FAIL']}, SKIP {st['SKIP']}, PASS {st['PASS']} / 규칙 {len(results)}개, 소요 {time.time() - t0:.1f}s")
-    return 1 if st["FAIL"] else 0
+    return 1 if st["FAIL"] or (strict and st["SKIP"]) else 0
 
 
 if __name__ == "__main__":

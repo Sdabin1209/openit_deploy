@@ -18,8 +18,9 @@ set -o pipefail
 # 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
 CA_TXT=""
 if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
-  CA_TXT=$(bash "$(dirname "$0")/check-all.sh" 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
-  [ $CA_RC = 0 ] || { echo "check-all.sh 가 FAIL 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
+  bash -n "$0" || { echo "e2e.sh 문법 오류: E2E를 시작하지 않는다"; exit 1; }   # 긴 셸은 줄 휴리스틱이 아니라 문법 검사와 준비 단계의 실제 실행에 맡긴다(ADR 0033)
+  CA_TXT=$(bash "$(dirname "$0")/check-all.sh" --strict 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
+  [ $CA_RC = 0 ] || { echo "check-all.sh --strict 가 FAIL 또는 SKIP 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
 fi
 # 사전 점검: 실패하면 바로 멈춘다(건너뛰기 DEPLOY_SKIP_DOCTOR=1). 하위 up.sh 가 다시 점검하지 않게 export 한다
 [ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" || exit 1
