@@ -14,7 +14,7 @@ case "${1:-}" in
     "$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG"/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/ctx/survey-service/build/wheels/openit_survey_schema-*.whl 2>&1 | tail -1
     # synthetic-data run-once용 가상환경(호스트): 그 영역 런북대로 requirements.lock 의 서드파티 + 태그 wheel
     if [ ! -x "$DEPLOY_ROOT/build/venv-sd/bin/python" ]; then python3 -m venv "$DEPLOY_ROOT/build/venv-sd"; "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q attrs==26.1.0 jsonschema==4.10.3 packaging==26.3 pyrsistent==0.20.0 PyYAML==6.0.3 2>&1 | tail -1; fi
-    "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG_SD"/boundary_contracts-*.whl 2>&1 | tail -1
+    "$DEPLOY_ROOT/build/venv-sd/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG"/boundary_contracts-*.whl 2>&1 | tail -1
     rm -rf "$DEPLOY_ROOT/build/ctx/synthetic-data"; mkdir -p "$DEPLOY_ROOT/build/ctx/synthetic-data"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DEPLOY_ROOT/build/ctx/synthetic-data" ;;
   *) echo "사용: prepare-host.sh venv|wheels" >&2; exit 2 ;;
 esac

@@ -112,22 +112,22 @@ fi
 
 if want dataset-store; then
   # I2 DatasetStore HTTP 서버(계약 v2.1.0, D100, 소유 synthetic-data). 이미지는 boundary-contracts 를 ssh 로 받으므로 model-registry 와 같이 태그 시점 소스로 만든 wheel 을 빌드 컨텍스트 wheels 로 대신 준다.
-  # 계약 태그는 DEPLOY_BC_TAG_DS(v2.1.0): I2 HTTP 면이 2.1.0 부터라서 기준 태그보다 높다(lib.sh). 문진 스키마는 이미지에 복사본을 두지 않고 빌드 컨텍스트 survey_schema 로 받는다(synthetic-data ADR 0011): survey-service 의 기준 스키마 태그 시점 schema/.
+  # 계약 태그는 기준 DEPLOY_BC_TAG(lib.sh). 문진 스키마는 이미지에 복사본을 두지 않고 빌드 컨텍스트 survey_schema 로 받는다(synthetic-data ADR 0011): survey-service 의 기준 스키마 태그 시점 schema/.
   DS="$CTX/synthetic-data"; DSW="$CTX/ds-wheels"; DSB="$CTX/ds-bc-src"; DSS="$CTX/ds-schema"
   rm -rf "$DS" "$DSW" "$DSB" "$DSS"; mkdir -p "$DS" "$DSW" "$DSB" "$DSS"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DS"
-  git -C "$CTX/boundary-contracts" archive "$DEPLOY_BC_TAG_DS" | tar -x -C "$DSB"
+  git -C "$CTX/boundary-contracts" archive "$DEPLOY_BC_TAG" | tar -x -C "$DSB"
   "$PIP" wheel -q --no-deps -w "$DSW" "$DSB" >/dev/null 2>&1
   whl=$(basename "$(ls "$DSW"/boundary_contracts-*.whl | head -1)")
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$DSS"
   c=$(commit_of synthetic-data); img="deploy-build/dataset-store:$c"
   "$DOCKER" build -q -t "$img" --build-context "wheels=$DSW" --build-context "survey_schema=$DSS/schema" --build-arg "BC_SPEC=/wheels/$whl" \
-    --build-arg "BC_VERSION=$DEPLOY_BC_TAG_DS" --build-arg "REVISION=$c" "$DS" >/dev/null
+    --build-arg "BC_VERSION=$DEPLOY_BC_TAG" --build-arg "REVISION=$c" "$DS" >/dev/null
   record dataset-store "$img" "$c"
 fi
 
-# 호스트에서 쓰는 wheel: E2E 클라이언트·검증기와 synthetic-data용(그 영역이 고정한 태그, lib.sh DEPLOY_BC_TAG_SD)
+# 호스트에서 쓰는 wheel: E2E 클라이언트·검증기와 synthetic-data 잡용(같은 기준 태그)
 mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
-for tag in "$BC" "$DEPLOY_BC_TAG_SD"; do
+for tag in "$BC"; do
   d="$DEPLOY_ROOT/build/hostsrc-$tag"; rm -rf "$d"; mkdir -p "$d"; git -C "$CTX/boundary-contracts" archive "$tag" | tar -x -C "$d"
   mkdir -p "$DEPLOY_ROOT/build/hostwheels/$tag"; "$PIP" wheel -q --no-deps -w "$DEPLOY_ROOT/build/hostwheels/$tag" "$d" >/dev/null 2>&1
 done

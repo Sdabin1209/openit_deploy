@@ -9,8 +9,8 @@ mkdir -p "$T/survey-service/docs" "$T/survey-service/tests" "$T/model-lab" "$T/s
 BC=$DEPLOY_BC_TAG; MR=$DEPLOY_MR_TAG; TE=$DEPLOY_TE_TAG
 printf 'x\ngit+ssh://git@github.com/Sdabin1209/openit_boundary-contracts.git@%s\ngit+ssh://git@github.com/Sdabin1209/openit_turn-engine.git@%s\n' "$BC" "$TE" > "$T/survey-service/requirements.txt"
 printf 'BOUNDARY_TAG=${BOUNDARY_TAG:-%s}\n' "$BC" > "$T/model-lab/build.sh"
-printf 'boundary-contracts @ git+ssh://git@github.com/x/openit_boundary-contracts.git@%s\n' "$DEPLOY_BC_TAG_SD" > "$T/synthetic-data/requirements.lock"
-printf 'ARG BC_SPEC="boundary-contracts @ git+ssh://git@github.com/x/openit_boundary-contracts.git@%s"\n' "$DEPLOY_BC_TAG_DS" > "$T/synthetic-data/Dockerfile"   # dataset-store 이미지는 DS 태그(ADR 0032)
+printf 'boundary-contracts @ git+ssh://git@github.com/x/openit_boundary-contracts.git@%s\n' "$DEPLOY_BC_TAG" > "$T/synthetic-data/requirements.lock"
+printf 'ARG BC_SPEC="boundary-contracts @ git+ssh://git@github.com/x/openit_boundary-contracts.git@%s"\n' "$DEPLOY_BC_TAG" > "$T/synthetic-data/Dockerfile"   # dataset-store 이미지는 DS 태그(ADR 0032)
 printf 'FROM x\nARG BOUNDARY_CONTRACT=%s\n' "$BC" > "$T/kiosk-frontend/Dockerfile"
 printf 'FROM x\nARG BOUNDARY_CONTRACTS=%s\nLABEL io.openit.turn-engine="n/a"\n' "$BC" > "$T/admin-console/Dockerfile"
 echo "옛 표기 boundary-contracts@v0.0.1" > "$T/survey-service/docs/old.md"; echo "BOUNDARY_TAG=v0.0.1" > "$T/survey-service/tests/old.sh"
@@ -23,6 +23,17 @@ sed -i "s/$BC/v1.3.3/" "$T/kiosk-frontend/Dockerfile" "$T/admin-console/Dockerfi
 out=$(bash "$HERE/check-versions.sh" 2>&1); r=$?
 { [ $r = 1 ] && grep -q 'survey-service/requirements.txt:3: turn-engine v0.0.9' <<<"$out" && grep -q 'model-lab/build.sh:1: boundary-contracts v9.9.9' <<<"$out"; } && grep -q 'kiosk-frontend/Dockerfile:2: boundary-contracts v1.3.3' <<<"$out" && grep -q 'admin-console/Dockerfile:2: boundary-contracts v1.3.3' <<<"$out" && echo "ok: 어긋나면 실패하고 파일:줄을 말한다(kiosk-frontend·admin-console 포함)" || { echo "FAIL: 어긋남을 못 잡았다 (rc=$r)"; echo "$out"; rc=1; }
 grep -q 'docs/old.md\|tests/old.sh' <<<"$out" && { echo "FAIL: 문서·시험을 검사했다"; rc=1; } || echo "ok: 문서·시험의 옛 표기는 무시"
-sed -i "s/@$DEPLOY_BC_TAG_DS/@v0.0.0-mismatch/" "$T/synthetic-data/Dockerfile"; out=$(bash "$HERE/check-versions.sh" 2>&1)
-grep -q 'synthetic-data/Dockerfile:1: boundary-contracts' <<<"$out" && echo "ok: synthetic-data Dockerfile 이 DS 태그와 다르면 실패" || { echo "FAIL: DS 태그 대조가 없다"; rc=1; }
+sed -i "s/@$DEPLOY_BC_TAG/@v0.0.0-mismatch/" "$T/synthetic-data/Dockerfile"; out=$(bash "$HERE/check-versions.sh" 2>&1)
+grep -q 'synthetic-data/Dockerfile:1: boundary-contracts' <<<"$out" && echo "ok: synthetic-data Dockerfile 이 기준 태그와 다르면 실패" || { echo "FAIL: DS 태그 대조가 없다"; rc=1; }
+# 구조화된 파일(pyproject.toml, package.json, compose, JSON)의 어긋남도 잡는다
+mkdir -p "$T/ops-feedback"
+printf '[project]\ndependencies = ["boundary-contracts @ git+ssh://git@github.com/x/openit_boundary-contracts.git@v0.0.0-x"]\n' | sed 's/v0.0.0-x/v1.0.0/' > "$T/ops-feedback/pyproject.toml"
+out=$(bash "$HERE/check-versions.sh" 2>&1); grep -q 'ops-feedback/pyproject.toml:2: boundary-contracts v1.0.0' <<<"$out" && echo "ok: pyproject.toml 의 어긋남" || { echo "FAIL: pyproject.toml 을 읽지 못했다"; rc=1; }
+rm "$T/ops-feedback/pyproject.toml"
+printf '{"dependencies": {"boundary-contracts": "github:x/openit_boundary-contracts#v1.0.0"}}' > "$T/kiosk-frontend/package.json"
+out=$(bash "$HERE/check-versions.sh" 2>&1); grep -q 'kiosk-frontend/package.json:1: boundary-contracts v1.0.0' <<<"$out" && echo "ok: package.json 의 어긋남" || { echo "FAIL: package.json 을 읽지 못했다"; rc=1; }
+rm "$T/kiosk-frontend/package.json"
+printf 'services:\n  a:\n    build:\n      args:\n        TURN_ENGINE_TAG: v1.0.0\n' > "$T/ops-feedback/compose.yaml"
+out=$(bash "$HERE/check-versions.sh" 2>&1); grep -q 'ops-feedback/compose.yaml:5: turn-engine v1.0.0' <<<"$out" && echo "ok: compose 의 어긋남" || { echo "FAIL: compose 를 읽지 못했다"; rc=1; }
+rm "$T/ops-feedback/compose.yaml"
 exit $rc

@@ -121,7 +121,7 @@ if [ $UP_ONLY = 0 ]; then
     [ -e "$WORKSPACE/$1/.git" ] || return 0
     if git -C "$WORKSPACE/$1" rev-parse -q --verify "refs/tags/$2" >/dev/null 2>&1; then ok "태그 $1 $2"; else fail "태그가 없다: $1 $2" "git -C ../$1 fetch --tags (그래도 없으면 원격에 태그가 없다: head 에 알린다)"; fi
   }
-  tagchk boundary-contracts "$DEPLOY_BC_TAG"; tagchk boundary-contracts "$DEPLOY_BC_TAG_SD"
+  tagchk boundary-contracts "$DEPLOY_BC_TAG"
   tagchk model-runtime "$DEPLOY_MR_TAG"; tagchk turn-engine "$DEPLOY_TE_TAG"; tagchk survey-service "$DEPLOY_SS_TAG"
   # --- 디스크
   AVAIL=$(df -Pk "$DEPLOY_ROOT" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')
