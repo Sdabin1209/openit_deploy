@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openit.local/boundary/publish-request.schema.json",
+  "title": "scripts/publish-image.sh 호출 (영역 CI -> deploy)",
+  "description": "deploy 가 받는 호출을 객체로 적은 것: `publish-image.sh <service> <image> [--registry host:port]`. 환경 변수 DEPLOY_LOCK 은 deploy 내부 사정이라 넣지 않는다. 모르는 키 거부: 호출 규약이 바뀌는 것을 CI 가 조용히 놓치지 않게 한다.",
+  "type": "object",
+  "properties": {
+    "service": {"enum": ["survey-service", "question-authoring", "ops-feedback", "release-gate", "model-registry", "dataset-store", "model-serving", "kiosk-frontend", "admin-console", "model-serving-gpu"]},
+    "image": {"type": "string", "minLength": 1, "description": "이미지 ID, 이미지 이름 또는 tar 파일 경로"},
+    "registry": {"type": "string", "pattern": "^[A-Za-z0-9._-]+(:[0-9]{1,5})?$", "description": "host:port, http:// 접두사 없음"}
+  },
+  "required": ["service", "image"],
+  "additionalProperties": false
+}

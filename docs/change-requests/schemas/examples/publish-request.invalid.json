@@ -1,0 +1,4 @@
+{
+  "service": "survey-svc",
+  "image": "deploy-build/survey-service:85b3552"
+}

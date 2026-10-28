@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openit.local/boundary/publish-result.schema.json",
+  "title": "publish-image.sh 결과 (deploy -> 영역 CI)",
+  "description": "표준 출력 마지막 줄 `PUBLISHED|UNCHANGED <서비스> <digest> <revision>` 을 풀어 쓴 것과 종료 코드. 영역 CI 는 이 줄을 deploy 변경으로 제출한다(docs/ci.md 3절). 종료 코드 의미: 0 성공 또는 이미 같음, 1 Docker 불가, 2 사용법·서비스 이름 거부, 3 필수 라벨 누락, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패.",
+  "type": "object",
+  "properties": {
+    "exit_code": {"enum": [0, 1, 2, 3, 4, 5]},
+    "status": {"enum": ["PUBLISHED", "UNCHANGED"], "description": "exit_code 가 0 일 때만 있다"},
+    "service": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "revision": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"}
+  },
+  "required": ["exit_code"],
+  "if": {"properties": {"exit_code": {"const": 0}}},
+  "then": {"required": ["status", "service", "digest", "revision"]},
+  "else": {"not": {"anyOf": [{"required": ["status"]}, {"required": ["digest"]}]}},
+  "additionalProperties": false
+}

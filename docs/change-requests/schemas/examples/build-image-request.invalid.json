@@ -1,0 +1,9 @@
+{
+  "source_dir": "/work/survey-service",
+  "revision": "HEAD",
+  "versions": {
+    "boundary": "v2.1.1",
+    "turn_engine": "v0.4.2"
+  },
+  "image_tag": "deploy-build/survey-service:85b3552"
+}

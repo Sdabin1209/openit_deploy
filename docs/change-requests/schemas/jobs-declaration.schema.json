@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openit.local/boundary/jobs-declaration.schema.json",
+  "title": "영역이 이미지로 선언하는 잡 (라벨 io.openit.jobs 의 내용)",
+  "description": "영역이 내고 deploy 가 읽어 compose 잡 정의(command, 비밀 파일 마운트, 네트워크)와 config/jobs.yaml 을 만든다. 지금은 deploy 가 영역의 파이썬 모듈 경로와 서브커맨드를 compose.yaml 에 직접 적는다(예: python -m release_gate collect). 잡은 멱등이어야 한다(워크스페이스 규칙 D39). 모르는 키 거부: 선언에 없는 능력을 deploy 가 짐작해 쓰지 않게 한다.",
+  "type": "object",
+  "properties": {
+    "jobs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/job"}}
+  },
+  "required": ["jobs"],
+  "additionalProperties": false,
+  "$defs": {
+    "job": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "argv": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "이미지 안에서 실행할 명령"},
+        "idempotent": {"const": true},
+        "secret_files": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*_FILE$"}, "description": "잡이 읽는 NAME_FILE 환경 변수 이름. 어떤 비밀 파일을 연결할지는 deploy 가 정한다(D84)"},
+        "config": {"type": "object", "properties": {"container_path": {"type": "string", "pattern": "^/"}, "schema": {"type": "string", "description": "설정 파일의 JSON Schema 위치(영역 계약 패키지 안)"}}, "required": ["container_path"], "additionalProperties": false},
+        "needs": {"type": "array", "uniqueItems": true, "items": {"enum": ["postgres", "gate-data", "release-network", "authoring-network", "logs-network"]}, "description": "잡이 닿아야 하는 자원(이름은 deploy 가 정한 집합)"}
+      },
+      "required": ["name", "argv", "idempotent"],
+      "additionalProperties": false
+    }
+  }
+}
