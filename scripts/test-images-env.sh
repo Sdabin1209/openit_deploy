@@ -9,6 +9,8 @@ ok() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  P
 no() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  FAIL $name (성공하면 안 된다)"; F=$((F+1)); else echo "  PASS $name"; fi; }
 # 임시 deploy 사본(실제 build/, locks/, state/ 를 건드리지 않는다). model-runtime 은 읽기 전용으로 링크한다
 mkdir -p "$T/deploy/build" && cp -r "$HERE" "$T/deploy/scripts" && cp -r "$ROOT/locks" "$T/deploy/locks" && ln -s "$WS/model-runtime" "$T/model-runtime"
+# 게시 전 라벨 검증(ADR 0035)이 읽는 계약 ImageLabels 스키마 사본도 임시 사본에 둔다(없으면 검사를 못 해 게시가 거부된다)
+mkdir -p "$T/deploy/docs/change-requests/contract-ready" && cp -r "$ROOT/docs/change-requests/contract-ready/schemas" "$T/deploy/docs/change-requests/contract-ready/schemas"
 D="$T/deploy"; source "$D/scripts/lib.sh" 2>/dev/null
 CUR=$(git -C "$WS/model-runtime" rev-parse --short "$DEPLOY_MR_TAG^{commit}") || { echo "model-runtime $DEPLOY_MR_TAG 태그가 이 워크스페이스에 없다: 시험할 수 없다"; exit 1; }
 # 가짜 docker: image inspect 는 FAKE_HAVE(공백으로 구분한 이미지 이름)에 있을 때만 성공, tag 는 기록, push 는 digest 를 낸다
@@ -16,7 +18,11 @@ cat > "$T/docker" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE_LOG"
 case "$1" in
-  image) [ "$2" = inspect ] && { case " $FAKE_HAVE " in *" $3 "*) exit 0;; esac; echo "Error: No such image: $3" >&2; exit 1; };;
+  image) [ "$2" = inspect ] && { case " $FAKE_HAVE " in *" $3 "*)
+      # `--format '{{json .Config.Labels}}'` 요청에는 계약 ImageLabels 를 따르는 라벨을 낸다(게시 전 검증, ADR 0035). FAKE_BAD_LABELS=1 이면 계약을 어기는 값(turn-engine=none)을 낸다
+      case "$*" in *Config.Labels*) if [ "${FAKE_BAD_LABELS:-0}" = 1 ]; then echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.1.1","io.openit.contracts.survey-schema":"1","io.openit.turn-engine":"none"}'
+        else echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.1.1","io.openit.contracts.survey-schema":"1","io.openit.turn-engine":"n/a","io.openit.model-runtime":"n/a"}'; fi;; esac
+      exit 0;; esac; echo "Error: No such image: $3" >&2; exit 1; };;
   tag) case " $FAKE_HAVE " in *" $2 "*) exit 0;; esac; echo "Error response from daemon: No such image: $2" >&2; exit 1;;
   push) echo "latest: digest: sha256:$(printf 'a%.0s' $(seq 64)) size: 1"; exit 0;;
 esac
@@ -27,6 +33,8 @@ cat > "$T/curl" <<'SH'
 echo "Docker-Content-Digest: sha256:$(printf 'a%.0s' $(seq 64))"
 SH
 chmod +x "$T/docker" "$T/curl"; export FAKE_LOG="$T/log"
+# 라벨 검사기를 돌릴 파이썬(jsonschema 필요): 임시 사본에는 .venv 가 없으므로 원래 리포의 .venv 를 쓴다. 없으면 검사를 못 해 게시가 거부된다(의도)
+export LABELS_PYTHON="${LABELS_PYTHON:-$ROOT/.venv/bin/python}"; [ -x "$LABELS_PYTHON" ] || export LABELS_PYTHON=python3
 BASE="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console"
 mkenv() { : > "$D/build/images.env"; for a in $BASE; do echo "$a deploy-build/$a:abc1234 abc1234" >> "$D/build/images.env"; done; [ -z "${1:-}" ] || echo "model-serving-gpu deploy-build/model-serving-gpu:$1 $1" >> "$D/build/images.env"; }
 HAVE_BASE=""; for a in $BASE; do HAVE_BASE="$HAVE_BASE deploy-build/$a:abc1234"; done
@@ -47,6 +55,10 @@ ok "재현: 존재하지 않는 옛 GPU 기록이 남아 있어도 기본 publis
 no "기본 publish 가 GPU 이미지를 tag 하지 않는다" grep -q "model-serving-gpu" "$T/log"
 no "잠금에 GPU digest 가 들어가지 않는다" grep -q '^MODEL_SERVING_GPU_' "$T/lock"
 ok "기본 영역 8개의 digest 는 잠금에 들어간다" bash -c "[ \$(grep -c '_DIGEST=sha256:' '$T/lock') -ge 8 ] && grep -q '^MODEL_SERVING_DIGEST=' '$T/lock'"
+mkenv ""; reg; export FAKE_HAVE="$HAVE_BASE"; : > "$T/log"
+no "라벨이 계약 ImageLabels 를 어기는 이미지는 올리지 않는다(검증기가 거부, ADR 0035)" bash -c "export FAKE_BAD_LABELS=1; $(declare -f pub); T='$T'; D='$D'; pub"
+no "거부된 게시는 이미지를 push 하지 않는다" grep -q "^push" "$T/log"
+mkenv 3992156; reg; export FAKE_HAVE="$HAVE_BASE"
 reg; no "이름을 줘서 GPU 를 올리려는데 기록이 유효하지 않으면 거부한다" pub model-serving-gpu
 reg; ( pub model-serving-gpu 2>&1 || true ) | grep -q "build-images.sh --gpu" && { N=$((N+1)); echo "  PASS 거부 메시지에 재빌드 안내가 있다"; } || { N=$((N+1)); echo "  FAIL 거부 메시지에 재빌드 안내"; F=$((F+1)); }
 mkenv "$CUR"; reg; export FAKE_HAVE="$HAVE_BASE deploy-build/model-serving-gpu:$CUR"; ok "유효한 GPU 기록은 이름을 줄 때 올라간다" pub model-serving-gpu
