@@ -36,5 +36,8 @@
  ],
  "corrections": [
   {"contains": "아까 말", "key": "Q1.D01.diagnosed", "value": false, "at": "Q1.D02"}
+ ],
+ "reasks": [
+  {"contains": "되묻기시험", "key": "Q1.D01.diagnosed", "reason": "MISSING"}
  ]
 }

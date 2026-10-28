@@ -78,6 +78,7 @@ areas:
       "5c": {why: "추론 출력(CORRECT)의 계약 모양"}
       "5m": {why: "model-serving 무응답 때 survey-service의 반응"}
       "5s": {why: "새 어댑터 적재(model-serving의 LOADED 상태)"}
+      "5n": {why: "가짜 A의 reasks 설정으로 REASK 를 연속 유도해 survey-service 되묻기 한도(REASK_LIMIT) 정지를 검증(5n-reask)"}
   model-lab:
     image: [model-registry]
     tests: {kind: pytest}

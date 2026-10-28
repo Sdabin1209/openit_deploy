@@ -1006,7 +1006,7 @@ def step5n():
     # (a) 위험 발화로 정지(단계 5f 의 방식: survey-service 기본 목록의 문구). 이 구성에는 직원 콘솔 구독자가 없어 전달은 DELIVERY_FAILED 로 끝나는 것이 정상이다(survey-service alerts.py 머리말). 구독자가 있으면 DELIVERED 일 수 있고 그래도 아래 호출은 OPEN 알림이 있으므로 성립한다
     sid = f"sess-{RID}-n"; phrase, _r = risk_phrase_from_defaults()
     A = dev_tok("e2e-a"); B = dev_tok("e2e-b")
-    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, ("기기 A 세션 시작", c, st)
+    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[:2]; assert c == 200, ("기기 A 세션 시작", c, st)
     c, rr, _h = tcall(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": f"저는 {phrase} 있어요", "turn_id": "n-1"}); assert c == 200, (c, rr)
     fs = rr.get("turn_failure_signal") or {}; first_status = fs.get("staff_alert")
     assert first_status in ("DELIVERED", "DELIVERY_FAILED"), ("위험 발화인데 직원 알림 신호가 없다", rr)
@@ -1047,9 +1047,37 @@ def step5n():
     c, st3 = state_of(sid); assert c == 200 and not st3.get("pause_reason"), ("정지가 풀렸는데 pause_reason 이 남았다(정지일 때만 의미)", st3)
     tcall(A, "POST", f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
     rec("5n", "REAL", f"위험 발화 정지(첫 전달 {first_status}) -> /state pause_reason=RISK -> staff-call/retry(필드·같은 turn_id 멱등·간격 안 새 turn_id 429+Retry-After) -> 다른 기기·위조·무토큰·직원 토큰 거부 -> staff-call/report(StaffAlert manual_notice_*, 멱등, 다른 outcome 409, 직원 알림 목록에 보임, 세션은 PAUSED_RISK 유지) -> 개입 뒤 재알림 409 NO_OPEN_ALERT")
-    # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT)는 가짜 A 로 만들 수 없다: fake 백엔드는 env 로 고정 출력을 받지 못하고(MODEL_RUNTIME_FAKE_FLOW_FILE 은 NEXT 만 낸다) REASK 를 내는 설정이 없다(model-runtime backends.py make_default_responder). 지어내지 않고 한계로 둔다
-    rz = survey_ready()[1]
-    rec("5n-reask", "BLOCKED", f"pause_reason=REASK_LIMIT: 가짜 A 가 REASK 를 연속으로 내는 구성이 없다(model-runtime fake 는 NEXT 만, 고정 출력 env 없음) -> model-runtime 변경 요청 대상(deploy/docs/change-requests). 서비스 설정은 /readyz reask_limit={rz.get('reask_limit')} 로만 본다")
+    # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT, survey-service ADR-0020·0022): 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json 의
+    # '되묻기시험' -> REASK)으로 같은 세션에서 REASK 를 연속으로 유도한다. 한도(N)는 /readyz 의 reask_limit 에서 읽는다(지어내지 않는다)
+    rz = survey_ready()[1]; N = rz.get("reask_limit")
+    if not isinstance(N, int) or N < 1:
+        rec("5n-reask", "BLOCKED", f"되묻기 한도가 꺼져 있거나 읽지 못했다(/readyz reask_limit={N!r}). SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
+    sid2 = f"sess-{RID}-n-reask"; utt = "되묻기시험 글쎄요"; FAKE = "(가짜 응답)"
+    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid2, "kind": "SESSION_START"})[:2]; assert c == 200, ("되묻기 세션 시작", c, st)
+    for i in range(1, N + 1):   # 한도까지는 정상 진행: 되묻는다(세션은 진행 중, 직원 알림 없음, 문장은 모델 응답)
+        c, rr = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{i}"})[:2]
+        assert c == 200 and not rr.get("turn_failure_signal") and FAKE in str(rr.get("response_text")), (f"{i}번째 되묻기 턴이 정상 진행이 아니다", c, str(rr)[:200])
+    c, s_ = state_of(sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), (f"한도({N}) 전에 정지했다", c, s_)
+    sv = staff_sv(sid2)
+    said = [t for t in sv["turns"] if t["utterance"]]; assert [t["action"] for t in said] == ["REASK"] * N, ("턴 기록의 action", [(t["turn_id"], t["action"]) for t in said])
+    c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200 and not [x for x in pg0["items"] if x["session_id"] == sid2], "한도 전에 직원 알림이 생겼다"
+    # N+1 번째: 되묻는 대신 직원 호출 경로(PAUSED_RISK + CALL_STAFF 알림 + 고정 문장 CALL_STAFF, 모델 문장이 아니다)
+    c, rl = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{N + 1}"})[:2]
+    assert c == 200 and rl.get("response_text") and FAKE not in str(rl.get("response_text")), (f"{N + 1}번째 턴 응답이 문항 세트 고정 문장이 아니다", c, str(rl)[:200])
+    fixed_text = rl["response_text"]
+    c, s_ = state_of(sid2); assert c == 200 and s_["state"] == "PAUSED_RISK", (c, s_)
+    assert s_.get("pause_reason") == "REASK_LIMIT", ("/state 의 pause_reason 이 REASK_LIMIT 가 아니다(계약 v2.1.0 H절)", s_); _validate_if_known("SessionState", s_)
+    c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
+    al = [x for x in pg["items"] if x["session_id"] == sid2]
+    assert len(al) == 1 and al[0]["kind"] == "CALL_STAFF" and al[0].get("pause_reason") == "REASK_LIMIT", ("CALL_STAFF 직원 알림(pause_reason REASK_LIMIT)이 하나 생기지 않았다", al)
+    assert staff_sv(sid2)["status"] == "PAUSED_RISK"
+    # 직원 재개 -> 정상: 정지가 풀리고 pause_reason 이 사라지며, 되묻기 문구가 없는 발화는 다시 모델 응답으로 진행한다(연속 횟수는 다시 센다)
+    c, iv, _h = gw_raw("POST", f"/v1/sessions/{sid2}/intervention", {"session_id": sid2, "decision": "RESUME", "turn_id": "nr-iv-1"}, basic=STAFF()); assert c == 200, (c, iv)
+    c, s_ = state_of(sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), ("재개 뒤 상태", c, s_)
+    c, rn = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "nr-after"})[:2]
+    assert c == 200 and not rn.get("turn_failure_signal") and FAKE in str(rn.get("response_text")), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
+    tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
+    rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, /readyz reask_limit={N}): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
 
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
