@@ -42,10 +42,11 @@
 
 ## 3. 실행 방법
 
-전제: git, python3(3.10+)와 venv, Docker(데몬 + compose + buildx). 이미지는 형제 폴더의 영역 리포 소스로 빌드하므로 `deploy`의 상위 폴더에 영역 리포들이 나란히 있어야 한다(`head/setup.sh`가 받아 준다). 설치 상세와 환경별 증상표는 docs/SETUP.md.
+전제: git, python3(3.10+)와 venv, Docker(데몬 + compose + buildx). 이미지는 형제 폴더의 영역 리포 소스로 빌드하므로 `deploy`의 상위 폴더에 영역 리포들이 나란히 있어야 한다(`head/setup.sh`가 받아 준다). 새 머신 절차 전체(head clone, `prepare-areas.sh`, doctor, e2e)와 환경별 증상표는 docs/SETUP.md 맨 위.
 
 ```
 cd <루트>/deploy
+bash scripts/prepare-areas.sh          # 0) 새 머신이면: 영역 환경 준비(docs/SETUP.md)
 bash scripts/doctor.sh                 # 1) 사전 점검. FAIL이면 안내된 한 줄 해결을 먼저 한다
 bash scripts/e2e.sh                    # 2) 시험: 빌드 + 임시 레지스트리 + 전체 합격 시나리오(인도 전 필수). 개발 중에는 --fast --reuse-build
 bash scripts/demo.sh up                # 3) 화면을 눌러 보는 데모(프로젝트 deploy-demo). 끝나면 demo.sh down

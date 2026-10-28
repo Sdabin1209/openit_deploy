@@ -18,7 +18,7 @@ GPU 서버가 필요한 부분은 "구멍"으로 두었다. 나머지(이미지,
 
 ```bash
 # [PC] 커밋된 내용과 태그만 담긴다(작업 중인 변경은 담기지 않는다: 먼저 커밋)
-cd ~/sdabin/healthKiosk && mkdir -p /tmp/openit-bundles
+cd <루트> && mkdir -p /tmp/openit-bundles
 for r in $(ls -d */ | tr -d /); do [ -d "$r/.git" ] && [ "$r" != head ] && git -C "$r" bundle create /tmp/openit-bundles/$r.bundle --all; done
 scp -o KexAlgorithms=curve25519-sha256 -r /tmp/openit-bundles <서버>:~/openit-bundles      # [사용자] 서버 주소는 사용자가 안다
 ```
@@ -86,7 +86,7 @@ cat probe-h1.txt | sed -n '/== 지연 표/,$p'
 # [사용자] 1) 학습 서버에서 어댑터를 가져온다 (읽기만 하는 복사. 경로는 학습 서버에서 확인)
 rsync -a openit:<경로>/adapters/LORA_A/ ./attach/LORA_A/
 rsync -a openit:<경로>/adapters/LORA_B/ ./attach/LORA_B/
-cp ~/sdabin/healthKiosk/model-lab/prompts/lora_a.system.txt ~/sdabin/healthKiosk/model-lab/prompts/lora_b.system.txt ./attach/
+cp <루트>/model-lab/prompts/lora_a.system.txt <루트>/model-lab/prompts/lora_b.system.txt ./attach/
 # [사용자] 2) GPU 서버로 옮긴다
 scp -o KexAlgorithms=curve25519-sha256 -r ./attach <서버>:~/attach
 ```

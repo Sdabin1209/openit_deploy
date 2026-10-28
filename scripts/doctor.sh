@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do case "$1" in
   -h|--help) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
   *) echo "알 수 없는 인자: $1 (사용: doctor.sh [--up] [--backup] [--llm] [--inference <URL>])" >&2; exit 2;; esac; done
 case "$INF_URL" in ""|http://*|https://*) ;; *) echo "--inference 에는 http:// 또는 https:// 주소가 필요하다: $INF_URL" >&2; exit 2;; esac
-FAILS=0; WARNS=0; UNABLES=0
+FAILS=0; WARNS=0; UNABLES=0; UNREAD=0
 ok()   { printf '  [OK]   %s\n' "$1"; }
 warn() { printf '  [WARN] %s\n         -> %s\n' "$1" "$2"; WARNS=$((WARNS+1)); }
 # unable: 이 호스트에서 어떤 시험을 돌릴 수 없다는 표시. WARN 보다 강한 문구(이유와 해결)를 내지만 E2E·기동을 막지는 않는다(이미지 빌드는 컨테이너 안의 도구를 쓴다). 종료 코드에 영향 없음
@@ -97,14 +97,17 @@ fi
 
 if [ $UP_ONLY = 0 ]; then
   # --- 워크스페이스 형제 리포와 필요한 태그 (build-images.sh 가 쓰는 값: lib.sh)
-  NEED="$(areas_list --kind python,node,library)"   # 정본: head/shared/areas.json
+  # 왜: 목록을 못 읽은 것을 "0개 통과"로 세면 확인하지 못한 것을 확인한 것처럼 쓰게 된다(워크스페이스 규칙). 못 읽으면 '확인 못 함'으로 세고 종료 코드도 실패다
+  if NEED="$(areas_list --kind python,node,library)"; then AREAS_OK=1; else AREAS_OK=0; NEED=""; UNREAD=$((UNREAD+1)); echo "  [확인 못 함] 영역 목록(head/shared/areas.json)을 읽지 못해 형제 리포·영역 시험 환경을 확인하지 못했다"; echo "         -> 해결: docs/SETUP.md 1단계: head 를 clone 하고 bash <루트>/head/setup.sh (파일 위치: $WORKSPACE/head/shared/areas.json)"; fi   # 정본: head/shared/areas.json
   MISSING=""; for r in $NEED; do [ -e "$WORKSPACE/$r/.git" ] || MISSING="$MISSING $r"; done
-  if [ -z "$MISSING" ]; then ok "형제 리포 $(echo $NEED | wc -w)개가 $WORKSPACE 옆에 있다"; else fail "형제 리포가 없다:$MISSING" "docs/SETUP.md C절: head 를 clone 한 뒤 bash <루트>/head/setup.sh (폴더 이름은 head/workspace.yaml 과 같아야 한다)"; fi
+  if [ $AREAS_OK = 0 ]; then :
+  elif [ -z "$MISSING" ]; then ok "형제 리포 $(echo $NEED | wc -w)개가 $WORKSPACE 옆에 있다"; else fail "형제 리포가 없다:$MISSING" "docs/SETUP.md C절: head 를 clone 한 뒤 bash <루트>/head/setup.sh (폴더 이름은 head/workspace.yaml 과 같아야 한다)"; fi
   # --- 영역 시험 환경(check-all 의 SKIP 원인). 없으면 WARN: 점검 항목이 검증되지 않는다
-  NOENV=""; for r in $(areas_list --kind python,library); do
+  NOENV=""; for r in $( [ $AREAS_OK = 1 ] && areas_list --kind python,library 2>/dev/null ); do
     [ -e "$WORKSPACE/$r/.git" ] || continue
     { [ -x "$WORKSPACE/$r/.venv/bin/python" ] && "$WORKSPACE/$r/.venv/bin/python" -c 'import pytest' >/dev/null 2>&1; } || NOENV="$NOENV $r"; done
-  if [ -z "$NOENV" ]; then ok "파이썬 영역 시험 환경(.venv와 pytest)이 있다"; else warn "파이썬 영역 시험 환경이 없다(.venv 또는 그 안의 pytest):$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "각 영역 README 실행 방법의 설치 줄(.venv + pip install). 그 줄에 pytest 가 없으면 .venv/bin/pip install pytest 를 더한다. docs/SETUP.md F절"; fi
+  if [ $AREAS_OK = 0 ]; then :
+  elif [ -z "$NOENV" ]; then ok "파이썬 영역 시험 환경(.venv와 pytest)이 있다"; else warn "파이썬 영역 시험 환경이 없다(.venv 또는 그 안의 pytest):$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "bash scripts/prepare-areas.sh (각 영역의 scripts/setup-env.sh 를 실행한다). docs/SETUP.md F절"; fi
   # --- 노드 영역(admin-console, kiosk-frontend): 호스트에 node(>= $DEPLOY_NODE_MIN_MAJOR)와 npm 이 있어야 시험할 수 있다. 이미지 빌드는 컨테이너 안의 node 를 쓰므로 이 검사와 무관하다
   NODEAREAS=""; for r in kiosk-frontend admin-console; do [ -e "$WORKSPACE/$r/.git" ] && NODEAREAS="$NODEAREAS $r"; done
   if [ -n "$NODEAREAS" ]; then
@@ -115,7 +118,7 @@ if [ $UP_ONLY = 0 ]; then
       unable "노드 영역 시험 불가:$NODEAREAS 는 node >= $DEPLOY_NODE_MIN_MAJOR 이 필요한데 v$NV 이다 (package.json engines)" "node $DEPLOY_NODE_MIN_MAJOR 이상으로 올린다. docs/SETUP.md F절"
     else ok "node v$NV(>= $DEPLOY_NODE_MIN_MAJOR), npm $(npm --version 2>/dev/null)"; fi
     NONM=""; for r in $NODEAREAS; do [ -d "$WORKSPACE/$r/node_modules" ] || NONM="$NONM $r"; done
-    [ -z "$NONM" ] && ok "노드 영역 node_modules 가 있다" || warn "노드 영역 node_modules 가 없다:$NONM -> check-all 의 해당 규칙이 SKIP(통과 아님)" "그 영역에서 npm ci. docs/SETUP.md F절"
+    [ -z "$NONM" ] && ok "노드 영역 node_modules 가 있다" || warn "노드 영역 node_modules 가 없다:$NONM -> check-all 의 해당 규칙이 SKIP(통과 아님)" "bash scripts/prepare-areas.sh (노드 영역은 setup-env.sh 가 npm ci). docs/SETUP.md F절"
   fi
   tagchk() { # tagchk <리포> <태그>
     [ -e "$WORKSPACE/$1/.git" ] || return 0
@@ -225,5 +228,6 @@ if [ -n "$INF_URL" ]; then
   fi
 fi
 
-echo; if [ $FAILS = 0 ]; then echo "doctor: 통과 (WARN $WARNS, 시험 불가 $UNABLES)"; else echo "doctor: FAIL $FAILS건 (WARN $WARNS, 시험 불가 $UNABLES) -- 위 해결 방법을 따른 뒤 다시 실행. 건너뛰기: DEPLOY_SKIP_DOCTOR=1"; fi
+echo; if [ $FAILS = 0 ] && [ $UNREAD -gt 0 ]; then echo "doctor: 확인 못 함 ${UNREAD}건 (통과 아님; FAIL 0, WARN $WARNS, 시험 불가 $UNABLES) -- 위 해결 방법을 따른 뒤 다시 실행"; exit 1
+elif [ $FAILS = 0 ]; then echo "doctor: 통과 (WARN $WARNS, 시험 불가 $UNABLES)"; else echo "doctor: FAIL $FAILS건 (확인 못 함 $UNREAD, WARN $WARNS, 시험 불가 $UNABLES) -- 위 해결 방법을 따른 뒤 다시 실행. 건너뛰기: DEPLOY_SKIP_DOCTOR=1"; fi
 exit $([ $FAILS = 0 ] && echo 0 || echo 1)

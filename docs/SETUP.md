@@ -2,6 +2,21 @@
 
 원칙: 처음부터 누구나 어떤 환경에서든 따라 할 수 있어야 한다. 의존은 **가상환경(.venv)과 컨테이너**로 만들고, 그것으로 못 만드는 것(git, python3, Docker 자체)은 아래에 어떻게 구성하는지 적었다. 경로는 어디에도 고정되어 있지 않다(루트 폴더 이름과 위치는 자유). 막히면 먼저 `bash scripts/doctor.sh`를 돌려 무엇이 없는지 본다.
 
+## 새 머신 절차 (순서대로)
+
+전제 도구(git, python3+venv, Docker, node)는 0~B절. GitHub 읽기 접근은 C절 1번.
+
+```
+mkdir -p <루트> && cd <루트>
+git clone git@github.com:Sdabin1209/openit_head.git head && bash head/setup.sh   # 1. 나머지 영역 리포 clone (C절)
+cd deploy
+bash scripts/prepare-areas.sh      # 2. 영역 환경 준비: 각 영역의 scripts/setup-env.sh 실행 + deploy 자신의 .venv (F절)
+bash scripts/doctor.sh             # 3. 사전 점검 (FAIL이면 안내된 해결을 따른다)
+bash scripts/e2e.sh                # 4. 전체 시험 (D절)
+```
+
+`prepare-areas.sh`는 `head/shared/areas.json`의 python/node/library 영역마다 `<영역>/scripts/setup-env.sh`를 차례로 실행하고 영역별 성공/실패/스크립트없음/소요시간 표를 낸다(하나 실패해도 나머지는 계속, 하나라도 실패하면 종료 코드 1, 멱등). `--list`는 대상만 보이고, 영역 이름을 주면 그 영역만 한다. deploy 자신의 `.venv`는 `prepare-host.sh venv`(requirements.txt 설치, e2e.sh도 부르는 같은 코드)를 그대로 불러 준비한다. deploy의 시험은 unittest라 pytest가 필요 없다.
+
 ## 0. 필요한 것 한눈에
 
 | 필요 | 이유 | 만드는 법 |
@@ -10,7 +25,7 @@
 | python3 (3.10+)와 venv 모듈 | E2E·스크립트가 `.venv` 가상환경을 만든다 | A절 |
 | Docker (데몬 + compose + buildx 플러그인) | 모든 서비스·이미지 | A절(리눅스) 또는 B절(WSL2) |
 | 형제 리포 11~13개 | 이미지는 각 영역 리포의 소스로 빌드한다 | C절 |
-| 영역별 `.venv`(와 pytest)/`node_modules`, 노드 영역은 호스트 node·npm | check-all이 영역 시험 수집·완화 정책을 실제로 확인한다(없으면 SKIP) | F절 |
+| 영역별 `.venv`(와 pytest)/`node_modules`, 노드 영역은 호스트 node·npm | check-all이 영역 시험 수집·완화 정책을 실제로 확인한다(없으면 SKIP) | `prepare-areas.sh` (F절) |
 | 인터넷(빌드할 때만) | 베이스 이미지, pip, npm | 이미 만든 이미지로 `--reuse-build`만 할 때는 불필요 |
 | curl | 점검·스모크(선택) | 패키지 관리자 |
 
@@ -110,11 +125,11 @@ bash scripts/demo.sh status | down | reset
 
 `scripts/check-all.sh`의 규칙 3(완화 정책)과 규칙 8(영역별 시험 수집)은 형제 영역의 가상환경을 실제로 불러서 확인한다. 영역에 `.venv`(파이썬 영역) 또는 `node_modules`(admin-console, kiosk-frontend)가 없으면 그 영역은 **검증 안 함**이 되고 규칙은 SKIP이다. SKIP은 통과가 아니다. `e2e.sh`는 영역 소스로 이미지를 빌드할 뿐 영역의 개발용 가상환경을 만들지 않으므로, 새 머신에서 C절만 하고 check-all을 돌리면 SKIP이 나온다.
 
-해결: 영역마다 그 영역 README의 "실행 방법"에 적힌 설치 줄을 한 번 실행한다(영역마다 설치 줄이 달라 여기에 옮기지 않는다. 이 리포는 형제 폴더를 만들지 않는다). 요약하면 파이썬 영역은 `python3 -m venv .venv` 뒤 README의 `pip install ...`(pytest 포함), 노드 영역은 `npm ci`다. 규칙 3은 `model-runtime/.venv`를 쓴다. 확인: `bash scripts/check-all.sh`가 `SKIP 0`으로 끝나야 한다. `bash scripts/doctor.sh`는 빠진 영역을 WARN으로 알려 준다.
+해결: `bash scripts/prepare-areas.sh` 한 줄. 영역 환경(파이썬은 `.venv`와 pytest, 노드는 `npm ci`)을 만드는 명령은 각 영역의 `scripts/setup-env.sh`가 정본이고 여기에 옮기지 않는다(이 리포는 형제 폴더를 직접 만들지 않고 그 스크립트를 부를 뿐이다). 표에서 `스크립트없음`인 영역은 아직 그 스크립트가 없는 것이니 영역 쪽에서 만든다. 확인: `bash scripts/check-all.sh`가 `SKIP 0`으로 끝나야 한다. `bash scripts/doctor.sh`는 빠진 영역을 WARN으로 알려 준다.
 
 **전제와 예외.**
 - **노드 영역은 node/npm이 먼저 필요하다.** admin-console, kiosk-frontend는 `npm ci`로 `node_modules`를 만들고 `npm test`로 수집한다. 필요한 node 주 버전 하한은 두 영역의 `package.json` `engines`(`>=24`)와 Dockerfile(`node:24`)에서 읽어 `scripts/lib.sh`의 `DEPLOY_NODE_MIN_MAJOR`에 한 곳으로 두었다(영역 파일이 바뀌면 거기를 따라 고친다). `doctor.sh`는 호스트의 node 버전과 npm을 검사하고, 없거나 낮으면 `[불가] 노드 영역 시험 불가`와 해결을 낸다(E2E를 막지는 않는다: 이미지 빌드는 컨테이너 안의 node를 쓴다). check-all의 규칙 8은 `node_modules`가 있을 때만 `npm test`를 부르므로, node가 PATH에 없는 호스트는 doctor가 알려 준다.
-- **파이썬 영역 모두에 pytest가 있어야 한다.** 규칙 8은 `.venv`에 pytest가 없으면 그 영역을 검증 안 함으로 둔다. 영역 README의 설치 줄은 pytest를 포함하는 것(`'.[dev]'`, `pytest` 인자 등)과 포함하지 않는 것이 섞여 있다. 작성 시점에 boundary-contracts README의 줄(`pip install -e .`)에는 pytest가 없다. 줄에 pytest가 없는 영역은 그 줄을 실행한 뒤 `.venv/bin/pip install pytest`를 더한다. doctor가 `.venv`는 있는데 pytest가 없는 영역도 짚는다. 이웃 README는 이 리포가 고치지 않는다([CR-D24](change-requests/CR-D24-boundary-contracts-readme-pytest.md)).
+- **파이썬 영역 모두에 pytest가 있어야 한다.** 규칙 8은 `.venv`에 pytest가 없으면 그 영역을 검증 안 함으로 둔다. pytest를 넣는 것은 각 영역 `setup-env.sh`의 몫이다. doctor가 `.venv`는 있는데 pytest가 없는 영역도 짚는다.
 
 **sudo 없이 홈에 node를 설치하는 표준 경로.** 공식 배포본을 받아 해시를 검증하고 홈에 푼다.
 
