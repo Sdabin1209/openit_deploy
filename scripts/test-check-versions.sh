@@ -4,6 +4,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh" 2>/dev/null || DEPLOY_NO_DOCKER=1 source "$HERE/lib.sh"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/head/shared"; cp "$HERE/../../head/shared/areas.json" "$T/head/shared/areas.json"
 mkdir -p "$T/survey-service/docs" "$T/survey-service/tests" "$T/model-lab" "$T/synthetic-data" "$T/kiosk-frontend" "$T/admin-console"
 BC=$DEPLOY_BC_TAG; MR=$DEPLOY_MR_TAG; TE=$DEPLOY_TE_TAG
 printf 'x\ngit+ssh://git@github.com/Sdabin1209/openit_boundary-contracts.git@%s\ngit+ssh://git@github.com/Sdabin1209/openit_turn-engine.git@%s\n' "$BC" "$TE" > "$T/survey-service/requirements.txt"

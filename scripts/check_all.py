@@ -12,6 +12,7 @@
 환경 변수(시험용): CHECK_ALL_WORKSPACE, CHECK_ALL_VERSIONS_CMD, CHECK_ALL_MR_PY, CHECK_ALL_ONLY(쉼표로 구분한 규칙 번호), CHECK_ALL_ALLOW, CHECK_ALL_EXCLUDE, CHECK_ALL_E2E_CLAIMS"""
 from __future__ import annotations
 
+import ast
 import fnmatch
 import json
 import os
@@ -28,15 +29,14 @@ WS = Path(os.environ.get("CHECK_ALL_WORKSPACE") or HERE.parent.parent)
 ALLOW_FILE = Path(os.environ.get("CHECK_ALL_ALLOW") or HERE / "check-all-allow.txt")
 EXCLUDE_FILE = Path(os.environ.get("CHECK_ALL_EXCLUDE") or HERE / "check-all.exclude")
 
-# 점검이 처리 방법을 아는 영역과 종류. 표에 없는 .git 폴더는 '모르는 대상'이다.
-AREA_KIND = {
-    "admin-console": "node", "kiosk-frontend": "node",
-    "boundary-contracts": "contract", "deploy": "shell", "head": "docs",
-    "model-lab": "py", "model-runtime": "py", "ops-feedback": "py", "question-authoring": "py",
-    "release-gate": "py", "survey-service": "py", "synthetic-data": "py", "turn-engine": "py",
-}
-VERSION_AREAS = ["survey-service", "release-gate", "model-lab", "ops-feedback", "question-authoring", "synthetic-data",
-                 "turn-engine", "model-runtime", "kiosk-frontend", "admin-console"]   # scripts/check-versions.sh 가 보는 10개
+# 점검이 처리 방법을 아는 영역과 종류의 정본: <워크스페이스>/head/shared/areas.json (scripts/areas.py). 표에 없는 .git 폴더는 '모르는 대상'이다.
+# 왜 파일에서 읽나: 영역을 더할 때 이 점검·셸 스크립트·bump 도구를 따로 고치면 한 곳을 빠뜨린다.
+sys.path.insert(0, str(HERE))
+import areas as _areas
+_AREAS = _areas.load(WS / "head" / "shared" / "areas.json") if (WS / "head" / "shared" / "areas.json").is_file() else {"areas": [], "readme_sections": []}
+_KIND_MAP = {"python": "py", "node": "node", "library": "py", "compose": "shell", "docs": "docs"}   # 점검 안의 처리 방식
+AREA_KIND = {a["name"]: _KIND_MAP[a["kind"]] for a in _AREAS["areas"]}
+VERSION_AREAS = [a["name"] for a in _AREAS["areas"] if a["version_train"]]
 
 
 class R:
@@ -182,7 +182,7 @@ def rule_enumerate() -> R:
             if w:
                 r.na.append((f"영역 {a}", f"제외({w})"))
             else:
-                r.fail(f"영역 {a}", f"모르는 대상: {a}  (워크스페이스의 .git 폴더인데 점검의 영역 표에 없다. scripts/check_all.py 의 AREA_KIND 에 넣거나 scripts/check-all.exclude 에 이유와 함께 적는다)")
+                r.fail(f"영역 {a}", f"모르는 대상: {a}  (워크스페이스의 .git 폴더인데 점검의 영역 표에 없다. head/shared/areas.json 에 넣거나 scripts/check-all.exclude 에 이유와 함께 적는다)")
     for ex in example_files():
         name = ex.name.split(".")[0]
         if find_schema_file(name):
@@ -465,31 +465,80 @@ def scan_code(rule: str, line_check, text_check=None) -> R:
     return r
 
 
+# ---------- 정본에서 읽는 값 ----------
+# 낡은 용어를 이 파일에 적어 막지 않는다(용어는 계속 바뀐다). '지금 있는 것'을 정본에서 읽고, 정본에 없는 것을 쓰면 실패한다.
+def _truth(rel: str, name: str):
+    """정본 파이썬 파일의 최상위 `name = 리터럴`을 코드를 실행하지 않고(ast) 읽는다. 읽지 못하면 None."""
+    try:
+        tree = ast.parse((WS / rel).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return None
+    for n in tree.body:
+        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets):
+            return n.value
+    return None
+
+
+def truth_templates():
+    """지원하는 프롬프트 템플릿 버전: model-runtime 이 정한다."""
+    v = _truth("model-runtime/src/model_runtime/prompts.py", "_USER")
+    return {k.value for k in v.keys if isinstance(k, ast.Constant)} if isinstance(v, ast.Dict) else None
+
+
+def truth_te_public():
+    """turn-engine 의 공개 API."""
+    v = _truth("turn-engine/turn_engine/__init__.py", "__all__")
+    return {e.value for e in v.elts if isinstance(e, ast.Constant)} if isinstance(v, (ast.List, ast.Tuple)) else None
+
+
+def truth_schema_version():
+    """계약의 파이프라인 스키마 버전."""
+    v = _truth("boundary-contracts/boundary_contracts/schemas_api.py", "PIPELINE_SCHEMA_VERSION")
+    return v.value if isinstance(v, ast.Constant) else None
+
+
 TE_IMPORT = re.compile(r"from\s+turn_engine(?:\.\w+)*\s+import\s+(\([^)]*\)|[^\n]*)")
-TE_REMOVED = re.compile(r"\b(normalize|judge|write_record|plan)\b")
-P4 = [("prompt-3", re.compile(r"prompt-3")), ("계약 v1 표기 v1.3.", re.compile(r"v1\.3\.")),
-      ("계약 v1 열거값", re.compile(r"""["'](PARSER|GENERATOR)["']"""))]
+PROMPT_TOKEN = re.compile(r"prompt-\d+")
 
 
 def rule_removed_names() -> R:
+    tpl, pub = truth_templates(), truth_te_public()
+
     def line_check(l):
-        return [f"삭제된 이름 {label}" for label, rx in P4 if rx.search(l)]
+        if tpl is None:
+            return []
+        return [f"지원하지 않는 프롬프트 템플릿 {t}(model-runtime 의 지원 목록 {sorted(tpl)})" for t in sorted(set(PROMPT_TOKEN.findall(l)) - tpl)]
 
     def text_check(text):
         out = []
+        if pub is None:
+            return out
         for m in TE_IMPORT.finditer(text):
-            gone = sorted(set(TE_REMOVED.findall(re.sub(r"#[^\n]*", "", m.group(1)))))
+            body = re.sub(r"\bas\s+\w+", "", re.sub(r"#[^\n]*", "", m.group(1)))
+            gone = sorted({x for x in re.findall(r"[A-Za-z_]\w*", body) if x not in pub})
             if gone:
-                out.append((text.count("\n", 0, m.start()) + 1, f"turn_engine 에서 제거된 함수 import {gone}"))
+                out.append((text.count("\n", 0, m.start()) + 1, f"turn_engine 공개 API 에 없는 이름 import {gone}(공개 API {sorted(pub)})"))
         return out
-    return scan_code("4", line_check, text_check)
+    r = scan_code("4", line_check, text_check)
+    if tpl is None or pub is None:
+        r.un.append(("정본", "model-runtime prompts.py 또는 turn-engine __init__.py 를 읽지 못해 확인 못 함"))
+    return r
 
 
-PSV = re.compile(r"""pipeline_schema_version["']?\s*(?:[:=]|,)\s*["']1\.""")
+PSV_LIT = re.compile(r"""pipeline_schema_version["']?\s*(?:[:=]|,)\s*["']([^"']+)["']""")
 
 
 def rule_hardcoded_contract() -> R:
-    return scan_code("5", lambda l: ["pipeline_schema_version 에 \"1.\" 값을 박았다(계약 패키지의 상수를 쓴다)"] if PSV.search(l) else [])
+    cur = truth_schema_version()
+
+    def line_check(l):
+        if cur is None:
+            return []
+        return [f'pipeline_schema_version 에 "{v}" 를 박았다(계약의 현재 값은 "{cur}". 계약 패키지의 상수를 쓴다)' for v in PSV_LIT.findall(l) if v != cur]
+    r = scan_code("5", line_check)
+    if cur is None:
+        r.un.append(("정본", "boundary-contracts schemas_api.py 를 읽지 못해 확인 못 함"))
+    return r
 
 
 # ---------- yaml 노드 ----------
@@ -708,13 +757,13 @@ def rule_collect() -> R:
 # ---------- 규칙 9 ----------
 # 규칙 9의 '필수 절 7개': 리포에 정의가 없어 이 점검이 다음 7개로 해석한다(미정, 헤드가 확정한다). 소개 = 제목 다음의 설명 문단 또는 '## 소개' 절,
 # 나머지 6개는 '## [번호.] [이 영역의 ]<이름>' 제목이다.
-README_SECTIONS = [("소개(제목 다음의 설명)", None), ("전체 속의 위치", r"전체 속의 위치"), ("구조", r"구조"), ("실행 방법", r"실행 방법"),
-                   ("현재 상태", r"현재 상태"), ("열린 항목", r"열린 항목"), ("더 자세한 문서", r"더 자세한 문서")]
+# 첫 항목은 제목 다음의 설명 문단 또는 '## 소개' 절로 본다(나머지는 '## [번호.] [이 영역의 ]<이름>' 제목). 이름 목록의 정본: areas.json readme_sections
+README_SECTIONS = [(("소개(제목 다음의 설명)", None) if i == 0 else (n, re.escape(n))) for i, n in enumerate(_AREAS["readme_sections"])]
 
 
 def rule_readme() -> R:
     r = R()
-    r.info.append("필수 절 7개(헤드 확정 전의 해석): " + ", ".join(n for n, _ in README_SECTIONS) + " (앞의 '소개'는 제목 다음의 설명 문단 또는 '## 소개' 절)")
+    r.info.append(f"필수 절 {len(README_SECTIONS)}개(정본: head/shared/areas.json): " + ", ".join(n for n, _ in README_SECTIONS) + " (앞의 '소개'는 제목 다음의 설명 문단 또는 '## 소개' 절)")
     for repo in known_areas():
         if AREA_KIND[repo] == "docs":
             r.na.append((repo, "설계 문서 영역이라 영역 README 형식이 아니다"))

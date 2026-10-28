@@ -20,7 +20,7 @@ README='# 영역
 ## 6. 더 자세한 문서
 '
 # mk <이름>... : 임시 워크스페이스 $W 에 영역(.git 과 올바른 README 포함)을 만든다
-mk() { W="$(mktemp -d -p "$T")"; for a in "$@"; do mkdir -p "$W/$a/.git"; printf '%s' "$README" > "$W/$a/README.md"; done; }
+mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; printf '%s' "$README" > "$W/$a/README.md"; done; }
 # run <규칙번호> [환경...] : 출력을 $OUT, 종료 코드를 $RC 에
 run() { local r=$1; shift; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_ALLOW=/dev/null CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
 expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
@@ -66,17 +66,25 @@ run 3 CHECK_ALL_MR_PY="$W/py-bad"; expect "규칙을 빼면 FAIL" FAIL
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "venv 가 없으면 SKIP(검증 안 함 1)" SKIP "검증 안 함 1"
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "SKIP 이유에 해결 방법이 붙는다" SKIP "docs/SETUP.md F절"
 
-echo "== 4 삭제된 이름"
-mk deploy; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "깨끗하면 PASS" PASS
-echo 'v = "prompt-3"' > "$W/deploy/app/a.py"; run 4; expect "prompt-3 잔존은 FAIL" FAIL "deploy/app/a.py:1"
-printf 'from turn_engine import (\n    plan,\n)\n' > "$W/deploy/app/a.py"; run 4; expect "제거된 turn_engine 함수 import 는 FAIL" FAIL "deploy/app/a.py:1"
-echo 'r = "PARSER"' > "$W/deploy/app/a.py"; run 4; expect "v1 열거값은 FAIL" FAIL
+echo "== 4 정본에 없는 이름 (지원 템플릿·turn-engine 공개 API를 정본에서 읽는다)"
+truth(){ mkdir -p "$W/model-runtime/src/model_runtime" "$W/turn-engine/turn_engine" "$W/boundary-contracts/boundary_contracts"
+  printf '_USER = {"prompt-7": None}\n' > "$W/model-runtime/src/model_runtime/prompts.py"
+  printf '__all__ = ["validate_extraction", "ENGINE_VERSION"]\n' > "$W/turn-engine/turn_engine/__init__.py"
+  printf 'PIPELINE_SCHEMA_VERSION = "9.9"\n' > "$W/boundary-contracts/boundary_contracts/schemas_api.py"; }
+mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "깨끗하면 PASS" PASS
+echo 'v = "prompt-7"' > "$W/deploy/app/a.py"; run 4; expect "정본에 있는 템플릿은 PASS" PASS
+echo 'v = "prompt-3"' > "$W/deploy/app/a.py"; run 4; expect "정본에 없는 템플릿은 FAIL" FAIL "deploy/app/a.py:1"
+printf 'from turn_engine import (\n    validate_extraction,\n    plan,\n)\n' > "$W/deploy/app/a.py"; run 4; expect "공개 API 에 없는 turn_engine 이름 import 는 FAIL" FAIL "deploy/app/a.py:1"
+printf 'from turn_engine import validate_extraction as v\n' > "$W/deploy/app/a.py"; run 4; expect "공개 API 의 이름은 별칭이 있어도 PASS" PASS
 echo '# prompt-3 은 제거됨' > "$W/deploy/app/a.py"; run 4; expect "주석의 설명은 통과" PASS
+rm -rf "$W/model-runtime"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "정본을 못 읽으면 통과로 치지 않고 SKIP" SKIP "정본"
 
 echo "== 5 박은 계약 문자열"
-mk deploy; mkdir -p "$W/deploy/app"; echo 'p = {"pipeline_schema_version": SCHEMA_VERSION}' > "$W/deploy/app/a.py"; run 5; expect "상수를 쓰면 PASS" PASS
-echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/app/a.py"; run 5; expect "\"1.\" 값을 박으면 FAIL" FAIL "deploy/app/a.py:1"
+mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'p = {"pipeline_schema_version": SCHEMA_VERSION}' > "$W/deploy/app/a.py"; run 5; expect "상수를 쓰면 PASS" PASS
+echo 'p = {"pipeline_schema_version": "9.9"}' > "$W/deploy/app/a.py"; run 5; expect "계약의 현재 값과 같으면 PASS" PASS
+echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/app/a.py"; run 5; expect "계약의 현재 값과 다른 값을 박으면 FAIL" FAIL "deploy/app/a.py:1"
 mkdir -p "$W/deploy/tests"; rm "$W/deploy/app/a.py"; echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/tests/t.py"; run 5; expect "시험 픽스처는 대상 아님" PASS
+rm -rf "$W/boundary-contracts"; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 5; expect "정본을 못 읽으면 SKIP" SKIP "정본"
 
 echo "== 6 설정 인라인 비밀"
 mk deploy; mkdir -p "$W/deploy/config"; printf 'api_key: MY_ENV_KEY\nauth:\n  token: {env: MY_TOKEN}\n  max_tokens: 5\n' > "$W/deploy/config/a.yaml"; run 6; expect "환경 변수 이름·env 형식은 PASS" PASS

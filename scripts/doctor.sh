@@ -97,11 +97,11 @@ fi
 
 if [ $UP_ONLY = 0 ]; then
   # --- 워크스페이스 형제 리포와 필요한 태그 (build-images.sh 가 쓰는 값: lib.sh)
-  NEED="boundary-contracts turn-engine model-runtime survey-service question-authoring ops-feedback release-gate model-lab kiosk-frontend admin-console synthetic-data"
+  NEED="$(areas_list --kind python,node,library)"   # 정본: head/shared/areas.json
   MISSING=""; for r in $NEED; do [ -e "$WORKSPACE/$r/.git" ] || MISSING="$MISSING $r"; done
   if [ -z "$MISSING" ]; then ok "형제 리포 $(echo $NEED | wc -w)개가 $WORKSPACE 옆에 있다"; else fail "형제 리포가 없다:$MISSING" "docs/SETUP.md C절: head 를 clone 한 뒤 bash <루트>/head/setup.sh (폴더 이름은 head/workspace.yaml 과 같아야 한다)"; fi
   # --- 영역 시험 환경(check-all 의 SKIP 원인). 없으면 WARN: 점검 항목이 검증되지 않는다
-  NOENV=""; for r in boundary-contracts turn-engine model-runtime survey-service question-authoring ops-feedback release-gate model-lab synthetic-data; do
+  NOENV=""; for r in $(areas_list --kind python,library); do
     [ -e "$WORKSPACE/$r/.git" ] || continue
     { [ -x "$WORKSPACE/$r/.venv/bin/python" ] && "$WORKSPACE/$r/.venv/bin/python" -c 'import pytest' >/dev/null 2>&1; } || NOENV="$NOENV $r"; done
   if [ -z "$NOENV" ]; then ok "파이썬 영역 시험 환경(.venv와 pytest)이 있다"; else warn "파이썬 영역 시험 환경이 없다(.venv 또는 그 안의 pytest):$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "각 영역 README 실행 방법의 설치 줄(.venv + pip install). 그 줄에 pytest 가 없으면 .venv/bin/pip install pytest 를 더한다. docs/SETUP.md F절"; fi
