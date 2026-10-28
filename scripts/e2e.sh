@@ -9,7 +9,10 @@
 # 시작 전에 scripts/check-all.sh(정적 점검)를 돌리고 FAIL 이면 멈춘다.
 # 끝에서 scripts/record-e2e.sh 가 결과 한 줄을 docs/E2E_RESULTS.md(E2E 통과 수의 정본)에 더한다(DEPLOY_NO_RECORD=1 이면 안 더함. 못 더하면 종료 코드 1).
 #  - --only <단계,...>: 단계 일부만(예: --only 5p, PostgreSQL 컨테이너 재시작 시험). --fast 처럼 9단계 뒷구간을 생략하고 정본에 기록하지 않는다. 전체 합격이 아니다.
-# 사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--keep] [--keep-images] [--reuse-build]
+#  - 선행 항목이 FAIL 이면 그에 의존하는 항목은 FAIL 이 아니라 SKIP(선행 실패: 항목명)으로 센다(연쇄 잡음 제거, docs/adr/0030). 종료 코드는 FAIL 만 본다. SKIP 개수는 요약의 'SKIP n' 줄과 E2E_RESULTS.md 출처 칸에 나온다.
+#  - --fail-fast: 첫 FAIL 에서 요약을 내고 중단한다(정본에 기록하지 않는다). --changed-only: 입력 해시가 마지막 PASS 와 달라진 단계(scripts/e2e_plan.py)와 그에 의존하는 단계만 e2e_steps.py 에서 돌린다
+#    (준비·단계 9 구간은 항상 돈다. 정본에 기록하지 않는다. 전체 합격이 아니며 최종 관문은 옵션 없는 전체 1회다).
+# 사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--fail-fast] [--changed-only] [--keep] [--keep-images] [--reuse-build]
 #  --reuse-build: 이미지가 있고 소스 커밋·의존 태그가 라벨과 같으면 다시 빌드하지 않는다(낡은 것만 빌드). 끝나도 이미지를 지우지 않는다.
 set -o pipefail
 # 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
@@ -22,15 +25,16 @@ fi
 [ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" || exit 1
 export DEPLOY_SKIP_DOCTOR=1
 source "$(dirname "$0")/lib.sh"
-KEEP=0; REUSE=0; KEEPIMG=0; FAST=0
+KEEP=0; REUSE=0; KEEPIMG=0; FAST=0; FAILFAST=0; CHANGED=0
 ONLY=""
 while [ $# -gt 0 ]; do case "$1" in
-  --fast) FAST=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;;
+  --fast) FAST=1;; --fail-fast) FAILFAST=1;; --changed-only) CHANGED=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;;
   --only) [ $# -ge 2 ] || { echo "--only 에는 단계 목록이 필요하다 (예: --only 5p)" >&2; exit 2; }; ONLY=$2; shift;;
   --only=*) ONLY=${1#*=};;
 esac; shift; done
 # --only: e2e_steps.py 의 단계 일부만 돌린다(개발 중 한 단계 확인용). 스택 기동과 준비는 같이 하고, 스케줄러·백업·롤백 구간은 생략하며 결과를 정본에 기록하지 않는다. 전체 합격이 아니다
 if [ -n "$ONLY" ]; then FAST=1; export DEPLOY_NO_RECORD=1; fi
+[ "$FAILFAST$CHANGED" = 00 ] || export DEPLOY_NO_RECORD=1   # 일부만 돌린 결과는 정본에 쓰지 않는다
 ID=$$; PROJECT=deploy-e2e-$ID; RPROJ=deploy-e2e-reg-$ID
 W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT=$PROJECT
@@ -42,8 +46,44 @@ RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
 SEC_NAMES=(); SEC_SECS=(); SEC_CUR=""; SEC_T0=$SECONDS
 sect() { local now=$SECONDS; if [ -n "$SEC_CUR" ]; then SEC_NAMES+=("$SEC_CUR"); SEC_SECS+=($((now-SEC_T0))); printf '  (소요 %ds)\n' $((now-SEC_T0)); fi; SEC_CUR="$1"; SEC_T0=$now; if [ -n "$1" ]; then echo; echo "== $1"; fi; }
-res() { RESULT+=("$1|$2|$3"); [ "$2" = FAIL ] && FAILS=$((FAILS+1)); printf '  [%s] %s: %s\n' "$2" "$1" "$3"; }
-chk() { local name=$1; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }
+declare -A STAT ROOTF   # 항목명 -> PASS|FAIL|SKIP, SKIP 의 뿌리 항목명
+SKIPS=0; STEP_SKIPS=0; NEED=()
+res() { local n=$1 st=$2; STAT["$n"]=$st; RESULT+=("$n|$st|$3"); [ "$st" = FAIL ] && FAILS=$((FAILS+1)); [ "$st" = SKIP ] && SKIPS=$((SKIPS+1)); printf '  [%s] %s: %s\n' "$st" "$n" "$3"
+  if [ "$st" = FAIL ] && [ "$FAILFAST" = 1 ]; then echo "--fail-fast: 첫 FAIL 에서 중단한다 (이후 항목은 돌리지 않았다)"; sect ""; finish; exit 1; fi; }
+# 선행 항목(NEED 배열 + 인자 하나)이 FAIL/SKIP 이면 이 항목은 돌리지 않고 SKIP 으로 센다. 뿌리 항목명을 남긴다
+blocked_by() { local d; for d in "${NEED[@]}" "$@"; do [ -n "$d" ] || continue; case "${STAT[$d]:-}" in FAIL) echo "$d"; return 0;; SKIP) echo "${ROOTF[$d]:-$d}"; return 0;; esac; done; return 1; }
+chk_dep() { local dep=$1; shift; local root; if root=$(blocked_by "$dep"); then ROOTF["$1"]=$root; res "$1" SKIP "SKIP(선행 실패: $root)"; else chk "$@"; fi; }
+chk() { local name=$1; local root; if root=$(blocked_by); then ROOTF["$name"]=$root; res "$name" SKIP "SKIP(선행 실패: $root)"; return 0; fi; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }
+finish() {
+{
+echo; echo "============================ 요약 ============================"
+if [ -f "$W/steps.log" ]; then sed -n '/== 요약 (단계 1~8)/,$p' "$W/steps.log"; fi
+[ "$FAST" = 1 ] && echo "-- FAST 모드: 생략한 구간 = 단계 9 스케줄러(D39), 백업·복구, digest 잠금 코드 축 롤백. 전체 합격 아님"
+echo "-- 9단계 및 준비 검사"
+printf '   PASS %s / FAIL %s\n' "$(printf '%s\n' "${RESULT[@]}" | grep -c '|PASS|')" "$FAILS"
+printf '   SKIP %s (선행 항목 실패로 돌리지 않은 것. FAIL 이 아니다)\n' "$((SKIPS+STEP_SKIPS))"
+for r in "${RESULT[@]}"; do case "$r" in *"|SKIP|"*) echo "   SKIP: ${r%%|*} -> ${r##*|}";; esac; done
+[ "$FAILFAST" = 1 ] && echo "-- FAIL-FAST 모드: 첫 FAIL 에서 중단했을 수 있다. 전체 합격 아님"
+[ "$CHANGED" = 1 ] && echo "-- CHANGED-ONLY 모드: e2e_steps.py 는 입력이 바뀐 단계와 그 하위만 돌렸다. 전체 합격 아님"
+for r in "${RESULT[@]}"; do case "$r" in *"|FAIL|"*) echo "   FAIL: ${r%%|*}";; esac; done
+echo "-- 구간별 소요 시간"
+TOTAL=0; for i in "${!SEC_NAMES[@]}"; do printf '   %5ds  %s\n' "${SEC_SECS[$i]}" "${SEC_NAMES[$i]}"; TOTAL=$((TOTAL+SEC_SECS[$i])); done
+printf '   %5ds  합계 (정리 제외)\n' "$TOTAL"
+echo "대신한 것(TEST-SUB): 단계 3 모델과 EvaluationReport(시험용), 단계 4 승인자(스크립트가 시험용 토큰으로 결정), 단계 5 가짜 백엔드, 단계 6 봉투, 단계 7 reviewed_input"
+echo "막힌 것(BLOCKED): 위 요약의 BLOCKED 행. docs/change-requests/ 참고"
+if [ "$FAILS" != 0 ]; then echo "E2E 결과: 실패 있음"
+elif [ "$FAST" = 1 ]; then echo "E2E 결과(--fast): 실행한 검사 전부 통과. 생략한 구간이 있어 전체 합격이 아니다 -- 인도 전에는 옵션 없는 전체 모드를 돌릴 것"
+else echo "E2E 결과: 실행한 검사 전부 통과 (BLOCKED/TEST-SUB 단계가 있어 시나리오 전체 합격은 아니다)"; fi
+} | tee "$W/summary.txt"
+# 결과 한 줄을 정본(docs/E2E_RESULTS.md)에 기록: 로그에서 숫자를 파싱하고, 못 하면 실패한다
+REC_RC=0
+if [ "${DEPLOY_NO_RECORD:-0}" = 1 ]; then echo "(DEPLOY_NO_RECORD=1: docs/E2E_RESULTS.md 에 기록하지 않음)"
+elif [ -z "$CA_TXT" ]; then echo "(check-all 을 건너뛰어 docs/E2E_RESULTS.md 에 기록하지 않음)"
+else
+  printf '%s\n' "$CA_TXT" > "$W/check-all.out"
+  bash "$DEPLOY_ROOT/scripts/record-e2e.sh" "$W/check-all.out" "$W/summary.txt" || { echo "record-e2e.sh 실패: 결과를 docs/E2E_RESULTS.md 에 적지 못했다"; REC_RC=1; }
+fi
+}
 cleanup() {
   local rc=$?
   [ $KEEP = 1 ] && { echo "--keep: 프로젝트 $PROJECT, 레지스트리 $RPROJ, 작업 폴더 $W 를 남겼다"; return; }
@@ -96,12 +136,14 @@ chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰,
 chk "images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다)" bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
 chk "check-health 자체 점검 (실패 상태 파일·디스크 한계·감시 대상 응답을 읽는다)" bash "$DEPLOY_ROOT/scripts/test-check-health.sh"
 chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
+chk "e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지)" python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null
 
 sect "단계 9 앞부분: Compose에서 이미지로 서비스가 뜬다"
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
+NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
 abort_if_failed
 port() { port_of "${PROJECT}-$1-1" 8080; }
 PQA=$(port question-authoring); PGATE=$(port release-gate); POPS=$(port ops-feedback-ingest); PSURVEY=$(port survey-service); PMR=$(port model-registry); PMS=$(port model-serving); PGW=$(port gateway); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS
@@ -194,16 +236,23 @@ chk "survey-service 이미지의 io.openit.langgraph 라벨이 unknown이 아니
 sect "단계 1~8 (실제 서비스의 HTTP로 잇는다)"
 IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
 PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGWS,\"ms\":$PMS}"
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --run-id e2e-test ${ONLY:+--only "$ONLY"} | tee "$W/steps.log"
+STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
+"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
-[ "$STEPS_RC" = 0 ] && res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고" || res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"
+# 단계별 상태(steps.json)를 항목 상태표에 올린다: '단계 N' 이름으로 뒤 항목이 선행으로 쓴다. 단계 안의 SKIP 은 SKIP 개수에 더한다
+if [ -f "$W/work/steps.json" ]; then
+  while IFS='|' read -r sid sst; do STAT["단계 $sid"]=$sst; done < <(python3 "$DEPLOY_ROOT/scripts/e2e_plan.py" step-status "$W/work/steps.json")
+  STEP_SKIPS=$(python3 "$DEPLOY_ROOT/scripts/e2e_plan.py" skips "$W/work/steps.json")
+fi
+if [ "$STEPS_RC" = 0 ]; then res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고$([ "${STEP_SKIPS:-0}" != 0 ] && echo "; 단계 안 SKIP ${STEP_SKIPS}")"
+else res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"; fi
 chk "비밀 노출 점검: 환경 변수·inspect·exec env 에 secrets 값 없음 (check-secrets-hidden)" bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" "$PROJECT"
 chk "check-secrets-hidden 자기 점검(노출 컨테이너는 실패, 파일 비밀은 통과)" bash "$DEPLOY_ROOT/scripts/test-check-secrets-hidden.sh"
 
 if [ "$FAST" = 0 ]; then   # --fast 에서는 아래 세 구간(스케줄러, 백업·복구, 롤백)을 건너뛴다
 sect "단계 9: 주기 잡 스케줄러 (D39)"
 chk "잡 엔트리포인트가 Compose 안에서 이미지·볼륨·네트워크로 실행된다(ops_feedback.job --help)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-ops-feedback python -m ops_feedback.job --help
-chk "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
+chk_dep "단계 4" "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
 chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_JOB_CONFIG=/nonexistent/job.yaml bash $DEPLOY_ROOT/scripts/run-job.sh job-ops-feedback; [ \$? = 2 ]"
 mkdir -p "$W/sched"
 cat > "$W/sched/jobs.yaml" <<YAML
@@ -244,62 +293,46 @@ chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)" 
 enc_clean() { local x; for x in $STORES; do d=$(ls -d $W/backups/$x/2* | tail -1); ls $d/*.gpg >/dev/null 2>&1 || { echo "$x: 암호문(.gpg)이 없다"; return 1; }; ls $d/*.tar $d/*.dump >/dev/null 2>&1 && { echo "$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d)" = 700 ] || { echo "$x: 폴더 모드"; return 1; }; done
   for x in $PGDBS; do d=$(ls -d $W/backups/pg-$x/2* | tail -1); ls $d/$x.dump.gpg >/dev/null 2>&1 || { echo "pg-$x: 암호문이 없다"; return 1; }; [ ! -e $d/$x.dump ] || { echo "pg-$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d/$x.dump.gpg)" = 600 ] || { echo "pg-$x: 파일 모드"; return 1; }; done
   ls -a $W/backups/*/ 2>/dev/null | grep -qE '^\.(tar|partial)-' && { echo "임시 평문/partial 이 남았다"; return 1; }; echo "백업 전부 암호문(.gpg), 평문 .tar·.dump 없음, 폴더 700·파일 600, 임시 파일 없음"; return 0; }
+NEED+=("백업(파일 저장소 2개, SQLite backup API + 해시 MANIFEST)" "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)")   # 백업이 실패하면 아래 암호문 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
 chk "백업 산출물은 암호문뿐이다(평문 없음, 권한 700/600)" enc_clean
 chk "보관 기간(7일)이 지난 스냅샷만 삭제" bash -c "[ ! -d $W/backups/gate-data/20200101T000000Z ] && [ \$(ls $W/backups/gate-data | wc -l) = 1 ]"
 dc "$PROJECT" down >/dev/null 2>&1
 chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_pg-data >/dev/null"
 dc "$PROJECT" up -d --wait --wait-timeout 120 postgres >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다
-chk "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
+chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
 # 서버 밖 사람 몫 모사: 개인키로 복호해 같은 폴더에 평문을 둔다(복구 뒤 지운다). 서버의 복구 스크립트는 복호 키를 갖지 않는다
 decrypt_all() { local x d; for x in $STORES; do d=$(ls -d $W/backups/$x/2* | tail -1); gpg --homedir "$GPGH" --batch --quiet --yes -o "$d/$x.tar" -d "$d/$x.tar.gpg" || return 1; done
   for x in $PGDBS; do d=$(ls -d $W/backups/pg-$x/2* | tail -1); gpg --homedir "$GPGH" --batch --quiet --yes -o "$d/$x.dump" -d "$d/$x.dump.gpg" || return 1; done; echo "개인키(시험 폴더)로 복호 완료"; }
+NEED+=("볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)")
 chk "복호(서버 밖 사람 몫 모사: 개인키로 .tar·.dump 를 푼다)" decrypt_all
+NEED+=("복호(서버 밖 사람 몫 모사: 개인키로 .tar·.dump 를 푼다)")
 for s in $STORES; do chk "복구 $s" bash -c "SN=\$(ls -d $W/backups/$s/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/restore.sh $s \"\$SN\" --yes"; done
 for d in $PGDBS; do chk "복구 pg-$d" bash -c "SN=\$(ls -d $W/backups/pg-$d/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/pg-restore.sh $d \"\$SN\" --yes"; done
-for s in $STORES; do chk "복구 후 지문 일치 $s" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh $s)\" = \"\$(cat $W/fp-before-$s.json)\" ]"; done
-for d in $PGDBS; do chk "복구 후 지문 일치 pg-$d" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh $d)\" = \"\$(cat $W/fp-before-pg-$d.json)\" ]"; done
+for s in $STORES; do chk_dep "복구 $s" "복구 후 지문 일치 $s" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh $s)\" = \"\$(cat $W/fp-before-$s.json)\" ]"; done
+for d in $PGDBS; do chk_dep "복구 pg-$d" "복구 후 지문 일치 pg-$d" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh $d)\" = \"\$(cat $W/fp-before-pg-$d.json)\" ]"; done
+NEED_RESTORE=(); for s in $STORES; do NEED_RESTORE+=("복구 $s"); done; for d in $PGDBS; do NEED_RESTORE+=("복구 pg-$d"); done
+NEED+=("${NEED_RESTORE[@]}")
 chk "복구 후 서비스 기동" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 PQA=$(port question-authoring); POPS=$(port ops-feedback-ingest); PGATE=$(port release-gate); PMR=$(port model-registry); PSURVEY=$(port survey-service)
 PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR}"
+NEED+=("복구 후 서비스 기동")
 chk "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
   "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test
 
 sect "단계 9: digest 잠금으로 코드 축 롤백"
+NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" "복구 후 서비스 기동")   # 롤백 구간: 복구 뒤 스택이 떠 있어야 한다. 백업 구간의 나머지 실패는 이 구간과 무관하다
 OLD_REF=$("$DOCKER" inspect "${PROJECT}-survey-service-1" --format '{{.Config.Image}}' | tr -d '\r')
 cp "$DEPLOY_ROOT/build/images.env" "$W/images.env.bak"
 chk "새 버전 빌드(시험: COMMIT 라벨에 -test2)" env BUILD_SUFFIX=-test2 bash "$DEPLOY_ROOT/scripts/build-images.sh" survey-service
-chk "새 버전 publish -> 잠금 갱신(이전 잠금은 history에 보관)" bash "$DEPLOY_ROOT/scripts/publish-images.sh" survey-service
+chk_dep "새 버전 빌드(시험: COMMIT 라벨에 -test2)" "새 버전 publish -> 잠금 갱신(이전 잠금은 history에 보관)" bash "$DEPLOY_ROOT/scripts/publish-images.sh" survey-service
 cp "$W/images.env.bak" "$DEPLOY_ROOT/build/images.env"   # 시험용 -test2 빌드가 build/images.env 에 남지 않게 한다
-chk "새 잠금으로 적용 -> survey-service가 새 digest 이미지로 교체" bash -c "bash $DEPLOY_ROOT/scripts/up.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" != \"$OLD_REF\" ]"
-chk "롤백: 잠금을 이전 것으로 되돌리고 적용 -> 이전 digest 이미지로 복귀" bash -c "bash $DEPLOY_ROOT/scripts/rollback.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" = \"$OLD_REF\" ]"
+chk_dep "새 버전 publish -> 잠금 갱신(이전 잠금은 history에 보관)" "새 잠금으로 적용 -> survey-service가 새 digest 이미지로 교체" bash -c "bash $DEPLOY_ROOT/scripts/up.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" != \"$OLD_REF\" ]"
+chk_dep "새 잠금으로 적용 -> survey-service가 새 digest 이미지로 교체" "롤백: 잠금을 이전 것으로 되돌리고 적용 -> 이전 digest 이미지로 복귀" bash -c "bash $DEPLOY_ROOT/scripts/rollback.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" = \"$OLD_REF\" ]"
 SP=$(port survey-service)
 survey_ready_after() { for i in $(seq 1 40); do o=$(curl -s -m 5 "http://127.0.0.1:$SP/readyz"); echo "$o" | grep -q '"ready": true' && { echo "$o" | cut -c1-120; return 0; }; sleep 2; done; echo "$o"; return 1; }
-chk "롤백 뒤 survey-service /readyz 200 (복구한 포인터의 릴리스를 HTTP로 다시 적재)" survey_ready_after
+chk_dep "롤백: 잠금을 이전 것으로 되돌리고 적용 -> 이전 digest 이미지로 복귀" "롤백 뒤 survey-service /readyz 200 (복구한 포인터의 릴리스를 HTTP로 다시 적재)" survey_ready_after
 
 fi
 sect ""
-{
-echo; echo "============================ 요약 ============================"
-if [ -f "$W/steps.log" ]; then sed -n '/== 요약 (단계 1~8)/,$p' "$W/steps.log"; fi
-[ "$FAST" = 1 ] && echo "-- FAST 모드: 생략한 구간 = 단계 9 스케줄러(D39), 백업·복구, digest 잠금 코드 축 롤백. 전체 합격 아님"
-echo "-- 9단계 및 준비 검사"
-printf '   PASS %s / FAIL %s\n' "$(printf '%s\n' "${RESULT[@]}" | grep -c '|PASS|')" "$FAILS"
-for r in "${RESULT[@]}"; do case "$r" in *"|FAIL|"*) echo "   FAIL: ${r%%|*}";; esac; done
-echo "-- 구간별 소요 시간"
-TOTAL=0; for i in "${!SEC_NAMES[@]}"; do printf '   %5ds  %s\n' "${SEC_SECS[$i]}" "${SEC_NAMES[$i]}"; TOTAL=$((TOTAL+SEC_SECS[$i])); done
-printf '   %5ds  합계 (정리 제외)\n' "$TOTAL"
-echo "대신한 것(TEST-SUB): 단계 3 모델과 EvaluationReport(시험용), 단계 4 승인자(스크립트가 시험용 토큰으로 결정), 단계 5 가짜 백엔드, 단계 6 봉투, 단계 7 reviewed_input"
-echo "막힌 것(BLOCKED): 위 요약의 BLOCKED 행. docs/change-requests/ 참고"
-if [ "$FAILS" != 0 ]; then echo "E2E 결과: 실패 있음"
-elif [ "$FAST" = 1 ]; then echo "E2E 결과(--fast): 실행한 검사 전부 통과. 생략한 구간이 있어 전체 합격이 아니다 -- 인도 전에는 옵션 없는 전체 모드를 돌릴 것"
-else echo "E2E 결과: 실행한 검사 전부 통과 (BLOCKED/TEST-SUB 단계가 있어 시나리오 전체 합격은 아니다)"; fi
-} | tee "$W/summary.txt"
-# 결과 한 줄을 정본(docs/E2E_RESULTS.md)에 기록: 로그에서 숫자를 파싱하고, 못 하면 실패한다
-REC_RC=0
-if [ "${DEPLOY_NO_RECORD:-0}" = 1 ]; then echo "(DEPLOY_NO_RECORD=1: docs/E2E_RESULTS.md 에 기록하지 않음)"
-elif [ -z "$CA_TXT" ]; then echo "(check-all 을 건너뛰어 docs/E2E_RESULTS.md 에 기록하지 않음)"
-else
-  printf '%s\n' "$CA_TXT" > "$W/check-all.out"
-  bash "$DEPLOY_ROOT/scripts/record-e2e.sh" "$W/check-all.out" "$W/summary.txt" || { echo "record-e2e.sh 실패: 결과를 docs/E2E_RESULTS.md 에 적지 못했다"; REC_RC=1; }
-fi
+finish
 [ "$FAILS" = 0 ] && [ "$REC_RC" = 0 ]; exit $?

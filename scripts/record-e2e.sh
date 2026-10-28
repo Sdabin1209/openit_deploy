@@ -10,14 +10,14 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
 FILE="$ROOT/docs/E2E_RESULTS.md"; WHEN=""; ENVT="${E2E_ENV:-}"; SRC=""; MANUAL=0
-COMMIT=""; MODE=""; P=""; F=""; EX=""; CAF=""; CAS=""; CAP=""; BL=""; TS=""; LOGS=()
+COMMIT=""; MODE=""; P=""; F=""; SK=""; EX=""; CAF=""; CAS=""; CAP=""; BL=""; TS=""; LOGS=()
 die() { echo "record-e2e.sh: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do case "$1" in
   --when) WHEN=${2:?}; shift 2;; --env) ENVT=${2:?}; shift 2;; --source) SRC=${2:?}; shift 2;; --file) FILE=${2:?}; shift 2;;
   --manual) MANUAL=1; shift;; --commit) COMMIT=${2:?}; shift 2;; --mode) MODE=${2:?}; shift 2;;
   --pass) P=${2:?}; shift 2;; --fail) F=${2:?}; shift 2;; --exit) EX=${2:?}; shift 2;;
   --ca-fail) CAF=${2:?}; shift 2;; --ca-skip) CAS=${2:?}; shift 2;; --ca-pass) CAP=${2:?}; shift 2;;
-  --blocked) BL=${2:?}; shift 2;; --test-sub) TS=${2:?}; shift 2;;
+  --skip) SK=${2:?}; shift 2;; --blocked) BL=${2:?}; shift 2;; --test-sub) TS=${2:?}; shift 2;;
   -*) die "모르는 옵션 $1";; *) LOGS+=("$1"); shift;; esac; done
 [ -f "$FILE" ] || die "$FILE 이 없다"
 grep -q '^<!-- E2E-ROWS-END -->$' "$FILE" || die "$FILE 에 '<!-- E2E-ROWS-END -->' 표식이 없다"
@@ -42,6 +42,7 @@ else
   if grep -qE '^E2E 결과: 실패 있음' <<<"$TXT"; then EX=1; else EX=0; fi
   grep -qE '^== 요약 \(단계 1~8\)' <<<"$TXT" || die "로그에서 '== 요약 (단계 1~8)' 표를 찾지 못했다"
   sect=$(awk '/^== 요약 \(단계 1~8\)/{on=1;next} on&&/^== /{exit} on&&/^$/{exit} on{print}' <<<"$TXT")
+  if [ -z "$SK" ]; then sk=$(grep -E '^ +SKIP [0-9]+ ' <<<"$TXT" | tail -1) || true; SK=$(sed -E 's/^ +SKIP ([0-9]+) .*/\1/' <<<"${sk:-   SKIP 0 }"); fi   # 옛 로그에는 SKIP 줄이 없다: 0
   BL=$(grep -cE '^ +[0-9A-Za-z_]+ +BLOCKED ' <<<"$sect" || true); TS=$(grep -cE '^ +[0-9A-Za-z_]+ +TEST-SUB ' <<<"$sect" || true)
   [ -n "$sect" ] || die "'== 요약 (단계 1~8)' 표가 비었다"
   COMMIT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null) || die "git 커밋 해시를 읽지 못했다"
@@ -63,6 +64,8 @@ for v in "$P" "$F" "$EX" "$CAF" "$CAS" "$CAP"; do isnum "$v" || die "숫자가 �
 [ "$MODE" = "전체" ] || [ "$MODE" = "--fast" ] || die "모드는 전체 또는 --fast"
 [ -n "$ENVT" ] || ENVT="이 PC"
 [ -n "$WHEN" ] || WHEN=$(date '+%F %H:%M')
+isnum "${SK:-0}" || die "숫자가 아닌 SKIP: '$SK'"
+[ "${SK:-0}" = 0 ] || SRC="$SRC; SKIP ${SK}개(선행 항목 실패로 건너뜀, FAIL 아님)"   # SKIP 은 표 칸을 늘리지 않고 출처 칸에 구분해 적는다(ADR 0030)
 ROW="| $WHEN | $COMMIT | $ENVT | $MODE | $P | $F | $EX | $CAF/$CAS/$CAP | $BL | $TS | $SRC |"
 if grep -qxF -- "$ROW" "$FILE"; then echo "이미 같은 줄이 있다: 더하지 않음"; exit 0; fi
 TMP=$(mktemp); awk -v row="$ROW" '/^<!-- E2E-ROWS-END -->$/{print row} {print}' "$FILE" > "$TMP" && cat "$TMP" > "$FILE"; rm -f "$TMP"

@@ -27,6 +27,8 @@ ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 �
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(내용이 토큰 하나). 비우면 이 구성이 만든 토큰")
 ap.add_argument("--llm-package", default="", help="실제 LLM 데모: make_neutral_package.py 가 만든 폴더(LORA_A, LORA_B). 단계 3이 시험용 fake 어댑터 대신 이 중립 LoRA 패키지(vllm 서빙 설정)를 게시한다")
 ap.add_argument("--turn-engine-version", default=os.environ.get("DEPLOY_TE_TAG", "v0.4.0").lstrip("v"), help="매니페스트 lineage 의 turn-engine 버전(게이트 기준과 문자열이 같아야 한다, D80). e2e.sh 가 lib.sh 의 값을 넘긴다")
+ap.add_argument("--fail-fast", action="store_true", help="첫 FAIL 에서 중단한다(뒤 단계는 돌리지 않는다). 전체 합격이 아니다")
+ap.add_argument("--changed-only", action="store_true", help="입력 해시가 마지막 PASS 와 다른 단계와 그에 의존하는 단계(+상태 재구성에 필요한 상류)만 돌린다. 단독 실행이 증명되지 않은 단계는 항상 포함(e2e_plan.py)")
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
 import ssl
@@ -1473,20 +1475,41 @@ def step5p():
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
 STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []
+order = [n for n, _ in STEPS if not (n.startswith("demo") and n not in only) and (not only or n in only)]
+_miss = PLAN.missing([n for n, _ in STEPS], PLAN.STEP_DECLS)
+if _miss: raise SystemExit(f"입력 선언이 없는 단계: {_miss} (scripts/e2e_plan.py STEP_DECLS 에 더한다)")
+LAST = PLAN.load_last_pass(); CUR = {n: PLAN.input_hash(n) for n in order}
+if a.changed_only:
+    sel, why = PLAN.select_changed(order, PLAN.STEP_DECLS, CUR, LAST)
+    print("== --changed-only 선택: " + ", ".join(f"{n}({why[n]})" for n in order if n in sel) + " / 제외: " + (", ".join(n for n in order if n not in sel) or "없음"), flush=True)
+    order = [n for n in order if n in sel]
+STATUS = {}   # 단계 -> 'FAIL' | 'SKIP:<뿌리>' | 'OK'. 선행이 FAIL 이면 의존 단계는 FAIL 이 아니라 SKIP 이다(연쇄 잡음, ADR 0030)
+STOPPED = False
 for n, fn in STEPS:
-    if only and n not in only: continue
-    if n.startswith("demo") and n not in only: continue   # demo.sh 전용 단계는 E2E 기본 실행에 넣지 않는다
-    t0 = time.time()
+    if n not in order: continue
+    if STOPPED: continue
+    root = PLAN.skip_root(n, STATUS)
+    if root:
+        STATUS[n] = "SKIP:" + root; rec(n, "SKIP", f"SKIP(선행 실패: 단계 {root})"); continue
+    t0 = time.time(); k0 = len(RESULTS)
     try: fn()
     except AssertionError as e: rec(fn.__name__, "FAIL", str(e))
     except Exception as e: rec(fn.__name__, "FAIL", f"{type(e).__name__}: {e}")
+    failed = any(r[1] == "FAIL" for r in RESULTS[k0:])
+    STATUS[n] = "FAIL" if failed else "OK"
+    if not failed and any(r[1] in ("REAL", "TEST-SUB") for r in RESULTS[k0:]): LAST[n] = CUR[n]   # BLOCKED 만 있으면 PASS 가 아니다
     TIMES.append((n, time.time() - t0)); print(f"  (소요 {TIMES[-1][1]:.1f}s)", flush=True)
+    if failed and a.fail_fast:
+        STOPPED = True; print(f"== --fail-fast: 단계 {n} 가 FAIL 이라 중단한다. 미실행: " + ", ".join(m for m, _ in STEPS if m in order and m not in STATUS), flush=True)
+if not os.environ.get("E2E_NO_LAST_PASS"): PLAN.save_last_pass(LAST)   # 시험이 실제 기록을 건드리지 않게 끌 수 있다
 print("\n== 요약 (단계 1~8)")
 for s, st, d in RESULTS: print(f"  {str(s):>4} {st:9} {d[:170]}")
 print("\n== 단계별 소요 시간 (1~8)")
 for n, sec in TIMES: print(f"  {sec:7.1f}s  단계 {n}")
 print(f"  {sum(x for _, x in TIMES):7.1f}s  합계")
 (WORK / "steps.json").write_text(json.dumps([list(r) for r in RESULTS], ensure_ascii=False, indent=1))
+print(f"  PASS-계열 {sum(1 for r in RESULTS if r[1] not in ('FAIL','SKIP','BLOCKED'))} / FAIL {sum(1 for r in RESULTS if r[1]=='FAIL')} / SKIP {sum(1 for r in RESULTS if r[1]=='SKIP')} / BLOCKED {sum(1 for r in RESULTS if r[1]=='BLOCKED')} (행 기준)")
 sys.exit(1 if any(r[1] == "FAIL" for r in RESULTS) else 0)
