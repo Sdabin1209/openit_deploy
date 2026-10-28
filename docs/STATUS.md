@@ -1,3 +1,12 @@
+# STATUS (2026-10-28, 계약 v2.1.0 준비)
+
+- E2E 단계 5n 을 선언·구현했다(`scripts/e2e_steps.py`, 선언 `scripts/e2e_plan.py`): 직원 호출 재알림·실패 기록·`pause_reason=RISK`. 새 survey-service 이미지가 들어오기 전에는 실행하지 않았다(구문·자체 시험만 확인).
+- `pause_reason=REASK_LIMIT` 은 E2E 로 만들 수 없다: 가짜 A(model-runtime fake)는 NEXT 만 내고 REASK 를 내는 설정이 없다. 단계 5n 이 BLOCKED 행(`5n-reask`)으로 남긴다. 풀려면 model-runtime 쪽 변경(가짜 A 가 지정 문구에 REASK)이 필요하다(미정, 변경 요청 대상).
+- I2 dataset-store(synthetic-data, D100): synthetic-data 에 `Dockerfile` 이 아직 없다(확인: `git -C ../synthetic-data log` 와 파일 목록). `scripts/build-images.sh` 에 그 파일이 생기면 `dataset-store` 이미지를 빌드하는 조건부 블록만 넣었다(없으면 건너뜀). compose 서비스·비밀 파일(synthetic-data 쓰기/model-lab 읽기 토큰)·`/healthz` 점검·`locks/images.lock` 항목·`check-containers.sh` 규칙·`lib.sh` SERVICES 는 이미지가 실제로 뜨는 것을 확인한 뒤 더한다(model-registry 가 있는 곳과 같은 위치: compose.yaml, compose.test.yaml, gen-secrets.sh, publish-image.sh, lib.sh, verify-areas.yaml). 미확인.
+- 기준 태그를 v2.1.0 으로 올리는 일은 태그가 push 된 뒤에 한다(준비 목록은 이 구간의 커밋 메시지·보고).
+
+---
+
 # STATUS (2026-10-27 최신 구간: PostgreSQL 기반, 게이트웨이 인증 D85)
 
 - 한 일: postgres 서비스·계정·백업(자체 시험 61건), 게이트웨이 개별 계정/역할·기기 토큰·운영자 경로, 스케줄러 주기(수집기 600/ops-feedback 3600/백업 86400, 실제 스택에서 세 잡이 OK로 도는 것 확인), `config/ops-feedback-job.yaml` 실제 파일화, check-all 규칙 11, E2E·데모의 activate를 X-Openit-User 헤더 HTTP로 변경. 자세한 것은 CHANGELOG.md.

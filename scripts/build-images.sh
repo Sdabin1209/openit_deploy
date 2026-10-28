@@ -110,6 +110,16 @@ if want model-registry; then
   record model-registry "$img" "$c"
 fi
 
+if want dataset-store && [ -f "$WORKSPACE/synthetic-data/Dockerfile" ]; then
+  # I2 DatasetStore HTTP 서버(계약 v2.1.0, D100, 소유 synthetic-data). 왜 조건부: 그 영역이 Dockerfile 을 커밋하기 전에는 이미지가 없어 기본 빌드를 깨뜨리면 안 된다.
+  # Dockerfile 이 생기면 자동으로 빌드한다. compose·digest 잠금·check-containers 는 이미지가 실제로 뜨는 것을 확인한 뒤 더한다(docs/STATUS.md 의 dataset-store 항목).
+  # 빌드 인자는 아직 그 영역의 Dockerfile 을 읽지 못해 REVISION·COMMIT 만 넘긴다(이름이 다르면 무시되고 라벨이 비는 것을 check-containers 단계에서 잡는다). 미확인.
+  DS="$CTX/synthetic-data"; rm -rf "$DS"; mkdir -p "$DS"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DS"
+  c=$(commit_of synthetic-data); img="deploy-build/dataset-store:$c"
+  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg COMMIT="$c" "$DS" >/dev/null
+  record dataset-store "$img" "$c"
+fi
+
 # 호스트에서 쓰는 wheel: E2E 클라이언트·검증기와 synthetic-data용(그 영역이 고정한 태그, lib.sh DEPLOY_BC_TAG_SD)
 mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
 for tag in "$BC" "$DEPLOY_BC_TAG_SD"; do
