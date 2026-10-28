@@ -1,0 +1,86 @@
+{
+  "area": "deploy",
+  "branch": "wo6",
+  "items": [
+    {
+      "name": "BuildImageRequest",
+      "source_draft": "schemas/build-image-request.schema.json",
+      "producer": "deploy",
+      "consumers": [
+        "각 영역 scripts/build-image.sh"
+      ],
+      "unknown_keys": "reject",
+      "note": "제안 형식이다: 영역에 이 진입점이 아직 없다(deploy build-images.sh 는 영역마다 다른 Dockerfile 인자 이름을 직접 안다). 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다). 예시는 초안에서 옮긴 것이고 실제 코드가 낸 값이 아니다."
+    },
+    {
+      "name": "BuildImageResult",
+      "source_draft": "schemas/build-image-result.schema.json",
+      "producer": "각 영역 scripts/build-image.sh",
+      "consumers": [
+        "deploy"
+      ],
+      "unknown_keys": "reject",
+      "note": "제안 형식. labels 는 ImageLabels 를 $ref 한다. image_id 는 _common.schema.json#/$defs/Hash 를 쓴다(sha256:64hex, 같은 패턴). 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다). 예시는 초안에서 옮긴 것."
+    },
+    {
+      "name": "Exposure",
+      "source_draft": "schemas/exposure.schema.json",
+      "producer": "서비스 영역(이미지 라벨 io.openit.exposure 의 JSON 문자열)",
+      "consumers": [
+        "deploy(config/Caddyfile 생성·대조)"
+      ],
+      "unknown_keys": "reject",
+      "note": "현재 어느 영역 이미지도 이 라벨을 달지 않는다(로컬 deploy-build 이미지 8개의 라벨을 읽어 확인): Caddyfile 이 경로·역할을 직접 안다. 역할 이름은 형식만 검사하고 계약의 역할 집합과의 대조는 하지 않는다. 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다). 예시는 초안에서 옮긴 것."
+    },
+    {
+      "name": "ImageLabels",
+      "source_draft": "schemas/image-labels.schema.json",
+      "producer": "각 영역 Dockerfile/빌드",
+      "consumers": [
+        "deploy(publish-image.sh, e2e.sh, demo.sh, check_versions.py)"
+      ],
+      "unknown_keys": "reject",
+      "note": "io.openit.* 의 모르는 키만 거부하고 다른 접두사(org.opencontainers.* 등)는 무시한다. io.openit.jobs/exposure 는 contentSchema 가 주석이라 검증기가 강제하지 않으므로 호출자가 풀어서 JobsDeclaration/Exposure 로 한 번 더 검증한다(validate.py 가 한다). survey-service 의 image-labels 초안과의 차이와 통합 가능성, 그리고 실제 이미지 라벨이 이 스키마를 어기는 곳은 README.md. 예시: real-* 는 로컬 deploy-build 이미지에서 docker image inspect 로 뽑은 라벨(이미지가 최신 빌드인지는 확인하지 않았다), 나머지는 초안에서 옮긴 것. 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다)."
+    },
+    {
+      "name": "JobsDeclaration",
+      "source_draft": "schemas/jobs-declaration.schema.json",
+      "producer": "서비스 영역(라벨 io.openit.jobs 의 JSON 문자열)",
+      "consumers": [
+        "deploy(compose 잡 정의·config/jobs.yaml 생성)"
+      ],
+      "unknown_keys": "reject",
+      "note": "현재 어느 영역 이미지도 이 라벨을 달지 않는다(로컬 이미지 라벨로 확인): deploy 가 compose.yaml 에 모듈 경로와 서브커맨드를 직접 적는다. needs 의 값 집합은 deploy 가 정한 자원 이름이다. 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다). 예시는 초안에서 옮긴 것."
+    },
+    {
+      "name": "PublishRequest",
+      "source_draft": "schemas/publish-request.schema.json",
+      "producer": "영역 CI",
+      "consumers": [
+        "deploy scripts/publish-image.sh"
+      ],
+      "unknown_keys": "reject",
+      "note": "service 열거는 scripts/lib.sh 의 SERVICES + SERVICES_OPTIONAL 과 같아야 한다(서비스가 늘면 같이 바꾼다: 이 스키마와 lib.sh 의 두 곳). 환경 변수 DEPLOY_LOCK 은 deploy 내부라 넣지 않았다. 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다). 예시는 초안에서 옮긴 것."
+    },
+    {
+      "name": "PublishResult",
+      "source_draft": "schemas/publish-result.schema.json",
+      "producer": "deploy scripts/publish-image.sh",
+      "consumers": [
+        "영역 CI"
+      ],
+      "unknown_keys": "reject",
+      "note": "표준 출력 마지막 줄 `PUBLISHED|UNCHANGED <서비스> <digest> <revision>` 과 종료 코드(0~5)를 객체로 푼 것이다. digest 는 _common.schema.json#/$defs/Hash. 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다). 예시는 초안에서 옮긴 것."
+    },
+    {
+      "name": "SetupEnvReport",
+      "source_draft": "schemas/setup-env-report.schema.json",
+      "producer": "각 영역 scripts/setup-env.sh 규약(결과는 deploy prepare-areas.sh 가 요약)",
+      "consumers": [
+        "deploy prepare-areas.sh, doctor.sh"
+      ],
+      "unknown_keys": "reject",
+      "note": "status script-missing/folder-missing 은 deploy 가 채우는 값이고 environment 는 제안 필드다. 초안 서술 기준. 이웃 쪽 미확인(이웃 영역 코드는 읽지 않았다). 예시는 초안에서 옮긴 것."
+    }
+  ]
+}

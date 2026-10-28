@@ -1,0 +1,7 @@
+{
+  "exit_code": 0,
+  "status": "PUBLISHED",
+  "service": "survey-service",
+  "digest": "sha256:df05d4369ff6fc797f922e99058002adab2ea621506c02d7c57d8bb0012d961f",
+  "revision": "f52a8e0"
+}

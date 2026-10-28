@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ImageLabels.schema.json",
+  "title": "ImageLabels",
+  "description": "영역 이미지의 라벨 (docker inspect .Config.Labels). 영역(빌드 쪽)이 이미지에 붙이고 deploy(publish-image.sh, e2e.sh, demo.sh, check_versions.py)가 읽는다. 라벨 값은 문자열이다. 이 초안은 한 벌의 표기를 제안한다(현재는 영역마다 다르다: 문서 CR-D27 3절). io.openit.* 키는 아래 집합만 허용한다: 오타(`io.openit.revison`)가 조용히 무시되면 게시 검사(필수 라벨)는 통과하는데 deploy 가 revision 을 못 읽는다. io.openit.* 가 아닌 라벨(org.opencontainers.* 등)은 무시한다(베이스 이미지가 붙인다).",
+  "type": "object",
+  "properties": {
+    "io.openit.service": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "서비스(이미지) 이름"
+    },
+    "io.openit.revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "소스 커밋. 'unknown' 불가"
+    },
+    "io.openit.contracts.boundary": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "소비하는 boundary-contracts 태그(v 접두사 포함)"
+    },
+    "io.openit.contracts.survey-schema": {
+      "type": "string",
+      "pattern": "^([0-9]+|n/a)$",
+      "description": "문진 스키마 주 버전. 쓰지 않는 영역은 n/a"
+    },
+    "io.openit.turn-engine": {
+      "type": "string",
+      "pattern": "^(v[0-9]+\\.[0-9]+\\.[0-9]+|n/a)$",
+      "description": "해당 없으면 n/a (none 이 아님)"
+    },
+    "io.openit.model-runtime": {
+      "type": "string",
+      "pattern": "^(v[0-9]+\\.[0-9]+\\.[0-9]+|n/a)$",
+      "description": "해당 없으면 n/a. v 접두사 포함"
+    },
+    "io.openit.variant": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "io.openit.app-version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "io.openit.langgraph": {
+      "type": "string",
+      "minLength": 1
+    },
+    "io.openit.jobs": {
+      "type": "string",
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "$ref": "JobsDeclaration.schema.json"
+      },
+      "description": "영역이 내는 잡 선언(JSON 문자열). 없으면 잡 없음"
+    },
+    "io.openit.exposure": {
+      "type": "string",
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "$ref": "Exposure.schema.json"
+      },
+      "description": "게이트웨이 노출 선언(JSON 문자열)"
+    }
+  },
+  "required": [
+    "io.openit.service",
+    "io.openit.revision",
+    "io.openit.contracts.boundary",
+    "io.openit.contracts.survey-schema",
+    "io.openit.turn-engine",
+    "io.openit.model-runtime"
+  ],
+  "propertyNames": {
+    "not": {
+      "pattern": "^io\\.openit\\.(?!(service|revision|contracts\\.boundary|contracts\\.survey-schema|turn-engine|model-runtime|variant|app-version|langgraph|jobs|exposure)$)"
+    }
+  }
+}

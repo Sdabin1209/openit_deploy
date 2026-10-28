@@ -1,0 +1,8 @@
+{
+  "io.openit.contracts.boundary": "2.1.1",
+  "io.openit.contracts.survey-schema": "1",
+  "io.openit.model-runtime": "0.7.6",
+  "io.openit.revision": "3c5956c",
+  "io.openit.service": "release-gate",
+  "io.openit.turn-engine": "0.4.2"
+}
