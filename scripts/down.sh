@@ -43,6 +43,7 @@ describe() { # 볼륨 이름(프로젝트 접두 제거) -> 들어 있는 것
     survey-data) echo "릴리스 작업 폴더(세션·발신함은 PostgreSQL)";;
     gate-data) echo "릴리스 번들 파일(releases/). 이력·승인 기록은 PostgreSQL";;
     models-data) echo "모델 패키지(어댑터)";;
+    datasets-data) echo "학습 데이터셋(DatasetManifest와 jsonl, dataset-store)";;
     serving-data) echo "추론 서버 번들 캐시(다시 받을 수 있음)";;
     pg-data) echo "PostgreSQL 서버의 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 scripts/pg-backup.sh";;
     gateway-*) echo "gateway 설정 사본(다시 만들어짐)";;

@@ -11,7 +11,8 @@ import argparse, hashlib, json, os, shutil, sqlite3, sys, time
 SQLITE_EXT = (".db", ".sqlite", ".sqlite3")
 SKIP_SUFFIX = ("-wal", "-shm", "-journal")
 # 저장소별 제외: survey-data/releases 는 게이트 묶음에서 다시 적재되는 작업 폴더 사본이다
-STORE_EXCLUDES = {"survey-data": ("releases",)}
+# datasets-data/.tmp 는 dataset-store 서버의 요청 임시 폴더다(시작 때 비우고 다시 만든다, synthetic-data ADR 0012). 복구할 데이터가 아니고 지문에 들어가면 서버를 껐다 켤 때마다 달라진다
+STORE_EXCLUDES = {"survey-data": ("releases",), "datasets-data": (".tmp",)}
 
 
 def sha(path):

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: gate-data models-data registry-data (파일 저장소. 비우면 gate-data models-data registry-data). 데이터베이스는 PostgreSQL 이라 pg-backup.sh
+# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: gate-data models-data datasets-data registry-data gateway-data (파일 저장소. 비우면 전부). 데이터베이스는 PostgreSQL 이라 pg-backup.sh
 #  환경: DEPLOY_PROJECT(기본 deploy), BACKUP_CONFIG(기본 config/backup.env), REGISTRY_PROJECT(기본 deploy-registry: 레지스트리 볼륨은 별도 프로젝트 소유)
 # 설정(BACKUP_DIR, BACKUP_RETENTION_DAYS, 수신자 공개키)이 없거나 비어 있으면 CRIT 로 거부한다(종료 코드 2, 코드에 기본값 없음). 설정·암호화는 backup-lib.sh.
 # 저장소마다 스냅샷을 tar 하나로 묶어 암호화한다(복원 시 풀어서 restore.sh 에 준다). 암호화를 쓰지 않는 시험 모드(BACKUP_ALLOW_PLAINTEXT=1)에서는 예전처럼 디렉터리 그대로.
 # gateway-data(내부 CA 루트·비밀키)도 같은 암호화 경로로 백업한다(점검 M3). 복원하면 루트가 유지되어 기기들이 다시 신뢰하지 않아도 된다(runbook 9-1).
+# datasets-data 를 넣은 이유: 학습 데이터셋은 게시된 버전이 불변이고 모델 패키지 계보(lineage.dataset)가 id·버전·content_hash 로 가리킨다. 잃으면 같은 데이터로 재학습·재현을 못 한다(원본 jsonl 은 데이터셋 담당 서버에 있으나 이 저장소의 게시 사본이 계보의 기준이다). ADR 0032.
 # registry-data 를 넣은 이유: 이미지는 CI 로 다시 만들 수 있으나 digest 로 고정된 운영 이미지를 레지스트리가 잃으면 롤백이 불가능하다(docs/adr/0020-backup-tool-and-encryption.md).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -13,7 +14,7 @@ P=${DEPLOY_PROJECT:-deploy}
 LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK")
 [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금 파일에 없다"
-STORES=${*:-gate-data models-data registry-data gateway-data}   # 세션·문항·로그·레지스트리 DB 는 PostgreSQL(D85)이라 pg-backup.sh 가 맡는다
+STORES=${*:-gate-data models-data datasets-data registry-data gateway-data}   # 세션·문항·로그·레지스트리 DB 는 PostgreSQL(D85)이라 pg-backup.sh 가 맡는다
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 umask 077   # 임시 평문 tar·partial 도 소유자 전용
 # 겹침 실행 방지(점검 M4): 같은 BACKUP_DIR 에서 두 번째 backup.sh 가 동시에 돌면 첫 번째의 진행 중 .partial 을 prune 이 지울 수 있다. 잠금을 못 잡으면 거부한다(종료 4)

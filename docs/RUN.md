@@ -97,7 +97,7 @@ bash scripts/demo.sh reset                       # down 후 up
 **백업·복구.** `pg-data` 볼륨을 파일째 복사하지 않는다(쓰는 중에는 일관되지 않다).
 - `bash scripts/pg-backup.sh [db ...]`: 설정·거부 규칙·보관 기간은 `backup.sh`와 같다(`config/backup.env`). 데이터베이스의 소유 계정으로 `pg_dump -Fc`(데이터베이스 안에서는 한 시점의 일관된 스냅샷, 서버가 떠 있어도 된다)해 `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump.age`(또는 `.gpg`, 수신자 공개키로 암호화, 평문은 남기지 않음) + `MANIFEST.json`(평문 sha256, 크기, 서버 버전, 덤프 시작·끝 시각)을 만든다. 5개는 병렬로 동시에 시작하지만 데이터베이스 사이 같은 시점은 아니다(한계: runbook 4-2절). 파일 600, 폴더 700. 설정이 불완전하면 CRIT와 종료 코드 2. 복호 개인키는 서버에 없다: 복구 절차는 [runbook.md](runbook.md) 4-3절.
 - `bash scripts/pg-restore.sh <db> <스냅샷 폴더> --yes`: 해시 검증(불일치면 종료 코드 3), 그 데이터베이스에 다른 접속이 있으면 거부(서비스를 먼저 멈춘다), 그다음 `pg_restore --clean --if-exists --single-transaction`. 볼륨을 잃었다면 `postgres`를 먼저 띄운다(초기화가 빈 데이터베이스와 계정을 만든다). 그다음 복구한다.
-- `scripts/backup-all.sh`가 backup 잡이다: 파일 저장소(`backup.sh`, 기본 `gate-data` 번들)와 PostgreSQL(`pg-backup.sh`)을 같은 `config/backup.env`로 백업한다. `e2e.sh`의 백업·복구 단계는 파일 저장소 2개(gate-data, models-data)와 데이터베이스 5개를 백업해 `pg-data` 볼륨까지 지우고, 초기화로 되살린 빈 데이터베이스에 `pg-restore.sh`로 복구한 뒤 `pg-fingerprint.sh`(스키마+행 집합 해시, 행 순서 무관)가 같은지 본다. 서버 단독 자체 시험은 `bash scripts/test-postgres.sh`.
+- `scripts/backup-all.sh`가 backup 잡이다: 파일 저장소(`backup.sh`, 기본 `gate-data` 번들)와 PostgreSQL(`pg-backup.sh`)을 같은 `config/backup.env`로 백업한다. `e2e.sh`의 백업·복구 단계는 파일 저장소 3개(gate-data, models-data, datasets-data)와 데이터베이스 5개를 백업해 `pg-data` 볼륨까지 지우고, 초기화로 되살린 빈 데이터베이스에 `pg-restore.sh`로 복구한 뒤 `pg-fingerprint.sh`(스키마+행 집합 해시, 행 순서 무관)가 같은지 본다. 서버 단독 자체 시험은 `bash scripts/test-postgres.sh`.
 
 **영역 개발용 서버(`scripts/dev-postgres.sh`).** 영역 에이전트가 자기 시험에 쓰는 일회용 서버다. 개발은 컨테이너 밖에서 하므로 서비스는 호스트에서 접속한다.
 ```
