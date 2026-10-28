@@ -220,7 +220,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, 모든 계정 암호 재전달, 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
 5. 토큰에는 만료가 없다. 회전은 수동이며 주기는 정하지 않았다(근거 없음, 사용자 결정 대기: 이 저장소의 OPEN_GAPS).
 
-한계: 해시 생성 때 암호가 `docker run` 인자로 호스트 프로세스 목록에 잠깐 보인다(같은 호스트 사용자만). docker 그룹 사용자는 어차피 모든 비밀에 닿는다(docker 그룹은 root와 같다).
+한계: 해시 생성 때 암호는 `docker run -i`의 표준 입력으로 전달되어 프로세스 목록(인자)에는 보이지 않는다(`scripts/test-hash-password-argv.sh`로 확인). 새 암호는 `rotate-account.sh`의 표준 출력에 한 번 나온다. docker 그룹 사용자는 어차피 모든 비밀에 닿는다(docker 그룹은 root와 같다).
 
 ## 8. 흔한 문제
 

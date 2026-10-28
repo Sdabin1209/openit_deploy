@@ -2,7 +2,7 @@
 # 게이트웨이 계정 암호 회전. 사용: rotate-account.sh <계정 ID> [--apply]     환경: SECRETS_DIR(기본 secrets/), DEPLOY_PROJECT(기본 deploy)
 # 새 무작위 암호를 만들어 bcrypt 해시만 디스크에 쓰고(account-<id>-hash 600, 평문 파일은 남기지 않는다), 게이트웨이 계정 파일을 다시 쓴다.
 # 새 암호는 **표준 출력에 한 번만** 나온다: 사람이 터미널에서 실행해 해당 직원에게 전달한다(에이전트·로그·CI 에서 실행하지 않는다).
-# 한계: 해시 생성 때 암호가 docker run 인자로 호스트 프로세스 목록에 아주 잠깐 보인다(같은 호스트 사용자만 볼 수 있다). 근거와 대안: docs/adr/0022-secret-file-permissions.md.
+# 해시 생성 때 암호는 docker run -i 의 표준 입력으로 전달된다(인자에 나타나지 않는다: scripts/test-hash-password-argv.sh). 근거: docs/adr/0022-secret-file-permissions.md.
 #   --apply : 게이트웨이를 다시 시작해 반영한다(Caddy 는 시작할 때 계정 파일을 읽는다). 없으면 파일만 바꾸고 안내한다.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"; source "$(dirname "$0")/gateway-lib.sh"
