@@ -106,7 +106,7 @@ if want model-registry; then
   whl=$(basename "$(ls "$ML"/vendor-wheels/boundary_contracts-*.whl | head -1)")
   c=$(commit_of model-lab); img="deploy-build/model-registry:$c"
   "$DOCKER" build -q -t "$img" --build-context "wheels=$ML/vendor-wheels" --build-arg "BC_SPEC=/wheels/$whl" \
-    --build-arg "REVISION=$c" "$ML" >/dev/null
+    --build-arg "BC_VERSION=$DEPLOY_BC_TAG" --build-arg "REVISION=$c" "$ML" >/dev/null
   record model-registry "$img" "$c"
 fi
 
