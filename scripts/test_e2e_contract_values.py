@@ -28,5 +28,29 @@ class T(unittest.TestCase):
         self.assertGreaterEqual(n, 2, "목록과 세션 조회 둘 다 RISK_STOP 을 확인해야 한다")
 
 
+class RuntimeVersionNotHardcoded(unittest.TestCase):
+    """model-runtime 서버는 릴리스 매니페스트의 lineage.model_runtime_version MAJOR.MINOR 가 서버와 같을 때만 적재한다(0.7.x 릴리스는 UNSUPPORTED_VERSION; model-runtime v0.8.0).
+    그러므로 E2E 가 만드는 매니페스트의 model_runtime_version 은 문자열 리터럴이 아니라 서버(/v1/info runtime_version) 또는 DEPLOY_MR_TAG 시점 패키지에서 와야 한다. 리터럴이면 태그를 올릴 때마다 조용히 어긋난다."""
+    def test_manifest_runtime_version_is_not_a_literal(self):
+        bad = []
+        for n in ast.walk(TREE):
+            if isinstance(n, ast.Dict):
+                for k, v in zip(n.keys, n.values):
+                    if isinstance(k, ast.Constant) and k.value in ("model_runtime_version", "runtime") and isinstance(v, ast.Constant) and isinstance(v.value, str):
+                        bad.append(f"e2e_steps.py:{n.lineno}")
+        self.assertEqual(bad, [], "model_runtime_version 을 리터럴로 박았다: " + ", ".join(bad))
+
+    def test_no_pinned_runtime_version_in_fixtures(self):
+        import re
+        root = HERE.parent / "test"
+        hits = [f"{p.relative_to(HERE.parent)}:{i + 1}" for p in root.rglob("*") if p.is_file() and p.suffix in (".json", ".txt", ".yaml", ".yml", ".py")
+                for i, l in enumerate(p.read_text(encoding="utf-8", errors="ignore").splitlines()) if re.search(r"model[_-]runtime[_-]version\W+\"?0\.\d+\.\d+", l)]
+        self.assertEqual(hits, [], "시험 픽스처가 model_runtime_version 을 박고 있다: " + ", ".join(hits))
+
+    def test_llm_attach_uses_runtime_constant(self):
+        src = (HERE / "llm_attach_package.py").read_text(encoding="utf-8")
+        self.assertIn('"model_runtime_version": mr.RUNTIME_VERSION', src)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
