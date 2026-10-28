@@ -22,6 +22,6 @@ sed -i "s/$BC/v1.3.3/" "$T/kiosk-frontend/Dockerfile" "$T/admin-console/Dockerfi
 out=$(bash "$HERE/check-versions.sh" 2>&1); r=$?
 { [ $r = 1 ] && grep -q 'survey-service/requirements.txt:3: turn-engine v0.0.9' <<<"$out" && grep -q 'model-lab/build.sh:1: boundary-contracts v9.9.9' <<<"$out"; } && grep -q 'kiosk-frontend/Dockerfile:2: boundary-contracts v1.3.3' <<<"$out" && grep -q 'admin-console/Dockerfile:2: boundary-contracts v1.3.3' <<<"$out" && echo "ok: 어긋나면 실패하고 파일:줄을 말한다(kiosk-frontend·admin-console 포함)" || { echo "FAIL: 어긋남을 못 잡았다 (rc=$r)"; echo "$out"; rc=1; }
 grep -q 'docs/old.md\|tests/old.sh' <<<"$out" && { echo "FAIL: 문서·시험을 검사했다"; rc=1; } || echo "ok: 문서·시험의 옛 표기는 무시"
-sed -i "s/$DEPLOY_BC_TAG_DS/$DEPLOY_BC_TAG_SD/" "$T/synthetic-data/Dockerfile"; out=$(bash "$HERE/check-versions.sh" 2>&1)
+sed -i "s/@$DEPLOY_BC_TAG_DS/@v0.0.0-mismatch/" "$T/synthetic-data/Dockerfile"; out=$(bash "$HERE/check-versions.sh" 2>&1)
 grep -q 'synthetic-data/Dockerfile:1: boundary-contracts' <<<"$out" && echo "ok: synthetic-data Dockerfile 이 DS 태그와 다르면 실패" || { echo "FAIL: DS 태그 대조가 없다"; rc=1; }
 exit $rc
