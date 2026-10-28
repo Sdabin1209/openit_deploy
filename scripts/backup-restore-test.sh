@@ -6,7 +6,7 @@
 #     원본이 시험 중에 바뀌면 지문이 어긋날 수 있어 최대 3번 다시 한다(그래도 다르면 FAIL).
 #  2) 실제 백업 무결성(키 필요 없음): BACKUP_DIR 의 최신 스냅샷마다 MANIFEST 의 stored_file 해시를 다시 계산해 대조한다.
 # 실제 개인키로 푸는 전체 복원 시험은 사람이 분기마다 한다(docs/runbook.md 4절). 이 시험은 그것을 대신하지 않는다.
-# 종료 코드: 0 통과, 1 시험 실패(복원 사슬이 깨졌거나 지문 불일치), 2 설정 문제(CRIT). check-health 가 잡 상태로 읽는다.
+# 종료 코드: 0 통과, 1 시험 실패(복원 사슬이 깨졌거나 지문 불일치), 2 설정 문제(CRIT). systemd 서비스 결과가 job-metrics.sh 로 지표가 된다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/backup-lib.sh"

@@ -95,7 +95,7 @@ CR-006의 미해결 항목을 deploy가 정하지 않고 임시로 채운 값: �
 
 ## 단계 5m: model-serving 무응답 중 환자 턴 (FAULT_MATRIX B1)
 
-`scripts/e2e_steps.py`의 `5m`(단독: `--only 1,2,3,4,5m`). model-serving을 `docker pause`한 동안 gateway 경유 환자 턴이 survey 턴 마감(6초) 안에 분류된 실패로 끝나는지(gateway 접근 로그 duration 6.5초 미만; 이 PC 관찰 4.03초 = survey의 model-serving 읽기 timeout 4초), 값이 저장되지 않는지(이전 값 유지, 그 칸 없음), `unpause` 뒤 서비스가 복구되어 새 `turn_id`로 값이 한 번 저장되는지 본다. 같은 단계가 실제 스택에서 `check-health.sh --project`를 불러 model-serving `/readyz` OK와 release-gate 판정 루프 판정을 읽는지도 확인한다(이 PC에서 확인).
+`scripts/e2e_steps.py`의 `5m`(단독: `--only 1,2,3,4,5m`). model-serving을 `docker pause`한 동안 gateway 경유 환자 턴이 survey 턴 마감(6초) 안에 분류된 실패로 끝나는지(gateway 접근 로그 duration 6.5초 미만; 이 PC 관찰 4.03초 = survey의 model-serving 읽기 timeout 4초), 값이 저장되지 않는지(이전 값 유지, 그 칸 없음), `unpause` 뒤 서비스가 복구되어 새 `turn_id`로 값이 한 번 저장되는지 본다. 같은 단계가 실제 스택에서 model-serving `/readyz` 200과 release-gate 판정 루프(`judging_loop`)의 정상 값을 직접 읽는지도 확인한다(이 PC에서 확인).
 
 관찰과 정책 단언: 실패 응답은 `200` + `turn_failure_signal`(`NOT_COMMITTED`)이고, 실패한 턴의 발화는 대화 기록에 남는다(값은 저장되지 않음). 이 턴을 **같은 `turn_id`로 재전송**하면 model-serving이 돌아온 뒤에도 같은 실패 응답이 계속 온다(20회, 약 60초). FAULT_POLICY 원칙 1·2의 기대(NOT_COMMITTED 턴의 재전송은 확정)와 달라서 정책 단언 `POLICY-PENDING`으로 두었다. 기다리는 변경: survey-service([CR-D25](change-requests/CR-D25-survey-notcommitted-turn-id-replay.md)).
 

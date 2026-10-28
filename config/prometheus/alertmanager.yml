@@ -1,0 +1,10 @@
+# 알림 수단(누구에게 어떻게)은 사용자 결정이라 정해지지 않았다(옛 check-health 의 OnFailure 자리와 같다). 지금은 수신자가 없어
+# 경보는 Alertmanager 화면/API(127.0.0.1)에서만 보인다. 수단이 정해지면 아래 receivers 에 email_configs / webhook_configs 를 넣는다(비밀은 *_file 로).
+route:
+  receiver: none
+  group_by: [alertname]
+  group_wait: 30s        # Alertmanager 기본값
+  group_interval: 5m     # 기본값
+  repeat_interval: 4h    # 기본값
+receivers:
+  - name: none

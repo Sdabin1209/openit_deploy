@@ -25,7 +25,7 @@
 
 ## 결과
 
-- 한 서버가 죽으면 전부 멈춘다(비보증, D10). 서버 밖 감시(`config/external-monitor.example.yaml`)와 백업이 보완한다.
+- 한 서버가 죽으면 전부 멈춘다(비보증, D10). 서버 밖 감시(`config/prometheus/external-targets.yml` 자리)와 백업이 보완한다.
 - 호스트 재부팅 뒤 기동 순서는 `restart: unless-stopped`와 depends_on에 맡긴다(점검 A5: 재부팅 절차를 런북에 명시할 것).
 
 ## 되돌리는 조건

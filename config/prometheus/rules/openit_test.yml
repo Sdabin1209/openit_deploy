@@ -1,0 +1,90 @@
+# promtool test rules config/prometheus/rules/openit_test.yml  (경보가 옛 check_health.py 의 판정과 같은 경계에서 울리는지)
+rule_files: [openit.yml]
+evaluation_interval: 1m
+tests:
+  - name: 디스크 79% 는 조용하고 80% 는 WARN, 90% 는 CRIT 만
+    interval: 1m
+    input_series:
+      - {series: 'node_filesystem_size_bytes{mountpoint="/a"}', values: '100+0x10'}
+      - {series: 'node_filesystem_avail_bytes{mountpoint="/a"}', values: '21+0x10'}
+      - {series: 'node_filesystem_size_bytes{mountpoint="/b"}', values: '100+0x10'}
+      - {series: 'node_filesystem_avail_bytes{mountpoint="/b"}', values: '20+0x10'}
+      - {series: 'node_filesystem_size_bytes{mountpoint="/c"}', values: '100+0x10'}
+      - {series: 'node_filesystem_avail_bytes{mountpoint="/c"}', values: '10+0x10'}
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DiskUsageWarning
+        exp_alerts:
+          - exp_labels: {severity: warning, mountpoint: /b}
+            exp_annotations: {summary: "디스크 /b 사용률 80% 이상"}
+      - eval_time: 10m
+        alertname: DiskUsageCritical
+        exp_alerts:
+          - exp_labels: {severity: critical, mountpoint: /c}
+            exp_annotations: {summary: "디스크 /c 사용률 90% 이상"}
+  - name: 탐침 실패는 2분 지속될 때 CRIT, 성공이면 조용
+    interval: 1m
+    input_series:
+      - {series: 'probe_success{instance="http://release-gate:8080/readyz"}', values: '1 1 0 0 0 0'}
+      - {series: 'probe_success{instance="http://gateway:8080/healthz"}', values: '1 1 1 1 1 1'}
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ProbeDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ProbeDown
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: "http://release-gate:8080/readyz"}
+            exp_annotations: {summary: "http://release-gate:8080/readyz 탐침 실패 (healthz/readyz 가 2xx 가 아니거나 닿지 못함)"}
+  - name: release-gate 판정 루프 연속 실패 0/1/2/3 회, 인증 실패, 오래된 실행
+    interval: 1m
+    input_series:
+      - {series: 'openit_gate_judging_consecutive_failures{instance="ok"}', values: '0'}
+      - {series: 'openit_gate_judging_consecutive_failures{instance="f1"}', values: '1'}
+      - {series: 'openit_gate_judging_consecutive_failures{instance="f2"}', values: '2'}
+      - {series: 'openit_gate_judging_consecutive_failures{instance="f3"}', values: '3'}
+      - {series: 'openit_gate_judging_upstream_auth_failed{instance="auth"}', values: '1'}
+      - {series: 'openit_gate_judging_upstream_auth_failed{instance="ok"}', values: '0'}
+      - {series: 'openit_gate_judging_last_run_timestamp_seconds{instance="old"}', values: '0+0x30'}
+      - {series: 'openit_gate_judging_last_run_timestamp_seconds{instance="fresh"}', values: '0+60x30'}
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: GateJudgingFailuresWarning
+        exp_alerts:
+          - {exp_labels: {severity: warning, instance: f1}, exp_annotations: {summary: "release-gate 판정 루프 연속 실패 1회"}}
+          - {exp_labels: {severity: warning, instance: f2}, exp_annotations: {summary: "release-gate 판정 루프 연속 실패 2회"}}
+      - eval_time: 1m
+        alertname: GateJudgingFailuresCritical
+        exp_alerts:
+          - {exp_labels: {severity: critical, instance: f3}, exp_annotations: {summary: "release-gate 판정 루프 연속 실패 3회"}}
+      - eval_time: 1m
+        alertname: GateJudgingUpstreamAuthFailed
+        exp_alerts:
+          - {exp_labels: {severity: critical, instance: auth}, exp_annotations: {summary: "release-gate 이웃 호출 인증 실패(토큰 확인)"}}
+      - eval_time: 20m   # old: 1200초 전 (> 900초)
+        alertname: GateJudgingStale
+        exp_alerts:
+          - {exp_labels: {severity: warning, instance: old}, exp_annotations: {summary: "release-gate 판정 루프 마지막 실행이 20m 0s 전"}}
+  - name: 주기 잡 실패, 주기의 2배+60초 지연
+    interval: 1m
+    input_series:
+      - {series: 'openit_job_last_exit_status{job_name="a"}', values: '0'}
+      - {series: 'openit_job_last_exit_status{job_name="b"}', values: '1'}
+      - {series: 'openit_job_interval_seconds{job_name="a"}', values: '600x40'}
+      - {series: 'openit_job_interval_seconds{job_name="b"}', values: '600x40'}
+      - {series: 'openit_job_interval_seconds{job_name="c"}', values: '600x40'}
+      - {series: 'openit_job_last_success_timestamp_seconds{job_name="a"}', values: '0+60x40'}
+      - {series: 'openit_job_last_success_timestamp_seconds{job_name="b"}', values: '0+60x40'}
+      - {series: 'openit_job_last_success_timestamp_seconds{job_name="c"}', values: '0+0x40'}
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: JobFailed
+        exp_alerts:
+          - {exp_labels: {severity: critical, job_name: b}, exp_annotations: {summary: "주기 잡 b 의 마지막 실행이 실패했다 (journalctl -u openit-b.service)"}}
+      - eval_time: 20m   # c: 1200초 경과 = 2*600+60 = 1260 미만이면 조용
+        alertname: JobStale
+        exp_alerts: []
+      - eval_time: 22m   # 1320초 > 1260 -> c 만 울림
+        alertname: JobStale
+        exp_alerts:
+          - {exp_labels: {severity: critical, job_name: c}, exp_annotations: {summary: "주기 잡 c 의 마지막 성공이 주기의 2배를 넘었다"}}

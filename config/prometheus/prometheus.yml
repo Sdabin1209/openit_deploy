@@ -1,0 +1,39 @@
+# Prometheus 설정(ADR 0037). 이 서버 안의 상태 감시다. 서버 전체가 죽으면 이 서버의 Prometheus도 죽으므로 서버 밖 감시(D10)는 따로 둔다(external-targets.yml 은 그 자리에 같은 탐침을 거는 예시).
+global:
+  scrape_interval: 1m        # Prometheus 기본값. 옛 check-health timer 는 5분 주기였다. 측정 안 함(시작값)
+  evaluation_interval: 1m    # Prometheus 기본값
+rule_files: [/etc/prometheus/rules/openit.yml]
+alerting:
+  alertmanagers:
+    - static_configs: [{targets: ['alertmanager:9093']}]
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{targets: ['localhost:9090']}]
+  - job_name: node          # 디스크 사용률(filesystem)과 주기 잡 결과(textfile: scripts/job-metrics.sh 가 쓴다)
+    static_configs: [{targets: ['node-exporter:9100']}]
+  - job_name: probe-healthz # 살아 있음. gateway 평문 포트 /healthz 는 상류와 무관한 정적 200(Caddyfile)
+    metrics_path: /probe
+    params: {module: [http_2xx]}
+    static_configs: [{targets: ['http://gateway:8080/healthz']}]
+    relabel_configs: &blackbox_relabel
+      - {source_labels: [__address__], target_label: __param_target}
+      - {source_labels: [__param_target], target_label: instance}
+      - {target_label: __address__, replacement: 'blackbox-exporter:9115'}
+  - job_name: probe-readyz  # 준비됨. release-gate(판정 루프 포함)와 model-serving(엔진 멈춤·사망 시 503)
+    metrics_path: /probe
+    params: {module: [http_2xx]}
+    static_configs: [{targets: ['http://release-gate:8080/readyz', 'http://model-serving:8080/readyz']}]
+    relabel_configs: *blackbox_relabel
+  - job_name: probe-external  # 서버 밖에서 보는 공개 주소(사용자 결정 뒤에 채운다). 기본은 빈 목록
+    metrics_path: /probe
+    params: {module: [http_2xx]}
+    file_sd_configs: [{files: [/etc/prometheus/external-targets.yml]}]
+    relabel_configs: *blackbox_relabel
+  - job_name: gate-judging   # /readyz 의 judging_loop 필드(연속 실패, 마지막 실행, 인증 실패)를 숫자로 읽는다
+    metrics_path: /probe
+    params: {module: [gate_judging]}
+    static_configs: [{targets: ['http://release-gate:8080/readyz']}]
+    relabel_configs:
+      - {source_labels: [__address__], target_label: __param_target}
+      - {source_labels: [__param_target], target_label: instance}
+      - {target_label: __address__, replacement: 'json-exporter:7979'}

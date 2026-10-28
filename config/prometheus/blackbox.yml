@@ -1,0 +1,9 @@
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s          # 옛 check_health.py 의 요청 제한 시간(urlopen timeout=5)을 그대로 옮겼다. 측정 안 함
+    http:
+      method: GET
+      valid_status_codes: []    # 비면 2xx 만 성공(옛: 기대 상태 코드 200)
+      preferred_ip_protocol: ip4
+      follow_redirects: false

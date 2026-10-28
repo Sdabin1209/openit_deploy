@@ -972,11 +972,11 @@ def step5m():
     n_final = utt_count(sv2, "아니요 없어요")
     # model-runtime 요청 상한(MODEL_RUNTIME_REQUEST_DEADLINE_S 3.5s)과 엔진 멈춤 시 /readyz 503 은 pause 로는 볼 수 없다(컨테이너가 통째로 얼어 /readyz 도 응답하지 못한다).
     # 이 이미지가 그 코드를 가졌는지는 라벨의 model-runtime 태그로만 안다: 태그가 73e79f9(요청 상한) 이후를 포함해야 한다.
-    chk_ = subprocess.run(["bash", str(ROOT / "scripts/check-health.sh"), "--project", a.project, "--skip-backup", "--disk-path", str(WORK)], capture_output=True, text=True)
-    lines = chk_.stdout.splitlines(); gate_l = [l for l in lines if "release-gate 판정 루프" in l]; ms_l = [l for l in lines if "readyz model-serving" in l]
-    assert ms_l and ms_l[0].startswith("OK"), ("check-health 의 model-serving 판정", ms_l)
-    assert gate_l and not gate_l[0].startswith(("CRIT", "SKIP")), ("check-health 의 release-gate 판정 루프", gate_l)
-    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 6s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택의 check-health --project 가 model-serving /readyz OK, release-gate 판정 루프 '{gate_l[0][5:60].strip()}...'를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
+    # 감시 스택(Prometheus 규칙, ADR 0037)이 보는 것과 같은 필드를 직접 읽는다: model-serving /readyz 200(엔진 정상), release-gate /readyz 의 judging_loop(연속 실패 3 미만, 인증 실패 아님)
+    assert urllib.request.urlopen(URL("ms") + "/readyz", timeout=10).status == 200, "model-serving /readyz 가 200이 아니다"
+    jl = json.loads(urllib.request.urlopen(URL("gate") + "/readyz", timeout=10).read()).get("judging_loop")
+    assert jl is not None and not jl.get("upstream_auth_failed") and (jl.get("consecutive_failures") or 0) < 3, ("release-gate 판정 루프", jl)
+    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 6s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택에서 직접 읽은 model-serving /readyz OK, release-gate 판정 루프 (연속 실패 {jl.get('consecutive_failures')}회)를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
 
 AUTHOR = lambda: ("author-e2e", TOK("account-author-e2e-password"))        # 저자 경로 계정(역할 author)
 CLINICAL = lambda: ("clinical-e2e", TOK("account-clinical-e2e-password"))   # 임상 근거 검수자(역할 clinical-reviewer, 저자와 다른 주체)

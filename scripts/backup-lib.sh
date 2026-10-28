@@ -4,7 +4,7 @@
 # source 하는 쪽이 lib.sh(die, DEPLOY_ROOT)를 먼저 source 해야 한다.
 
 # 설정을 읽고 검증한다. 문제가 있으면 "CRIT: ..." 를 표준 오류로 내고 종료 코드 2(D88 U6: 경고가 아니라 실패).
-# 스케줄러는 종료 코드와 마지막 줄을 상태 파일에 남기고 check-health 가 이것을 CRIT 로 읽는다.
+# systemd 가 종료 코드와 마지막 줄을 journald 에 남기고 job-metrics.sh 가 실패를 지표로 내보내 JobFailed 경보가 된다.
 backup_load_config() {
   CFG=${BACKUP_CONFIG:-$DEPLOY_ROOT/config/backup.env}
   [ -f "$CFG" ] || { echo "CRIT: 백업 설정 파일이 없다: $CFG (config/backup.env.example 을 복사해 채운다. 백업 없이 운영하지 않는다, D88 U6)" >&2; exit 2; }

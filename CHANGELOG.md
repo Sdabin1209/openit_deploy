@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 단위 4a-2: check_health -> Prometheus + blackbox/json/node exporter + Alertmanager (D111, ADR 0037)
+- 추가: `compose.monitoring.yaml`(이미지 5개 digest 고정, `lock-third-party.sh`), `config/prometheus/`(prometheus, 경보 규칙과 `promtool test rules`, blackbox, json_exporter, alertmanager), `scripts/job-metrics.sh`(systemd `ExecStopPost`가 주기 잡 결과를 textfile 지표로), `scripts/test-monitoring.sh`(정적 + 가짜 서비스 실패 주입), `scripts/check-monitoring-live.sh`, 각 `.service`에 `ExecStopPost`.
+- 삭제: `check_health.py`, `check-health.sh`, `test-check-health.sh`, `external-monitor.example.yaml`, check-health 유닛.
+- E2E: 단계 5m은 model-serving `/readyz`와 판정 루프를 직접 읽는다. 단계 9 구간은 감시 스택을 같은 프로젝트에 올려 탐침·지표를 확인한다(전체 모드에서만).
+
 ## 단위 4a-1: scheduler.py -> systemd timer (D111, ADR 0036)
 - 잡마다 `config/systemd/openit-<잡>.service|timer` 7쌍을 추가했다. `scripts/scheduler.py`, `config/jobs.yaml`, `schemas/jobs.schema.json`, 스케줄러 유닛, 스케줄러 상태 파일과 그 시험을 지웠다. `check_health.py`는 스케줄러 상태를 읽지 않는다(잡 신선도 점검은 4a-2에서 Prometheus가 이어받는다).
 - 새 시험 `scripts/test-systemd-units.sh`(주기 표, oneshot, 스크립트 존재, `systemd-analyze verify`, 망가진 유닛 거부). E2E 단계 9의 스케줄러 구간은 이 시험 + `run-job.sh` 실행으로 바뀌었다.

@@ -1,0 +1,95 @@
+# 상태 감시 스택(ADR 0037): Prometheus + blackbox_exporter + json_exporter + node_exporter + Alertmanager.
+# 사용: COMPOSE_EXTRA=compose.monitoring.yaml scripts/up.sh deploy   (E2E 는 이 파일을 함께 올린다)
+# 이미지는 digest 로 고정한다(locks/images.lock, scripts/lock-third-party.sh). 호스트 포트는 127.0.0.1 에만 열고 Docker 가 배정한다(고정 포트 금지).
+# 네트워크: monitoring(전용) + serving(탐침이 gateway/release-gate/model-serving 에 닿아야 한다). 서비스 쪽 네트워크는 바꾸지 않는다.
+# 강화: 비root, 읽기 전용, cap_drop ALL, no-new-privileges, 로그 회전, 자원 한도(측정 안 함, 시작값).
+x-monlog: &monlog {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+x-monhard: &monhard
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  logging: *monlog
+services:
+  prometheus:
+    <<: *monhard
+    image: ${PROMETHEUS_IMAGE:?locks/images.lock}
+    user: "65534:65534"       # nobody
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}      # 측정 안 함(시작값)
+    cpus: ${PROMETHEUS_CPUS:-0.5}
+    pids_limit: ${PROMETHEUS_PIDS_LIMIT:-128}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}    # Prometheus 기본값(측정 안 함)
+      - --web.listen-address=:9090
+    ports: ["127.0.0.1::9090"]
+    volumes:
+      - ${CONFIG_DIR:-./config}/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${CONFIG_DIR:-./config}/prometheus/external-targets.yml:/etc/prometheus/external-targets.yml:ro
+      - ${CONFIG_DIR:-./config}/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks: [monitoring]
+    depends_on: [alertmanager, blackbox-exporter, json-exporter, node-exporter]
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s}
+  alertmanager:
+    <<: *monhard
+    image: ${ALERTMANAGER_IMAGE:?locks/images.lock}
+    user: "65534:65534"
+    mem_limit: ${ALERTMANAGER_MEM_LIMIT:-128m}
+    cpus: ${ALERTMANAGER_CPUS:-0.25}
+    pids_limit: ${ALERTMANAGER_PIDS_LIMIT:-64}
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=:9093
+    ports: ["127.0.0.1::9093"]
+    volumes:
+      - ${CONFIG_DIR:-./config}/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks: [monitoring]
+    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"], interval: 15s, timeout: 3s, retries: 5, start_period: 10s}
+  blackbox-exporter:
+    <<: *monhard
+    image: ${BLACKBOX_IMAGE:?locks/images.lock}
+    user: "65534:65534"
+    mem_limit: ${BLACKBOX_MEM_LIMIT:-128m}
+    cpus: ${BLACKBOX_CPUS:-0.25}
+    pids_limit: ${BLACKBOX_PIDS_LIMIT:-64}
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes: ["${CONFIG_DIR:-./config}/prometheus/blackbox.yml:/etc/blackbox/blackbox.yml:ro"]
+    networks: [monitoring, serving]
+  json-exporter:
+    <<: *monhard
+    image: ${JSON_EXPORTER_IMAGE:?locks/images.lock}
+    user: "65534:65534"
+    mem_limit: ${JSON_EXPORTER_MEM_LIMIT:-128m}
+    cpus: ${JSON_EXPORTER_CPUS:-0.25}
+    pids_limit: ${JSON_EXPORTER_PIDS_LIMIT:-64}
+    command: ["--config.file=/config/json-exporter.yml"]
+    volumes: ["${CONFIG_DIR:-./config}/prometheus/json-exporter.yml:/config/json-exporter.yml:ro"]
+    networks: [monitoring, serving]
+  node-exporter:
+    <<: *monhard
+    image: ${NODE_EXPORTER_IMAGE:?locks/images.lock}
+    user: "65534:65534"
+    mem_limit: ${NODE_EXPORTER_MEM_LIMIT:-128m}
+    cpus: ${NODE_EXPORTER_CPUS:-0.25}
+    pids_limit: ${NODE_EXPORTER_PIDS_LIMIT:-64}
+    # 필요한 수집기만 켠다(최소 권한): 파일시스템(디스크 사용률)과 textfile(주기 잡 결과, scripts/job-metrics.sh). 호스트 루트는 읽기 전용으로만 본다
+    command:
+      - --path.rootfs=/host
+      - --collector.disable-defaults
+      - --collector.filesystem
+      - --collector.textfile
+      - --collector.textfile.directory=/textfile
+      - --web.listen-address=:9100
+    volumes:
+      - ${NODE_EXPORTER_ROOT_MOUNT:-/:/host:ro}   # 호스트 루트 읽기 전용. 하위 마운트(별도 디스크)까지 보려면 / 가 shared 인 리눅스 서버에서 NODE_EXPORTER_ROOT_MOUNT=/:/host:ro,rslave (node_exporter 문서의 방식). WSL/Docker Desktop 은 / 가 shared 가 아니라 rslave 를 거부한다(측정함)
+      - ${METRICS_DIR:-./state/metrics}:/textfile:ro
+    networks: [monitoring]
+networks:
+  monitoring:
+volumes:
+  prometheus-data:
+  alertmanager-data:

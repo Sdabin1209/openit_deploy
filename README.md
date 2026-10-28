@@ -118,6 +118,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0005 TLS는 gateway에서 HTTPS 필수, 기본은 Caddy 내부 CA(`tls internal`)](docs/adr/0005-tls-internal-ca.md)
 - [0010 주기 잡은 호스트의 가벼운 스케줄러는 폐기됨 -> 0036](docs/adr/0010-host-scheduler.md)
 - [0036 주기 잡은 systemd timer가 run-job.sh로 돌린다(0010 대체)](docs/adr/0036-systemd-timers.md)
+- [0037 상태 감시는 Prometheus + blackbox/json/node exporter + Alertmanager](docs/adr/0037-prometheus-monitoring.md)
 - [0011 서버 안의 로컬 레지스트리와 이미지 digest 잠금](docs/adr/0011-local-registry-digest-lock.md)
 - [0035 이미지 라벨은 게시 전에 계약 ImageLabels 스키마로 검증한다](docs/adr/0035-image-label-gate.md)
 - [0012 영역을 가로지르는 정적 일관성 점검(check-all)을 E2E 앞에 둔다](docs/adr/0012-check-all-static-consistency.md)

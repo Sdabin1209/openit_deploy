@@ -1,0 +1,12 @@
+# 감시 스택 시험용: 가짜 gateway/release-gate/model-serving 를 serving 네트워크에 둔다(compose.monitoring.yaml 과 함께 쓴다).
+services:
+  fakes:
+    image: ${UTIL_IMAGE:?}
+    command: ["python", "/fake/fake-services.py"]
+    volumes:
+      - ./fake-services.py:/fake/fake-services.py:ro
+      - ${FAKE_STATE_DIR:?}:/state:ro
+    networks:
+      serving: {aliases: [gateway, release-gate, model-serving]}
+networks:
+  serving:

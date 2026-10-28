@@ -1,0 +1,15 @@
+# release-gate /readyz 의 judging_loop 를 지표로 바꾼다. /readyz 는 판정 루프가 실패하면 503 이지만 본문의 judging_loop 는 그대로 있으므로 503 도 읽는다.
+modules:
+  gate_judging:
+    valid_status_codes: [200, 503]   # json_exporter 모듈 필드(기본은 2xx 만)
+    metrics:
+      - name: openit_gate_judging_consecutive_failures
+        help: release-gate 판정 루프 연속 실패 횟수
+        path: '{.judging_loop.consecutive_failures}'
+      - name: openit_gate_judging_last_run_timestamp_seconds
+        help: 판정 루프 마지막 실행 시각(epoch 초)
+        path: '{.judging_loop.last_run_at}'
+      - name: openit_gate_judging_upstream_auth_failed
+        help: 이웃 호출 인증 실패(1 = 실패)
+        path: '{.judging_loop.upstream_auth_failed}'
+        values: {true: 1, false: 0}

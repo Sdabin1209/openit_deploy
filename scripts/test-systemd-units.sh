@@ -21,6 +21,7 @@ while IFS='|' read -r name iv cmd; do
   grep -q '^TimeoutStartSec=' "$s" || fail "$name: TimeoutStartSec 이 없다"
   grep -qx "ExecStart=/srv/deploy/$cmd" "$s" || fail "$name: ExecStart 가 기대($cmd)와 다르다"
   grep -qx "OnUnitActiveSec=${iv}s" "$t" || fail "$name: 주기가 ${iv}s 가 아니다"
+  grep -qx "ExecStopPost=/srv/deploy/scripts/job-metrics.sh $name $iv" "$s" || fail "$name: ExecStopPost 의 잡 이름·주기가 timer 와 다르다(경보 'JobStale' 이 이 값을 쓴다, ADR 0037)"
   [ -f "$HERE/${cmd%% *}" ] || fail "$name: 스크립트 ${cmd%% *} 가 없다"
   case "$cmd" in *run-job.sh*) svc=${cmd##* }; grep -q "^  $svc:" "$HERE/compose.yaml" || fail "$name: compose.yaml 에 서비스 $svc 가 없다";; esac
   ok "$name: 쌍, 주기 ${iv}s, oneshot, 스크립트"

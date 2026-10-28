@@ -1,0 +1,57 @@
+# 경보 규칙(ADR 0037). 옛 scripts/check_health.py 가 보던 조건을 같은 한계값으로 옮겼다. 시험: promtool test rules (openit_test.yml).
+# severity: warning = 옛 WARN, critical = 옛 CRIT. 알림을 누구에게 어떻게 보낼지는 사용자 결정(미정)이라 alertmanager.yml 에 수신자가 없다.
+# `for:` 값: 옛 점검은 순간값이었다. 스크랩 한 번의 떨림으로 울리지 않게 둔 시작값(측정 안 함). 임계값(80/90%, 2배+60초, 900초, 실패 1/3회)은 옛 점검 값 그대로다.
+groups:
+  - name: openit-disk
+    rules:
+      - alert: DiskUsageWarning          # 옛: 디스크 사용률 80% 이상 WARN
+        expr: (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 >= 80 and (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 90
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "디스크 {{ $labels.mountpoint }} 사용률 80% 이상"}
+      - alert: DiskUsageCritical         # 옛: 90% 이상 CRIT
+        expr: (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 >= 90
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "디스크 {{ $labels.mountpoint }} 사용률 90% 이상"}
+  - name: openit-probes
+    rules:
+      - alert: ProbeDown                 # 옛: 외부 감시 대상 /healthz, 서비스 /readyz 가 200 이 아니거나 닿지 못하면 CRIT
+        expr: probe_success == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "{{ $labels.instance }} 탐침 실패 (healthz/readyz 가 2xx 가 아니거나 닿지 못함)"}
+  - name: openit-release-gate-judging    # 옛: release-gate 판정 루프(/readyz judging_loop)
+    rules:
+      - alert: GateJudgingFailuresWarning     # 연속 실패 1~2회 WARN
+        expr: openit_gate_judging_consecutive_failures >= 1 and openit_gate_judging_consecutive_failures < 3
+        for: 0m
+        labels: {severity: warning}
+        annotations: {summary: "release-gate 판정 루프 연속 실패 {{ $value }}회"}
+      - alert: GateJudgingFailuresCritical    # 연속 실패 3회 이상 CRIT
+        expr: openit_gate_judging_consecutive_failures >= 3
+        for: 0m
+        labels: {severity: critical}
+        annotations: {summary: "release-gate 판정 루프 연속 실패 {{ $value }}회"}
+      - alert: GateJudgingUpstreamAuthFailed  # upstream_auth_failed: 재시도로 풀리지 않는다. 토큰 확인. CRIT
+        expr: openit_gate_judging_upstream_auth_failed == 1
+        for: 0m
+        labels: {severity: critical}
+        annotations: {summary: "release-gate 이웃 호출 인증 실패(토큰 확인)"}
+      - alert: GateJudgingStale               # last_run_at 이 900초(옛 --judging-stale-seconds)보다 오래되면 WARN
+        expr: time() - openit_gate_judging_last_run_timestamp_seconds > 900
+        for: 0m
+        labels: {severity: warning}
+        annotations: {summary: "release-gate 판정 루프 마지막 실행이 {{ $value | humanizeDuration }} 전"}
+  - name: openit-jobs                    # 옛: 스케줄러 상태 파일(마지막 종료 코드, 주기의 2배(+60초) 지연). 이제 systemd 서비스가 scripts/job-metrics.sh 로 남긴다
+    rules:
+      - alert: JobFailed                 # 마지막 실행이 실패 -> CRIT
+        expr: openit_job_last_exit_status != 0
+        for: 0m
+        labels: {severity: critical}
+        annotations: {summary: "주기 잡 {{ $labels.job_name }} 의 마지막 실행이 실패했다 (journalctl -u openit-{{ $labels.job_name }}.service)"}
+      - alert: JobStale                  # 마지막 성공이 주기의 2배+60초를 넘음 -> CRIT. 백업 잡이면 '백업이 2일 넘게 안 됐다'(옛 --backup-max-age-seconds 172800)와 같다
+        expr: time() - openit_job_last_success_timestamp_seconds > 2 * openit_job_interval_seconds + 60
+        for: 0m
+        labels: {severity: critical}
+        annotations: {summary: "주기 잡 {{ $labels.job_name }} 의 마지막 성공이 주기의 2배를 넘었다"}

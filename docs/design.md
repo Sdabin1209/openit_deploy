@@ -117,7 +117,7 @@
 ## 9. 서버 밖 외부 감시 자리 (D10)
 
 - 구성: 서버 밖 감시자가 gateway의 `/healthz`(공개 주소가 정해지면)를 주기로 호출하고 실패 시 유지보수 담당에게 알린다. 서버 전체 중단은 비보증이다.
-- 이 저장소의 자리: `config/external-monitor.example.yaml`(감시 대상 URL 목록과 알림 대상 자리, 실제 서비스·주소·연락처는 미정이라 값 없음).
+- 이 저장소의 자리: `config/prometheus/external-targets.yml`(서버 밖 공개 주소를 탐침 대상으로 두는 자리, 알림 대상은 `config/prometheus/alertmanager.yml`의 receivers 자리. 실제 주소·연락처는 미정이라 값 없음).
 - 미정: 감시 서비스 선택, 공개 주소, 알림 채널. 사용자 결정.
 
 ## 10. 컨테이너 규칙(D22) 적합성

@@ -127,7 +127,7 @@ else chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/s
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
-grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES|PROMETHEUS|ALERTMANAGER|BLACKBOX|NODE_EXPORTER|JSON_EXPORTER)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/registry.sh" up
 chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
 chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
@@ -137,7 +137,8 @@ chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰,
 chk "시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검)" bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
 chk "계정 암호가 docker 인자로 보이지 않는다 (표준 입력, 문서 일치)" bash "$DEPLOY_ROOT/scripts/test-hash-password-argv.sh"
 chk "images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다)" bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
-chk "check-health 자체 점검 (실패 상태 파일·디스크 한계·감시 대상 응답을 읽는다)" bash "$DEPLOY_ROOT/scripts/test-check-health.sh"
+chk "감시 스택 정적 시험 (promtool check/test rules, 변이 시험, amtool, blackbox)" bash "$DEPLOY_ROOT/scripts/test-monitoring.sh" --static
+chk "job-metrics 자체 시험 (textfile 지표)" bash "$DEPLOY_ROOT/scripts/test-job-metrics.sh"
 chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
 chk "e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지)" python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 chk "데모 구성 자기 점검 (모방 백엔드·키오스크 /config.json 배선, 운영 구성 불변)" bash "$DEPLOY_ROOT/scripts/test-demo-kiosk.sh"
@@ -272,11 +273,11 @@ chk_dep "단계 4" "수집기 잡 엔트리포인트(release_gate collect, 단�
 chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_JOB_CONFIG=/nonexistent/job.yaml bash $DEPLOY_ROOT/scripts/run-job.sh job-ops-feedback; [ \$? = 2 ]"
 # 주기 실행은 systemd timer 의 몫이다(ADR 0036). 유닛 파일은 정적 시험으로 확인하고(주기·oneshot·스크립트·systemd-analyze verify), 실제 잡 실행은 위 run-job.sh 호출이 Compose 안에서 확인한다
 chk "systemd 유닛 정적 시험(잡마다 service+timer, 주기, systemd-analyze verify)" bash "$DEPLOY_ROOT/scripts/test-systemd-units.sh"
-mkdir -p "$W/sched"
-# 단계 5d/5q/5w 가 gateway 를 다시 시작하면 Docker 가 배정한 호스트 포트가 바뀐다: 감시 대상 주소는 지금 포트를 다시 읽어 만든다(평문 /healthz 와 HTTPS /healthz + 시험용 CA)
-PGW=$(port gateway); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)
-printf 'targets:\n  - {name: gateway-healthz-plain, url: "http://127.0.0.1:%s/healthz", expect_status: 200}\n  - {name: gateway-healthz-https, url: "https://127.0.0.1:%s/healthz", expect_status: 200, ca_file: "%s"}\n' "$PGW" "$PGWS" "$W/gateway-ca.crt" > "$W/sched/monitor.yaml"
-chk "check-health: 디스크·외부 감시 대상(gateway /healthz 평문·HTTPS)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --monitor "$W/sched/monitor.yaml" --disk-path "$W" --skip-backup
+# 감시 스택(ADR 0037): 같은 프로젝트에 compose.monitoring.yaml 의 서비스를 올려 실제 gateway·release-gate·model-serving 를 탐침하는지 본다.
+# (이전 구간은 check-health.sh 가 gateway /healthz 평문·HTTPS 를 읽었다. HTTPS 탐침은 서버 밖 감시의 몫이라 external-targets.yml 에 둔다.)
+export METRICS_DIR="$W/metrics"; mkdir -p "$METRICS_DIR"; chmod 755 "$METRICS_DIR"; SERVICE_RESULT=success bash "$DEPLOY_ROOT/scripts/job-metrics.sh" e2e-demo 600
+chk "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" bash -c "source '$DEPLOY_ROOT/scripts/lib.sh'; COMPOSE_EXTRA='$COMPOSE_EXTRA $DEPLOY_ROOT/compose.monitoring.yaml' dc '$PROJECT' up -d --wait prometheus alertmanager >/dev/null 2>&1"
+chk_dep "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" "감시 스택이 실제 서비스를 본다 (gateway healthz, release-gate·model-serving readyz 탐침 성공, 판정 루프 지표, 디스크 지표)" bash "$DEPLOY_ROOT/scripts/check-monitoring-live.sh" "$PROJECT"
 chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 없다(서빙 서버 밖, D40)" bash -c "! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
 sect "단계 9: 백업과 복구 (gpg 공개키 암호화 경로를 실제로 실행: 시험 폴더 안의 임시 키쌍, 복호는 서버 밖 사람 몫을 모사)"

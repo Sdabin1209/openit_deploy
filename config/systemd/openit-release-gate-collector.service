@@ -13,3 +13,5 @@ Environment=DEPLOY_PROJECT=deploy
 # 잡 하나의 제한 시간: 옛 스케줄러의 기본값 3600초를 그대로 옮겼다(근거 없는 시작값, 측정 안 함)
 TimeoutStartSec=3600
 ExecStart=/srv/deploy/scripts/run-job.sh job-release-gate-collect
+# 실행 결과를 Prometheus(node_exporter textfile)에 남긴다(ADR 0037). 실패해도 ExecStopPost 는 실행된다
+ExecStopPost=/srv/deploy/scripts/job-metrics.sh release-gate-collector 600

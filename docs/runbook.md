@@ -71,7 +71,7 @@ cp config/backup.env.example config/backup.env    # BACKUP_DIR(서버 밖), BACK
 bash scripts/backup-check.sh                       # 읽기 전용 점검. 문제가 있으면 CRIT 와 종료 코드 2
 ```
 
-- 설정이 없거나 불완전하면 `backup.sh`, `pg-backup.sh`, `backup-all.sh`가 "CRIT:" 한 줄과 종료 코드 2로 실패한다. 스케줄러가 이를 상태 파일에 남기고 `check-health.sh`가 CRIT로 읽는다. `doctor.sh --up --backup`과 운영 프로젝트(`deploy`)의 `up.sh`는 기동 전에 같은 점검을 하고 FAIL로 막는다.
+- 설정이 없거나 불완전하면 `backup.sh`, `pg-backup.sh`, `backup-all.sh`가 "CRIT:" 한 줄과 종료 코드 2로 실패한다. systemd가 실패를 남기고 `job-metrics.sh`가 `openit_job_last_exit_status`로 내보내 `JobFailed` 경보(critical)가 된다. `doctor.sh --up --backup`과 운영 프로젝트(`deploy`)의 `up.sh`는 기동 전에 같은 점검을 하고 FAIL로 막는다.
 - 암호화는 수신자 **공개키만** 서버에 둔다(age 우선, 없으면 gpg). 복호 개인키는 서버 밖에서 사람이 2곳 이상에 보관한다. 서버에서 풀 수 없으므로 서버가 뚫려도 백업 내용은 읽히지 않는다. 개인키를 잃으면 백업을 못 푼다. 개인키가 수신자 파일에 들어 있으면 거부한다.
 - 파일 권한: 폴더 700, 파일 600. 평문 덤프는 암호화에 성공한 뒤 지운다.
 - 보관 14일(설정). 가장 최근 하나는 기간이 지나도 남는다.
@@ -95,12 +95,12 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
    `age -d -i <개인키> -o <db>.dump <db>.dump.age` 또는 `gpg -d -o <db>.dump <db>.dump.gpg`. 파일 저장소는 `<저장소>.tar`.
 4. `bash scripts/pg-restore.sh <db> <스냅샷 폴더> --yes` (해시 검증, 불일치면 종료 코드 3). 파일 저장소는 `bash scripts/restore.sh <저장소> <스냅샷 폴더> --yes`(서비스 정지 필요, tar는 스크립트가 푼다).
 5. 복호한 평문(`<db>.dump`, `<저장소>.tar`)을 지운다. 데이터베이스 5개는 가능하면 **같은 백업 세트(같은 UTC 시각)**에서 복구한다.
-6. `bash scripts/up.sh deploy`, 그다음 gateway `/readyz`와 `bash scripts/check-health.sh`.
+6. `bash scripts/up.sh deploy`, 그다음 gateway `/readyz`와 `bash scripts/check-monitoring-live.sh deploy`(감시 스택이 떠 있을 때).
 7. 게이트 INTEGRITY_ERROR(릴리스 파일 변조): 해당 릴리스를 활성화하지 말고, 활성이면 롤백 요청 후 이 절차로 gate 데이터베이스와 gate-data를 같은 세트로 복구한다(게이트 런북).
 
 ### 4-4. 복원 시험
 
-- 자동(주 1회, 스케줄러 잡 `backup-restore-test`): `bash scripts/backup-restore-test.sh`. 시험용 키쌍을 임시로 만들어 지금 운영 데이터를 암호화 백업하고, 복호해 임시 데이터베이스(`rt_*`)에 복원한 뒤 원본과 행 지문(스키마·행 집합 해시·행 수)을 대조한다. 실제 백업 파일의 해시도 MANIFEST와 대조한다. 실패는 종료 코드 1이고 `check-health.sh`가 CRIT로 읽는다. **서버에는 실제 개인키가 없으므로 이 시험은 도구 사슬과 파일 무결성만 보증한다.**
+- 자동(주 1회, 스케줄러 잡 `backup-restore-test`): `bash scripts/backup-restore-test.sh`. 시험용 키쌍을 임시로 만들어 지금 운영 데이터를 암호화 백업하고, 복호해 임시 데이터베이스(`rt_*`)에 복원한 뒤 원본과 행 지문(스키마·행 집합 해시·행 수)을 대조한다. 실제 백업 파일의 해시도 MANIFEST와 대조한다. 실패는 종료 코드 1이고 `JobFailed`/`JobStale` 경보가 CRIT로 읽는다. **서버에는 실제 개인키가 없으므로 이 시험은 도구 사슬과 파일 무결성만 보증한다.**
 - 사람(분기마다 1회 권장, 근거 없음: 시작값): 실제 개인키로 최신 스냅샷을 복호해 시험 서버나 임시 프로젝트에 4-3 절차대로 복구하고 서비스가 뜨는지 본다. 키를 잃지 않았다는 유일한 확인이다.
 - 전체: `scripts/e2e.sh`가 지웠다 복구하는 왕복을 한다(평문 모드, 시험 전용). 서버 단독 자체 시험: `bash scripts/test-backup.sh`(암호화·복원 시험), `bash scripts/test-postgres.sh`.
 
@@ -145,34 +145,29 @@ journalctl -u openit-release-gate-collector.service -n 30   # 마지막 결과�
 
 쓰기 토큰은 설정이 아니라 환경 변수 `DATASET_STORE_WRITE_TOKEN_FILE`(단수, 잡 쪽)에 파일 경로로 준다: `secrets/tokens/dataset-store-write-synthetic-data`. 서버 쪽 `DATASET_STORE_WRITE_TOKENS_FILE`(복수, 역할=토큰 목록)과 이름이 다르다(synthetic-data ADR 0013). 요구: 잡 실행 환경의 boundary-contracts 가 v2.1.0 이상. 닿는 경로: `datasets` 네트워크는 internal 이라 호스트 밖에서 닿지 않는다. 시험 구성(`compose.test.yaml`)은 `127.0.0.1` 임의 포트를 연다. 운영에서 GPU 호스트가 닿는 방법은 정하지 않았다(ADR 0032 "검토한 대안"). E2E 단계 7d 가 호스트에서 잡을 이 설정으로 돌려 확인한다.
 
-## 5-1. 상태 감시 (FAULT_POLICY 13·14)
+## 5-1. 상태 감시 (FAULT_POLICY 13·14, ADR 0037)
 
-서버 밖 감시가 gateway `/healthz`(살아 있음)와 `/readyz`(환자 경로 survey-service 반영)를 본다. 서버 안에서 읽을 수 있는 상태는 다음이다.
+Prometheus + blackbox_exporter + json_exporter + node_exporter + Alertmanager(`compose.monitoring.yaml`, 설정 `config/prometheus/`)가 이 서버의 상태를 본다. 서버 전체가 죽으면 이 스택도 죽으므로 서버 밖 감시(9절)는 따로 둔다.
 
 ```
-bash scripts/check-health.sh        # 종료 코드 0 OK, 1 WARN, 2 CRIT. cron/systemd timer 가 부르고 종료 코드로 알린다
+COMPOSE_EXTRA=compose.monitoring.yaml bash scripts/up.sh deploy     # 감시 스택까지 올린다
+bash scripts/check-monitoring-live.sh deploy                          # 탐침·지표가 실제로 읽히는지 확인(Prometheus API)
+docker compose -p deploy port prometheus 9090                         # 화면/API 는 127.0.0.1 에만 열린다(Docker 배정 포트)
 ```
 
-| 대상 | 읽는 곳 | 판정 |
+| 대상 | 읽는 곳 | 경보(규칙 `config/prometheus/rules/openit.yml`) |
 |---|---|---|
-| 디스크 사용률 | `df`(state/ 폴더와 `config/backup.env`의 `BACKUP_DIR`) | 80% 이상 WARN, 90% 이상 CRIT. Docker 볼륨(pg-data 등)이 있는 디스크가 위 경로와 다르면 `--disk-path`로 더한다 |
-| 외부 감시 대상 | `config/external-monitor.yaml`(없으면 `.example.yaml`)의 `targets[].url` | 기대 상태 코드와 다르거나 닿지 못하면 CRIT. url이 null이면 SKIP(확인 못 함, 통과 아님) |
+| 디스크 사용률 | node_exporter filesystem | 80% 이상 DiskUsageWarning, 90% 이상 DiskUsageCritical |
+| 살아 있음·준비됨 | blackbox: gateway `/healthz`, release-gate·model-serving `/readyz` | 2xx 가 아니거나 닿지 못함이 2분 지속되면 ProbeDown(critical) |
+| 서버 밖 대상 | `config/prometheus/external-targets.yml`(공개 주소가 정해지면 채운다) | 같은 ProbeDown |
+| release-gate 판정 루프 | json_exporter 가 `/readyz` 의 `judging_loop` 를 읽는다 | 연속 실패 1~2회 warning, 3회 이상 critical, `upstream_auth_failed` critical, 마지막 실행 900초 초과 warning |
+| 주기 잡 결과 | systemd 서비스의 `ExecStopPost=scripts/job-metrics.sh`가 node_exporter textfile(`state/metrics/*.prom`)로 남긴다 | 마지막 실행 실패 JobFailed(critical), 마지막 성공이 주기의 2배+60초를 넘으면 JobStale(critical). 백업 잡이면 '백업이 2일 넘게 안 됐다' |
 
-한계값(80/90%, 2배, 1시간)은 표준 관행의 시작값이고 사용자 결정이 아니다. SKIP은 통과가 아니라 따로 센다. 자체 시험: `bash scripts/test-check-health.sh`(Docker 불필요). 전체 E2E의 스케줄러 구간이 실제 스케줄러가 쓴 상태 파일과 gateway `/healthz`를 이 스크립트로 읽는다. 아직 하지 않은 것: 컨테이너 로그·Docker 볼륨 사용량과 postgres 자체의 디스크 경보(서비스 쓰기 거부 503은 각 영역의 몫), 이 점검을 부르는 cron/timer의 실제 배치(운영 서버가 정해지면).
+옛 `check-health.sh`와의 차이(알려진 것): (1) 백업 파일을 직접 열어 나이를 보지 않고 `backup` 잡의 마지막 성공 시각으로 본다. (2) 백업 암호화 설정 경고(평문 허용)는 없다: restic 저장소(3단계)는 항상 암호화다. (3) 판정 루프가 "한 번도 돌지 않았다"(`last_run_at` null)는 지표가 없어 경보가 없다. (4) gateway HTTPS 탐침은 서버 밖 감시의 몫이다. (5) '시작했지만 끝나지 않음 1시간'은 `TimeoutStartSec=3600`이 서비스를 죽이고 JobFailed 가 된다.
 
-### 점검 호출 주체: systemd timer(표준)와 cron(대안)
+경보 규칙 시험: `bash scripts/test-monitoring.sh`(promtool check/test rules + 변이 시험 + Docker 로 가짜 서비스에 실패를 주입해 경보가 firing 되는지). 정적만: `--static`. 한계값은 옛 점검 값 그대로이고 `for:` 값은 시작값이다(측정 안 함, ADR 0037).
 
-이 리포는 점검과 주기 잡을 **부르는 주체를 설치하지 않는다**(서버의 시스템 설정은 사람이 한다). 예시 유닛이 `config/systemd/`에 있다: `openit-check-health.{service,timer}`(5분마다 `scripts/check-health.sh --project deploy`), `openit-scheduler.{service,timer}`(1분마다 스케줄러 tick). 경로 `/srv/deploy`와 사용자 `openit`은 자리표시다.
-
-사람이 할 일(sudo 필요):
-1. 예시 파일을 서버에 맞게 고쳐 `/etc/systemd/system/`에 복사한다(경로, 사용자, 이 사용자가 docker 그룹이고 `.venv`가 있는지).
-2. `sudo systemctl daemon-reload && sudo systemctl enable --now openit-check-health.timer 'openit-*.timer'`.
-3. 확인(sudo 없이): `systemctl list-timers 'openit-*'`로 다음 실행 시각, `systemctl status openit-check-health.service`와 `journalctl -u openit-check-health.service -n 30`로 마지막 결과, 같은 명령을 손으로 `bash scripts/check-health.sh --project deploy; echo $?`. 서비스는 종료 코드가 0이 아니면(WARN 1, CRIT 2) failed가 되므로 `systemctl --failed`에도 보인다.
-4. cron 대안(systemd가 없을 때, 주기 잡은 각 `.timer`의 주기대로 `bash scripts/run-job.sh <서비스>`를 부른다): `*/5 * * * * cd /srv/deploy && bash scripts/check-health.sh --project deploy >> state/check-health.log 2>&1`. 종료 코드로 알리려면 cron의 `MAILTO` 또는 아래 연결 지점에 쓸 래퍼가 필요하다.
-
-**알림 수단 연결 지점(미정, 만들지 않았다).** 점검이 CRIT/WARN을 "누구에게 어떻게" 알릴지는 사용자 결정이다. 연결할 곳: (a) systemd 서비스의 `OnFailure=`(예시 유닛에 주석 처리된 줄) -- 사용자가 정한 수단으로 알리는 유닛을 지정한다. (b) cron 래퍼의 종료 코드 분기. (c) 서버 밖 감시가 gateway `/healthz`·`/readyz`를 보는 경로(`config/external-monitor.example.yaml`)는 이것과 별개로 서버 전체 중단을 본다(D10).
-
-`check-health.sh`가 추가로 읽는 것(`--project`가 release-gate·model-serving 컨테이너의 호스트 포트를 `docker port`로 찾는다. 호스트 포트가 없는 운영 구성에서는 `--readyz release-gate=URL --readyz model-serving=URL`로 주소를 직접 준다): release-gate `/readyz`의 `judging_loop`(`upstream_auth_failed`면 CRIT, 연속 실패 3회 이상 CRIT, 1회 이상 WARN, `last_run_at`이 15분보다 오래되었거나 없으면 WARN)와 model-serving `/readyz`(엔진 멈춤·사망 시 503이면 CRIT). 한계값은 시작값이고 사용자 결정이 아니다(15분은 판정 루프의 실제 주기를 확인하지 못한 채 잡은 값).
+**알림 수단 연결 지점(미정, 만들지 않았다).** 경보를 "누구에게 어떻게" 보낼지는 사용자 결정이다. 지금 `config/prometheus/alertmanager.yml`에는 수신자가 없어 경보는 Alertmanager 화면/API에서만 보인다. 수단이 정해지면 그 파일의 `receivers`에 넣는다(비밀은 파일로).
 
 ## 5-2. 자동 롤백 요청(D3): 운영 잡 설정에 `rollback`·`gate_service`가 없는 이유
 
