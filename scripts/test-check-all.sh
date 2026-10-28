@@ -96,6 +96,9 @@ echo 'd["pipeline_schema_version"] = "1.3"' > "$W/deploy/app/a.py"; run 5; expec
 echo 'f(pipeline_schema_version, "1.3")' > "$W/deploy/app/a.py"; run 5; expect "쉼표 뒤 다음 인자를 값으로 읽지 않는다(오탐 없음)" PASS
 printf 'pipeline_schema_version: "1.3"\n' > "$W/deploy/app/c.yaml"; rm "$W/deploy/app/a.py"; run 5; expect "YAML 값은 파서로 읽어 FAIL" FAIL "deploy/app/c.yaml"
 rm "$W/deploy/app/c.yaml"; printf '{"pipeline_schema_version": "9.9"}' > "$W/deploy/app/c.json"; run 5; expect "JSON 의 현재 값은 PASS" PASS
+# 계약 2.2.0 의 거부 예시 폴더(conformance/examples_invalid)는 일부러 틀린 값을 담은 시험 데이터다(examples/ 와 같은 취급)
+rm "$W/deploy/app/c.json"; mkdir -p "$W/deploy/conformance/examples_invalid"; printf '{"pipeline_schema_version": "1.3"}' > "$W/deploy/conformance/examples_invalid/X.bad.json"; run 5; expect "거부 예시 폴더(examples_invalid)의 일부러 틀린 값은 대상 아님" PASS
+rm -r "$W/deploy/conformance"; printf '{"pipeline_schema_version": "9.9"}' > "$W/deploy/app/c.json"
 printf 'x = ' > "$W/deploy/app/bad.py"; run 5; expect "파싱하지 못한 파일은 통과가 아니라 SKIP" SKIP "파싱하지 못했다"
 rm "$W/deploy/app/bad.py"
 mkdir -p "$W/deploy/tests"; echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/tests/t.py"; run 5; expect "시험 픽스처는 대상 아님" PASS

@@ -411,7 +411,7 @@ def rule_relax() -> R:
 # ---------- 규칙 4, 5: 코드 파일 (파서로 읽는다) ----------
 # 왜 파서인가: 줄을 정규식으로 읽으면 쉼표 뒤 다음 인자를 값으로 읽거나(오탐) 별칭 import 를 놓친다(미탐). 파이썬은 ast, JSON 은 json, YAML 은 yaml, TOML 은 tomllib 로 읽는다.
 # 파서가 없는 종류(.ts .sh Dockerfile 등)는 '대상 아님(파서 없음)'으로 센다. 읽은 것처럼 통과로 세지 않는다.
-SKIP_DIR = re.compile(r"(^|/)(docs|build|dist|tests?|fixtures?|examples?|runs|testdata|__pycache__)/")
+SKIP_DIR = re.compile(r"(^|/)(docs|build|dist|tests?|fixtures?|examples?|examples_invalid|runs|testdata|__pycache__)/")   # examples_invalid: 계약 2.2.0 의 거부 예시(일부러 틀린 값을 담은 시험 데이터)
 PARSERS = {".py": "py", ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml"}
 
 
