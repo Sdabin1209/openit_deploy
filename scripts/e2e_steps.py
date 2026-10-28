@@ -592,11 +592,20 @@ def model_server_v2_check(new, tok):
     validate("ResponseRequest", rin)
     c, body, h = ms_call(f"/v1/releases/{new}/respond", rin, tok); assert c == 200, (c, body[:200])
     assert body == FAKE_RESPONSE_TEXT and h.get("content-type", "").startswith("text/plain") and h.get("x-openit-outcome") == "ok", (body[:80], h)
+    # I9 ExtractRequest{input, flow}(계약 2.2, D108): 문항 순서표를 실으면 서버가 규칙을 보증한다. 정상 출력은 옛 본문과 같고(200), flow 가 불완전한 본문은 두 형식 모두 아니므로 400이다.
+    # flow 는 가짜 백엔드가 쓰는 흐름 파일(test/fake-model/question_flow.json)에서 order·skips 만 뽑아 만든다(QuestionFlowTable). 규칙 위반 출력을 내는 가짜 설정은 없어 위반 거부는 보지 않는다.
+    ff = json.loads((pathlib.Path(__file__).resolve().parents[1] / "test" / "fake-model" / "question_flow.json").read_text())
+    flow = {"order": ff["order"], "skips": ff["skips"]}; ereq = {"input": ein, "flow": flow}
+    validate("QuestionFlowTable", flow); validate("ExtractRequest", ereq)
+    c, body, h = ms_call(f"/v1/releases/{new}/extract", ereq, tok); assert c == 200, ("ExtractRequest 가 200이 아니다", c, body[:200])
+    out2 = json.loads(body); validate("ActionExtraction", out2); assert out2 == FAKE_EXTRACTION, out2
+    assert h.get("x-openit-outcome") == "ok", h
+    c, bad2, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": {"order": flow["order"]}}, tok); assert c == 400, ("skips 없는 flow 가 400이 아니다", c, bad2[:100])
     c, bad, _ = ms_call(f"/v1/releases/{new}/extract", {"question_id": "Q1"}, tok); assert c == 400, ("계약 위반 입력이 400이 아니다", c, bad[:100])
     c, nf, _ = ms_call("/v1/releases/rel-none-x/extract", ein, tok); assert c == 404, ("적재되지 않은 릴리스가 404가 아니다", c)
     c, info = http("GET", "ms", "/v1/info", tok)
     assert info.get("system_prompt_sha256") == STATE.get("system_prompt"), f"서버가 쓰는 시스템 프롬프트 해시가 패키지와 다르다: {info.get('system_prompt_sha256')} / {STATE.get('system_prompt')}"
-    return "extract(JSON, ActionExtraction 스키마, X-Openit-Outcome ok) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
+    return "extract(JSON, ActionExtraction 스키마, X-Openit-Outcome ok; ExtractRequest{input, flow} 도 200·같은 출력, flow 불완전은 400) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
 
 SWAP_SERVICES = ["survey-service", "release-gate", "model-registry", "ops-feedback-ingest", "question-authoring", "gateway"]
 def container_ids():
