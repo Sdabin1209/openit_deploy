@@ -1181,12 +1181,12 @@ def step5r():
     # 직원 알림이 목록에 나온다(게이트웨이 경유, 직원 계정)
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     mine = [x for x in pg["items"] if x["session_id"] == sid and x["alert_id"] == r1["alert_id"]]; assert mine and mine[0]["status"] == "OPEN", ("위험 신호가 알림 목록에 없다", pg["items"][:2])
-    assert mine[0]["kind"] == "RISK_STOP", mine[0]   # 목록(StaffAlert)의 kind 는 RISK_STOP, 세션 조회(StaffViewAlert)의 kind 는 RISK(신호 severity)
+    assert mine[0]["kind"] == "RISK_STOP", mine[0]   # 목록(StaffAlert)과 세션 조회(StaffSessionView.alerts[])의 kind 는 같은 이름 RISK_STOP(계약 PUBLIC_API.md; survey-service CR-019). 신호 severity 의 RISK, pause_reason 의 RISK 와는 다른 필드
     # (C) 직원 세션 조회: 대화 기록·값·subject_ref
     c, sv = gws("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv); validate_survey("StaffSessionView", sv)
     assert sv["status"] == "PAUSED_RISK" and sv["subject_ref"] == subj and sv["turns"], (sv["status"], sv.get("subject_ref"), len(sv.get("turns", [])))
     va = [al for al in sv["alerts"] if al["alert_id"] == r1["alert_id"]]; assert va, "직원 세션 조회의 alerts 에 이 알림이 없다"
-    assert va[0]["kind"] == "RISK" and va[0]["rule_id"] == "e2e-detector:TEST_RISK", va[0]
+    assert va[0]["kind"] == "RISK_STOP" and va[0]["rule_id"] == "e2e-detector:TEST_RISK", va[0]
     assert gw_raw("GET", f"/v1/staff/sessions/{sid}", basic=OPERATOR())[0] == 403, "operator 계정이 직원 세션 조회를 부를 수 있다"
     # (E) 직원 개입(RESUME): 행위자는 게이트웨이가 붙인 헤더의 계정, 본문의 staff_id 는 무시
     # 본문은 InterventionDecision(+turn_id 봉투)뿐이다(additionalProperties false: staff_id 를 실으면 400). 행위자는 헤더가 정본이므로 위조 X-Openit-User 를 실어도 인증 계정이 기록되어야 한다
