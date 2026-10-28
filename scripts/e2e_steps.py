@@ -1630,7 +1630,152 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+# ---- FAULT_MATRIX 1-1절 '4차 근거 대조'의 빈 10칸을 닫는 단계들 (5pn, 5pj, 5g, 5b). 기대는 head/docs/FAULT_POLICY.md 이다 ----
+def _pg_ready_wait(pg):
+    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+
+def _ready_code(k):
+    try: return http("GET", k, "/readyz")[0]
+    except Exception: return 0
+
+def _run_ops_job():   # run-job.sh 는 5p/스케줄러와 같은 경로(compose run --rm). 설정은 e2e.sh 가 내보낸 OPS_JOB_CONFIG
+    r = sh(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], env={"DEPLOY_PROJECT": a.project}, check=False)
+    return r.returncode, ((r.stdout or "") + (r.stderr or ""))[-300:]
+
+def step5pn():
+    title("5pn", "PostgreSQL 네트워크 분리(docker network disconnect, F8) -> 서비스 /readyz 2초 안 503 -> 재연결 -> 사람 개입 없이 200 (FAULT_MATRIX A5·C4·D1·D4·E1 F8)")
+    # FAULT_POLICY 11: 분리(F8)는 중지(F1)·멈춤(F2)과 같은 규칙. 연결할 수 없으면 F1 로 분류한다 -> 원칙 5: 의존이 죽으면 /readyz 는 2초 안에 503. 원칙 12: 의존이 돌아오면 사람 개입 없이 /readyz 200
+    pg = f"{a.project}-postgres-1"
+    edges = [("A5", "survey", "survey-service", "db-survey"), ("C4", "gate", "release-gate", "db-gate"), ("D4", "ops", "ops-feedback-ingest", "db-ops"), ("E1", "qa", "question-authoring", "db-qa")]
+    if "pointers" not in STATE:   # 활성 릴리스가 없으면 survey-service /readyz 는 DB 와 무관하게 503(5p 와 같은 제한)
+        edges = [e for e in edges if e[1] != "survey"]; print("  (활성 릴리스가 없어 A5(survey-service)는 제외한다: 단계 4 를 포함해 돌려야 A5 가 확인된다)")
+    out = []
+    for cell, k, name, net in edges:
+        N = f"{a.project}_{net}"
+        assert _ready_code(k) == 200, f"{name} /readyz 가 처음부터 200 이 아니다"
+        # postgres 쪽에서 그 서비스의 DB 네트워크만 끊는다: stop 과 달리 postgres 는 살아 있고 다른 서비스는 영향이 없다. 서비스 쪽에서는 postgres 이름이 풀리지 않거나 경로가 없다
+        sh([a.docker, "network", "disconnect", N, pg])
+        try:
+            wait(lambda: _ready_code(k) != 200 or None, 60, f"{name} 분리 뒤 /readyz 비정상", every=1)
+            t = time.time(); c, b = http("GET", k, "/readyz"); el = time.time() - t
+            assert c == 503, f"{name} 분리 중 /readyz 가 503 이 아니다: {c} {str(b)[:100]}"
+            assert el <= 2.5, f"{name} 분리 중 /readyz 응답 {el:.1f}s (FAULT_POLICY 5: 2초 안, 여유 0.5s)"
+            assert http("GET", k, "/healthz")[0] == 200, f"{name} /healthz 가 분리 중 200 이 아니다(원칙 5)"
+            body = json.dumps(b, ensure_ascii=False) if isinstance(b, dict) else str(b)
+            assert "postgres://" not in body and "password" not in body.lower(), f"{name} /readyz 본문에 접속 정보가 있다"
+            job_note = ""
+            if net == "db-ops":   # D1: 같은 네트워크를 쓰는 job-ops-feedback 도 DB 에 닿지 못해 조용히 성공하지 않는다
+                rc, tail = _run_ops_job(); assert rc != 0, f"D1: 분리 중 job-ops-feedback 이 성공(0)으로 끝났다: {tail}"
+                job_note = f", D1 잡 종료 코드 {rc}"
+        finally:
+            sh([a.docker, "network", "connect", "--alias", "postgres", N, pg], check=False)   # 시험이 실패해도 분리를 남기지 않는다
+        t1 = time.time(); wait(lambda: _ready_code(k) == 200 or None, 90, f"{name} 재연결 뒤 /readyz 200 (사람 개입 없이)", every=1)
+        if net == "db-ops":
+            rc2, tail2 = _run_ops_job(); assert rc2 == 0, f"D1: 재연결 뒤 job-ops-feedback 이 성공하지 않는다({rc2}): {tail2}"
+        out.append(f"{cell} {name}: 503 {el:.1f}s -> 복구 {time.time() - t1:.0f}s{job_note}")
+    rec("5pn", "REAL", "postgres 를 서비스별 DB 네트워크에서 disconnect(F8) -> /readyz 503(2초 안)·/healthz 200 -> connect 뒤 자동 200. " + "; ".join(out))
+
+def step5pj():
+    title("5pj", "DB 중지 중 job-ops-feedback run-once: 실패가 드러나고(조용히 성공 안 함) 복구 뒤 재실행이 멱등으로 성공 (FAULT_MATRIX D1 F1·F4)")
+    # FAULT_POLICY 14: 스케줄러/잡 실패는 상태 파일 또는 종료 코드로 드러난다. 원칙 4: DB 는 connect_timeout 이 있어 무한 대기하지 않는다. 원칙 12: 복구 뒤 재전송/재실행이 안전하다
+    pg = f"{a.project}-postgres-1"
+    rc0, tail0 = _run_ops_job(); assert rc0 == 0, f"사전 조건: DB 정상일 때 잡이 성공하지 않는다({rc0}): {tail0}"
+    fp0 = sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), "ops_log"], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
+    sh([a.docker, "stop", pg]); notes = []
+    try:
+        t = time.time(); rc, tail = _run_ops_job(); el = time.time() - t
+        assert rc != 0, f"DB 중지 중 job-ops-feedback 이 성공(0)으로 끝났다(조용한 성공): {tail}"
+        assert el <= 60, f"DB 중지 중 잡이 {el:.0f}s 걸렸다(무한 대기 금지, 원칙 4)"
+        notes.append(f"F1 중지: 종료 코드 {rc} ({el:.0f}s)")
+    finally:
+        sh([a.docker, "start", pg])
+    _pg_ready_wait(pg)
+    wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "postgres 기동 뒤 서비스 /readyz 200", every=1)
+    sh([a.docker, "pause", pg]); 
+    try:
+        t = time.time(); rc, tail = _run_ops_job(); el = time.time() - t
+        assert rc != 0, f"DB 무응답(pause) 중 job-ops-feedback 이 성공(0)으로 끝났다: {tail}"
+        assert el <= 60, f"DB pause 중 잡이 {el:.0f}s 걸렸다(무한 대기 금지, 원칙 4)"
+        notes.append(f"F4 pause: 종료 코드 {rc} ({el:.0f}s)")
+    finally:
+        sh([a.docker, "unpause", pg], check=False)
+    wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "unpause 뒤 서비스 /readyz 200", every=1)
+    for i in (1, 2):   # 같은 입력으로 두 번: 둘 다 성공하고 행 지문이 같다(멱등)
+        rc, tail = _run_ops_job(); assert rc == 0, f"복구 뒤 재실행 {i} 이 실패했다({rc}): {tail}"
+    fp1 = sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), "ops_log"], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
+    assert fp0 == fp1, "실패한 실행 뒤 재실행으로 ops_log 행 지문이 바뀌었다(멱등이 아니다)"
+    rec("5pj", "REAL", "job-ops-feedback run-once: " + "; ".join(notes) + "; 복구 뒤 재실행 2회 모두 0 이고 ops_log 행 지문 불변(멱등).")
+
+def _registry_container():
+    rp = os.environ.get("REGISTRY_PROJECT", "")
+    assert rp, "REGISTRY_PROJECT 환경이 없다(e2e.sh 가 내보낸다)"
+    return rp   # compose.registry.yaml: container_name: ${REGISTRY_PROJECT}
+
+def step5g():
+    title("5g", "로컬 레지스트리 중지(F1)·무응답(F4) 중 이미지 게시: 실패하고 잠금이 깨지지 않으며 실행 중 서비스는 영향 없음 -> 복구 뒤 재시도 성공 (FAULT_MATRIX G2 F1·F4)")
+    # 기대 출처: FAULT_MATRIX G2 '레지스트리 중단: 새 이미지 적용·롤백이 막히고 이미 떠 있는 컨테이너는 영향 없음'. FAULT_POLICY 원칙 4(무한 대기 금지)·12(복구 뒤 사람 개입 없이 재시도 성공)
+    reg = _registry_container(); lock = pathlib.Path(os.environ["DEPLOY_LOCK"])
+    def lock_hash(): return hashlib.sha256(lock.read_bytes()).hexdigest()
+    pub = lambda t: subprocess.run(["timeout", str(t), "bash", str(ROOT / "scripts/publish-images.sh"), "kiosk-frontend"], capture_output=True, text=True)
+    r0 = pub(120); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다: {(r0.stderr or r0.stdout)[-300:]}"
+    h0 = lock_hash(); notes = []
+    def live_ok(): return all(http("GET", k, "/healthz")[0] == 200 for k in ("qa", "gate", "ops"))
+    sh([a.docker, "stop", reg])
+    try:
+        r = pub(60); assert r.returncode not in (0, 124), f"F1: 레지스트리 중지 중 게시가 {'성공' if r.returncode == 0 else '60s 안에 끝나지 않았다'}: {(r.stderr or r.stdout)[-200:]}"
+        assert lock_hash() == h0, "F1: 실패한 게시가 잠금 파일을 바꿨다"
+        assert live_ok(), "F1: 레지스트리 중지가 실행 중 서비스에 영향을 줬다"
+        notes.append(f"F1 중지: 게시 종료 코드 {r.returncode}(실패), 잠금 불변, 실행 중 서비스 /healthz 200")
+    finally:
+        sh([a.docker, "start", reg])
+    wait(lambda: pub(60).returncode == 0 or None, 90, "레지스트리 기동 뒤 게시 재시도 성공", every=3)
+    h1 = lock_hash()
+    sh([a.docker, "pause", reg])
+    try:
+        r = pub(25)   # 무응답: publish-images.sh 는 자체 상한이 없다 -> 바깥 timeout(25s)으로 끊는다. 성공해서는 안 된다
+        assert r.returncode != 0, "F4: 레지스트리 무응답 중 게시가 성공했다"
+        assert lock_hash() == h1, "F4: 무응답 중 끊긴 게시가 잠금 파일을 바꿨다"
+        assert live_ok(), "F4: 레지스트리 pause 가 실행 중 서비스에 영향을 줬다"
+        notes.append(f"F4 pause: 게시 종료 코드 {r.returncode}({'스스로 실패' if r.returncode != 124 else '자체 상한 없음, 바깥 25s timeout 이 끊음'}), 잠금 불변")
+    finally:
+        sh([a.docker, "unpause", reg], check=False)
+    wait(lambda: pub(60).returncode == 0 or None, 90, "unpause 뒤 게시 재시도 성공", every=3)
+    rec("5g", "REAL", "레지스트리 컨테이너: " + "; ".join(notes) + "; 복구 뒤 재시도 성공.")
+
+def step5b():
+    title("5b", "백업 도중 postgres 중지(F1): 백업이 실패로 보고되고 불완전한 백업이 성공으로 남지 않으며 복구 뒤 다시 성공 (FAULT_MATRIX G3 F1)")
+    # 기대 출처: FAULT_MATRIX G3 '.partial 에 쓰고 완료 시 mv'. pg-backup.sh: 덤프 실패 시 die + 작업 폴더 삭제. FAULT_POLICY 14(잡 실패는 종료 코드로 드러남), 12(복구 뒤 재실행)
+    pg = f"{a.project}-postgres-1"; bdir = WORK / "backups-5b"; bdir.mkdir(parents=True, exist_ok=True)
+    cfg = WORK / "backup-5b.env"; cfg.write_text(f"BACKUP_DIR={bdir}\nBACKUP_RETENTION_DAYS=7\nBACKUP_ALLOW_PLAINTEXT=1\n")   # 시험 전용 평문 모드(백업 대상은 E2E 시험 데이터)
+    env = {"DEPLOY_PROJECT": a.project, "BACKUP_CONFIG": str(cfg)}
+    def snap(): return sorted(str(p.relative_to(bdir)) for p in bdir.rglob("*") if p.parent != bdir or p.name.startswith("pg-")) 
+    def done_dirs(): return sorted(str(p.relative_to(bdir)) for p in bdir.glob("pg-*/*") if p.is_dir())
+    # 백업이 '진행 중'인 순간을 결정적으로 만든다: qa DB 의 테이블 하나에 ACCESS EXCLUSIVE 잠금을 잡아 pg_dump 가 그 테이블에서 기다리게 한다
+    tbl = sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-Atqc", "select tablename from pg_tables where schemaname='public' order by 1 limit 1"]).stdout.strip()
+    assert tbl, "qa DB 에서 잠글 테이블을 찾지 못했다"
+    locker = subprocess.Popen([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-qc", f"begin; lock table {tbl} in access exclusive mode; select pg_sleep(120);"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(2)
+        bk = subprocess.Popen(["bash", str(ROOT / "scripts/pg-backup.sh")], env={**os.environ, **env}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        wait(lambda: sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-Atqc", "select count(*) from pg_stat_activity where wait_event_type='Lock' and datname='qa'"]).stdout.strip() not in ("", "0") or None, 30, "pg_dump 가 잠금에서 기다림(= 백업 진행 중)", every=1)
+        sh([a.docker, "stop", "-t", "2", pg])
+        try: out, _ = bk.communicate(timeout=90)
+        except subprocess.TimeoutExpired: bk.kill(); raise AssertionError("백업이 postgres 중지 뒤 90s 안에 끝나지 않았다(무한 대기)")
+        assert bk.returncode != 0, f"백업 도중 postgres 가 멈췄는데 백업이 성공(0)으로 보고됐다: {out[-300:]}"
+        assert done_dirs() == [], f"불완전한 백업 디렉터리가 완료본으로 남았다: {done_dirs()}"
+        left = [p.name for p in bdir.glob(".work-*")] + [str(p) for p in bdir.rglob(".partial-*")]
+        assert not left, f"임시 작업 폴더가 남았다: {left}"
+        rc_fail = bk.returncode
+    finally:
+        locker.kill()
+        sh([a.docker, "start", pg], check=False)
+    _pg_ready_wait(pg)
+    wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "postgres 기동 뒤 서비스 /readyz 200", every=1)
+    r = sh(["bash", str(ROOT / "scripts/pg-backup.sh"), "qa", "gate"], env=env)
+    ok = done_dirs(); assert len(ok) == 2 and all((bdir / d / "MANIFEST.json").exists() for d in ok), f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
+    rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 완료 디렉터리 0, 임시 폴더 없음; 복구 뒤 재실행 성공(MANIFEST 있는 완성본 {len(ok)}개).")
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []

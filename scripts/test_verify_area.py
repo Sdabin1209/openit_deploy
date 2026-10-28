@@ -98,7 +98,7 @@ class T(unittest.TestCase):
         plan, _ = v.assemble(self.cfg, "kiosk-frontend", WS, changed=["app/x.ts"], stale=("kiosk-frontend",))
         self.assertEqual(plan[0][1], ["npm", "test", "--silent"]); self.assertEqual(plan[0][2], WS / "kiosk-frontend")
         self.assertEqual(plan[2][1][-1], "kiosk-frontend"); self.assertIn("build-images.sh", plan[2][1][1])
-        self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5f"])
+        self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5f,5g"])
         plan, _ = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])
         self.assertIn("--fast", plan[-1][1]); self.assertEqual(plan[0][2], v.DEPLOY_ROOT)
         plan, notes = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])
