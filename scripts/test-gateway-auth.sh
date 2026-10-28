@@ -21,7 +21,7 @@ ok "잘못된 기기 ID 는 거부" bash -c '! bash $1/scripts/kiosk-add-device.
 ok "기기가 0대여도 설정이 유효(모두 거부)" bash -c 'rm $1/tokens/kiosk-device-*; bash $2/scripts/kiosk-add-device.sh sync >/dev/null 2>&1; grep -q "expression false" $1/gateway-devices.caddy' _ "$T" "$DEPLOY_ROOT"
 ok "0대일 때 caddy validate 통과" val
 # 파일로 준다(/dev/stdin 은 here-string 이 파이프일 때 읽히지 않아, 예전 시험은 "계정이 하나도 없다" 오류로 우연히 통과했다. 빈 계정 목록은 이제 오류가 아니다)
-printf 'x-1 superuser\n' > "$T/bad-role.conf"
+printf 'x-1 superuser $2a$14$ThFaB0RPIv4Ii/aJyV6gh.W8lng/OIREUbKeN9IcdNx5hY6xdg5Im\n' > "$T/bad-role.conf"; chmod 600 "$T/bad-role.conf"
 GATEWAY_ACCOUNTS_CONF="$T/bad-role.conf" bash -c 'source "$1/scripts/lib.sh"; source "$1/scripts/gateway-lib.sh"; gw_parse_accounts' _ "$DEPLOY_ROOT" >/dev/null 2>&1 && { echo "  FAIL 모르는 역할을 받아들였다"; FAILS=$((FAILS+1)); } || echo "  PASS 모르는 역할은 거부"
 # 교차 사이트 요청 방어(점검 M2)의 실제 동작: 가짜 비밀로 gateway 를 띄우고 헤더 조합별 응답을 본다. 인증이 없으면 401 이므로 "403 + 교차 출처 문구"는 이 규칙만의 응답이다. (Docker·Caddy 필요)
 bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add auth-1 >/dev/null 2>&1   # 인증 계약 시험(아래)이 쓸 기기 한 대. 위에서 0대로 만든 목록에 더한다
@@ -141,6 +141,21 @@ chk401 "계정 0개 구성: POST /v1/activate" Basic - POST /v1/activate
 chk401 "계정 0개 구성: GET /admin/" Basic - GET /admin/
 chk401 "기기 0대 구성: POST /v1/sessions" Bearer bearer:0000 POST /v1/sessions
 docker rm -f $CE >/dev/null 2>&1; CP=$CP_SAVE
+# 조직이 준 계정 파일(ADR 0039): 조직이 caddy hash-password 로 만든 해시를 secrets/staff-accounts.conf 로 주면 그 암호로 실제 로그인되고, 틀린 암호는 401, 역할 밖은 403 이다
+O=$T/org; mkdir -p "$O/tokens"; chmod 700 "$O" "$O/tokens"; bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$O" >/dev/null 2>&1
+ORGPW="org-test-password-$$"; ORGH=$(printf '%s\n%s\n' "$ORGPW" "$ORGPW" | docker run --rm -i "$GW" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n')
+( umask 077; printf 'kim.staff staff %s\nlee.op operator %s\n' "$ORGH" "$ORGH" > "$O/staff-accounts.conf" )
+SECRETS_DIR="$O" bash "$DEPLOY_ROOT/scripts/apply-accounts.sh" >/dev/null 2>&1
+CO=gwauth-org-$$; docker rm -f $CO >/dev/null 2>&1
+docker run -d --name $CO -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$O/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$O/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$O/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null
+CP_SAVE=$CP; CP=""; for i in $(seq 1 30); do CP=$(docker port $CO 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$CP" ] && curl -sk -o /dev/null -m 2 "https://127.0.0.1:$CP/healthz" && break; sleep 0.5; done
+orgcall() { curl -sk -m 5 -o /dev/null -w '%{http_code}' -u "$1:$2" -X "$3" "https://127.0.0.1:$CP$4"; }
+AN=$((AN+4))
+c=$(orgcall kim.staff "$ORGPW" GET /v1/staff/alerts); case "$c" in 401|403) echo "  FAIL 조직이 준 해시의 암호로 로그인 -> $c"; FAILS=$((FAILS+1));; *) echo "  PASS 조직이 준 해시의 암호로 로그인 -> $c (인증·인가 통과)";; esac
+c=$(orgcall kim.staff wrong-password GET /v1/staff/alerts); [ "$c" = 401 ] && echo "  PASS 틀린 암호 -> 401" || { echo "  FAIL 틀린 암호 -> $c"; FAILS=$((FAILS+1)); }
+c=$(orgcall kim.staff "$ORGPW" POST /v1/activate); [ "$c" = 403 ] && echo "  PASS 역할 밖(staff -> operator 경로) -> 403" || { echo "  FAIL 역할 밖 -> $c"; FAILS=$((FAILS+1)); }
+c=$(orgcall lee.op "$ORGPW" POST /v1/activate); case "$c" in 401|403) echo "  FAIL operator 계정 -> $c"; FAILS=$((FAILS+1));; *) echo "  PASS operator 계정 -> $c (인증·인가 통과)";; esac
+docker rm -f $CO >/dev/null 2>&1; CP=$CP_SAVE
 echo "  인증 계약 시험 ${AN}건 실행"
 docker rm -f $CN >/dev/null 2>&1
 [ $FAILS = 0 ] && echo "통과: 게이트웨이 인증 자체 시험" || { echo "실패: $FAILS건"; exit 1; }

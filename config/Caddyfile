@@ -9,7 +9,7 @@
 }
 # 토큰은 환경 변수가 아니라 Caddy 표준 파일 치환 {file./run/secrets/<이름>} 으로 읽는다(D84; 설정을 읽을 때 한 번 치환되고 컨테이너 환경에 값이 없다).
 # 인증 블록(D85 E절): 직원·운영자·승인자·검토자를 개별 계정으로 인증한다. 계정과 해시, 계정 -> 역할은 생성된 비밀 파일(secrets/gateway-accounts.caddy)에 있다
-# (원본 목록은 config/gateway-accounts.conf, 만드는 것은 scripts/gen-secrets.sh). 이 파일이 두 조각을 정의한다:
+# (원본 목록은 조직이 주는 secrets/staff-accounts.conf, 만드는 것은 scripts/apply-accounts.sh·gen-secrets.sh). 이 파일이 두 조각을 정의한다:
 #   (authenticate)   인증 블록. 통과하면 {http.auth.user.id} 에 계정 ID 가 든다. 병원 IdP(OIDC)가 정해지면 **이 블록만** 교체한다(docs/RUN.md 4-1-2).
 #   (role_matchers)  @role_staff / @role_operator / @role_approver / @role_reviewer. 계정 -> 역할 매핑.
 # 이 Caddyfile 의 나머지는 위 두 조각의 이름만 안다(basic_auth 를 직접 쓰지 않는다).

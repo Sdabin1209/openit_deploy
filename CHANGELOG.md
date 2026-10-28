@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 단위 4a-4: 직원 계정 발급·회전 스크립트 -> 조직이 주는 bcrypt 계정 파일 (D111, ADR 0039)
+- 운영 직원 계정의 원본은 조직이 주는 `secrets/staff-accounts.conf`(`<계정> <역할> <bcrypt 해시>`, 형식 `config/staff-accounts.conf.example`). 새 `scripts/apply-accounts.sh [--apply]`가 형식·역할·bcrypt를 검사하고 게이트웨이 계정 조각을 다시 쓴다(검사 실패면 기존 조각 유지, 해시는 출력하지 않음).
+- 삭제: `scripts/rotate-account.sh`, `config/gateway-accounts.conf`, 운영 계정의 무작위 암호·해시 생성. 시험 계정(`*-e2e`)은 `--test-fixtures`에서만 기존대로 만든다.
+- 시험: `test-staff-accounts.sh` 17건(Docker 불필요), `test-gateway-auth.sh`에 조직이 준 해시로 실제 로그인(통과/틀린 암호 401/역할 밖 403) 추가.
+
 ## 단위 4a-3: backup_tool.py + age/gpg -> restic (D111, ADR 0038)
 - 백업은 restic 저장소 하나(`$BACKUP_DIR/restic`, 이미지 `RESTIC_IMAGE` digest 고정, 암호는 `BACKUP_PASSWORD_FILE`). `backup.sh`(볼륨), `pg-backup.sh`(`pg_dump -Fc | restic backup --stdin`, 평문 파일 없음, 중도 실패 시 스냅샷 삭제), `backup-secrets.sh`, 복구 `restore.sh`/`pg-restore.sh`/`restore-secrets.sh <latest|ID>`, 정기 복원 시험은 임시 저장소 왕복 + 실제 저장소 `restic check`.
 - 삭제: `backup_tool.py`, age/gpg 암호화, MANIFEST 해시, tar 묶기, `BACKUP_ENCRYPT_*`·`BACKUP_ALLOW_PLAINTEXT`·`BACKUP_SECRETS_*` 키(남아 있으면 CRIT). **보증이 약해진 점**: 서버에 저장소 암호가 있어야 한다(옛 공개키 방식은 서버에 복호 키가 없었다). ADR 0038 '감수하는 것'.

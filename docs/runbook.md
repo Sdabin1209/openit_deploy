@@ -206,16 +206,16 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 **권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 644(폴더 700 안; compose가 파일 secrets의 모드를 바꾸지 못하기 때문, [adr/0022-secret-file-permissions.md](adr/0022-secret-file-permissions.md)). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
 
-**평문 암호 최소화.** 게이트웨이 계정은 bcrypt 해시만 Caddy 파일에 들어간다. 평문 암호 파일(`account-<id>-password`, 600)은 해시를 만들 때만 생기고 E2E 시험 계정이 쓴다. 운영에서는 계정 암호를 사람에게 전달한 뒤 `bash scripts/gen-secrets.sh --drop-plaintext`로 평문 파일을 지운다(해시가 남아 로그인은 그대로). 지운 평문은 되살리지 않는다. 운영 계정은 OIDC 도입 전까지 아래 회전 절차로 관리한다.
+**직원 계정은 조직이 준다(ADR 0039).** 이 프로젝트는 직원 계정을 발급하지 않고 암호를 만들지 않는다. 조직(병원 정보부서 등)이 `secrets/staff-accounts.conf`(`<계정> <역할[,역할]> <bcrypt 해시>`, 형식은 `config/staff-accounts.conf.example`)를 주고, 게이트웨이는 그 해시를 그대로 Caddy 파일에 넣는다. 해시 만드는 법은 예시 파일 머리말(`docker run --rm -it caddy:2-alpine caddy hash-password`, 암호는 화면에 안 보이고 인자에도 안 남는다). 평문 암호 파일(`account-<id>-password`)은 E2E·데모 시험 계정(`*-e2e`, `gen-secrets.sh --test-fixtures`)만 쓴다.
 
 **회전 절차.**
-1. 계정 암호 한 개: 사람이 터미널에서 `bash scripts/rotate-account.sh <계정 ID> --apply`. 새 암호가 표준 출력에 한 번 나온다(해시만 저장). 해당 직원에게 안전한 경로로 전달하고 터미널 기록을 지운다. `--apply`는 게이트웨이를 다시 시작한다.
+1. 직원 계정(추가·삭제·암호 변경): 조직이 `secrets/staff-accounts.conf`를 고쳐 주면 `bash scripts/apply-accounts.sh --apply`(형식·역할·bcrypt 검사 후 계정 조각을 다시 쓰고 게이트웨이를 다시 시작한다. 검사에 실패하면 기존 조각을 바꾸지 않는다). 이 프로젝트가 새 암호를 만들거나 전달하지 않는다.
 2. 서비스 토큰·DB 암호 한 개: 해당 파일을 지우고 `gen-secrets.sh`를 다시 실행(목록 값 파일도 새 값으로 다시 쓴다). DB 암호는 `bash scripts/pg-roles.sh sync`로 서버의 계정 암호를 맞춘다. 그다음 소유 서비스와 그 클라이언트를 다시 만든다(`up.sh deploy`).
 3. 기기 토큰: `bash scripts/kiosk-add-device.sh remove <ID> --apply` 후 `add <ID> --apply`, 새 토큰을 기기에 한 번 전한다.
-4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, 모든 계정 암호 재전달, 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
+4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, 조직에 모든 직원 계정의 해시 교체 요청, 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
 5. 토큰에는 만료가 없다. 회전은 수동이며 주기는 정하지 않았다(근거 없음, 사용자 결정 대기: 이 저장소의 OPEN_GAPS).
 
-한계: 해시 생성 때 암호는 `docker run -i`의 표준 입력으로 전달되어 프로세스 목록(인자)에는 보이지 않는다(`scripts/test-hash-password-argv.sh`로 확인). 새 암호는 `rotate-account.sh`의 표준 출력에 한 번 나온다. docker 그룹 사용자는 어차피 모든 비밀에 닿는다(docker 그룹은 root와 같다).
+한계: 시험 계정의 해시를 만들 때 암호는 `docker run -i`의 표준 입력으로 전달되어 프로세스 목록(인자)에는 보이지 않는다(`scripts/test-hash-password-argv.sh`로 확인). docker 그룹 사용자는 어차피 모든 비밀에 닿는다(docker 그룹은 root와 같다).
 
 ## 8. 흔한 문제
 
@@ -260,7 +260,7 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 ### 9-4. 저자 경로(question-authoring)를 gateway로 여는 구성 (D88/U9)
 
 - 경로: `POST /v1/materials`, `/v1/drafts`, `/v1/drafts/*`, `POST /v1/reviews`. 개별 계정 인증(Basic) 뒤에서 역할 `author` 또는 `clinical-reviewer`만 통과하고(없으면 401, 다른 역할은 403), gateway가 서비스 토큰(`qa-gateway-token`, 서비스의 `QA_GATEWAY_TOKENS`)과 인증된 계정 ID(`X-Openit-User`)를 붙인다. 클라이언트가 보낸 `Authorization`·`X-Openit-User`는 덮어쓴다. 이웃 읽기 면(I1 `/v1/question-sets*`)은 열지 않는다.
-- 역할표는 두 곳이다: gateway 계정(`config/gateway-accounts.conf`, 역할 `author`/`clinical-reviewer`)과 서비스(`config/question-authoring.env`의 `QA_USER_ROLES`, 사용자 ID=역할). **둘을 같게 둔다.** 현재 값은 시험 계정(`author-e2e`, `clinical-e2e`)이다. 운영에서는 실제 계정으로 바꾸고 시험 계정은 지운다(`gen-secrets.sh`는 계정 파일의 모든 계정에 암호를 만든다).
+- 역할표는 두 곳이다: gateway 계정(조직이 준 `secrets/staff-accounts.conf`, 역할 `author`/`clinical-reviewer`)과 서비스(`config/question-authoring.env`의 `QA_USER_ROLES`, 사용자 ID=역할). **둘을 같게 둔다.** 현재 값은 시험 계정(`author-e2e`, `clinical-e2e`)이다. 운영에서는 실제 계정으로 바꾸고 시험 계정은 지운다(`gen-secrets.sh`는 계정 파일의 모든 계정에 암호를 만든다).
 - 4-eyes는 서비스가 강제한다: 저자의 확인은 `clinical_basis_approved=false`이고 임상 근거 승인은 저자와 다른 `clinical-reviewer`가 `POST /v1/reviews`로 해야 `reviewed_only`에 나타난다(자기 승인 403).
 - 본문 상한은 사이트 기본 8MiB(자료 업로드). 응답 헤더 대기는 15초(`proxy_limits`, 시작값).
 - E2E 단계 `5a`가 gateway 경유로 위 흐름(401, 403, 등록·확인, 자기 승인 403, 위조 헤더 무시, 승인 뒤 `reviewed_only`, I1 404, 본문 상한)을 확인한다.
@@ -285,7 +285,7 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 
 - 왜: gateway(Caddy 기본 이미지)에는 속도 제한이 없고, 커스텀 이미지로 모듈을 넣으면 공급망 위험이 늘어 하지 않았다(§9-2, ADR 0002). 그래서 무차별 대입을 막는 장치가 gateway 안에 없다.
 - 요건 1: `GATEWAY_BIND`를 병원 내부 주소로 한정하고 방화벽에서 접속 원본·초당 접속 수를 제한한다(인터넷에 직접 열지 않는다).
-- 요건 2: 계정 암호는 `gen-secrets.sh`/`rotate-account.sh`가 만드는 무작위 48자리 16진수 강도를 유지한다(사람이 고른 짧은 암호로 바꾸지 않는다).
+- 요건 2: 계정 암호의 강도는 조직 몫이다(이 프로젝트는 암호를 만들지 않고 bcrypt 해시만 받는다). 시험 계정(`*-e2e`)은 `gen-secrets.sh`가 무작위 48자리 16진수를 만든다.
 - 요건 3: 접근 로그의 401 반복(같은 IP)을 감시한다(§9-2의 3번, 감시 도구 설치는 호스트 몫).
 - 확인한 것: Caddy 기본 모듈에 rate limit이 없다(§9-2). 확인하지 않은 것: 병원 방화벽 규칙과 감시 도구의 동작.
 

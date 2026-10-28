@@ -416,7 +416,7 @@ def step3():
 def decisions_for(gate_read, subj):
     return gate_read.find_decisions(question_set=subj["question_set"], lora_a=subj["lora_a"], lora_b=subj["lora_b"])[0]
 
-ADMIN = lambda: ("trainer-e2e", TOK("account-trainer-e2e-password"))   # 개별 계정(config/gateway-accounts.conf, D85 E절)
+ADMIN = lambda: ("trainer-e2e", TOK("account-trainer-e2e-password"))   # 개별 계정(config/gateway-accounts.test.conf, 시험 계정, D85 E절)
 OPERATOR = lambda: ("operator-e2e", TOK("account-operator-e2e-password"))   # 역할 operator: /v1/activate, /v1/rollback
 REVIEWER = lambda: ("reviewer-e2e", TOK("account-reviewer-e2e-password"))   # 실패 사례 검토 화면 계정(역할 reviewer)   # 승인 화면 기본 인증 시험 계정(운영 인증 방식은 미정)
 

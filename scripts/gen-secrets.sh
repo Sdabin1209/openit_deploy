@@ -11,9 +11,9 @@
 #   컨테이너가 읽는 파일을 600 으로 만들지 못하는 이유: compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않아(측정함),
 #   uid 10001 인 컨테이너가 호스트 사용자 소유 600 파일을 읽지 못한다. docs/adr/0022-secret-file-permissions.md. 이미 있는 파일의 모드도 실행할 때마다 바로잡는다.
 #   --test-fixtures : 시험 자격(시험 기기 e2e, e2e-a/b/c와 config/gateway-accounts.test.conf 의 *-e2e 계정)을 **더한다**. E2E·데모·자체 시험만 넘긴다.
-#     없으면 운영 자격만 만든다(기기 0대, 계정은 config/gateway-accounts.conf 의 것만). 시험 자격이 운영 gateway 에서 유효해지는 것을 막는다(12-factor 10항, OWASP 기본 자격 금지).
+#     없으면 운영 자격만 만든다(기기 0대, 계정은 조직이 준 secrets/staff-accounts.conf 의 것만: 이 프로젝트는 직원 계정을 발급하지 않는다, ADR 0039). 시험 자격이 운영 gateway 에서 유효해지는 것을 막는다(12-factor 10항, OWASP 기본 자격 금지).
 #     시험 폴더에는 .test-fixtures 표시를 남기고, 운영 기동 점검(check-test-fixtures.sh)이 시험 자격이 든 폴더를 거부한다.
-#   --drop-plaintext : 해시가 있는 계정의 평문 암호 파일(account-<id>-password)을 지운다(운영: 전달한 뒤 평문을 디스크에 남기지 않는다). 회전은 scripts/rotate-account.sh
+#   --drop-plaintext : 시험 계정의 평문 암호 파일(account-<id>-password)을 지운다. 운영 계정은 평문을 다루지 않는다(조직이 준 해시만 쓴다). 계정 변경은 scripts/apply-accounts.sh
 set -euo pipefail
 ONLY_DB=0; DROP_PLAIN=0; TEST_FIX=0
 while [ "${1:-}" = "--db-only" ] || [ "${1:-}" = "--drop-plaintext" ] || [ "${1:-}" = "--test-fixtures" ]; do case "$1" in --db-only) ONLY_DB=1;; --drop-plaintext) DROP_PLAIN=1;; --test-fixtures) TEST_FIX=1;; esac; shift; done
@@ -72,11 +72,12 @@ putlist qa-author-tokens "$QA_AUTHOR:author-e2e:question-author,$QA_REVIEWER:cli
 putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
 
 # 게이트웨이(Caddy): 개별 계정 인증(D85 E절)과 키오스크 기기 토큰(F절). 서비스 토큰은 위의 개별 토큰 파일을 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 없음).
-#   계정/역할: config/gateway-accounts.conf -> secrets/gateway-accounts.caddy (암호·해시는 tokens/account-<id>-password / -hash). 개발/E2E용 시험 계정, 운영 방식(OIDC)은 병원 IdP 가 정해진 뒤 교체
+#   계정/역할: 조직이 주는 secrets/staff-accounts.conf(<계정> <역할> <bcrypt 해시>) -> secrets/gateway-accounts.caddy. 시험 계정(*-e2e)만 --test-fixtures 에서 암호·해시(tokens/account-<id>-password / -hash)를 만든다. 운영 방식(OIDC)은 병원 IdP 가 정해진 뒤 교체
 #   기기: tokens/kiosk-device-<id> -> secrets/gateway-devices.caddy. 기본은 기기 0대(--test-fixtures 에서만 시험 기기 e2e 등). 더하려면 scripts/kiosk-add-device.sh add <id>
 source "$(dirname "$0")/gateway-lib.sh"
 if [ $TEST_FIX = 1 ]; then ( umask 077; : > "$D/.test-fixtures" ); GW_TEST_FIXTURES=1; fi
 [ -e "$D/.test-fixtures" ] && TEST_FIX=1   # 표시가 있는 폴더는 시험 폴더로 계속 취급한다
+[ -f "$(gw_accounts_conf)" ] || [ $TEST_FIX = 1 ] || echo "알림: 조직이 준 직원 계정 파일이 없다($(gw_accounts_conf)). 계정이 0개라 사람 인증 경로는 모두 401 이다. 형식: config/staff-accounts.conf.example, 반영: scripts/apply-accounts.sh" >&2
 gw_write_accounts "$D"
 [ $TEST_FIX = 0 ] || tok kiosk-device-e2e >/dev/null
 # E2E 단계 5d(기기 사이 세션 격리, 폐기): 시험 기기 a·b 와 폐기 시험용 c. 운영에서는 kiosk-add-device.sh 로 실제 기기만 만든다(이 시험 기기는 운영 비밀 폴더에서 remove 한다)
