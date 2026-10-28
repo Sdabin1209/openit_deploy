@@ -226,13 +226,13 @@ def imp_config(name, max_invalid_rows, store_root):
            "question_sets": [{"id": QS, "version": q["version"], "content_hash": q["content_hash"]}],
            "source_label": "deploy-e2e-test-data", "turn_engine_version": a.turn_engine_version, "created_at": "2026-10-27T00:00:00Z",
            "tolerance": {"max_invalid_rows": max_invalid_rows, "max_invalid_rate": 1.0},
-           "output": {"work_dir": str(WORK / f"sd-import-{name}"), "store": {"kind": "file", "root": str(store_root)}}}
+           "output": {"work_dir": str(WORK / f"sd-import-{name}"), "store": store_root if isinstance(store_root, dict) else {"kind": "file", "root": str(store_root)}}}
     p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
 def run_import(name, max_invalid_rows, store_root):
     p = imp_config(name, max_invalid_rows, store_root)
     r = subprocess.run([str(SD["venv"]), "-m", "synthetic_data", "import", "--config", str(p)], cwd=str(SD["src"]), capture_output=True, text=True,
-                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DATASET_STORE_WRITE_TOKEN_FILE": str(pathlib.Path(a.secrets) / "tokens" / "dataset-store-write-synthetic-data")})   # 잡 쪽 단수형 이름(서버 쪽 DATASET_STORE_WRITE_TOKENS_FILE 과 다르다, synthetic-data ADR 0013). kind=http 일 때만 읽힌다
     out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
     return r.returncode, out, json.loads((WORK / f"sd-import-{name}" / "import_report.json").read_text())
 
@@ -1329,8 +1329,19 @@ def step7d():
     m = json.loads((root / "manifest.json").read_text()); assert m["content_hash"] == ds["content_hash"], "단계 2 의 매니페스트가 바뀌었다"
     WT, RT = TOK("dataset-store-write-synthetic-data"), TOK("dataset-store-read-model-lab")
     body = _ds_tar(m, root); TAR = "application/x-tar"; q = urllib.parse.quote
-    c1, b1 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c1 in (200, 201), ("쓰기 토큰 게시", c1, b1[:200])
-    assert json.loads(b1)["content_hash"] == m["content_hash"], "응답의 content_hash 가 다르다"
+    # 실제 생산자 잡(synthetic-data import, store.kind=http)이 dataset-store 로 게시한다. 같은 입력이라 단계 2 의 파일 저장소 게시와 버전·content_hash 가 같아야 한다(결정적)
+    # 잡 실행 환경(build/venv-sd)의 boundary-contracts 가 2.1.0 미만이면 HttpDatasetStore 가 없어 잡이 http 로 게시할 수 없다(DEPLOY_BC_TAG_SD 를 올리기 전). 그때는 tar 직접 게시로 대신하고 그 사실을 기록에 남긴다
+    job = subprocess.run([str(SD["venv"]), "-c", "from boundary_contracts.clients import HttpDatasetStore"], capture_output=True).returncode == 0
+    if job:
+        hs = {"kind": "http", "base_url": URL("ds"), "timeout": 60}
+        rc, o, _ = run_import("http", 2, hs)
+        assert rc == 0 and o.get("status") in ("PUBLISHED", "ALREADY_PUBLISHED"), f"잡의 HTTP 게시 실패: {rc} {o}"
+        assert (o["version"], o["content_hash"]) == (ds["version"], ds["content_hash"]), ("잡이 HTTP 로 게시한 버전·해시가 단계 2 와 다르다", o)
+        rc2, o2, _ = run_import("http2", 2, hs); assert rc2 == 0 and o2["status"] == "ALREADY_PUBLISHED", ("같은 잡 재실행이 멱등이 아니다", rc2, o2)
+        via = f"실제 생산자 잡 import, store.kind=http, 결과 {o['status']}, 버전·해시는 단계 2 와 같다) -> 같은 잡 재실행 ALREADY_PUBLISHED"
+    else:
+        c1, b1 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c1 in (200, 201), ("쓰기 토큰 게시", c1, b1[:200])
+        via = "잡 실행 환경의 boundary-contracts 가 2.1.0 미만이라 잡 경유가 아니라 단계 2 의 파일을 tar 로 직접 게시, 생산자 잡의 HTTP 게시는 확인 못 함)"
     c2, b2 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c2 == 200 and json.loads(b2)["content_hash"] == m["content_hash"], ("같은 게시는 멱등 200 이어야 한다", c2, b2[:200])
     # 읽기: 읽기 토큰으로 목록·버전·매니페스트·파일 바이트(해시를 manifest 와 대조)
     c, b = _ds_call("GET", "/v1/datasets", RT); assert c == 200 and ds["id"] in b.decode(), ("목록", c, b[:200])
@@ -1350,7 +1361,7 @@ def step7d():
     c, _ = _ds_call("GET", "/v1/datasets"); assert c == 403, ("토큰 없는 읽기", c)
     c, _ = _ds_call("POST", "/v1/datasets", None, body, TAR); assert c == 403, ("토큰 없는 게시", c)
     c, _ = _ds_call("GET", "/v1/datasets", "x" * 48); assert c == 403, ("모르는 토큰", c)
-    rec("7d", "REAL", f"dataset-store 서버(실제 이미지)에 단계 2 의 데이터셋 {ds['id']}@{ds['version']} 를 쓰기 토큰(synthetic-data)으로 게시({'새로 만듦 201' if c1 == 201 else '이미 있음 200'}) -> 같은 게시는 멱등 200 -> 읽기 토큰(model-lab)으로 목록·버전·매니페스트(스키마 통과)·파일 {len(m['files'])}개 바이트(manifest 해시 일치) -> 읽기 토큰의 게시는 403 -> 같은 버전에 다른 내용은 409 이고 저장본 불변 -> 토큰 없음·모르는 토큰은 403(서버 계약이 401 이 아니다). 못 보는 것: 소비자 model-lab 의 실제 읽기 코드(그 영역), 큰 본문·동시 게시 한도, synthetic-data 잡의 HTTP 게시(잡 설정 store.kind 가 file/memory 뿐)")
+    rec("7d", "REAL", f"dataset-store 서버(실제 이미지)에 단계 2 와 같은 입력의 데이터셋 {ds['id']}@{ds['version']} 를 쓰기 토큰(synthetic-data)으로 게시({via}, 같은 tar 재게시는 멱등 200 -> 읽기 토큰(model-lab)으로 목록·버전·매니페스트(스키마 통과)·파일 {len(m['files'])}개 바이트(manifest 해시 일치) -> 읽기 토큰의 게시는 403 -> 같은 버전에 다른 내용은 409 이고 저장본 불변 -> 토큰 없음·모르는 토큰은 403(서버 계약이 401 이 아니다). 못 보는 것: 소비자 model-lab 의 실제 읽기 코드(그 영역), 큰 본문·동시 게시 한도, synthetic-data run(시드) 모드의 HTTP 게시(import 모드만 확인)")
 
 def step8():
     title(8, "롤백 요청이 활성 릴리스를 되돌린다 (ops-feedback -> release-gate, I5 HTTP)")
