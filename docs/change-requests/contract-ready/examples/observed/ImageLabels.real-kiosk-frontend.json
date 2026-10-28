@@ -1,0 +1,7 @@
+{
+  "io.openit.app-version": "0.1.0",
+  "io.openit.contracts.boundary": "v2.1.1",
+  "io.openit.contracts.survey-schema": "1",
+  "io.openit.revision": "6b84c64",
+  "io.openit.service": "kiosk-frontend"
+}

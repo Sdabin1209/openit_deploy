@@ -1,0 +1,13 @@
+{
+  "service": "survey-service",
+  "routes": [
+    {
+      "paths": [
+        "/v1/staff/*"
+      ],
+      "auth": {
+        "kind": "account"
+      }
+    }
+  ]
+}
