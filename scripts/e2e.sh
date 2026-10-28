@@ -142,6 +142,7 @@ chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3
 chk "e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지)" python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 chk "데모 구성 자기 점검 (모방 백엔드·키오스크 /config.json 배선, 운영 구성 불변)" bash "$DEPLOY_ROOT/scripts/test-demo-kiosk.sh"
 chk "이미지 라벨 검사기 자체 점검 (계약 ImageLabels: 필수 4개, n/a 하나, revision unknown 거부)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_image_labels.py"
+chk "시험 빌드 라벨 자체 점검 (롤백 시험의 새 버전은 revision 이 아니라 시험 라벨로 다른 digest 를 얻는다)" bash "$DEPLOY_ROOT/scripts/test-build-test-label.sh"
 chk "e2e 계약 열거 값 점검 (직원 알림 kind = RISK_STOP, 낡은 RISK 기대 없음)" python3 "$DEPLOY_ROOT/scripts/test_e2e_contract_values.py"
 chk "e2e 인증 실패 기대 점검 (토큰 없음/틀림 = 401 + Bearer, 권한 부족만 403: 계약 CONVENTIONS.md 6절)" python3 "$DEPLOY_ROOT/scripts/test_e2e_auth_expectations.py"
 chk "e2e turn-engine 버전 한 출처 점검 (DEPLOY_TE_TAG 만 읽는다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_turn_engine_version.py"
@@ -337,9 +338,9 @@ sect "단계 9: digest 잠금으로 코드 축 롤백"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" "복구 후 서비스 기동")   # 롤백 구간: 복구 뒤 스택이 떠 있어야 한다. 백업 구간의 나머지 실패는 이 구간과 무관하다
 OLD_REF=$("$DOCKER" inspect "${PROJECT}-survey-service-1" --format '{{.Config.Image}}' | tr -d '\r')
 cp "$DEPLOY_ROOT/build/images.env" "$W/images.env.bak"
-chk "새 버전 빌드(시험: COMMIT 라벨에 -test2)" env BUILD_SUFFIX=-test2 bash "$DEPLOY_ROOT/scripts/build-images.sh" survey-service
-chk_dep "새 버전 빌드(시험: COMMIT 라벨에 -test2)" "새 버전 publish -> 잠금 갱신(이전 잠금은 history에 보관)" bash "$DEPLOY_ROOT/scripts/publish-images.sh" survey-service
-cp "$W/images.env.bak" "$DEPLOY_ROOT/build/images.env"   # 시험용 -test2 빌드가 build/images.env 에 남지 않게 한다
+chk "새 버전 빌드(시험: 시험 라벨 openit.test-build=test2, revision 은 그대로)" env BUILD_TEST_ID=test2 bash "$DEPLOY_ROOT/scripts/build-images.sh" survey-service
+chk_dep "새 버전 빌드(시험: 시험 라벨 openit.test-build=test2, revision 은 그대로)" "새 버전 publish -> 잠금 갱신(이전 잠금은 history에 보관)" bash "$DEPLOY_ROOT/scripts/publish-images.sh" survey-service
+cp "$W/images.env.bak" "$DEPLOY_ROOT/build/images.env"   # 시험용 test2 빌드가 build/images.env 에 남지 않게 한다
 chk_dep "새 버전 publish -> 잠금 갱신(이전 잠금은 history에 보관)" "새 잠금으로 적용 -> survey-service가 새 digest 이미지로 교체" bash -c "bash $DEPLOY_ROOT/scripts/up.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" != \"$OLD_REF\" ]"
 chk_dep "새 잠금으로 적용 -> survey-service가 새 digest 이미지로 교체" "롤백: 잠금을 이전 것으로 되돌리고 적용 -> 이전 digest 이미지로 복귀" bash -c "bash $DEPLOY_ROOT/scripts/rollback.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" = \"$OLD_REF\" ]"
 SP=$(port survey-service)

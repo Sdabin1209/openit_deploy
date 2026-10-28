@@ -104,7 +104,7 @@ class T(unittest.TestCase):
         self.assertTrue(v.is_stale(None, True, "abc", "bc=v2,te=v4,mr=v7"))              # 기록 없음
         self.assertTrue(v.is_stale(rec, False, "abc", "bc=v2,te=v4,mr=v7"))              # 이미지가 로컬에 없다
         self.assertTrue(v.is_stale(rec, True, "abd", "bc=v2,te=v4,mr=v7"))               # 소스 커밋이 다름
-        self.assertTrue(v.is_stale({**rec, "commit": "abc-test2"}, True, "abc", rec["stamp"]))   # 시험 접미사
+        self.assertTrue(v.is_stale({**rec, "commit": "abcdef0"}, True, "abc", rec["stamp"]))   # 다른 커밋
         self.assertTrue(v.is_stale(rec, True, "abc", "bc=v3,te=v4,mr=v7"))               # 의존 태그가 올랐다
         self.assertTrue(v.is_stale({"commit": "abc", "stamp": None}, True, "abc", rec["stamp"]))   # 옛 기록(도장 없음)은 한 번 다시 빌드
 

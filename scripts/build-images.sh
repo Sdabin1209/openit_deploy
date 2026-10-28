@@ -9,7 +9,7 @@
 #  --gpu        model-serving 의 GPU 변형을 별도 이미지 model-serving-gpu 로 빌드한다(약 13GB, 기본 빌드에는 넣지 않는다).
 #               --gpu 만 주면 GPU 이미지만 빌드한다(다른 빌드 결과를 지우지 않는다). 빌드 전에 docker system df 로 사용량과 추가 용량을 안내한다.
 #  --yes-large  비대화형(터미널이 아닐 때)에서 큰 빌드를 진행한다는 확인. 없으면 비대화형은 멈춘다
-#  BUILD_SUFFIX: 시험 전용. COMMIT 라벨 뒤에 붙여 다른 digest를 만든다(롤백 시험). 운영에는 쓰지 않는다.
+#  BUILD_TEST_ID: 시험 전용. 빌드한 이미지에 시험 라벨 openit.test-build=<ID> 를 더해 같은 소스에서 다른 digest 를 만든다(롤백 시험). revision 라벨은 소스 커밋 그대로다(lib.sh apply_test_label). 운영에는 쓰지 않는다.
 set -euo pipefail
 DEPLOY_NO_DOCKER=1   # 옵션·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
 source "$(dirname "$0")/lib.sh"
@@ -36,7 +36,6 @@ if want_gpu; then
   elif [ -t 0 ]; then printf '계속하려면 y: '; read -r ans; [ "$ans" = y ] || { echo "취소했다." >&2; exit 1; }
   else die "비대화형이다. 약 13GB 빌드를 진행하려면 --yes-large 를 명시하라"; fi
 fi
-SUFFIX=${BUILD_SUFFIX:-}
 if [ "$ONLY" = "  " ]; then
   # 기본(전부) 빌드는 8개 기록을 새로 쓴다. 따로 빌드한 GPU 이미지 기록(model-serving-gpu)은 지우지 않는다(13GB를 다시 빌드하지 않게)
   # 단, 이미지가 실제로 있고 현재 기준 model-runtime 태그와 같은 커밋일 때만 유지한다(아니면 이유를 알리고 기록을 버린다: gpu_record_valid, lib.sh)
@@ -68,9 +67,10 @@ done
 touch "$DEPLOY_ROOT/build/images.env"
 # 네 번째 열(의존 태그 도장)은 e2e.sh --reuse-build 가 이미지를 다시 써도 되는지 판정하는 데 쓴다(verify_area.py). 이미지 라벨은 영역마다 표기가 달라(v 접두, none, n/a) 비교에 쓸 수 없다
 # 빌드 직후 라벨 검사(계약 ImageLabels): 게시 단계(publish-image(s).sh)에서 실패하기 전에 빌드에서 알린다
-record() { local vrc=0 vout; vout=$(validate_image_labels "$2" "$1" 2>&1) || vrc=$?; [ $vrc = 0 ] || { echo "$vout" >&2; die "이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다: $1 ($2)"; }
+record() { local vrc=0 vout; set -- "$1" "$(apply_test_label "$2")" "$3"   # 시험 ID 가 있으면 새 이미지 이름(<이름>-<ID>)을 쓴다. 원래 이미지는 그대로 둔다
+  vout=$(validate_image_labels "$2" "$1" 2>&1) || vrc=$?; [ $vrc = 0 ] || { echo "$vout" >&2; die "이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다: $1 ($2)"; }
   sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,te=$TE,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
-commit_of() { echo "$(git -C "$WORKSPACE/$1" rev-parse --short HEAD)$SUFFIX"; }
+commit_of() { git -C "$WORKSPACE/$1" rev-parse --short HEAD; }
 
 if want survey-service; then
   ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" TURN_ENGINE_TAG="$TE" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
@@ -150,7 +150,7 @@ if want model-serving; then
   # 추론 서버가 스키마 마운트·일회성 추출 서비스 없이 이미지 하나로 뜬다(다른 호스트에서도 같다).
   rm -rf "$CTX/ms-schema"; mkdir -p "$CTX/ms-schema"
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
-  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}")$SUFFIX; img="deploy-build/model-serving:$c"
+  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}"); img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
     --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MS")")" "$MS" >/dev/null
   record model-serving "$img" "$c"
@@ -177,7 +177,7 @@ if want_gpu; then
   git -C "$WORKSPACE/model-runtime" archive "$DEPLOY_MR_TAG" | tar -x -C "$MSG"
   git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder-gpu"
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema-gpu"
-  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$DEPLOY_MR_TAG^{commit}")$SUFFIX; img="deploy-build/model-serving-gpu:$c"
+  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$DEPLOY_MR_TAG^{commit}"); img="deploy-build/model-serving-gpu:$c"
   echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \

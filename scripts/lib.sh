@@ -4,6 +4,15 @@ DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(cd "$DEPLOY_ROOT/.." && pwd)"
 VENV="$DEPLOY_ROOT/.venv"
 die() { echo "오류: $*" >&2; exit 1; }
+# 시험 전용: 롤백 시험처럼 '같은 소스인데 다른 digest 의 새 버전'이 필요할 때 이미지에 시험 라벨 하나(openit.test-build=<ID>)를 더한다. BUILD_TEST_ID 가 없으면 아무것도 하지 않는다.
+# 왜 revision 에 접미사를 붙이지 않는가: io.openit.revision 은 소스 커밋(hex)이어야 한다(영역 Dockerfile 의 형식 검사와 계약 ImageLabels 의 ^[0-9a-f]{7,40}$). revision 에 접미사(-test2)를 붙이던 예전 방식은 이 규칙과 충돌했다.
+# 왜 이 라벨 키인가: ImageLabels 는 io.openit.* 의 모르는 키만 거부하고 다른 접두사는 무시한다(propertyNames). 그래서 계약 라벨은 그대로 두고 digest 만 달라진다. 운영에는 쓰지 않는다.
+apply_test_label() { # apply_test_label <이미지 이름:태그>  -> 표준 출력: 사용할 이미지 이름. 시험 ID 가 있으면 새 이름 <이름:태그>-<ID> (원래 이미지는 그대로 둔다)
+  [ -n "${BUILD_TEST_ID:-}" ] || { echo "$1"; return 0; }
+  [[ "$BUILD_TEST_ID" =~ ^[a-z0-9][a-z0-9._-]{0,31}$ ]] || die "BUILD_TEST_ID 형식: 소문자·숫자·.·_·- (1~32자): '$BUILD_TEST_ID'"
+  printf 'FROM %s\nLABEL openit.test-build=%s\n' "$1" "$BUILD_TEST_ID" | "$DOCKER" build -q -t "$1-$BUILD_TEST_ID" - >/dev/null || die "시험 라벨을 더하지 못했다: $1"
+  echo "$1-$BUILD_TEST_ID"
+}
 # 이미지 라벨이 계약 ImageLabels 스키마를 따르는지 게시 전에 검사한다(헤드 결정 wo8: 스키마 정본은 계약 패키지의 ImageLabels, 릴리스 전에는 docs/change-requests/contract-ready 사본; scripts/check_image_labels.py).
 # 사용: validate_image_labels <이미지> [표시 이름]  -> 0 통과, 1 어긋남(사유를 표준 출력에), 2 검사를 못 함(jsonschema 없음 등: 통과로 세지 않는다).
 # 왜 파이썬: 스키마(JSON Schema 2020-12) 검증을 셸로 다시 구현하지 않는다. 파이썬은 LABELS_PYTHON, 없으면 deploy .venv, 없으면 python3.
