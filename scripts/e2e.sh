@@ -184,6 +184,12 @@ chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정
 chk "gateway: /v1/turns -> 404, /staff/ 와 직원 API 는 인증 없이 401, /v1/activate 는 인증 없이 401, 키오스크 경로는 기기 토큰 없이 401(D85)" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/staff/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/admin/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/submissions)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/activate)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/cases)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/traces)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/staff/alerts)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions/x/intervention)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions)\" = 401 ]"
 reach() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import urllib.request;urllib.request.urlopen('http://$2:8080/healthz',timeout=3)" >/dev/null 2>&1; }
 blocked() { ! reach "$@"; }
+net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원이 정확히 그 컨테이너들이다
+  local n=$1; shift; local got want
+  got=$("$DOCKER" network inspect "${PROJECT}_$n" --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}' | sed '/^$/d' | sort | tr '\n' ' ')
+  want=$(printf '%s\n' "$@" | sort | tr '\n' ' ')
+  [ "$got" = "$want" ] || { echo "구성원 불일치: $n"; return 1; }
+}
 chk "도달: survey-service -> ops-feedback-ingest (serving, I6)" reach survey-service ops-feedback-ingest
 chk "도달: survey-service -> release-gate (serving, I4)" reach survey-service release-gate
 chk "도달: release-gate -> question-authoring (release, I1)" reach release-gate question-authoring
@@ -198,12 +204,6 @@ chk "gateway 설정(Caddyfile)에 dataset-store 경로가 없다" bash -c "! gre
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
 chk "차단: model-registry -> model-serving" blocked model-registry model-serving
 chk "차단: question-authoring -> model-serving" blocked question-authoring model-serving
-net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원이 정확히 그 컨테이너들이다
-  local n=$1; shift; local got want
-  got=$("$DOCKER" network inspect "${PROJECT}_$n" --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}' | sed '/^$/d' | sort | tr '\n' ' ')
-  want=$(printf '%s\n' "$@" | sort | tr '\n' ' ')
-  [ "$got" = "$want" ] || { echo "구성원 불일치: $n"; return 1; }
-}
 for pair in "db-survey:survey-service" "db-qa:question-authoring" "db-ops:ops-feedback-ingest" "db-gate:release-gate"; do
   chk "db 네트워크 ${pair%%:*} 에는 postgres 와 ${pair##*:} 만 있다(postgres 클라이언트끼리 닿지 않는다)" net_is "${pair%%:*}" "${PROJECT}-postgres-1" "${PROJECT}-${pair##*:}-1"
 done
