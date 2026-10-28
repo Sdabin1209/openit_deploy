@@ -1,0 +1,13 @@
+# 주기 잡 survey-purge 의 주기: 86400초. 출처: D85 사용자 결정(표준 주기). ADR 0036.
+# OnUnitActiveSec: 서비스가 마지막으로 시작한 때부터 86400초 뒤(옛 스케줄러의 last_start + interval_seconds 와 같은 뜻).
+# OnBootSec: 부팅 뒤 처음 한 번(옛 상태 파일 없음 = 즉시 실행과 비슷하게 1분 뒤).
+[Unit]
+Description=openit 주기 잡 survey-purge 의 주기
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=86400s
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

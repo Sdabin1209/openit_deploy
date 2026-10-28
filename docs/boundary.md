@@ -63,4 +63,4 @@ model-serving(model-runtime CPU/fake 변형): 포트 8080, uid 10001, `/healthz`
 | 로컬 레지스트리 중단 | 새 이미지 적용·롤백이 막힌다. 이미 떠 있는 컨테이너는 영향 없음 | 레지스트리 볼륨 복구 또는 재게시(`publish-images.sh`) |
 | 잠금 파일 손상 | 적용 불가 | `locks/history/` 또는 git에서 복구 |
 | 볼륨 손상 | 해당 저장소 서비스 영향 | `restore.sh`(백업이 있어야 한다. 설정 전에는 백업이 없다) |
-| 스케줄러 중단 | 주기 잡이 서지 않는다(상태 파일로 재개) | `scheduler.py tick` 재개 |
+| systemd timer 중단 | 주기 잡이 서지 않는다 | `systemctl start openit-*.timer` (재개 뒤 `OnBootSec`/`OnUnitActiveSec`으로 이어진다) |

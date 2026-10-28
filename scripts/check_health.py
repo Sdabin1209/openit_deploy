@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""상태 점검(읽기 전용): 스케줄러/잡 실패, 디스크 사용률, 외부 감시 대상(gateway)의 응답을 한 번에 읽어 OK/WARN/CRIT/SKIP 으로 낸다.
+"""상태 점검(읽기 전용): 디스크 사용률, 외부 감시 대상(gateway)의 응답을 한 번에 읽어 OK/WARN/CRIT/SKIP 으로 낸다.
 cron·systemd timer·서버 밖 감시가 부르고 종료 코드로 판단한다: 0 모두 OK, 1 WARN 있음, 2 CRIT 있음. SKIP(확인하지 못함)은 통과가 아니라 따로 센다.
-읽는 것: 스케줄러 상태 파일(scheduler.py 가 쓴다), 잡 정의(config/jobs.yaml), 디스크(df), 외부 감시 설정의 대상(config/external-monitor.yaml, 없으면 .example.yaml)
-한계값(디스크 80/90%, 잡 지연 2배)은 헤드가 정한 표준 관행의 시작값이고 사용자 결정이 아니다. 비밀 값은 읽지도 출력하지도 않는다.
+읽는 것: 디스크(df), 외부 감시 설정의 대상(config/external-monitor.yaml, 없으면 .example.yaml)
+한계값(디스크 80/90%)은 헤드가 정한 표준 관행의 시작값이고 사용자 결정이 아니다. 비밀 값은 읽지도 출력하지도 않는다.
 """
 import argparse, json, os, shutil, ssl, sys, time, urllib.request, urllib.error
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ap = argparse.ArgumentParser()
-ap.add_argument("--scheduler-state", default=os.path.join(ROOT, "state/scheduler.json"))
-ap.add_argument("--jobs", default=os.path.join(ROOT, "config/jobs.yaml"))
 ap.add_argument("--monitor", default="", help="외부 감시 설정(기본 config/external-monitor.yaml, 없으면 .example.yaml)")
 ap.add_argument("--disk-path", action="append", default=[], help="점검할 경로(여러 번). 기본: 이 리포의 state/, config/backup.env 의 BACKUP_DIR")
 ap.add_argument("--disk-warn", type=int, default=80); ap.add_argument("--disk-crit", type=int, default=90)
-ap.add_argument("--stale-factor", type=float, default=2.0, help="주기의 몇 배를 넘기면 CRIT")
-ap.add_argument("--stuck-seconds", type=int, default=3600, help="시작했지만 끝나지 않은 채 이 시간이 지나면 CRIT")
 ap.add_argument("--readyz", action="append", default=[], metavar="release-gate=URL|model-serving=URL", help="서비스 /readyz 를 읽어 판정한다(여러 번)")
 ap.add_argument("--project", default="", help="compose 프로젝트 이름(예: deploy). 있으면 그 프로젝트의 release-gate·model-serving 컨테이너 호스트 포트를 docker port 로 찾아 --readyz 로 쓴다(컨테이너나 게시 포트가 없으면 SKIP)")
 ap.add_argument("--judging-failures-warn", type=int, default=1); ap.add_argument("--judging-failures-crit", type=int, default=3)
@@ -29,26 +25,7 @@ NOW = a.now or time.time()
 R = []   # (상태, 이름, 설명)
 def add(s, n, d): R.append((s, n, d))
 
-# 1) 스케줄러/잡
-try: jobs = yaml.safe_load(open(a.jobs, encoding="utf-8"))["jobs"]
-except Exception as e: jobs = None; add("CRIT", "스케줄러 잡 정의", f"{a.jobs} 를 읽지 못했다({type(e).__name__})")
-if jobs is not None:
-    try: st = json.load(open(a.scheduler_state))
-    except FileNotFoundError: st = None; add("WARN", "스케줄러 상태 파일", f"{os.path.relpath(a.scheduler_state, ROOT)} 가 없다: 스케줄러(scheduler.py tick)가 한 번도 돌지 않았다")
-    except Exception as e: st = None; add("CRIT", "스케줄러 상태 파일", f"읽지 못했다({type(e).__name__})")
-    if st is not None:
-        for j in jobs:
-            n = j["name"]
-            if j.get("where") != "serving": add("SKIP", f"잡 {n}", f"실행 위치 {j.get('where')}(이 서버 밖): 여기서 확인하지 않는다"); continue
-            if j.get("interval_seconds") is None: add("SKIP", f"잡 {n}", "주기 미정"); continue
-            s = st.get(n)
-            if not s or "last_start" not in s: add("WARN", f"잡 {n}", "실행 기록이 없다"); continue
-            ls, le, code, iv = s["last_start"], s.get("last_end"), s.get("last_exit"), j["interval_seconds"]
-            if le is None or le < ls:
-                add("CRIT" if NOW - ls > a.stuck_seconds else "OK", f"잡 {n}", f"시작 {int(NOW-ls)}초 전, 아직 끝나지 않았다" + (f"(상한 {a.stuck_seconds}초 초과)" if NOW - ls > a.stuck_seconds else "(실행 중으로 본다)"))
-            elif code != 0: add("CRIT", f"잡 {n}", f"마지막 종료 코드 {code}: {str(s.get('last_msg',''))[:100]} ({int(NOW-le)}초 전)")
-            elif NOW - ls > iv * a.stale_factor + 60: add("CRIT", f"잡 {n}", f"마지막 시작이 {int(NOW-ls)}초 전이라 주기 {iv}초의 {a.stale_factor:g}배를 넘었다(스케줄러가 멈췄나)")
-            else: add("OK", f"잡 {n}", f"마지막 종료 코드 0, {int(NOW-le)}초 전")
+# (잡 실행 결과는 systemd 가 journald 에 남기고 보는 도구가 따로 있다: ADR 0036. 이 점검은 잡 상태를 읽지 않는다)
 
 # 2) 디스크
 paths = list(a.disk_path)

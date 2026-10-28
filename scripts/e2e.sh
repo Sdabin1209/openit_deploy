@@ -266,25 +266,18 @@ chk "비밀 노출 점검: 환경 변수·inspect·exec env 에 secrets 값 없�
 chk "check-secrets-hidden 자기 점검(노출 컨테이너는 실패, 파일 비밀은 통과)" bash "$DEPLOY_ROOT/scripts/test-check-secrets-hidden.sh"
 
 if [ "$FAST" = 0 ]; then   # --fast 에서는 아래 세 구간(스케줄러, 백업·복구, 롤백)을 건너뛴다
-sect "단계 9: 주기 잡 스케줄러 (D39)"
+sect "단계 9: 주기 잡 (D39, systemd timer)"
 chk "잡 엔트리포인트가 Compose 안에서 이미지·볼륨·네트워크로 실행된다(ops_feedback.job --help)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-ops-feedback python -m ops_feedback.job --help
 chk_dep "단계 4" "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
 chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_JOB_CONFIG=/nonexistent/job.yaml bash $DEPLOY_ROOT/scripts/run-job.sh job-ops-feedback; [ \$? = 2 ]"
+# 주기 실행은 systemd timer 의 몫이다(ADR 0036). 유닛 파일은 정적 시험으로 확인하고(주기·oneshot·스크립트·systemd-analyze verify), 실제 잡 실행은 위 run-job.sh 호출이 Compose 안에서 확인한다
+chk "systemd 유닛 정적 시험(잡마다 service+timer, 주기, systemd-analyze verify)" bash "$DEPLOY_ROOT/scripts/test-systemd-units.sh"
 mkdir -p "$W/sched"
-cat > "$W/sched/jobs.yaml" <<YAML
-jobs:
-  - {name: test-fast, where: serving, command: ["bash","-c","echo run >> $W/sched/ran.txt"], interval_seconds: 3}
-  - {name: test-undecided, where: serving, command: ["bash","-c","echo SHOULD-NOT-RUN >> $W/sched/ran.txt"], interval_seconds: null}
-  - {name: test-gpu, where: gpu-external, command: ["bash","-c","echo SHOULD-NOT-RUN >> $W/sched/ran.txt"], interval_seconds: 3}
-YAML
-SCHED="$VENV/bin/python $DEPLOY_ROOT/scripts/scheduler.py --config $W/sched/jobs.yaml --state $W/sched/st.json"
-$SCHED tick >/dev/null; $SCHED tick >/dev/null; sleep 3.5; $SCHED tick >/dev/null
-chk "스케줄러: 기한이 되면 실행하고 기한 전 tick은 아무것도 안 한다(3초 주기, 3번 tick -> 2번 실행), 주기 미정·GPU 밖 잡은 실행 안 함" bash -c "[ \"\$(cat $W/sched/ran.txt)\" = \"\$(printf 'run\nrun')\" ] && echo '실행 2회, SHOULD-NOT-RUN 없음'"
 # 단계 5d/5q/5w 가 gateway 를 다시 시작하면 Docker 가 배정한 호스트 포트가 바뀐다: 감시 대상 주소는 지금 포트를 다시 읽어 만든다(평문 /healthz 와 HTTPS /healthz + 시험용 CA)
 PGW=$(port gateway); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)
 printf 'targets:\n  - {name: gateway-healthz-plain, url: "http://127.0.0.1:%s/healthz", expect_status: 200}\n  - {name: gateway-healthz-https, url: "https://127.0.0.1:%s/healthz", expect_status: 200, ca_file: "%s"}\n' "$PGW" "$PGWS" "$W/gateway-ca.crt" > "$W/sched/monitor.yaml"
-chk "check-health: 스케줄러 상태 파일·디스크·외부 감시 대상(gateway /healthz 평문·HTTPS)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --jobs "$W/sched/jobs.yaml" --scheduler-state "$W/sched/st.json" --monitor "$W/sched/monitor.yaml" --disk-path "$W" --skip-backup
-chk "config/jobs.yaml: GPU 잡 3개는 gpu-external(이 Compose에 없음)" bash -c "[ \$(grep -c 'where: gpu-external' $DEPLOY_ROOT/config/jobs.yaml) = 3 ] && ! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
+chk "check-health: 디스크·외부 감시 대상(gateway /healthz 평문·HTTPS)을 읽어 모두 OK(종료 0)" bash "$DEPLOY_ROOT/scripts/check-health.sh" --monitor "$W/sched/monitor.yaml" --disk-path "$W" --skip-backup
+chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 없다(서빙 서버 밖, D40)" bash -c "! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
 sect "단계 9: 백업과 복구 (gpg 공개키 암호화 경로를 실제로 실행: 시험 폴더 안의 임시 키쌍, 복호는 서버 밖 사람 몫을 모사)"
 chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"

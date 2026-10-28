@@ -15,7 +15,7 @@ def errs(name, doc): return cs.validate(name, doc, ROOT)
 
 class T(unittest.TestCase):
     def test_real_files_pass(self):
-        paths = {"images-env": ROOT / "build/images.env", "images-lock": ROOT / "locks/images.lock", "jobs": ROOT / "config/jobs.yaml", "verify-areas": ROOT / "config/verify-areas.yaml"}
+        paths = {"images-env": ROOT / "build/images.env", "images-lock": ROOT / "locks/images.lock", "verify-areas": ROOT / "config/verify-areas.yaml"}
         self.assertEqual(cs.run(paths, ROOT), 0)
 
     def test_schemas_are_valid_2020_12(self):
@@ -35,16 +35,6 @@ class T(unittest.TestCase):
         self.assertEqual(errs("images-lock", {**base, "SURVEY_SERVICE_DIGEST": D, "SURVEY_SERVICE_REVISION": "abc1234"}), [])
         for bad in ({**base, "SURVEY_SERVICE_DIGST": D}, {**base, "SURVEY_SERVICE_DIGEST": "sha256:short"}, {**base, "SURVEY_SERVICE_REVISION": "main"}, {k: v for k, v in base.items() if k != "GATEWAY_IMAGE"}, {**base, "UTIL_IMAGE": "python:latest"}):
             self.assertTrue(errs("images-lock", bad), bad)
-
-    def test_jobs_rejects(self):
-        ok = {"jobs": [{"name": "a", "where": "serving", "command": ["x"], "interval_seconds": 60}, {"name": "b", "where": "gpu-external", "interval_seconds": None}]}
-        self.assertEqual(errs("jobs", ok), [])
-        for bad in ({"jobs": [{"name": "a", "where": "serving", "command": ["x"]}]},                       # interval_seconds 키 없음
-                    {"jobs": [{"name": "a", "where": "serving", "interval_seconds": 60}]},                 # command 없음
-                    {"jobs": [{"name": "a", "where": "serving", "command": ["x"], "interval_seconds": 0}]},
-                    {"jobs": [{"name": "a", "where": "somewhere", "command": ["x"], "interval_seconds": 5}]},
-                    {"jobs": [{"name": "a", "where": "serving", "command": ["x"], "interval_seconds": 5, "intervall": 1}]}):
-            self.assertTrue(errs("jobs", bad), bad)
 
     def test_verify_areas_rejects(self):
         a = {"image": [], "tests": {"kind": "pytest"}, "e2e": "auto"}

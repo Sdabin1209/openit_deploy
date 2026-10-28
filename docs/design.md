@@ -102,15 +102,9 @@
 
 [boundary.md](boundary.md)의 표를 본다.
 
-## 7. 주기 잡 스케줄러 (D39): 호스트 스케줄러를 고른 근거
+## 7. 주기 잡 (D39): systemd timer
 
-후보: (a) 컨테이너 안 cron/supercronic, (b) ofelia 같은 docker 소켓 스케줄러, (c) 호스트에서 도는 가벼운 스케줄러(`scripts/scheduler.py`) + `docker compose run --rm`.
-
-- (a)는 잡이 서로 다른 이미지에서 돌아야 해서 cron 컨테이너가 잡마다 이미지를 갖거나 docker를 불러야 한다. (b)는 컨테이너에 docker 소켓을 줘야 하므로 서버 권한을 넘긴다. 선택은 (c): 잡은 그 영역 이미지·볼륨·네트워크로 `docker compose run --rm`(프로필 `jobs`)에서 한 번 돌고 끝난다. 스케줄러는 소켓을 컨테이너에 주지 않는다.
-- `tick`(한 번 보고 끝)은 cron이나 systemd timer가 부르고, `loop`는 직접 돌릴 때 쓴다. 상태는 `state/scheduler.json`. 같은 잡이 실행 중이면 건너뛰고(flock), 기한 전에는 아무것도 하지 않는다(멱등).
-- 주기는 `config/jobs.yaml`의 `interval_seconds`. **서빙 잡은 D85에서 정했다: 수집기 600초, ops-feedback 3600초, 백업 86400초(GPU 밖 잡은 null).** null이면 실행하지 않는다. 코드에 기본값이 없다.
-- `where: gpu-external`(release-gate 승인 평가 워커, synthetic-data, model-lab 파이프라인)은 서빙 서버 밖 GPU 서버의 일이다(D40). Compose에 넣지 않았고 스케줄러도 실행하지 않는다. 승인 평가 워커의 **실행기 구현이 release-gate에 없다**(CR-D10).
-- 구성된 잡: `job-ops-feedback`(`python -m ops_feedback.job --config /config/job.yaml`), `job-release-gate-collect`(`python -m release_gate collect`, 후보 수집기 run-once), `backup`. 둘 다 서비스와 같은 이미지·네트워크로 `docker compose run --rm`. 설정 파일 값(비식별 기준 등)은 사용자 결정이라 운영 설정은 없고, 시험용 설정은 `test/ops-job/`.
+주기 잡은 호스트의 systemd timer가 `scripts/run-job.sh`(`docker compose run --rm`)로 한 번 실행한다. 컨테이너에 docker 소켓을 주지 않는다. 고른 근거와 대안은 [ADR 0036](adr/0036-systemd-timers.md)(0010을 대체). GPU 서버 밖 잡(release-gate 승인 평가 워커, synthetic-data, model-lab 파이프라인)은 서빙 서버의 일이 아니다(D40). Compose에도 timer에도 넣지 않았다.
 
 ## 8. 백업·복구 (O16 미정)
 

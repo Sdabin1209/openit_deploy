@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""deploy 내부 파일(build/images.env, locks/images.lock, config/jobs.yaml, config/verify-areas.yaml)을 schemas/*.schema.json 으로 검증한다(R5, audit DP-15).
+"""deploy 내부 파일(build/images.env, locks/images.lock, config/verify-areas.yaml)을 schemas/*.schema.json 으로 검증한다(R5, audit DP-15).
 사용: check_schemas.py [--root DIR] [--files images-env=PATH ...]   종료 코드 0 통과, 1 어긋남, 2 사용법.
 build/images.env 가 없으면(빌드 전) 그 항목은 SKIP 으로 알린다. 왜 파서를 여기 두는가: 저장 형식(공백 텍스트, KEY=value)을 바꾸지 않고 기계가 읽는 정의만 더하는 것이 가장 작은 수정이다(docs/adr/0034-deploy-internal-schemas.md).
 값(digest 포함)은 출력하지 않고 줄 번호와 이유만 낸다."""
@@ -54,7 +54,6 @@ def run(paths, root=ROOT):
         if not errs: print(f"OK   {p.name}")
     else: print(f"SKIP {p.name} (없음: 빌드 전)")
     report("images.lock", validate("images-lock", parse_lock(paths["images-lock"].read_text(encoding="utf-8")), root))
-    report("jobs.yaml", validate("jobs", yaml.safe_load(paths["jobs"].read_text(encoding="utf-8")), root))
     report("verify-areas.yaml", validate("verify-areas", yaml.safe_load(paths["verify-areas"].read_text(encoding="utf-8")), root))
     return 1 if bad else 0
 
@@ -62,10 +61,10 @@ def run(paths, root=ROOT):
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", default=str(ROOT))
-    ap.add_argument("--files", nargs="*", default=[], help="이름=경로 (images-env, images-lock, jobs, verify-areas)")
+    ap.add_argument("--files", nargs="*", default=[], help="이름=경로 (images-env, images-lock, verify-areas)")
     a = ap.parse_args(argv[1:])
     root = pathlib.Path(a.root)
-    paths = {"images-env": root / "build/images.env", "images-lock": root / "locks/images.lock", "jobs": root / "config/jobs.yaml", "verify-areas": root / "config/verify-areas.yaml"}
+    paths = {"images-env": root / "build/images.env", "images-lock": root / "locks/images.lock", "verify-areas": root / "config/verify-areas.yaml"}
     for kv in a.files:
         k, _, v = kv.partition("=")
         if k not in paths or not v: ap.error(f"알 수 없는 이름: {kv}")

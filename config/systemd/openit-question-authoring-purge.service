@@ -1,0 +1,15 @@
+# 주기 잡 question-authoring-purge: 초안·고아 원본 자료 보존 정리(D88/U4, 멱등). 보존 단위가 일 단위라 하루 1회. 예시이며 이 리포는 설치하지 않는다(경로 /srv/deploy 와 사용자 openit 은 서버에 맞게 바꾼다). ADR 0036.
+# 실행은 oneshot 이라 같은 잡이 실행 중이면 timer 가 다시 시작하지 않는다(옛 스케줄러의 잠금과 같은 성질). 결과·종료 코드는 journald: journalctl -u openit-question-authoring-purge.service
+[Unit]
+Description=openit 주기 잡 question-authoring-purge
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=openit
+WorkingDirectory=/srv/deploy
+Environment=DEPLOY_PROJECT=deploy
+# 잡 하나의 제한 시간: 옛 스케줄러의 기본값 3600초를 그대로 옮겼다(근거 없는 시작값, 측정 안 함)
+TimeoutStartSec=3600
+ExecStart=/srv/deploy/scripts/run-job.sh job-question-authoring-purge

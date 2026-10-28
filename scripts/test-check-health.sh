@@ -1,36 +1,19 @@
 #!/usr/bin/env bash
-# check-health.sh 자체 시험(Docker 불필요): 가짜 스케줄러 상태, 가짜 디스크 한계, 로컬 HTTP 서버로 OK/WARN/CRIT/SKIP 과 종료 코드를 확인한다. 사용: bash scripts/test-check-health.sh
+# check-health.sh 자체 시험(Docker 불필요): 가짜 디스크 한계, 로컬 HTTP 서버로 OK/WARN/CRIT/SKIP 과 종료 코드를 확인한다. 사용: bash scripts/test-check-health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; T=$(mktemp -d); trap 'kill $SP 2>/dev/null; rm -rf "$T"' EXIT
 N=0; F=0
 t() { local name=$1 want_rc=$2 want_txt=$3; shift 3; local out rc; out=$(bash "$HERE/check-health.sh" "$@" 2>&1); rc=$?; N=$((N+1))
   if [ $rc = "$want_rc" ] && grep -qF -- "$want_txt" <<<"$out"; then echo "  PASS $name"; else echo "  FAIL $name (종료 $rc, 기대 $want_rc, '$want_txt')"; echo "$out" | sed 's/^/       /'; F=$((F+1)); fi; }
 NOW=1000000
-cat > $T/jobs.yaml <<'Y'
-jobs:
-  - {name: a, where: serving, command: ["x"], interval_seconds: 100}
-  - {name: g, where: gpu-external, command: ["x"], interval_seconds: null}
-  - {name: u, where: serving, command: ["x"], interval_seconds: null}
-Y
 cat > $T/mon.yaml <<'Y'
 targets:
   - {name: none, url: null}
 Y
-base=(--jobs $T/jobs.yaml --monitor $T/mon.yaml --disk-path $T --now $NOW --skip-backup)
-echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":0}}' > $T/s.json
-t "정상: 종료 코드 0, 위치 밖·주기 미정·url 미정은 SKIP 으로 따로 센다" 0 "SKIP(확인 못 함, 통과 아님) 4" "${base[@]}" --scheduler-state $T/s.json
-echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":3,"last_msg":"boom"}}' > $T/s.json
-t "잡의 마지막 종료 코드가 0이 아니면 CRIT(2)" 2 "마지막 종료 코드 3" "${base[@]}" --scheduler-state $T/s.json
-echo '{"a":{"last_start":999000,"last_end":999001,"last_exit":0}}' > $T/s.json
-t "주기의 2배를 넘게 실행이 없으면 CRIT" 2 "주기 100초" "${base[@]}" --scheduler-state $T/s.json
-echo '{"a":{"last_start":990000,"last_exit":0}}' > $T/s.json
-t "시작했지만 상한을 넘겨 끝나지 않으면 CRIT" 2 "아직 끝나지 않았다" "${base[@]}" --scheduler-state $T/s.json --stuck-seconds 3600
-echo '{}' > $T/s.json
-t "실행 기록이 없으면 WARN(1)" 1 "실행 기록이 없다" "${base[@]}" --scheduler-state $T/s.json
-t "상태 파일이 없으면 WARN" 1 "스케줄러 상태 파일" "${base[@]}" --scheduler-state $T/none.json
-echo '{"a":{"last_start":999950,"last_end":999951,"last_exit":0}}' > $T/s.json
-t "디스크 한계를 0%로 낮추면 CRIT" 2 "디스크" "${base[@]}" --scheduler-state $T/s.json --disk-crit 0 --disk-warn 0
-t "없는 경로는 SKIP(확인 못 함)" 0 "경로가 없어" "${base[@]}" --scheduler-state $T/s.json --disk-path $T/nope
+base=(--monitor $T/mon.yaml --disk-path $T --now $NOW --skip-backup)
+t "정상: 종료 코드 0, url 미정·백업 건너뜀은 SKIP 으로 따로 센다" 0 "SKIP(확인 못 함, 통과 아님) 2" "${base[@]}"
+t "디스크 한계를 0%로 낮추면 CRIT" 2 "디스크" "${base[@]}" --disk-crit 0 --disk-warn 0
+t "없는 경로는 SKIP(확인 못 함)" 0 "경로가 없어" "${base[@]}" --disk-path $T/nope
 python3 -I - "$T" <<'PY' &
 import http.server, sys, threading
 import json, time
@@ -54,13 +37,13 @@ srv = http.server.HTTPServer(("127.0.0.1", 0), H); open(sys.argv[1] + "/port", "
 PY
 SP=$!; for i in $(seq 1 50); do [ -s $T/port ] && break; sleep 0.1; done; P=$(cat $T/port)
 printf 'targets:\n  - {name: h, url: "http://127.0.0.1:%s/healthz", expect_status: 200}\n' $P > $T/mon.yaml
-t "외부 감시 대상이 기대 코드면 OK" 0 "감시 h: http://127.0.0.1:$P/healthz -> 200" "${base[@]}" --scheduler-state $T/s.json
+t "외부 감시 대상이 기대 코드면 OK" 0 "감시 h: http://127.0.0.1:$P/healthz -> 200" "${base[@]}"
 printf 'targets:\n  - {name: r, url: "http://127.0.0.1:%s/readyz", expect_status: 200}\n' $P > $T/mon.yaml
-t "외부 감시 대상이 다른 코드면 CRIT" 2 "-> 503 (기대 200)" "${base[@]}" --scheduler-state $T/s.json
+t "외부 감시 대상이 다른 코드면 CRIT" 2 "-> 503 (기대 200)" "${base[@]}"
 printf 'targets:\n  - {name: d, url: "http://127.0.0.1:1/healthz"}\n' > $T/mon.yaml
-t "닿지 못하면 CRIT" 2 "닿지 못했다" "${base[@]}" --scheduler-state $T/s.json
+t "닿지 못하면 CRIT" 2 "닿지 못했다" "${base[@]}"
 printf 'targets: []\n' > $T/mon-empty.yaml
-bb=(--jobs $T/jobs.yaml --monitor $T/mon-empty.yaml --disk-path $T --now $NOW --scheduler-state $T/s.json)
+bb=(--monitor $T/mon-empty.yaml --disk-path $T --now $NOW)
 t "백업 설정이 없으면 CRIT(U6)" 2 "백업이 돌지 않는다" "${bb[@]}" --backup-config $T/none.env
 printf 'BACKUP_DIR=\n' > $T/b0.env; t "BACKUP_DIR 이 비면 CRIT" 2 "BACKUP_DIR 이 비어" "${bb[@]}" --backup-config $T/b0.env
 mkdir -p $T/bk/pg-survey/20260101T000000Z $T/bk/pg-gate/20260101T000000Z; touch -d @999000 $T/bk/pg-survey/20260101T000000Z $T/bk/pg-gate/20260101T000000Z
@@ -69,17 +52,17 @@ t "최신 백업이 기준보다 오래되면 CRIT" 2 "초 전 (기준 100초" "
 printf 'BACKUP_DIR=%s/bk\n' $T > $T/b2.env; t "암호화 none 은 WARN" 1 "평문" "${bb[@]}" --backup-config $T/b2.env
 mon0=(--monitor $T/mon.yaml); printf 'targets: []\n' > $T/mon.yaml
 rz() { echo "--readyz release-gate=http://127.0.0.1:$P/gate/$1"; }
-t "release-gate 판정 루프 정상이면 OK" 0 "연속 실패 0" "${base[@]}" --scheduler-state $T/s.json $(rz ok)
-t "연속 실패 1회는 WARN(1)" 1 "연속 실패 1회" "${base[@]}" --scheduler-state $T/s.json $(rz fail1)
-t "연속 실패 3회는 CRIT(2)" 2 "연속 실패 3회" "${base[@]}" --scheduler-state $T/s.json $(rz fail3)
-t "upstream_auth_failed 는 CRIT" 2 "upstream_auth_failed" "${base[@]}" --scheduler-state $T/s.json $(rz auth)
-t "last_run_at 이 오래되면 WARN" 1 "초 전이다" "${base[@]}" --scheduler-state $T/s.json $(rz stale)
-t "last_run_at 이 없으면 WARN" 1 "한 번도 돌지 않았다" "${base[@]}" --scheduler-state $T/s.json $(rz never)
-t "judging_loop 가 없으면 SKIP(통과 아님)" 0 "judging_loop 가 없다" "${base[@]}" --scheduler-state $T/s.json $(rz nojl)
-t "release-gate /readyz 503 은 CRIT" 2 "-> 503" "${base[@]}" --scheduler-state $T/s.json $(rz down)
-t "model-serving /readyz 200 은 OK" 0 "엔진 정상" "${base[@]}" --scheduler-state $T/s.json --readyz model-serving=http://127.0.0.1:$P/ms/ok
-t "model-serving /readyz 503(엔진 멈춤)은 CRIT" 2 "engine stuck" "${base[@]}" --scheduler-state $T/s.json --readyz model-serving=http://127.0.0.1:$P/ms/down
-t "컨테이너가 없는 프로젝트는 SKIP" 0 "컨테이너가 없거나" "${base[@]}" --scheduler-state $T/s.json --project deploy-nonexistent-xyz
+t "release-gate 판정 루프 정상이면 OK" 0 "연속 실패 0" "${base[@]}" $(rz ok)
+t "연속 실패 1회는 WARN(1)" 1 "연속 실패 1회" "${base[@]}" $(rz fail1)
+t "연속 실패 3회는 CRIT(2)" 2 "연속 실패 3회" "${base[@]}" $(rz fail3)
+t "upstream_auth_failed 는 CRIT" 2 "upstream_auth_failed" "${base[@]}" $(rz auth)
+t "last_run_at 이 오래되면 WARN" 1 "초 전이다" "${base[@]}" $(rz stale)
+t "last_run_at 이 없으면 WARN" 1 "한 번도 돌지 않았다" "${base[@]}" $(rz never)
+t "judging_loop 가 없으면 SKIP(통과 아님)" 0 "judging_loop 가 없다" "${base[@]}" $(rz nojl)
+t "release-gate /readyz 503 은 CRIT" 2 "-> 503" "${base[@]}" $(rz down)
+t "model-serving /readyz 200 은 OK" 0 "엔진 정상" "${base[@]}" --readyz model-serving=http://127.0.0.1:$P/ms/ok
+t "model-serving /readyz 503(엔진 멈춤)은 CRIT" 2 "engine stuck" "${base[@]}" --readyz model-serving=http://127.0.0.1:$P/ms/down
+t "컨테이너가 없는 프로젝트는 SKIP" 0 "컨테이너가 없거나" "${base[@]}" --project deploy-nonexistent-xyz
 # https 대상 + 내부 CA(ca_file): 자체 서명 인증서를 ca_file 로 주면 OK, 안 주면 신뢰할 수 없어 CRIT (D88/U5, external-monitor 의 ca_file)
 openssl req -x509 -newkey rsa:2048 -nodes -keyout $T/k.pem -out $T/c.pem -days 2 -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1" >/dev/null 2>&1
 python3 -I - "$T" <<'PY' &
@@ -93,8 +76,8 @@ open(sys.argv[1] + "/tlsport", "w").write(str(srv.server_port)); srv.serve_forev
 PY
 SP2=$!; for i in $(seq 1 50); do [ -s $T/tlsport ] && break; sleep 0.1; done; TP=$(cat $T/tlsport)
 printf 'targets:\n  - {name: tls, url: "https://127.0.0.1:%s/healthz", expect_status: 200, ca_file: "%s/c.pem"}\n' $TP $T > $T/mon.yaml
-t "https 대상이 ca_file 로 검증되면 OK" 0 "감시 tls: https://127.0.0.1:$TP/healthz -> 200" "${base[@]}" --scheduler-state $T/s.json
+t "https 대상이 ca_file 로 검증되면 OK" 0 "감시 tls: https://127.0.0.1:$TP/healthz -> 200" "${base[@]}"
 printf 'targets:\n  - {name: tls, url: "https://127.0.0.1:%s/healthz", expect_status: 200}\n' $TP > $T/mon.yaml
-t "ca_file 없이 자체 서명 https 는 신뢰할 수 없어 CRIT" 2 "닿지 못했다" "${base[@]}" --scheduler-state $T/s.json
+t "ca_file 없이 자체 서명 https 는 신뢰할 수 없어 CRIT" 2 "닿지 못했다" "${base[@]}"
 kill $SP2 2>/dev/null
 [ $F = 0 ] && echo "통과: check-health 자체 시험 $N건" || { echo "실패: $F/$N건"; exit 1; }

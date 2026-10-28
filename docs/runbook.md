@@ -121,13 +121,17 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 
 ## 5. 주기 잡
 
+주기 실행은 systemd timer가 한다(ADR 0036). 잡마다 `config/systemd/openit-<잡>.service|timer`가 있다(예시이며 이 리포는 설치하지 않는다).
+
 ```
-.venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json status
-.venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json tick     # cron/systemd timer 가 1분마다 부른다
+sudo cp config/systemd/openit-*.service config/systemd/openit-*.timer /etc/systemd/system/   # 경로 /srv/deploy 와 User=openit 을 서버에 맞게 고친 뒤
+sudo systemctl daemon-reload && sudo systemctl enable --now 'openit-*.timer'
+systemctl list-timers 'openit-*'                       # 다음 실행 시각
+journalctl -u openit-release-gate-collector.service -n 30   # 마지막 결과와 종료 코드
 ```
 
-- cron 예: `* * * * * cd /srv/deploy && .venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json tick >> state/scheduler.log 2>&1`
-- 주기(D85, 표준): release-gate-collector 600초, ops-feedback-job 3600초, backup 86400초, backup-restore-test 604800초(시작값, 근거 없음). `interval_seconds: null`은 "주기 미정"이라 실행하지 않는다. backup 잡은 `config/backup.env`(BACKUP_DIR, BACKUP_RETENTION_DAYS, 수신자 공개키)가 없거나 불완전하면 "CRIT:"와 종료 코드 2로 실패하고 check-health가 CRIT로 읽는다(4-1절).
+- 주기: release-gate-collector 600초, ops-feedback-job 3600초, 백업·정리 잡 86400초는 사용자 결정(D85, 표준 주기). backup-restore-test 604800초는 시작값(근거 없음). 값은 각 `.timer`의 `OnUnitActiveSec`에 있고 출처는 ADR 0036. backup 잡은 `config/backup.env`가 없으면 거부한다.
+- 같은 잡이 실행 중이면 oneshot 서비스라 timer가 다시 시작하지 않는다. 한 번 지금 실행: `sudo systemctl start openit-backup.service`.
 - 잡 하나를 지금 실행: `bash scripts/run-job.sh job-ops-feedback`(설정 파일 `OPS_JOB_CONFIG`가 있어야 한다. 없으면 거부).
 - `gpu-external` 잡은 GPU 서버에서 돈다(D40). 서빙 서버의 Compose·스케줄러가 실행하지 않는다.
 
@@ -151,7 +155,6 @@ bash scripts/check-health.sh        # 종료 코드 0 OK, 1 WARN, 2 CRIT. cron/s
 
 | 대상 | 읽는 곳 | 판정 |
 |---|---|---|
-| 스케줄러·잡 실패 | `state/scheduler.json`(scheduler.py가 잡마다 last_start/last_end/last_exit/last_msg를 쓴다), `config/jobs.yaml` | 마지막 종료 코드가 0이 아니면 CRIT. 마지막 시작이 주기의 2배(+60초)를 넘으면 CRIT(스케줄러 정지). 시작했는데 1시간 넘게 끝나지 않으면 CRIT. 기록이 없으면 WARN. 주기 미정·서버 밖(gpu-external) 잡은 SKIP |
 | 디스크 사용률 | `df`(state/ 폴더와 `config/backup.env`의 `BACKUP_DIR`) | 80% 이상 WARN, 90% 이상 CRIT. Docker 볼륨(pg-data 등)이 있는 디스크가 위 경로와 다르면 `--disk-path`로 더한다 |
 | 외부 감시 대상 | `config/external-monitor.yaml`(없으면 `.example.yaml`)의 `targets[].url` | 기대 상태 코드와 다르거나 닿지 못하면 CRIT. url이 null이면 SKIP(확인 못 함, 통과 아님) |
 
@@ -159,13 +162,13 @@ bash scripts/check-health.sh        # 종료 코드 0 OK, 1 WARN, 2 CRIT. cron/s
 
 ### 점검 호출 주체: systemd timer(표준)와 cron(대안)
 
-이 리포는 점검과 스케줄러를 **부르는 주체를 설치하지 않는다**(서버의 시스템 설정은 사람이 한다). 예시 유닛이 `config/systemd/`에 있다: `openit-check-health.{service,timer}`(5분마다 `scripts/check-health.sh --project deploy`), `openit-scheduler.{service,timer}`(1분마다 스케줄러 tick). 경로 `/srv/deploy`와 사용자 `openit`은 자리표시다.
+이 리포는 점검과 주기 잡을 **부르는 주체를 설치하지 않는다**(서버의 시스템 설정은 사람이 한다). 예시 유닛이 `config/systemd/`에 있다: `openit-check-health.{service,timer}`(5분마다 `scripts/check-health.sh --project deploy`), `openit-scheduler.{service,timer}`(1분마다 스케줄러 tick). 경로 `/srv/deploy`와 사용자 `openit`은 자리표시다.
 
 사람이 할 일(sudo 필요):
 1. 예시 파일을 서버에 맞게 고쳐 `/etc/systemd/system/`에 복사한다(경로, 사용자, 이 사용자가 docker 그룹이고 `.venv`가 있는지).
-2. `sudo systemctl daemon-reload && sudo systemctl enable --now openit-scheduler.timer openit-check-health.timer`.
+2. `sudo systemctl daemon-reload && sudo systemctl enable --now openit-check-health.timer 'openit-*.timer'`.
 3. 확인(sudo 없이): `systemctl list-timers 'openit-*'`로 다음 실행 시각, `systemctl status openit-check-health.service`와 `journalctl -u openit-check-health.service -n 30`로 마지막 결과, 같은 명령을 손으로 `bash scripts/check-health.sh --project deploy; echo $?`. 서비스는 종료 코드가 0이 아니면(WARN 1, CRIT 2) failed가 되므로 `systemctl --failed`에도 보인다.
-4. cron 대안(systemd가 없을 때): `* * * * * cd /srv/deploy && .venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json tick >> state/scheduler.log 2>&1` 와 `*/5 * * * * cd /srv/deploy && bash scripts/check-health.sh --project deploy >> state/check-health.log 2>&1`. 종료 코드로 알리려면 cron의 `MAILTO` 또는 아래 연결 지점에 쓸 래퍼가 필요하다.
+4. cron 대안(systemd가 없을 때, 주기 잡은 각 `.timer`의 주기대로 `bash scripts/run-job.sh <서비스>`를 부른다): `*/5 * * * * cd /srv/deploy && bash scripts/check-health.sh --project deploy >> state/check-health.log 2>&1`. 종료 코드로 알리려면 cron의 `MAILTO` 또는 아래 연결 지점에 쓸 래퍼가 필요하다.
 
 **알림 수단 연결 지점(미정, 만들지 않았다).** 점검이 CRIT/WARN을 "누구에게 어떻게" 알릴지는 사용자 결정이다. 연결할 곳: (a) systemd 서비스의 `OnFailure=`(예시 유닛에 주석 처리된 줄) -- 사용자가 정한 수단으로 알리는 유닛을 지정한다. (b) cron 래퍼의 종료 코드 분기. (c) 서버 밖 감시가 gateway `/healthz`·`/readyz`를 보는 경로(`config/external-monitor.example.yaml`)는 이것과 별개로 서버 전체 중단을 본다(D10).
 

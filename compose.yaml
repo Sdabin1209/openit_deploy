@@ -410,7 +410,7 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  # 주기 잡: 상시 서비스가 아니다. scripts/scheduler.py 가 `docker compose run --rm <잡>` 으로 한 번 실행한다(D39).
+  # 주기 잡: 상시 서비스가 아니다. systemd timer(config/systemd/openit-<잡>.timer, ADR 0036)가 scripts/run-job.sh 로 `docker compose run --rm <잡>` 을 한 번 실행한다(D39).
   # 이웃 서비스와 같은 이미지·볼륨·네트워크를 쓰되 쓰기 주체는 같은 영역이다.
   job-ops-feedback:
     profiles: ["jobs"]

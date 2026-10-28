@@ -1,5 +1,9 @@
 # 변경 이력
 
+## 단위 4a-1: scheduler.py -> systemd timer (D111, ADR 0036)
+- 잡마다 `config/systemd/openit-<잡>.service|timer` 7쌍을 추가했다. `scripts/scheduler.py`, `config/jobs.yaml`, `schemas/jobs.schema.json`, 스케줄러 유닛, 스케줄러 상태 파일과 그 시험을 지웠다. `check_health.py`는 스케줄러 상태를 읽지 않는다(잡 신선도 점검은 4a-2에서 Prometheus가 이어받는다).
+- 새 시험 `scripts/test-systemd-units.sh`(주기 표, oneshot, 스크립트 존재, `systemd-analyze verify`, 망가진 유닛 거부). E2E 단계 9의 스케줄러 구간은 이 시험 + `run-job.sh` 실행으로 바뀌었다.
+
 ## 기준 표 갱신과 turn-engine 코드 의존 제거 반영 (wo-u3, D109)
 - `scripts/lib.sh`: boundary-contracts v2.2.1, model-runtime v0.9.0, 문진 스키마 survey-schema-v1.1.0. `DEPLOY_TE_TAG`(v0.4.3)는 코드 의존이 아니라 계약 기록의 '규칙 세대 표지'로만 남는다. v 없는 형식 `DEPLOY_TE_VERSION`(0.4.3)을 새로 내보낸다.
 - `compose.yaml`: survey-service 에 `SURVEY_TURN_ENGINE_VERSION`을 `DEPLOY_TE_VERSION`으로 넘긴다(survey 쪽 기본값에 기대지 않는다).

@@ -1,9 +1,0 @@
-# 예시: 주기 잡 스케줄러 tick 1회(기한이 된 잡만 실행하고 끝난다, 멱등). check-health 가 읽는 state/scheduler.json 을 이 tick 이 쓴다.
-[Unit]
-Description=openit deploy 주기 잡 스케줄러 tick
-
-[Service]
-Type=oneshot
-User=openit
-WorkingDirectory=/srv/deploy
-ExecStart=/srv/deploy/.venv/bin/python scripts/scheduler.py --config config/jobs.yaml --state state/scheduler.json tick

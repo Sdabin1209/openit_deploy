@@ -972,7 +972,7 @@ def step5m():
     n_final = utt_count(sv2, "아니요 없어요")
     # model-runtime 요청 상한(MODEL_RUNTIME_REQUEST_DEADLINE_S 3.5s)과 엔진 멈춤 시 /readyz 503 은 pause 로는 볼 수 없다(컨테이너가 통째로 얼어 /readyz 도 응답하지 못한다).
     # 이 이미지가 그 코드를 가졌는지는 라벨의 model-runtime 태그로만 안다: 태그가 73e79f9(요청 상한) 이후를 포함해야 한다.
-    chk_ = subprocess.run(["bash", str(ROOT / "scripts/check-health.sh"), "--project", a.project, "--skip-backup", "--disk-path", str(WORK), "--scheduler-state", str(WORK / "none.json"), "--jobs", str(ROOT / "config/jobs.yaml")], capture_output=True, text=True)
+    chk_ = subprocess.run(["bash", str(ROOT / "scripts/check-health.sh"), "--project", a.project, "--skip-backup", "--disk-path", str(WORK)], capture_output=True, text=True)
     lines = chk_.stdout.splitlines(); gate_l = [l for l in lines if "release-gate 판정 루프" in l]; ms_l = [l for l in lines if "readyz model-serving" in l]
     assert ms_l and ms_l[0].startswith("OK"), ("check-health 의 model-serving 판정", ms_l)
     assert gate_l and not gate_l[0].startswith(("CRIT", "SKIP")), ("check-health 의 release-gate 판정 루프", gate_l)

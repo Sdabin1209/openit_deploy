@@ -27,7 +27,7 @@
 | `compose.registry.yaml` / `compose.test.yaml` / `compose.llm*.yaml` / `compose.inference.yaml` / `compose.external-inference.yaml` | 로컬 레지스트리 / E2E·데모용 시험 구성 / 실제 LLM(GPU) 데모 / 추론 서버 단독 / 외부 추론 서버 연결 |
 | `locks/images.lock` (+ `locks/history/`) | 이미지 digest 잠금(코드 축). 롤백은 이것을 되돌리는 일 |
 | `config/` | Caddyfile, 주기 잡 `jobs.yaml`, 백업 예시, 서비스별 env 예시 |
-| `scripts/` | `doctor.sh` 사전 점검, `build-images.sh`·`publish-images.sh`, `gen-secrets.sh`, `up.sh`·`down.sh`·`status.sh`, `rollback.sh`, `backup.sh`·`restore.sh`, `scheduler.py`, `e2e.sh`, `demo.sh`, `check-*.sh` 점검기 |
+| `scripts/` | `doctor.sh` 사전 점검, `build-images.sh`·`publish-images.sh`, `gen-secrets.sh`, `up.sh`·`down.sh`·`status.sh`, `rollback.sh`, `backup.sh`·`restore.sh`, `run-job.sh`(주기 잡 한 번 실행, 호출은 `config/systemd/`의 timer), `e2e.sh`, `demo.sh`, `check-*.sh` 점검기 |
 | `test/` | 시험용 대역(가짜 모델 문항 순서 등). 이름에 test가 들어간다 |
 | `docs/` | 아래 7절 |
 | `secrets/`, `state/`, `build/`, `.env`, `.venv/` | 로컬에서 만들어지는 것. git에 넣지 않는다(.gitignore) |
@@ -56,7 +56,7 @@ bash scripts/demo.sh up                # 3) 화면을 눌러 보는 데모(프�
 
 비밀은 환경 변수가 아니라 파일이다(D84): `gen-secrets.sh`가 `secrets/tokens/<이름>`을 만들고(값은 출력하지 않는다), compose가 서비스마다 필요한 것만 `/run/secrets`에 마운트하며 서비스는 `NAME_FILE` 경로로 읽는다(docs/RUN.md 4-1절). 점검: `bash scripts/check-secrets-hidden.sh`.
 
-이 세션에서 직접 돌려 본 것(가벼운 것만): `bash -n scripts/*.sh`(문법, 이상 없음), `doctor.sh --help`, `demo.sh --help`, `scheduler.py status`(잡 6개와 `interval_seconds: null` 출력), `docker --version`, `docker compose version`. **돌리지 않은 것**: `doctor.sh` 본 실행, 이미지 빌드, `up.sh`, `e2e.sh`, `demo.sh up`, `backup/restore`, `check-*.sh`, 시험 스크립트(`test-*.sh`). 이 영역에는 pytest 시험이 없고 시험은 셸 스크립트와 E2E다(`ls`로 확인).
+이 세션에서 직접 돌려 본 것(가벼운 것만): `bash -n scripts/*.sh`(문법, 이상 없음), `doctor.sh --help`, `demo.sh --help`, `docker --version`, `docker compose version`. **돌리지 않은 것**: `doctor.sh` 본 실행, 이미지 빌드, `up.sh`, `e2e.sh`, `demo.sh up`, `backup/restore`, `check-*.sh`, 시험 스크립트(`test-*.sh`). 이 영역에는 pytest 시험이 없고 시험은 셸 스크립트와 E2E다(`ls`로 확인).
 
 ## 4. 현재 상태
 
@@ -116,7 +116,8 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0003 시간 불변식 체인: 키오스크 10s > gateway 9.5s > survey 턴 마감 6s > survey의 model-serving 읽기 4s > model-runtime 요청 상한 3.5s](docs/adr/0003-time-invariants.md)
 - [0004 E2E는 가짜 모델로 하고 전체 모드와 --only/--fast를 둔다](docs/adr/0004-e2e-fake-model.md)
 - [0005 TLS는 gateway에서 HTTPS 필수, 기본은 Caddy 내부 CA(`tls internal`)](docs/adr/0005-tls-internal-ca.md)
-- [0010 주기 잡은 호스트의 가벼운 스케줄러(scheduler.py tick)가 `docker compose run --rm`으로 돌린다](docs/adr/0010-host-scheduler.md)
+- [0010 주기 잡은 호스트의 가벼운 스케줄러는 폐기됨 -> 0036](docs/adr/0010-host-scheduler.md)
+- [0036 주기 잡은 systemd timer가 run-job.sh로 돌린다(0010 대체)](docs/adr/0036-systemd-timers.md)
 - [0011 서버 안의 로컬 레지스트리와 이미지 digest 잠금](docs/adr/0011-local-registry-digest-lock.md)
 - [0035 이미지 라벨은 게시 전에 계약 ImageLabels 스키마로 검증한다](docs/adr/0035-image-label-gate.md)
 - [0012 영역을 가로지르는 정적 일관성 점검(check-all)을 E2E 앞에 둔다](docs/adr/0012-check-all-static-consistency.md)

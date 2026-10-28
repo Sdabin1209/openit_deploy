@@ -1,6 +1,6 @@
 # 0010. 주기 잡은 호스트의 가벼운 스케줄러(scheduler.py tick)가 `docker compose run --rm`으로 돌린다
 
-- 상태: 채택
+- 상태: 대체됨(Superseded by [0036](0036-systemd-timers.md))
 - 날짜: 2026-10-28
 
 ## 맥락
