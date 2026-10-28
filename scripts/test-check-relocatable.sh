@@ -19,5 +19,5 @@ chk "YAML 문자열의 j:<개행 이스케이프> 는 오탐하지 않는다" 0 
 chk "x:<개행 이스케이프>와 소문자 단어가 이어져도 오탐하지 않는다" 0 "a:%sn  b:%snfoo%sn\n" "$BS" "$BS" "$BS"
 chk "경로가 아닌 평범한 파일은 통과" 0 'hello\n'
 chk "/home/<이름> 경로는 계속 잡는다" 1 '%s/%s/%s\n' '' home someone
-chk "워크스페이스 이름(healthKiosk)은 계속 잡는다" 1 'cd ~/%s%s\n' sda bin
+chk "워크스페이스 루트 이름은 계속 잡는다" 1 'cd ~/%s%s\n' sda bin
 [ $rc = 0 ] && echo "통과: check-relocatable 정적 검사 자체 시험 ${N}건" || exit 1
