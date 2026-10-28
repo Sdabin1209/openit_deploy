@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """버전 표 드리프트 점검(check-versions.sh 가 부른다). 기준은 scripts/lib.sh 의 표 하나다.
 형제 영역의 구조화된 파일(pyproject.toml, requirements*/*.lock/*.in, Dockerfile ARG, compose, package.json, 그 밖의 JSON/YAML/TOML)과
-빌드 셸의 `NAME_TAG=vX` 기본값이 적은 boundary-contracts·turn-engine·model-runtime 태그를 표와 비교한다. 문서(*.md)와 tests/ 는 보지 않는다.
+빌드 셸의 `NAME_TAG=vX` 기본값이 적은 boundary-contracts·model-runtime 태그를 표와 비교한다(turn-engine 은 D109 로 v0.4.3 에 동결돼 열차 밖이라 보지 않는다). 문서(*.md)와 tests/ 는 보지 않는다.
 읽는 방법: toml·json·yaml 은 파서로 문자열 값과 `*_TAG` 류 키를 모두 걸어 본다. requirements/lock/Dockerfile/셸은 줄 형식이 정해진 파일이라 주석을 뺀 줄에서 `이름@vX`·`ARG NAME=vX`·`NAME=${NAME:-vX}` 만 읽는다.
 .py 의 상수 리터럴은 코드이므로 이 점검이 읽지 않는다(코드는 표를 읽거나 환경 변수로 받는다)."""
 import json, os, re, subprocess, sys, tomllib
 from pathlib import Path
 
 ws = Path(os.environ["WS"])
-TABLE = {"boundary-contracts": os.environ["EXP_BC"], "turn-engine": os.environ["EXP_TE"], "model-runtime": os.environ["EXP_MR"]}
+TABLE = {"boundary-contracts": os.environ["EXP_BC"], "model-runtime": os.environ["EXP_MR"]}
 REPOS = os.environ["VERSION_REPOS"].split()
 LINEFILE = re.compile(r"(^|/)(requirements[^/]*\.(txt|lock|in)|[^/]*\.lock|Dockerfile[^/]*|[^/]*\.sh)$")
 DATAFILE = {".toml": "toml", ".json": "json", ".yaml": "yaml", ".yml": "yaml"}
 SKIP_DIR = re.compile(r"(^|/)(tests?|docs|\.venv|node_modules|build|dist|examples?|schemas?)/")
 SKIP_NAME = re.compile(r"(package-lock\.json|pnpm-lock|tsconfig[^/]*\.json|CHANGELOG)")
-PKG = re.compile(r"(boundary-contracts|turn-engine|model-runtime)(?:\.git)?[@#](v\d+\.\d+\.\d+)")
-VAR = re.compile(r"\b(BOUNDARY|TURN_ENGINE|MODEL_RUNTIME)_(?:TAG|CONTRACTS?)\b[^\n]*?\b(v\d+\.\d+\.\d+)")
-VARPKG = {"BOUNDARY": "boundary-contracts", "TURN_ENGINE": "turn-engine", "MODEL_RUNTIME": "model-runtime"}
-KEYVAR = re.compile(r"^(BOUNDARY|TURN_ENGINE|MODEL_RUNTIME)_(?:TAG|CONTRACTS?)$")
+PKG = re.compile(r"(boundary-contracts|model-runtime)(?:\.git)?[@#](v\d+\.\d+\.\d+)")
+VAR = re.compile(r"\b(BOUNDARY|MODEL_RUNTIME)_(?:TAG|CONTRACTS?)\b[^\n]*?\b(v\d+\.\d+\.\d+)")
+VARPKG = {"BOUNDARY": "boundary-contracts", "MODEL_RUNTIME": "model-runtime"}
+KEYVAR = re.compile(r"^(BOUNDARY|MODEL_RUNTIME)_(?:TAG|CONTRACTS?)$")
 TAG = re.compile(r"v\d+\.\d+\.\d+")
 
 
@@ -79,7 +79,7 @@ for repo in REPOS:
             seen += 1
             if tag != TABLE[pkg]:
                 bad.append(f"{repo}/{rel}:{n}: {pkg} {tag} (표: {TABLE[pkg]})")
-print(f"기준 표(scripts/lib.sh): boundary-contracts {TABLE['boundary-contracts']}, turn-engine {TABLE['turn-engine']}, model-runtime {TABLE['model-runtime']}")
+print(f"기준 표(scripts/lib.sh): boundary-contracts {TABLE['boundary-contracts']}, model-runtime {TABLE['model-runtime']}")
 print(f"검사한 태그 표기 {seen}건, 영역 {len(REPOS) - len(missing)}개" + (f", 폴더가 없어 건너뜀: {' '.join(missing)}" if missing else ""))
 for u in unparsed:
     print("  파싱 못 함:", u)

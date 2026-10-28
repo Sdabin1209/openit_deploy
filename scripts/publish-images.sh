@@ -14,7 +14,7 @@ source "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"   # DEPLOY_REGI
 CT=${PUBLISH_CONNECT_TIMEOUT:-3}; PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; HEAD_T=${PUBLISH_HEAD_TIMEOUT:-15}; PUSH_T=${PUBLISH_PUSH_TIMEOUT:-900}
 only=" $* "
 tmp=$(mktemp); cp "$LOCK" "$tmp"
-while read -r area img commit _; do   # 4번째 열(bc=..,te=..,mr=.. 빌드 태그 기록, 속도 개선의 --reuse-build 용)은 무시한다
+while read -r area img commit _; do   # 4번째 열(bc=..,mr=.. 빌드 태그 기록, 속도 개선의 --reuse-build 용)은 무시한다
   [ "$only" = "  " ] || [[ "$only" == *" $area "* ]] || continue
   # 선택 이미지는 기본 경로에 넣지 않는다: 기록이 남아 있어도 기본 게시·E2E 가 그 이미지에 의존하지 않는다
   if [ "$only" = "  " ] && [[ " $SERVICES_OPTIONAL " == *" $area "* ]]; then echo "건너뜀: $area (선택 이미지, 이름을 줄 때만 게시)"; continue; fi

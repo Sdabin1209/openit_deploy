@@ -129,7 +129,7 @@ def skippable(files, globs):
 
 def is_stale(record, image_exists, expected_rev, expected_stamp):
     """build/images.env 의 한 줄(이름 이미지 커밋 [도장])이 현재 소스·의존 태그와 다르면 낡았다.
-    기록이 없거나 이미지가 로컬에 없거나, 커밋이 다르거나, 도장(bc=,te=,mr=)이 없거나 다르면 낡았다(모르면 다시 빌드한다)."""
+    기록이 없거나 이미지가 로컬에 없거나, 커밋이 다르거나, 도장(bc=,mr=)이 없거나 다르면 낡았다(모르면 다시 빌드한다)."""
     if not record or not image_exists:
         return True
     return record.get("commit") != expected_rev or record.get("stamp") != expected_stamp
@@ -192,7 +192,7 @@ def lib_tags():
 
 def stale_images(images, ws):
     tags = lib_tags()
-    stamp = f"bc={tags['DEPLOY_BC_TAG']},te={tags['DEPLOY_TE_TAG']},mr={tags['DEPLOY_MR_TAG']}"   # build-images.sh 의 record 가 쓰는 도장과 같은 모양
+    stamp = f"bc={tags['DEPLOY_BC_TAG']},mr={tags['DEPLOY_MR_TAG']}"   # build-images.sh 의 record 가 쓰는 도장과 같은 모양
     rec = {}
     env = DEPLOY_ROOT / "build" / "images.env"
     if env.exists():

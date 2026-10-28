@@ -99,23 +99,23 @@ class T(unittest.TestCase):
         self.assertNotIn("--only", plan[-1][1])
 
     def test_is_stale(self):
-        rec = {"commit": "abc", "stamp": "bc=v2,te=v4,mr=v7"}
-        self.assertFalse(v.is_stale(rec, True, "abc", "bc=v2,te=v4,mr=v7"))
-        self.assertTrue(v.is_stale(None, True, "abc", "bc=v2,te=v4,mr=v7"))              # 기록 없음
-        self.assertTrue(v.is_stale(rec, False, "abc", "bc=v2,te=v4,mr=v7"))              # 이미지가 로컬에 없다
-        self.assertTrue(v.is_stale(rec, True, "abd", "bc=v2,te=v4,mr=v7"))               # 소스 커밋이 다름
+        rec = {"commit": "abc", "stamp": "bc=v2,mr=v7"}
+        self.assertFalse(v.is_stale(rec, True, "abc", "bc=v2,mr=v7"))
+        self.assertTrue(v.is_stale(None, True, "abc", "bc=v2,mr=v7"))              # 기록 없음
+        self.assertTrue(v.is_stale(rec, False, "abc", "bc=v2,mr=v7"))              # 이미지가 로컬에 없다
+        self.assertTrue(v.is_stale(rec, True, "abd", "bc=v2,mr=v7"))               # 소스 커밋이 다름
         self.assertTrue(v.is_stale({**rec, "commit": "abcdef0"}, True, "abc", rec["stamp"]))   # 다른 커밋
-        self.assertTrue(v.is_stale(rec, True, "abc", "bc=v3,te=v4,mr=v7"))               # 의존 태그가 올랐다
+        self.assertTrue(v.is_stale(rec, True, "abc", "bc=v3,mr=v7"))               # 의존 태그가 올랐다
         self.assertTrue(v.is_stale({"commit": "abc", "stamp": None}, True, "abc", rec["stamp"]))   # 옛 기록(도장 없음)은 한 번 다시 빌드
 
     def test_build_images_record_writes_stamp(self):
         s = (HERE / "build-images.sh").read_text(encoding="utf-8")
-        self.assertIn('bc=$BC,te=$TE,mr=$MR', s)
+        self.assertIn('bc=$BC,mr=$MR', s)
 
     def test_stale_images_with_fake_git_and_docker(self):
         import json, tempfile
         tags = v.lib_tags()   # 기준 표(scripts/lib.sh)에서 읽는다. 숫자를 시험에 적지 않는다
-        st = f"bc={tags['DEPLOY_BC_TAG']},te={tags['DEPLOY_TE_TAG']},mr={tags['DEPLOY_MR_TAG']}"
+        st = f"bc={tags['DEPLOY_BC_TAG']},mr={tags['DEPLOY_MR_TAG']}"
         class P:  # subprocess.CompletedProcess 대용
             def __init__(s, out="", rc=0): s.stdout, s.returncode = out, rc
         def fake_run(argv, cwd=None):

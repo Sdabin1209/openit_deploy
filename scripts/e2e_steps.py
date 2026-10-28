@@ -633,7 +633,7 @@ def fake_values_check(new, tok):
         EA.check_fake_extraction(out, key, val, nxt, f"[{qid} '{utt}']")
     return f"{len(cases)}건(Q4 아니요 -> Q4.answer=false·Q4_1 건너뜀, Q7 -> Q8_1, Q8_1 없어요 -> days=0·Q8_2 건너뜀 등)"
 
-@step('5', repos=('survey-service', 'model-runtime', 'turn-engine', 'kiosk-frontend') + _GW, deps=('3', '4'),
+@step('5', repos=('survey-service', 'model-runtime', 'kiosk-frontend') + _GW, deps=('3', '4'),
       why="step5 는 STATE['pointers'],['releases'](step4)·['system_prompt'](step3)를 읽는다. " + _P4,
       also={'release-gate': '활성화된 릴리스 번들을 survey-service와 model-serving이 읽는다(I4)'})
 def step5():

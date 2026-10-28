@@ -73,7 +73,7 @@ touch "$DEPLOY_ROOT/build/images.env"
 # 빌드 직후 라벨 검사(계약 ImageLabels): 게시 단계(publish-image(s).sh)에서 실패하기 전에 빌드에서 알린다
 record() { local vrc=0 vout; set -- "$1" "$(apply_test_label "$2")" "$3"   # 시험 ID 가 있으면 새 이미지 이름(<이름>-<ID>)을 쓴다. 원래 이미지는 그대로 둔다
   vout=$(validate_image_labels "$2" "$1" 2>&1) || vrc=$?; [ $vrc = 0 ] || { echo "$vout" >&2; die "이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다: $1 ($2)"; }
-  sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,te=$TE,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
+  sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
 commit_of() { git -C "$WORKSPACE/$1" rev-parse --short HEAD; }
 
 if want survey-service; then
