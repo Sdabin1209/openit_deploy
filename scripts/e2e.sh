@@ -127,7 +127,7 @@ else chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/s
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
-grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES|PROMETHEUS|ALERTMANAGER|BLACKBOX|NODE_EXPORTER|JSON_EXPORTER)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES|RESTIC|PROMETHEUS|ALERTMANAGER|BLACKBOX|NODE_EXPORTER|JSON_EXPORTER)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/registry.sh" up
 chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
 chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
@@ -280,44 +280,36 @@ chk "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter
 chk_dep "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" "감시 스택이 실제 서비스를 본다 (gateway healthz, release-gate·model-serving readyz 탐침 성공, 판정 루프 지표, 디스크 지표)" bash "$DEPLOY_ROOT/scripts/check-monitoring-live.sh" "$PROJECT"
 chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 없다(서빙 서버 밖, D40)" bash -c "! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
-sect "단계 9: 백업과 복구 (gpg 공개키 암호화 경로를 실제로 실행: 시험 폴더 안의 임시 키쌍, 복호는 서버 밖 사람 몫을 모사)"
+sect "단계 9: 백업과 복구 (restic: 시험 폴더 안의 임시 저장소 암호 파일, 저장소는 암호화된다. ADR 0038)"
 chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.env"
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
-# 시험용 gpg 키쌍: 시험 폴더($W/gnupg, 모드 700) 안에서만 만들고 출력·로그에 내지 않는다. 서버가 쓰는 것은 공개키 파일뿐이고 개인키는 아래 복호 단계(서버 밖 사람 몫 모사)에서만 쓴다. 시험이 끝나면 $W 째로 지워진다
-GPGH="$W/gnupg"; mkdir -m 700 "$GPGH"
-gpg --homedir "$GPGH" --batch --quiet --passphrase '' --quick-generate-key "openit-e2e-backup-test" default default never >/dev/null 2>&1
-gpg --homedir "$GPGH" --batch --armor --export > "$W/backup-recipient.pub" 2>/dev/null
-[ -s "$W/backup-recipient.pub" ] || { echo "시험용 gpg 공개키를 만들지 못했다(gpg 필요)"; exit 1; }
-printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_ENCRYPT_RECIPIENTS=%s\nBACKUP_ENCRYPT_TOOL=gpg\n' "$W/backups" "$W/backup-recipient.pub" > "$W/backup-test.env"
-if command -v age >/dev/null 2>&1; then echo "  [참고] age 가 있으나 이 단계는 gpg 로 돈다. age 분기는 scripts/test-backup.sh 의 몫"; else echo "  [미실행] age 분기: 이 호스트에 age 바이너리가 없어 실행하지 않았다(gpg 경로만 실행)"; fi
+# 시험용 저장소 암호: 시험 폴더($W, 모드 700) 안에서만 만들고 출력·로그에 내지 않는다. 시험이 끝나면 $W 째로 지워진다
+( umask 077; head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$W/backup.pass" )
+printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W/backups" "$W/backup.pass" > "$W/backup-test.env"
 export BACKUP_CONFIG="$W/backup-test.env"
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
 dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx postgres | tr '\n' ' ') >/dev/null 2>&1
 STORES="gate-data models-data datasets-data"; PGDBS="survey qa ops_log ops_failure gate"
 for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
 for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-before-pg-$d.json"; done
-mkdir -p "$W/backups/gate-data/20200101T000000Z"; touch -d '2020-01-01' "$W/backups/gate-data/20200101T000000Z"
-chk "백업(파일 저장소 3개, SQLite backup API + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
-chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
-enc_clean() { local x; for x in $STORES; do d=$(ls -d $W/backups/$x/2* | tail -1); ls $d/*.gpg >/dev/null 2>&1 || { echo "$x: 암호문(.gpg)이 없다"; return 1; }; ls $d/*.tar $d/*.dump >/dev/null 2>&1 && { echo "$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d)" = 700 ] || { echo "$x: 폴더 모드"; return 1; }; done
-  for x in $PGDBS; do d=$(ls -d $W/backups/pg-$x/2* | tail -1); ls $d/$x.dump.gpg >/dev/null 2>&1 || { echo "pg-$x: 암호문이 없다"; return 1; }; [ ! -e $d/$x.dump ] || { echo "pg-$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d/$x.dump.gpg)" = 600 ] || { echo "pg-$x: 파일 모드"; return 1; }; done
-  ls -a $W/backups/*/ 2>/dev/null | grep -qE '^\.(tar|partial)-' && { echo "임시 평문/partial 이 남았다"; return 1; }; echo "백업 전부 암호문(.gpg), 평문 .tar·.dump 없음, 폴더 700·파일 600, 임시 파일 없음"; return 0; }
-NEED+=("백업(파일 저장소 3개, SQLite backup API + 해시 MANIFEST)" "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)")   # 백업이 실패하면 아래 암호문 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
-chk "백업 산출물은 암호문뿐이다(평문 없음, 권한 700/600)" enc_clean
-chk "보관 기간(7일)이 지난 스냅샷만 삭제" bash -c "[ ! -d $W/backups/gate-data/20200101T000000Z ] && [ \$(ls $W/backups/gate-data | wc -l) = 1 ]"
+chk "백업(파일 저장소 3개, restic 스냅샷)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
+chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
+repo_clean() { [ -f $W/backups/restic/config ] || { echo "restic 저장소가 없다"; return 1; }
+  n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = 8 ] || { echo "저장소(host)별 스냅샷이 8개(파일 3 + 데이터베이스 5)가 아니다: $n"; return 1; }
+  ! grep -rqa 'PGDMP' $W/backups/restic || { echo "저장소에 덤프 평문 표지가 있다"; return 1; }
+  [ -z "$(find $W/backups/restic ! -user $(id -u) | head -1)" ] || { echo "저장소 파일 소유자가 호스트 사용자가 아니다"; return 1; }
+  [ "$(stat -c %a $W/backups)" = 700 ] || { echo "백업 폴더 모드"; return 1; }
+  echo "restic 저장소: 스냅샷 8개(host별 1개), 덤프 평문 표지 없음, 소유자 호스트 사용자, 폴더 700"; return 0; }
+NEED+=("백업(파일 저장소 3개, restic 스냅샷)" "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)")   # 백업이 실패하면 아래 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
+chk "백업 산출물은 암호화된 restic 저장소뿐이다(평문 없음)" repo_clean
 dc "$PROJECT" down >/dev/null 2>&1
 chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_datasets-data ${PROJECT}_pg-data >/dev/null"
 dc "$PROJECT" up -d --wait --wait-timeout 120 postgres >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다
 chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
-# 서버 밖 사람 몫 모사: 개인키로 복호해 같은 폴더에 평문을 둔다(복구 뒤 지운다). 서버의 복구 스크립트는 복호 키를 갖지 않는다
-decrypt_all() { local x d; for x in $STORES; do d=$(ls -d $W/backups/$x/2* | tail -1); gpg --homedir "$GPGH" --batch --quiet --yes -o "$d/$x.tar" -d "$d/$x.tar.gpg" || return 1; done
-  for x in $PGDBS; do d=$(ls -d $W/backups/pg-$x/2* | tail -1); gpg --homedir "$GPGH" --batch --quiet --yes -o "$d/$x.dump" -d "$d/$x.dump.gpg" || return 1; done; echo "개인키(시험 폴더)로 복호 완료"; }
 NEED+=("볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)")
-chk "복호(서버 밖 사람 몫 모사: 개인키로 .tar·.dump 를 푼다)" decrypt_all
-NEED+=("복호(서버 밖 사람 몫 모사: 개인키로 .tar·.dump 를 푼다)")
-for s in $STORES; do chk "복구 $s" bash -c "SN=\$(ls -d $W/backups/$s/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/restore.sh $s \"\$SN\" --yes"; done
-for d in $PGDBS; do chk "복구 pg-$d" bash -c "SN=\$(ls -d $W/backups/pg-$d/2* | tail -1); [ -n \"\$SN\" ] && bash $DEPLOY_ROOT/scripts/pg-restore.sh $d \"\$SN\" --yes"; done
+for s in $STORES; do chk "복구 $s" bash "$DEPLOY_ROOT/scripts/restore.sh" $s latest --yes; done
+for d in $PGDBS; do chk "복구 pg-$d" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" $d latest --yes; done
 for s in $STORES; do chk_dep "복구 $s" "복구 후 지문 일치 $s" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh $s)\" = \"\$(cat $W/fp-before-$s.json)\" ]"; done
 for d in $PGDBS; do chk_dep "복구 pg-$d" "복구 후 지문 일치 pg-$d" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh $d)\" = \"\$(cat $W/fp-before-pg-$d.json)\" ]"; done
 NEED_RESTORE=(); for s in $STORES; do NEED_RESTORE+=("복구 $s"); done; for d in $PGDBS; do NEED_RESTORE+=("복구 pg-$d"); done

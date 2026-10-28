@@ -8,7 +8,7 @@ ID=$$; P=deploy-pgtest-$ID; W="$DEPLOY_ROOT/state/pgtest-$ID"; mkdir -p "$W/back
 export DEPLOY_PROJECT=$P SECRETS_DIR="$W/secrets" DEPLOY_REGISTRY_ENV="$W/registry.env"
 echo "DEPLOY_REGISTRY=127.0.0.1:1" > "$DEPLOY_REGISTRY_ENV"
 source "$(dirname "$0")/testlib.sh"; test_lock_copy "$W/images.lock"; export DEPLOY_LOCK="$W/images.lock"   # 커밋된 잠금이 불완전해도 compose 가 해석되게(scripts/testlib.sh)   # compose 전체 해석에 필요한 자리 채움(이 시험은 postgres 만 쓴다)
-printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_ALLOW_PLAINTEXT=1\n' "$W/backups" > "$W/backup.env"; export BACKUP_CONFIG="$W/backup.env"
+( umask 077; echo "pgtest-password-$ID-not-a-secret" > "$W/backup.pass" ); printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W/backups" "$W/backup.pass" > "$W/backup.env"; export BACKUP_CONFIG="$W/backup.env"
 cleanup() { dc "$P" down -v --remove-orphans >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
 FAILS=0; N=0
@@ -50,23 +50,21 @@ echo "== 백업·복구 왕복"
 for a in survey gate; do eval "FP_$a=\$(fp $a)"; done
 PF_before=$(bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" survey)
 ok "백업 (survey gate)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" survey gate
-SN_S=$(ls -d "$W"/backups/pg-survey/2* | tail -1); SN_G=$(ls -d "$W"/backups/pg-gate/2* | tail -1)
-ok "MANIFEST 에 해시·크기" bash -c "grep -q '\"sha256\": \"sha256:[0-9a-f]\{64\}\"' '$SN_S/MANIFEST.json' && [ \"\$(stat -c %a '$SN_S/survey.dump')\" = 600 ]"
+ok "restic 저장소에 스냅샷이 생겼고 저장소 파일에 덤프 평문 표지(PGDMP)가 없다" bash -c "[ -f '$W/backups/restic/config' ] && ! grep -rqa PGDMP '$W/backups/restic'"
 sql survey survey "DELETE FROM items WHERE id % 2 = 0; DROP SCHEMA IF EXISTS junk" >/dev/null 2>&1
 N=$((N+1)); if [ "$(fp survey)" != "$FP_survey" ]; then echo "  PASS 데이터를 지운 뒤 지문이 달라졌다"; else echo "  FAIL 지문이 같다"; FAILS=$((FAILS+1)); fi
 "$DOCKER" exec -d -e PGPASSWORD="$(pw survey)" "$(C)" psql -h 127.0.0.1 -U survey -d survey -c 'SELECT pg_sleep(60)' >/dev/null 2>&1; sleep 2
-no "다른 접속이 있으면 복구 거부" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "$SN_S" --yes
+no "다른 접속이 있으면 복구 거부" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey latest --yes
 "$DOCKER" exec "$(C)" psql -U postgres -d postgres -Atqc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='survey' AND pid<>pg_backend_pid()" >/dev/null; sleep 1
-cp -r "$SN_S" "$W/bad"; printf 'x' >> "$W/bad/survey.dump"
-no "해시가 다르면 복구 거부(종료 3)" bash -c "bash '$DEPLOY_ROOT/scripts/pg-restore.sh' survey '$W/bad' --yes; [ \$? = 3 ] && exit 1 || exit 0" 
-no "--yes 없이는 거부" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "$SN_S"
-ok "복구 survey" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "$SN_S" --yes
+no "스냅샷 ID 형식이 아니면 거부" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey "../etc" --yes
+no "--yes 없이는 거부" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey latest
+ok "복구 survey" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey latest --yes
 N=$((N+1)); if [ "$(fp survey)" = "$FP_survey" ] && [ "$(bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" survey)" = "$PF_before" ]; then echo "  PASS 복구 후 지문 일치 survey (행 지문 pg-fingerprint.sh 포함)"; else echo "  FAIL 복구 후 지문 불일치 survey"; FAILS=$((FAILS+1)); fi
 echo "== 볼륨을 잃은 뒤 복구 (down -v -> 새 볼륨 -> 초기화 -> 복구)"
 dc "$P" down -v >/dev/null 2>&1
 dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up2.log" 2>&1; ok "새 볼륨에서 다시 기동·초기화" test -n "$(C)"
 no "새 볼륨에는 데이터가 없다" fp survey
-for a in survey gate; do SN=$(ls -d "$W"/backups/pg-$a/2* | tail -1); ok "복구 $a" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" $a "$SN" --yes; done
+for a in survey gate; do ok "복구 $a" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" $a latest --yes; done
 for a in survey gate; do want=FP_$a; N=$((N+1)); if [ "$(fp $a)" = "${!want}" ]; then echo "  PASS 볼륨 상실 후 지문 일치 $a"; else echo "  FAIL 지문 불일치 $a"; FAILS=$((FAILS+1)); fi; done
 ok "pg-roles.sh sync 멱등" bash "$DEPLOY_ROOT/scripts/pg-roles.sh" sync
 ok "sync 뒤에도 접속" sql survey survey "SELECT 1"

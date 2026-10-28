@@ -60,64 +60,61 @@ curl -s http://127.0.0.1:$(docker port deploy-gateway-1 8080/tcp | sed 's/.*://'
 
 각 서비스의 `/readyz` 해석은 영역 런북을 본다(survey: `problems`, gate: `can_pass`·`judging`).
 
-## 4. 백업과 복구 (PostgreSQL 기준)
+## 4. 백업과 복구 (PostgreSQL 기준, restic)
 
-저장소는 PostgreSQL 한 서버(5개 데이터베이스: survey, qa, ops_log, ops_failure, gate)와 파일 볼륨(gate-data 번들, models-data 모델 패키지, 레지스트리 볼륨)이다. 근거와 한계: [adr/0020-backup-tool-and-encryption.md](adr/0020-backup-tool-and-encryption.md).
+저장소는 PostgreSQL 한 서버(5개 데이터베이스: survey, qa, ops_log, ops_failure, gate)와 파일 볼륨(gate-data 번들, models-data 모델 패키지, datasets-data, gateway-data, 레지스트리 볼륨)이다. 백업은 **restic 저장소 하나**(`$BACKUP_DIR/restic`)에 둔다. 근거와 한계: [adr/0038-restic-backup.md](adr/0038-restic-backup.md)(옛 [0020](adr/0020-backup-tool-and-encryption.md)을 대체).
 
 ### 4-1. 설정과 규칙 (백업 없이 운영하지 않는다, D88 U6)
 
 ```
-cp config/backup.env.example config/backup.env    # BACKUP_DIR(서버 밖), BACKUP_RETENTION_DAYS(예시 14), BACKUP_ENCRYPT_RECIPIENTS(공개키 파일) 를 적는다
+cp config/backup.env.example config/backup.env    # BACKUP_DIR(서버 밖), BACKUP_RETENTION_DAYS(예시 14), BACKUP_PASSWORD_FILE(restic 저장소 암호 파일) 를 적는다
 bash scripts/backup-check.sh                       # 읽기 전용 점검. 문제가 있으면 CRIT 와 종료 코드 2
 ```
 
-- 설정이 없거나 불완전하면 `backup.sh`, `pg-backup.sh`, `backup-all.sh`가 "CRIT:" 한 줄과 종료 코드 2로 실패한다. systemd가 실패를 남기고 `job-metrics.sh`가 `openit_job_last_exit_status`로 내보내 `JobFailed` 경보(critical)가 된다. `doctor.sh --up --backup`과 운영 프로젝트(`deploy`)의 `up.sh`는 기동 전에 같은 점검을 하고 FAIL로 막는다.
-- 암호화는 수신자 **공개키만** 서버에 둔다(age 우선, 없으면 gpg). 복호 개인키는 서버 밖에서 사람이 2곳 이상에 보관한다. 서버에서 풀 수 없으므로 서버가 뚫려도 백업 내용은 읽히지 않는다. 개인키를 잃으면 백업을 못 푼다. 개인키가 수신자 파일에 들어 있으면 거부한다.
-- 파일 권한: 폴더 700, 파일 600. 평문 덤프는 암호화에 성공한 뒤 지운다.
-- 보관 14일(설정). 가장 최근 하나는 기간이 지나도 남는다.
+- 설정이 없거나 불완전하면 `backup.sh`, `pg-backup.sh`, `backup-all.sh`가 "CRIT:" 한 줄과 종료 코드 2로 실패한다. systemd가 실패를 남기고 `job-metrics.sh`가 `openit_job_last_exit_status`로 내보내 `JobFailed` 경보(critical)가 된다. `doctor.sh --up --backup`과 운영 프로젝트(`deploy`)의 `up.sh`는 기동 전에 같은 점검을 하고 FAIL로 막는다. 옛 키(`BACKUP_ENCRYPT_RECIPIENTS` 등)가 남아 있어도 거부한다.
+- 암호화는 restic이 한다(AES-256, 인증된 암호화, 내용 해시로 무결성 검증). **저장소 암호가 서버에 있어야 자동 백업이 돈다**(옛 공개키 방식과 다르다: 서버가 뚫리면 백업도 읽힌다는 점을 감수한다, ADR 0038). 암호 파일은 모드 400/600, `BACKUP_DIR` 밖이어야 한다. **암호를 잃으면 모든 백업을 영영 못 푼다.** 서버 밖 2곳 이상에 따로 보관한다.
+- 보관 14일(설정). 저장소(host)마다 가장 최근 하나는 기간이 지나도 남는다(`restic forget --keep-within --keep-last 1 --prune`).
 
 ### 4-2. 무엇이 어떻게 백업되나
 
-| 대상 | 방법 | 위치 | 같은 시점 여부 |
+| 대상 | 방법 | restic 스냅샷 | 같은 시점 여부 |
 |---|---|---|---|
-| 5개 데이터베이스 | `pg-backup.sh`: 병렬로 동시에 시작한 `pg_dump -Fc`, 파일마다 암호화 | `$BACKUP_DIR/pg-<db>/<UTC 시각>/<db>.dump.age`(또는 `.gpg`) + `MANIFEST.json` | 각 데이터베이스 안에서는 단일 스냅샷. **데이터베이스 사이는 같은 시점이 아니다**: 덤프 시작 시각 차이는 가장 오래 걸리는 덤프 하나의 시간 이하이고 `MANIFEST.json`의 `dump_started/dump_finished`에 남는다. PostgreSQL은 여러 데이터베이스에 걸친 스냅샷을 지원하지 않는다. 정확히 같은 시점이 필요하면 쓰기 서비스(survey-service, question-authoring, ops-feedback-ingest, release-gate)를 멈추고 백업한다 |
-| gate-data(번들), models-data(모델 패키지), registry-data(레지스트리 이미지, 프로젝트 `deploy-registry`) | `backup.sh`: 복사 후 tar, 암호화 | `$BACKUP_DIR/<저장소>/<UTC 시각>/<저장소>.tar.age` | 볼륨 단위 |
+| 5개 데이터베이스 | `pg-backup.sh`: 병렬로 동시에 시작한 `pg_dump -Fc`를 `restic backup --stdin`으로 바로 저장(평문 덤프가 디스크에 쓰이지 않는다) | host `pg-<db>`, 파일 `<db>.dump`, 태그 `set-<UTC 시각>`·`pg-<서버 버전>` | 각 데이터베이스 안에서는 단일 스냅샷. **데이터베이스 사이는 같은 시점이 아니다**: 덤프 시작 시각 차이가 덤프 하나의 시간 이하이고, 같은 실행의 스냅샷은 같은 `set-` 태그다 |
+| gate-data(번들), models-data(모델 패키지), datasets-data, gateway-data(내부 CA), registry-data(레지스트리 이미지, 프로젝트 `deploy-registry`) | `backup.sh`: 볼륨을 읽기 전용으로 붙여 `restic backup` | host `<저장소>`, 경로 `/data` | 볼륨 단위 |
+| secrets/ | `backup-secrets.sh` | host `secrets` | 4-6절 |
 
-`secrets/`(DB 암호, 비식별 salt `deid-salt`, 서비스 토큰, 계정 해시, 기기 토큰)는 DB 백업과 **별도 산출물**로 `backup-secrets.sh`가 같은 수신자 공개키로 암호화해 백업한다(4-6절). 서버를 잃으면 이것이 없으면 서비스가 다시 서지 못하고, salt를 잃으면 이후 비식별 값이 이전과 이어지지 않는다.
+`backup-all.sh`(systemd의 backup 잡, 매일)가 셋을 모두 돌린다. 레지스트리 볼륨이 이 서버에 없으면 건너뛴다고 출력한다. 덤프가 중간에 실패하면 이 실행이 만든 스냅샷을 모두 지우고 실패(종료 코드 1)한다.
 
-`backup-all.sh`(스케줄러의 backup 잡, 매일)가 둘을 모두 돌린다. 레지스트리 볼륨이 이 서버에 없으면 건너뛴다고 출력한다.
-
-### 4-3. 복구 절차 (사람이 한다: 개인키는 서버에 없다)
+### 4-3. 복구 절차
 
 1. 서비스 멈추기: 복구할 데이터베이스를 쓰는 서비스를 멈춘다(`docker compose -p deploy stop <서비스>`). 다른 접속이 있으면 `pg-restore.sh`가 거부한다.
 2. 볼륨을 잃은 경우: `docker compose -p deploy up -d --wait postgres`. 초기화 스크립트가 빈 데이터베이스와 계정을 만든다.
-3. 스냅샷 폴더(또는 사본)에서 개인키로 복호한다. 키 파일은 복호하는 동안만 그 기계에 두고 끝나면 지운다.
-   `age -d -i <개인키> -o <db>.dump <db>.dump.age` 또는 `gpg -d -o <db>.dump <db>.dump.gpg`. 파일 저장소는 `<저장소>.tar`.
-4. `bash scripts/pg-restore.sh <db> <스냅샷 폴더> --yes` (해시 검증, 불일치면 종료 코드 3). 파일 저장소는 `bash scripts/restore.sh <저장소> <스냅샷 폴더> --yes`(서비스 정지 필요, tar는 스크립트가 푼다).
-5. 복호한 평문(`<db>.dump`, `<저장소>.tar`)을 지운다. 데이터베이스 5개는 가능하면 **같은 백업 세트(같은 UTC 시각)**에서 복구한다.
+3. 새 서버라면 저장소와 암호 파일을 먼저 놓는다(`BACKUP_DIR`에 `restic/` 폴더, `BACKUP_PASSWORD_FILE`에 서버 밖 보관본의 암호). 어떤 스냅샷이 있는지: `docker run --rm -v $BACKUP_DIR:/backup -v $BACKUP_PASSWORD_FILE:/pw:ro -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD_FILE=/pw <RESTIC_IMAGE> snapshots`(RESTIC_IMAGE 는 `locks/images.lock`).
+4. `bash scripts/pg-restore.sh <db> latest --yes`(또는 스냅샷 ID). 파일 저장소는 `bash scripts/restore.sh <저장소> latest --yes`(서비스 정지 필요, 볼륨을 비우고 `--verify`로 내용 해시를 확인하며 복원, 소유자·모드는 백업 때 값 그대로). 데이터베이스 5개는 가능하면 **같은 백업 세트(같은 `set-` 태그)**의 스냅샷 ID로 복구한다.
+5. 복호 단계는 없다(restic이 저장소 암호로 직접 읽는다). 평문 파일이 디스크에 남지 않는다.
 6. `bash scripts/up.sh deploy`, 그다음 gateway `/readyz`와 `bash scripts/check-monitoring-live.sh deploy`(감시 스택이 떠 있을 때).
 7. 게이트 INTEGRITY_ERROR(릴리스 파일 변조): 해당 릴리스를 활성화하지 말고, 활성이면 롤백 요청 후 이 절차로 gate 데이터베이스와 gate-data를 같은 세트로 복구한다(게이트 런북).
 
 ### 4-4. 복원 시험
 
-- 자동(주 1회, 스케줄러 잡 `backup-restore-test`): `bash scripts/backup-restore-test.sh`. 시험용 키쌍을 임시로 만들어 지금 운영 데이터를 암호화 백업하고, 복호해 임시 데이터베이스(`rt_*`)에 복원한 뒤 원본과 행 지문(스키마·행 집합 해시·행 수)을 대조한다. 실제 백업 파일의 해시도 MANIFEST와 대조한다. 실패는 종료 코드 1이고 `JobFailed`/`JobStale` 경보가 CRIT로 읽는다. **서버에는 실제 개인키가 없으므로 이 시험은 도구 사슬과 파일 무결성만 보증한다.**
-- 사람(분기마다 1회 권장, 근거 없음: 시작값): 실제 개인키로 최신 스냅샷을 복호해 시험 서버나 임시 프로젝트에 4-3 절차대로 복구하고 서비스가 뜨는지 본다. 키를 잃지 않았다는 유일한 확인이다.
-- 전체: `scripts/e2e.sh`가 지웠다 복구하는 왕복을 한다(평문 모드, 시험 전용). 서버 단독 자체 시험: `bash scripts/test-backup.sh`(암호화·복원 시험), `bash scripts/test-postgres.sh`.
+- 자동(주 1회, systemd 잡 `backup-restore-test`): `bash scripts/backup-restore-test.sh`. 임시 암호·임시 저장소로 지금 운영 데이터를 백업하고, `restic dump`로 임시 데이터베이스(`rt_*`)에 복원한 뒤 원본과 행 지문(스키마·행 집합 해시·행 수)을 대조한다. 실제 저장소는 데이터베이스마다 스냅샷이 있는지 보고 `restic check --read-data-subset=5%`로 구조와 데이터 일부를 다시 읽는다(전체 읽기는 시험 전용 `RESTIC_CHECK_FULL=1`).
+- 사람(분기마다 1회 권장, 근거 없음: 시작값): 서버 밖 보관본의 암호로 최신 스냅샷을 시험 서버나 임시 프로젝트에 4-3 절차대로 복구하고 서비스가 뜨는지 본다. 암호를 잃지 않았다는 유일한 확인이다.
+- 전체: `scripts/e2e.sh`가 지웠다 복구하는 왕복을 한다(시험용 임시 암호). 서버 단독 자체 시험: `bash scripts/test-backup.sh`(암호화·복원·손상 감지·보관 기간), `bash scripts/test-backup-secrets.sh`, `bash scripts/test-postgres.sh`(모두 Docker 필요).
 
 ### 4-5. 업그레이드·롤백과 백업
 
 - **업그레이드 전에 백업한다**: `bash scripts/backup-all.sh`를 먼저 돌려 성공(종료 코드 0)을 확인하고 `up.sh`로 새 이미지를 적용한다. 실패하면 적용하지 않는다.
-- `rollback.sh`는 이미지 digest만 되돌린다(DB는 되돌리지 않는다). 새 이미지가 DB 스키마를 올렸다면 이전 이미지가 그 스키마를 읽는지는 **각 영역의 마이그레이션 정책에 달려 있다. deploy는 이를 확인하지 못했다(확인 못 함)**. 안전한 순서: (1) 업그레이드 전 백업, (2) 문제가 생기면 이미지 롤백, (3) 이전 이미지가 스키마 때문에 못 뜨면 업그레이드 전 백업으로 해당 데이터베이스를 복구(그 뒤에 쌓인 데이터는 사라진다). 영역에 하위 호환 마이그레이션(확장 후 정리) 정책이 있는지 해당 영역 문서를 확인한다.
+- `rollback.sh`는 이미지 digest만 되돌린다(DB는 되돌리지 않는다). 새 이미지가 DB 스키마를 올렸다면 이전 이미지가 그 스키마를 읽는지는 **각 영역의 마이그레이션 정책에 달려 있다. deploy는 이를 확인하지 못했다(확인 못 함)**. 안전한 순서: (1) 업그레이드 전 백업, (2) 문제가 있으면 이미지를 되돌리고, 스키마가 호환되지 않으면 (3) 4-3 절차로 DB를 업그레이드 전 백업에서 복구한다.
 - PostgreSQL 주 버전(16 고정)은 덤프·복원 방식으로만 올린다(새 버전 서버에 복원). 볼륨을 새 주 버전 이미지에 그대로 붙이지 않는다.
 
 ### 4-6. secrets/ 백업과 복구
 
-> **위험: 복호 개인키를 잃으면 이 백업(DB 백업 포함)은 영영 풀 수 없다.** 개인키는 서버에 없고(서버가 뚫려도 백업이 읽히지 않게 하려는 설계) 복구할 방법이 없다. 서로 다른 안전한 곳 2곳 이상(예: 금고의 오프라인 매체 + 담당자 비밀번호 관리자)에 보관하고, 담당자가 바뀔 때 인수인계 항목에 넣는다. 보관은 사람의 일이다.
+> **위험: 저장소 암호를 잃으면 이 백업(DB 백업 포함)은 영영 풀 수 없다.** 암호는 서버 밖 서로 다른 안전한 곳 2곳 이상(예: 금고의 오프라인 매체 + 담당자 비밀번호 관리자)에 둔다. 암호 파일이 `secrets/` 안에 있으면 그 파일은 스냅샷에서 뺀다.
 
-- `bash scripts/backup-secrets.sh`(backup 잡이 `backup-all.sh`로 매일 함께 돌린다): `secrets/` 전체를 tar로 묶어 수신자 공개키로 암호화한다. 대상은 `BACKUP_SECRETS_DIR`(없으면 `$BACKUP_DIR/secrets`, **DB 백업과 접근 권한이 다른 곳이 더 좋다**), 폴더 700·파일 600, 최신 `BACKUP_SECRETS_KEEP`개(기본 14, 근거 기록 없음)만 남긴다. 평문 모드에서는 거부한다. MANIFEST에는 값이 없다.
-- 복구(서버를 새로 세울 때): (1) 개인키를 가진 사람이 서버 밖에서 `age -d -i <키> -o secrets.tar secrets.tar.age`(또는 `gpg -d -o secrets.tar secrets.tar.gpg`)로 복호한다. (2) 새 서버에서 `bash scripts/restore-secrets.sh secrets.tar secrets --yes`(비어 있지 않은 폴더는 거부, `..`·절대 경로 tar는 거부, 모드는 `secret_mode`대로). (3) `bash scripts/check-secret-perms.sh secrets`. (4) 복호한 `secrets.tar`를 지운다. (5) DB는 4-3절로 복구한다. DB 암호가 같은 값으로 돌아오므로 `pg-roles.sh sync` 없이 서비스가 붙는다.
-- 이 복구 시험은 `bash scripts/test-backup-secrets.sh`(임시 키쌍으로 secrets/를 통째로 지우고 되살려 `deid-salt`가 같은 값으로 돌아오는지 확인)가 한다. 실제 키로 푸는 시험은 4-4절의 사람 시험에 secrets 복호도 포함한다.
-- 한계: secrets/가 백업된 시점 이후에 회전한 토큰은 사라진다(회전 뒤 즉시 `backup-secrets.sh`를 한 번 돌린다). 백업 파일 하나로 모든 비밀이 풀리므로 개인키는 그만큼 중요하다.
+- `bash scripts/backup-secrets.sh`(backup 잡이 `backup-all.sh`로 매일 함께 돌린다): `secrets/` 전체를 같은 restic 저장소에 `--host secrets`로 저장한다. 보관은 `BACKUP_RETENTION_DAYS` 하나다(옛 `BACKUP_SECRETS_KEEP`·`BACKUP_SECRETS_DIR`은 없어졌다. 접근 권한을 나누고 싶으면 별도 `BACKUP_DIR`의 별도 설정으로 한 번 더 돌린다).
+- 복구(서버를 새로 세울 때): (1) 암호 파일과 `restic/` 저장소를 놓는다(4-3의 3). (2) `bash scripts/restore-secrets.sh latest secrets --yes`(비어 있지 않은 폴더는 거부, restic이 내용 해시를 검증, 모드는 `lib.sh secret_mode`대로 바로잡고 값은 건드리지 않는다). (3) `bash scripts/check-secret-perms.sh secrets`.
+- 이 복구 시험은 `bash scripts/test-backup-secrets.sh`(secrets/를 통째로 지우고 되살려 `deid-salt`가 같은 값으로 돌아오는지 확인)가 한다. 실제 암호로 푸는 시험은 4-4절의 사람 시험에 secrets 복원도 포함한다.
+- 한계: secrets/가 백업된 시점 이후에 회전한 토큰은 사라진다(회전 뒤 즉시 `backup-secrets.sh`를 한 번 돌린다). 암호 하나로 모든 백업이 풀리므로 암호는 그만큼 중요하다.
 
 ## 5. 주기 잡
 
@@ -277,9 +274,8 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 
 ### 9-6. gateway CA 루트의 백업과 복원 (점검 M3)
 
-- `gateway-data`(Caddy 내부 CA 루트 인증서와 **비밀키**, `/data/caddy/pki`)는 `scripts/backup.sh`가 다른 파일 저장소와 같은 수신자 공개키 암호화 경로로 백업한다(기본 대상에 포함). 평문 모드(`BACKUP_ALLOW_PLAINTEXT=1`, 시험 전용)에서는 비밀키라서 이 볼륨을 건너뛴다.
-- **루트가 바뀌면(볼륨을 잃었거나 새 서버면) 모든 키오스크와 직원 PC가 새 루트를 다시 신뢰해야 한다. 백업에서 복원하면 루트가 유지되어 기기는 아무것도 하지 않아도 된다.** 복원: 복호 개인키가 있는 곳에서 `gateway-data.tar.gpg`(또는 `.age`)를 풀어 서버의 `deploy_gateway-data` 볼륨에 올리고(소유자 uid 10001) gateway를 시작한다. 복원 시험은 자체 시험(`test-backup.sh`)이 시험용 키쌍으로 풀어 `root.key`가 든 것을 확인한다.
-- age 분기는 이 PC에 age가 없어 **실행해 보지 못했다(미실행)**. gpg 경로만 시험했다.
+- `gateway-data`(Caddy 내부 CA 루트 인증서와 **비밀키**, `/data/caddy/pki`)는 `scripts/backup.sh`가 다른 파일 저장소와 같은 restic 저장소(암호화)에 백업한다(기본 대상에 포함).
+- **루트가 바뀌면(볼륨을 잃었거나 새 서버면) 모든 키오스크와 직원 PC가 새 루트를 다시 신뢰해야 한다. 백업에서 복원하면 루트가 유지되어 기기는 아무것도 하지 않아도 된다.** 복원: 서비스(gateway)를 멈추고 `bash scripts/restore.sh gateway-data latest --yes`(소유자·모드는 백업 때 값 그대로 돌아온다) 후 gateway를 시작한다. 복원 시험은 자체 시험(`test-backup.sh`)이 한다.
 
 ## 10. 병원 서버에 올리기 전 요건 (사용자가 확인하는 것)
 
@@ -295,7 +291,7 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 
 ### 10-2. 저장 시 암호화가 없다 -> 데이터 볼륨은 암호화된 디스크여야 한다 (OPEN_GAPS L06)
 
-- 왜: PostgreSQL(`pg-data`)과 파일 저장소 볼륨(`gate-data`, `models-data`)은 디스크에 평문으로 쓰인다. 이 리포는 DB 수준 암호화(TDE 등)를 켜지 않았다. 호스트 디스크가 분실·반출되면 문진 응답이 읽힌다. 백업은 별도로 gpg/age로 암호화된다(§4).
+- 왜: PostgreSQL(`pg-data`)과 파일 저장소 볼륨(`gate-data`, `models-data`)은 디스크에 평문으로 쓰인다. 이 리포는 DB 수준 암호화(TDE 등)를 켜지 않았다. 호스트 디스크가 분실·반출되면 문진 응답이 읽힌다. 백업은 별도로 restic 저장소에서 암호화된다(§4).
 - 요건: Docker의 데이터 루트(볼륨이 놓이는 경로)가 있는 디스크를 OS 수준 전체 디스크 암호화(Linux는 LUKS/dm-crypt, Windows는 BitLocker)로 보호한다. 병원 서버에서 사용자가 직접 확인한다: 예) Linux `lsblk -f`에서 데이터 루트(`docker info --format '{{.DockerRootDir}}'`)가 crypt 장치 위에 있는지.
 - 확인하지 못한 것: 대상 서버의 디스크 구성. 이 리포는 암호화 여부를 점검하지 않는다(서버 밖 사실이다).
 

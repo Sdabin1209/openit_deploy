@@ -20,3 +20,4 @@ pin ALERTMANAGER_IMAGE prom/alertmanager:v0.28.1
 pin BLACKBOX_IMAGE prom/blackbox-exporter:v0.27.0
 pin NODE_EXPORTER_IMAGE prom/node-exporter:v1.9.1
 pin JSON_EXPORTER_IMAGE quay.io/prometheuscommunity/json-exporter:v0.7.0
+pin RESTIC_IMAGE restic/restic:0.18.0                        # 백업 저장소(scripts/backup-lib.sh, ADR 0038)

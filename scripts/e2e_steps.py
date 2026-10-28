@@ -1890,12 +1890,15 @@ def step5g():
       also={'survey-service': 'survey DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'release-gate': 'gate DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'ops-feedback': 'ops_log·ops_failure DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고된다(G3 F1)', 'question-authoring': 'qa DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)'})
 def step5b():
     title("5b", "백업 도중 postgres 중지(F1): 백업이 실패로 보고되고 불완전한 백업이 성공으로 남지 않으며 복구 뒤 다시 성공 (FAULT_MATRIX G3 F1)")
-    # 기대 출처: FAULT_MATRIX G3 '.partial 에 쓰고 완료 시 mv'. pg-backup.sh: 덤프 실패 시 die + 작업 폴더 삭제. FAULT_POLICY 14(잡 실패는 종료 코드로 드러남), 12(복구 뒤 재실행)
+    # 기대 출처: FAULT_MATRIX G3 '완료 시에만 완성본이 보인다'(옛 .partial -> mv). pg-backup.sh(restic): 덤프 실패 시 이 실행의 스냅샷을 모두 forget + die. FAULT_POLICY 14(잡 실패는 종료 코드로 드러남), 12(복구 뒤 재실행)
     pg = f"{a.project}-postgres-1"; bdir = WORK / "backups-5b"; bdir.mkdir(parents=True, exist_ok=True)
-    cfg = WORK / "backup-5b.env"; cfg.write_text(f"BACKUP_DIR={bdir}\nBACKUP_RETENTION_DAYS=7\nBACKUP_ALLOW_PLAINTEXT=1\n")   # 시험 전용 평문 모드(백업 대상은 E2E 시험 데이터)
+    pw = WORK / "backup-5b.pass"; pw.write_text("e2e-5b-test-password-not-a-secret\n"); pw.chmod(0o600)   # 시험 전용 임시 암호(시험 폴더 안)
+    cfg = WORK / "backup-5b.env"; cfg.write_text(f"BACKUP_DIR={bdir}\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE={pw}\n")
     env = {"DEPLOY_PROJECT": a.project, "BACKUP_CONFIG": str(cfg)}
-    def snap(): return sorted(str(p.relative_to(bdir)) for p in bdir.rglob("*") if p.parent != bdir or p.name.startswith("pg-")) 
-    def done_dirs(): return sorted(str(p.relative_to(bdir)) for p in bdir.glob("pg-*/*") if p.is_dir())
+    def done_dirs():   # 완성본 = restic 저장소의 스냅샷(이름은 호스트 pg-<db>). 저장소가 아직 없으면 0개
+        if not (bdir / "restic" / "config").exists(): return []
+        r = sh(["bash", "-c", f"source {ROOT}/scripts/lib.sh; source {ROOT}/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json"], env=env)
+        return sorted(x["hostname"] for x in json.loads(r.stdout or "[]"))
     # 백업이 '진행 중'인 순간을 결정적으로 만든다: qa DB 의 테이블 하나에 ACCESS EXCLUSIVE 잠금을 잡아 pg_dump 가 그 테이블에서 기다리게 한다
     tbl = sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-Atqc", "select tablename from pg_tables where schemaname='public' order by 1 limit 1"]).stdout.strip()
     assert tbl, "qa DB 에서 잠글 테이블을 찾지 못했다"
@@ -1908,9 +1911,7 @@ def step5b():
         try: out, _ = bk.communicate(timeout=90)
         except subprocess.TimeoutExpired: bk.kill(); raise AssertionError("백업이 postgres 중지 뒤 90s 안에 끝나지 않았다(무한 대기)")
         assert bk.returncode != 0, f"백업 도중 postgres 가 멈췄는데 백업이 성공(0)으로 보고됐다: {out[-300:]}"
-        assert done_dirs() == [], f"불완전한 백업 디렉터리가 완료본으로 남았다: {done_dirs()}"
-        left = [p.name for p in bdir.glob(".work-*")] + [str(p) for p in bdir.rglob(".partial-*")]
-        assert not left, f"임시 작업 폴더가 남았다: {left}"
+        assert done_dirs() == [], f"불완전한 스냅샷이 완성본으로 남았다: {done_dirs()}"
         rc_fail = bk.returncode
     finally:
         locker.kill()
@@ -1918,8 +1919,8 @@ def step5b():
     _pg_ready_wait(pg)
     wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "postgres 기동 뒤 서비스 /readyz 200", every=1)
     r = sh(["bash", str(ROOT / "scripts/pg-backup.sh"), "qa", "gate"], env=env)
-    ok = done_dirs(); assert len(ok) == 2 and all((bdir / d / "MANIFEST.json").exists() for d in ok), f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
-    rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 완료 디렉터리 0, 임시 폴더 없음; 복구 뒤 재실행 성공(MANIFEST 있는 완성본 {len(ok)}개).")
+    ok = done_dirs(); assert ok == ["pg-gate", "pg-qa"], f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
+    rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 남은 스냅샷 0(성공한 데이터베이스의 것도 버림); 복구 뒤 재실행 성공(스냅샷 {len(ok)}개: {ok}).")
 
 STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN

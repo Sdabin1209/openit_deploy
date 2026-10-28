@@ -151,8 +151,8 @@ mkdir -p ~/.local/bin && for b in node npm npx; do ln -sf ~/.local/node/bin/$b ~
 
 백업 설정이 없으면 운영 프로젝트(`deploy`)의 `up.sh`가 doctor에서 멈추고 backup 잡은 CRIT로 실패한다(D88 U6).
 
-1. 암호화 도구: `sudo apt-get install -y age` (없으면 gpg가 쓰인다. `BACKUP_ENCRYPT_TOOL`로 고른다).
-2. **서버 밖의 기계에서** 키쌍을 만든다: `age-keygen -o openit-backup.key`. 출력된 `public key: age1...` 한 줄만 서버의 공개키 파일(예: `/etc/openit/backup-recipients.pub`)에 적는다. `openit-backup.key`(개인키)는 서버에 올리지 않고 사람이 2곳 이상에 보관한다.
-3. `cp config/backup.env.example config/backup.env` 후 `BACKUP_DIR`(서버 밖 디스크·마운트), `BACKUP_RETENTION_DAYS`(14), `BACKUP_ENCRYPT_RECIPIENTS`를 적는다.
-4. `bash scripts/backup-check.sh`(또는 `bash scripts/doctor.sh --up --backup`)가 통과하는지 본다. 스케줄러를 설치하면(runbook 5-1절) backup 잡(매일)과 backup-restore-test 잡(매주)이 돈다.
-5. 복구는 runbook 4절. 개인키 없이는 복구할 수 없으니 3개월마다 사람이 복구 시험을 한다(4-4절).
+1. 도구: Docker만 있으면 된다(restic은 `locks/images.lock`의 digest 고정 이미지로 돈다). 호스트에 restic·age·gpg를 설치하지 않는다.
+2. 저장소 암호 파일을 만든다(서버의 `BACKUP_DIR` 밖, 모드 600): `umask 077; head -c 32 /dev/urandom | base64 > /etc/openit/backup.pass`. **이 암호를 서버 밖 2곳 이상에 따로 보관한다. 잃으면 모든 백업을 못 푼다.**
+3. `cp config/backup.env.example config/backup.env` 후 `BACKUP_DIR`(서버 밖 디스크·마운트), `BACKUP_RETENTION_DAYS`(14), `BACKUP_PASSWORD_FILE`을 적는다.
+4. `bash scripts/backup-check.sh`(또는 `bash scripts/doctor.sh --up --backup`)가 통과하는지 본다. systemd 유닛을 설치하면(runbook 5절) backup 잡(매일)과 backup-restore-test 잡(매주)이 돈다.
+5. 복구는 runbook 4절. 저장소 암호 없이는 복구할 수 없으니 3개월마다 사람이 복구 시험을 한다(4-4절).

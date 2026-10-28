@@ -165,7 +165,7 @@ if [ $CHECK_BACKUP = 1 ]; then
   BOUT=$(bash "$(dirname "$0")/backup-check.sh" 2>&1); BRC=$?
   if [ $BRC = 0 ]; then
     while IFS= read -r l; do case "$l" in WARN:*) warn "${l#WARN: }" "BACKUP_DIR 를 다른 디스크나 원격 마운트로 바꾼다 (config/backup.env.example)";; OK:*) ok "${l#OK: }";; esac; done <<<"$BOUT"
-  else fail "$(echo "$BOUT" | sed -n 's/^CRIT: //p' | head -1)" "config/backup.env.example 을 config/backup.env 로 복사해 채운다. 수신자 공개키 만드는 법과 복호 키 보관: docs/SETUP.md 백업 절"; fi
+  else fail "$(echo "$BOUT" | sed -n 's/^CRIT: //p' | head -1)" "config/backup.env.example 을 config/backup.env 로 복사해 채운다. restic 저장소 암호 파일 만드는 법과 서버 밖 보관: docs/SETUP.md 백업 절"; fi
 fi
 # --- 실제 LLM(GPU) 준비(D72/D73): 읽기 전용 점검. 컨테이너에서 GPU가 보여야 하고, 프로파일이 GPU 메모리에 맞아야 한다
 if [ $LLM = 1 ]; then

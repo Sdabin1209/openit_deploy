@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 단위 4a-3: backup_tool.py + age/gpg -> restic (D111, ADR 0038)
+- 백업은 restic 저장소 하나(`$BACKUP_DIR/restic`, 이미지 `RESTIC_IMAGE` digest 고정, 암호는 `BACKUP_PASSWORD_FILE`). `backup.sh`(볼륨), `pg-backup.sh`(`pg_dump -Fc | restic backup --stdin`, 평문 파일 없음, 중도 실패 시 스냅샷 삭제), `backup-secrets.sh`, 복구 `restore.sh`/`pg-restore.sh`/`restore-secrets.sh <latest|ID>`, 정기 복원 시험은 임시 저장소 왕복 + 실제 저장소 `restic check`.
+- 삭제: `backup_tool.py`, age/gpg 암호화, MANIFEST 해시, tar 묶기, `BACKUP_ENCRYPT_*`·`BACKUP_ALLOW_PLAINTEXT`·`BACKUP_SECRETS_*` 키(남아 있으면 CRIT). **보증이 약해진 점**: 서버에 저장소 암호가 있어야 한다(옛 공개키 방식은 서버에 복호 키가 없었다). ADR 0038 '감수하는 것'.
+- 시험: `test-backup.sh` 38건, `test-backup-secrets.sh` 15건, `test-postgres.sh` 66건이 restic 경로로 통과. E2E 단계 9 백업 구간과 5b를 restic 경로로 바꿨다(이 환경에서는 Docker 네트워크 부족으로 E2E를 돌리지 못했다).
+
 ## 단위 4a-2: check_health -> Prometheus + blackbox/json/node exporter + Alertmanager (D111, ADR 0037)
 - 추가: `compose.monitoring.yaml`(이미지 5개 digest 고정, `lock-third-party.sh`), `config/prometheus/`(prometheus, 경보 규칙과 `promtool test rules`, blackbox, json_exporter, alertmanager), `scripts/job-metrics.sh`(systemd `ExecStopPost`가 주기 잡 결과를 textfile 지표로), `scripts/test-monitoring.sh`(정적 + 가짜 서비스 실패 주입), `scripts/check-monitoring-live.sh`, 각 `.service`에 `ExecStopPost`.
 - 삭제: `check_health.py`, `check-health.sh`, `test-check-health.sh`, `external-monitor.example.yaml`, check-health 유닛.

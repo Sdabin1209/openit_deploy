@@ -108,11 +108,11 @@
 
 ## 8. 백업·복구 (O16 미정)
 
-- `backup.sh`: 저장소마다 스냅샷 디렉터리(`<BACKUP_DIR>/<저장소>/<UTC 시각>/`)에 SQLite는 backup API로 일관된 사본, 나머지 파일은 복사, `MANIFEST.json`에 파일별 sha256. `.partial`에 쓰고 완료 뒤 이름을 바꾼다. SQLite를 먼저, 나머지 파일(게이트의 `releases/`)을 나중에 복사한다(릴리스 파일은 불변이라 DB 행이 가리키는 파일이 사본에 있다). survey-data의 `releases/` 작업 폴더는 게이트 묶음에서 다시 적재되는 사본이라 제외한다.
-- **설정이 없으면 거부한다**: `config/backup.env`(또는 `BACKUP_CONFIG`)에 `BACKUP_DIR`와 정수 `BACKUP_RETENTION_DAYS`가 있어야 하고, 아니면 종료 코드 2다. 코드에 기본값이 없다. 주기는 `config/jobs.yaml`의 `backup.interval_seconds`. 허용 중단 시간·복구 시점(O16)이 정해지면 이 둘을 정한다.
+- `backup.sh`: 저장소(볼륨)마다 restic 스냅샷 하나(`restic backup /data --host <저장소>`, 암호화·중복 제거·내용 해시는 restic이 한다). 데이터베이스는 `pg-backup.sh`가 `pg_dump -Fc`를 `restic backup --stdin`으로 바로 저장한다. 저장소는 `<BACKUP_DIR>/restic`, 암호는 `BACKUP_PASSWORD_FILE`. 근거: ADR 0038(0020 대체).
+- **설정이 없으면 거부한다**: `config/backup.env`(또는 `BACKUP_CONFIG`)에 `BACKUP_DIR`, 정수 `BACKUP_RETENTION_DAYS`, 암호 파일 `BACKUP_PASSWORD_FILE`이 있어야 하고, 아니면 종료 코드 2다. 코드에 기본값이 없다. 주기는 `config/jobs.yaml`의 `backup.interval_seconds`. 허용 중단 시간·복구 시점(O16)이 정해지면 이 둘을 정한다.
 - 보관 기간을 넘긴 스냅샷은 새 백업이 끝난 뒤 지운다(저장소마다 최신 하나는 항상 남긴다).
-- `restore.sh <저장소> <스냅샷> --yes`: 그 볼륨을 쓰는 컨테이너가 있으면 거부, 해시 검증 후 볼륨을 비우고 복원, 소유자 10001. E2E가 4개 저장소를 실제로 지웠다가 복구하고(논리 지문 일치, ops는 같은 Trace 재전송이 DUPLICATE, qa는 두 문항 버전이 읽기 전용 SDK로 읽히고 해시 일치) 서비스를 다시 띄운다.
-- 서버 밖 사본, 암호화, 백업 대상의 오프사이트 전송은 미정(O16과 함께 사용자 결정이 필요).
+- `restore.sh <저장소> <latest|스냅샷 ID> --yes`: 그 볼륨을 쓰는 컨테이너가 있으면 거부, 볼륨을 비우고 `restic restore --verify`로 복원(root로 실행해 소유자·모드가 백업 때 값 그대로). 근거: ADR 0038.
+- 서버 밖 사본(백업 대상의 오프사이트 전송)은 미정(O16과 함께 사용자 결정이 필요). 암호화는 restic 저장소 암호로 한다.
 
 ## 9. 서버 밖 외부 감시 자리 (D10)
 
