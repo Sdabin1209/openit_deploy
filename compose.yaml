@@ -34,6 +34,8 @@ networks:
     internal: true
   # PostgreSQL 접근: 서비스마다 postgres 와만 닿는 별도 네트워크(internal, 호스트로 열지 않는다). 하나로 합치면 postgres 클라이언트끼리 서로 닿는다(E2E 차단 단언이 잡았다).
   # postgres 는 아래 넷에 모두 붙는다(여러 네트워크 가입은 compose 에서 정상). 서비스끼리의 길은 serving/authoring/release 만 열어 준다.
+  datasets:   # dataset-store(I2) 전용. internal: 호스트로 열지 않고 게이트웨이도 붙지 않는다(키오스크·직원 경로에서 닿지 않는다). docs/adr/0032-dataset-store-boundary.md
+    internal: true
   db-survey:
     internal: true
   db-qa:
@@ -48,6 +50,7 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   gate-data:      # 번들 파일 releases/ (릴리스 레지스트리 DB는 PostgreSQL(gate))
   serving-data:   # model-serving: 게이트에서 받은 번들 캐시(다시 받을 수 있어 백업 대상 아님)
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
+  datasets-data:  # dataset-store: 학습 데이터셋(DatasetManifest + files/). 쓰기는 dataset-store 서버만(D49: 이웃은 볼륨이 아니라 HTTP). 백업 대상(ADR 0032)
   gateway-data:   # gateway(Caddy)의 내부 CA 루트와 발급 인증서(/data/caddy/pki). 비밀키가 들어 있어 백업·유출에 주의
   pg-data:        # postgres: 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 볼륨 복사가 아니라 scripts/pg-backup.sh(pg_dump)
 
@@ -149,6 +152,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/model-registry-read-tokens
   model-registry-write-tokens:
     file: ${SECRETS_DIR:-./secrets}/tokens/model-registry-write-tokens
+  dataset-store-read-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/dataset-store-read-tokens
+  dataset-store-write-tokens:
+    file: ${SECRETS_DIR:-./secrets}/tokens/dataset-store-write-tokens
 
 services:
   postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
@@ -380,6 +387,23 @@ services:
     secrets: [model-registry-read-tokens, model-registry-write-tokens]
     volumes: [models-data:/data]
     networks: [release]
+    healthcheck:
+      <<: *pyhealth
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+
+  dataset-store:        # synthetic-data의 I2 서버(소스 리포지토리는 synthetic-data, 이미지 이름은 dataset-store, 계약 v2.1.0 D100). 읽기=model-lab, 쓰기=synthetic-data
+    <<: *hardening
+    mem_limit: ${DATASET_STORE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${DATASET_STORE_CPUS:-1.0}
+    pids_limit: ${DATASET_STORE_PIDS_LIMIT:-256}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/dataset-store@${DATASET_STORE_DIGEST:?locks/images.lock}
+    environment:
+      DATASET_STORE_READ_TOKENS_FILE: /run/secrets/dataset-store-read-tokens
+      DATASET_STORE_WRITE_TOKENS_FILE: /run/secrets/dataset-store-write-tokens
+    secrets: [dataset-store-read-tokens, dataset-store-write-tokens]
+    volumes: [datasets-data:/data]   # 이미지의 DATASET_STORE_ROOT=/data (uid 10001 소유). 서버의 임시 폴더(/data/.tmp)도 같은 볼륨이라 게시 rename 이 원자적이다. 루트는 read_only
+    networks: [datasets]
+    stop_grace_period: 40s   # 서버는 SIGTERM 에서 진행 중 요청을 끝까지 기다린다(daemon_threads=False). 요청 소켓 timeout 30초(DATASET_STORE_SOCKET_TIMEOUT 기본) + 여유 10초. 하드 상한은 그 영역이 확정하지 않았다(큰 게시·느린 읽기는 더 걸릴 수 있다, 측정 안 함). SIGKILL 이어도 게시는 임시 폴더 후 rename 이라 반쯤 쓴 버전이 보이지 않는다(synthetic-data ADR 0008·0012). 근거 docs/adr/0032-dataset-store-boundary.md
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]

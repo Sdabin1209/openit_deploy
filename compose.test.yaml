@@ -7,6 +7,7 @@ networks:   # 서비스마다 따로 둔다(공유하면 시험 접근이 격리
   test-ops:
   test-gate:
   test-mr:
+  test-ds:
   test-ms:
 services:
   survey-service:
@@ -30,4 +31,7 @@ services:
       MODEL_RUNTIME_ALLOW_FAKE: "1"   # v0.7.3: fake 는 이 값이 1일 때만 시작한다(시험·개발 전용)
   model-registry:
     networks: [release, test-mr]
+    ports: ["127.0.0.1::8080"]
+  dataset-store:
+    networks: [datasets, test-ds]
     ports: ["127.0.0.1::8080"]

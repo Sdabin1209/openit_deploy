@@ -41,6 +41,8 @@ QA_R=$(roles qa read release-gate synthetic-data model-lab)
 OPS_R=$(roles ops read synthetic-data model-lab question-authoring reviewer)
 MR_R=$(roles model-registry read release-gate model-lab)
 MR_W="model-lab=$(tok model-registry-write-model-lab)"
+DS_R=$(roles dataset-store read model-lab)                       # I2 읽기: 소비자 model-lab 하나(ADR 0032). 쓰기 토큰으로도 읽을 수 있어 synthetic-data 는 읽기 토큰이 필요 없다
+DS_W="synthetic-data=$(tok dataset-store-write-synthetic-data)"   # I2 쓰기: synthetic-data 하나(HTTP.md ## I2)
 QA_AUTHOR=$(tok qa-author-e2e)
 QA_REVIEWER=$(tok qa-reviewer-e2e)   # clinical-reviewer 역할(임상 근거 승인, 4-eyes: 저자와 다른 주체여야 한다, question-authoring D88/U9)
 # survey-result-reader / survey-risk-source: survey-service 의 결과 조회(result-reader)·위험 신호 입력(risk-source) 역할 토큰(내부 호출용, 게이트웨이에 열지 않음)
@@ -58,6 +60,8 @@ putlist qa-read-tokens "$QA_R"
 putlist ops-read-tokens "$OPS_R"
 putlist model-registry-read-tokens "$MR_R"
 putlist model-registry-write-tokens "$MR_W"
+putlist dataset-store-read-tokens "$DS_R"
+putlist dataset-store-write-tokens "$DS_W"
 putlist ops-review-tokens "reviewer=$(tok ops-review-reviewer)"
 tok qa-gateway-token >/dev/null   # gateway 가 저작 서비스에 쓰는 서비스 토큰(저자 경로, D88/U9). 이 토큰의 요청에서만 서비스가 X-Openit-User 를 사용자로 쓴다
 putlist qa-gateway-tokens "$(tok qa-gateway-token)"

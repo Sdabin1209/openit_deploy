@@ -15,6 +15,7 @@ detect_docker() {
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
 DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v2.0.2}"          # boundary-contracts (이미지 빌드, E2E 클라이언트·검증기)
+DEPLOY_BC_TAG_DS="v2.1.0"                            # boundary-contracts: dataset-store(synthetic-data 의 I2 서버) 이미지가 고정한 태그. I2 HTTP 면이 계약 2.1.0 부터라서 기준 태그(v2.0.2)보다 높다(D100). 기준 태그를 올리면 이 줄을 지운다
 DEPLOY_BC_TAG_SD="v2.0.2"                            # boundary-contracts: synthetic-data 가 고정한 태그(호스트 실행용, requirements.lock)
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.7.3}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
@@ -23,7 +24,7 @@ DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.4.0}"          # turn-engine (survey-se
 export DEPLOY_TE_TAG
 DEPLOY_SS_TAG="survey-schema-v1.0.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름
-SERVICES="survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console"
+SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console"
 # 선택 이미지: 기본 빌드·게시 흐름에 들어가지 않는다(약 13GB). build-images.sh --gpu 로 만든다 (compose.llm.yaml)
 SERVICES_OPTIONAL="model-serving-gpu"
 # build/images.env 의 선택 이미지(GPU) 기록을 유지해도 되는지: gpu_record_valid <기록 파일>. 유효하면 그 줄을 stdout 으로 내고 0, 아니면 이유를 stderr 로 내고 1.

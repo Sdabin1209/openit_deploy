@@ -3,7 +3,7 @@
 #  - 영역 리포지토리는 `git archive HEAD`로 build/ctx/<이름>/ 에 꺼내 거기서 빌드한다.
 #  - 라이브러리(boundary-contracts, turn-engine, model-runtime)는 영역들의 빌드 스크립트가 `git -C ../<이름> archive <태그>`로
 #    읽으므로 build/ctx/<이름>/ 에 bare 사본을 둔다(태그 시점 소스만 쓰인다). 태그는 각 영역 스크립트의 기본값을 따른다.
-# 이미지 이름: survey-service question-authoring ops-feedback release-gate model-registry(소스는 model-lab 리포지토리)
+# 이미지 이름: survey-service question-authoring ops-feedback release-gate model-registry(소스는 model-lab 리포지토리) dataset-store(소스는 synthetic-data 리포지토리)
 # 결과: build/images.env (영역 로컬이름 커밋). 레지스트리에 올리고 digest 잠금을 만드는 일은 publish-images.sh.
 # 사용: build-images.sh [--gpu [--yes-large]] [이름 ...]   (이름이 없으면 기본 8개 전부)
 #  --gpu        model-serving 의 GPU 변형을 별도 이미지 model-serving-gpu 로 빌드한다(약 13GB, 기본 빌드에는 넣지 않는다).
@@ -51,7 +51,7 @@ export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG" TE="$DEPLOY_TE_TAG"   # 태그는
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
-declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend [admin-console]=admin-console )
+declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [dataset-store]=synthetic-data [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend [admin-console]=admin-console )
 # survey-service는 태그(survey-schema-v1.0.0)도 읽혀야 하므로 작업 트리가 있는 사본(clone, HEAD)으로 둔다
 rm -rf "$CTX/survey-service"; git clone -q --no-hardlinks "$WORKSPACE/survey-service" "$CTX/survey-service"; rm -rf "$CTX/survey-service/.git/hooks"
 for n in "${!SRC[@]}"; do
@@ -110,13 +110,18 @@ if want model-registry; then
   record model-registry "$img" "$c"
 fi
 
-if want dataset-store && [ -f "$WORKSPACE/synthetic-data/Dockerfile" ]; then
-  # I2 DatasetStore HTTP 서버(계약 v2.1.0, D100, 소유 synthetic-data). 왜 조건부: 그 영역이 Dockerfile 을 커밋하기 전에는 이미지가 없어 기본 빌드를 깨뜨리면 안 된다.
-  # Dockerfile 이 생기면 자동으로 빌드한다. compose·digest 잠금·check-containers 는 이미지가 실제로 뜨는 것을 확인한 뒤 더한다(docs/STATUS.md 의 dataset-store 항목).
-  # 빌드 인자는 아직 그 영역의 Dockerfile 을 읽지 못해 REVISION·COMMIT 만 넘긴다(이름이 다르면 무시되고 라벨이 비는 것을 check-containers 단계에서 잡는다). 미확인.
-  DS="$CTX/synthetic-data"; rm -rf "$DS"; mkdir -p "$DS"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DS"
+if want dataset-store; then
+  # I2 DatasetStore HTTP 서버(계약 v2.1.0, D100, 소유 synthetic-data). 이미지는 boundary-contracts 를 ssh 로 받으므로 model-registry 와 같이 태그 시점 소스로 만든 wheel 을 빌드 컨텍스트 wheels 로 대신 준다.
+  # 계약 태그는 DEPLOY_BC_TAG_DS(v2.1.0): I2 HTTP 면이 2.1.0 부터라서 기준 태그보다 높다(lib.sh). 문진 스키마는 이미지에 복사본을 두지 않고 빌드 컨텍스트 survey_schema 로 받는다(synthetic-data ADR 0011): survey-service 의 기준 스키마 태그 시점 schema/.
+  DS="$CTX/synthetic-data"; DSW="$CTX/ds-wheels"; DSB="$CTX/ds-bc-src"; DSS="$CTX/ds-schema"
+  rm -rf "$DS" "$DSW" "$DSB" "$DSS"; mkdir -p "$DS" "$DSW" "$DSB" "$DSS"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DS"
+  git -C "$CTX/boundary-contracts" archive "$DEPLOY_BC_TAG_DS" | tar -x -C "$DSB"
+  "$PIP" wheel -q --no-deps -w "$DSW" "$DSB" >/dev/null 2>&1
+  whl=$(basename "$(ls "$DSW"/boundary_contracts-*.whl | head -1)")
+  git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$DSS"
   c=$(commit_of synthetic-data); img="deploy-build/dataset-store:$c"
-  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg COMMIT="$c" "$DS" >/dev/null
+  "$DOCKER" build -q -t "$img" --build-context "wheels=$DSW" --build-context "survey_schema=$DSS/schema" --build-arg "BC_SPEC=/wheels/$whl" \
+    --build-arg "BC_VERSION=$DEPLOY_BC_TAG_DS" --build-arg "REVISION=$c" "$DS" >/dev/null
   record dataset-store "$img" "$c"
 fi
 

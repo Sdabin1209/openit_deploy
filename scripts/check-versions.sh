@@ -10,14 +10,15 @@ export DEPLOY_NO_DOCKER=1
 unset BOUNDARY_TAG_ALL MODEL_RUNTIME_TAG_ALL TURN_ENGINE_TAG_ALL
 source "$(dirname "$0")/lib.sh"
 WS="${CHECK_VERSIONS_WORKSPACE:-$WORKSPACE}"
-export WS EXP_BC="$DEPLOY_BC_TAG" EXP_BC_SD="$DEPLOY_BC_TAG_SD" EXP_TE="$DEPLOY_TE_TAG" EXP_MR="$DEPLOY_MR_TAG"
+export WS EXP_BC="$DEPLOY_BC_TAG" EXP_BC_SD="$DEPLOY_BC_TAG_SD" EXP_BC_DS="$DEPLOY_BC_TAG_DS" EXP_TE="$DEPLOY_TE_TAG" EXP_MR="$DEPLOY_MR_TAG"
 exec python3 - <<'PY'
 import os, re, subprocess, sys
 from pathlib import Path
 ws = Path(os.environ["WS"])
 TABLE = {"boundary-contracts": os.environ["EXP_BC"], "turn-engine": os.environ["EXP_TE"], "model-runtime": os.environ["EXP_MR"]}
 REPOS = ["survey-service", "release-gate", "model-lab", "ops-feedback", "question-authoring", "synthetic-data", "turn-engine", "model-runtime", "kiosk-frontend", "admin-console"]
-SD_BC = os.environ["EXP_BC_SD"]   # synthetic-data 는 자기가 고정한 boundary-contracts 태그(표의 별도 항목)와 맞춘다
+SD_BC = os.environ["EXP_BC_SD"]
+DS_BC = os.environ["EXP_BC_DS"]   # synthetic-data 의 Dockerfile 은 dataset-store 이미지(I2 서버)라 별도 항목(lib.sh DEPLOY_BC_TAG_DS, ADR 0032)   # synthetic-data 는 자기가 고정한 boundary-contracts 태그(표의 별도 항목)와 맞춘다
 NAMEFILE = re.compile(r"(^|/)(requirements[^/]*\.(txt|lock|in)|[^/]*\.lock|pyproject\.toml|Dockerfile[^/]*|[^/]*\.sh)$")
 SKIP_DIR = re.compile(r"(^|/)(tests?|docs|\.venv|node_modules|build|dist)/")
 PKG = re.compile(r"(boundary-contracts|turn-engine|model-runtime)(?:\.git)?@(v\d+\.\d+\.\d+)")
@@ -40,9 +41,9 @@ for repo in REPOS:
             found = [(m.group(1), m.group(2)) for m in PKG.finditer(line)] + [(VARPKG[m.group(1)], m.group(2)) for m in VAR.finditer(line)]
             for pkg, tag in found:
                 seen += 1
-                exp = SD_BC if (repo == "synthetic-data" and pkg == "boundary-contracts") else TABLE[pkg]
+                exp = (DS_BC if rel.startswith("Dockerfile") else SD_BC) if (repo == "synthetic-data" and pkg == "boundary-contracts") else TABLE[pkg]
                 if tag != exp: bad.append(f"{repo}/{rel}:{n}: {pkg} {tag} (표: {exp})")
-print(f"기준 표(scripts/lib.sh): boundary-contracts {TABLE['boundary-contracts']} (synthetic-data용 {SD_BC}), turn-engine {TABLE['turn-engine']}, model-runtime {TABLE['model-runtime']}")
+print(f"기준 표(scripts/lib.sh): boundary-contracts {TABLE['boundary-contracts']} (synthetic-data용 {SD_BC}, dataset-store 이미지용 {DS_BC}), turn-engine {TABLE['turn-engine']}, model-runtime {TABLE['model-runtime']}")
 print(f"검사한 태그 표기 {seen}건, 영역 {len(REPOS) - len(missing)}개" + (f", 폴더가 없어 건너뜀: {' '.join(missing)}" if missing else ""))
 for b in bad: print("  다름:", b)
 if bad: print(f"실패: 표와 다른 표기 {len(bad)}건. 영역의 해당 파일을 표에 맞추거나(영역 세션), 표를 바꾼다(deploy)"); sys.exit(1)

@@ -20,7 +20,7 @@ AREAS = ["survey-service", "release-gate", "ops-feedback", "question-authoring",
          "model-lab", "kiosk-frontend", "admin-console", "synthetic-data", "deploy"]
 # 이미지 이름 -> 소스 리포지토리. scripts/build-images.sh 의 SRC 표와 같아야 한다(시험이 대조한다)
 IMAGE_SRC = {"survey-service": "survey-service", "question-authoring": "question-authoring", "ops-feedback": "ops-feedback",
-             "release-gate": "release-gate", "model-registry": "model-lab", "model-serving": "model-runtime",
+             "release-gate": "release-gate", "model-registry": "model-lab", "dataset-store": "synthetic-data", "model-serving": "model-runtime",
              "kiosk-frontend": "kiosk-frontend", "admin-console": "admin-console"}
 
 

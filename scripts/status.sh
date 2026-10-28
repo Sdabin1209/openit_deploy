@@ -12,7 +12,7 @@ for p in "${PROJECTS[@]}"; do case "$p" in deploy|deploy-*) ;; *) die "프로젝
 # 서비스 이름 -> 내부 포트(레지스트리는 5000, 나머지 8080)
 probe() { # probe <프로젝트> : 호스트 포트가 열린 서비스의 /readyz 를 요약한다
   local p=$1 s json="{" first=1 hp
-  for s in survey-service release-gate question-authoring ops-feedback-ingest model-registry model-serving gateway; do
+  for s in survey-service release-gate question-authoring ops-feedback-ingest model-registry dataset-store model-serving gateway; do
     hp=$("$DOCKER" port "$p-$s-1" 8080/tcp 2>/dev/null | head -1 | tr -d '\r' | sed 's/.*://')
     [ -n "$hp" ] || continue
     [ $first = 1 ] || json+=","; first=0; json+="\"$s\":$hp"
@@ -32,7 +32,7 @@ def get(name, path="/readyz"):
     try: d = json.loads(raw or b"{}")
     except ValueError: return code, {}
     return code, d if isinstance(d, dict) else {}
-for name in ("survey-service", "release-gate", "question-authoring", "ops-feedback-ingest", "model-registry", "model-serving", "gateway"):
+for name in ("survey-service", "release-gate", "question-authoring", "ops-feedback-ingest", "model-registry", "dataset-store", "model-serving", "gateway"):
     if name not in ports: continue
     c, d = get(name, "/healthz" if name == "gateway" else "/readyz")   # gateway 평문 포트는 /healthz 만 답한다(/readyz 는 HTTPS)
     extra = ""

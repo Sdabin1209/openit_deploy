@@ -2,7 +2,7 @@
 # 영역 CI가 부르는 운영용 게시 인터페이스(D24). 이미지 하나를 서버의 로컬 레지스트리에 올리고 digest를 locks/images.lock 에 기록한다.
 #
 # 사용: scripts/publish-image.sh <서비스 이름> <이미지 ID|이미지 이름|tar 파일> [--registry host:port]
-#   서비스 이름: survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console
+#   서비스 이름: survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console
 #   레지스트리: --registry, 없으면 환경 변수 DEPLOY_REGISTRY, 없으면 state/registry.env
 #   환경: DEPLOY_LOCK (기본 locks/images.lock)
 # 종료 코드: 0 성공(또는 이미 같은 digest), 1 Docker 실행 파일/데몬에 닿지 않음, 2 사용법/서비스 이름이 목록에 없음, 3 필수 라벨 누락, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패

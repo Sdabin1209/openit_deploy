@@ -27,7 +27,7 @@ cat > "$T/curl" <<'SH'
 echo "Docker-Content-Digest: sha256:$(printf 'a%.0s' $(seq 64))"
 SH
 chmod +x "$T/docker" "$T/curl"; export FAKE_LOG="$T/log"
-BASE="survey-service question-authoring ops-feedback release-gate model-registry model-serving kiosk-frontend admin-console"
+BASE="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console"
 mkenv() { : > "$D/build/images.env"; for a in $BASE; do echo "$a deploy-build/$a:abc1234 abc1234" >> "$D/build/images.env"; done; [ -z "${1:-}" ] || echo "model-serving-gpu deploy-build/model-serving-gpu:$1 $1" >> "$D/build/images.env"; }
 HAVE_BASE=""; for a in $BASE; do HAVE_BASE="$HAVE_BASE deploy-build/$a:abc1234"; done
 echo "== gpu_record_valid (lib.sh)"

@@ -16,7 +16,7 @@
 | postgres | 2g | 2.0 | 300 (+ shm 256m) |
 | gateway | 256m | 1.0 | 256 |
 | kiosk-frontend, admin-console | 128m | 0.5 | 128 |
-| survey-service, question-authoring, ops-feedback-ingest, model-registry | 512m | 1.0 | 256 |
+| survey-service, question-authoring, ops-feedback-ingest, model-registry, dataset-store | 512m | 1.0 | 256 |
 | release-gate | 1g | 1.0 | 256 |
 | model-serving (fake/CPU) | 1g | 2.0 | 512 |
 | model-serving (실제 LLM, compose.llm.yaml) | 16g | 4.0 | 2048 |
