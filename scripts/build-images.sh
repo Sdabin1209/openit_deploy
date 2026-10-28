@@ -51,6 +51,8 @@ export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG" TE="$DEPLOY_TE_TAG"   # 태그는
 for lib in boundary-contracts turn-engine model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
+# 왜: 이미지 라벨 io.openit.model-runtime 의 정본은 model-runtime 의 pyproject version 이다(D50). 태그 문자열에서 추측하지 않고 빌드 컨텍스트(태그 시점 소스)의 파일을 파서로 읽는다
+mr_version() { python3 -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1]+"/pyproject.toml","rb"))["project"]["version"])' "$1"; }
 declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [dataset-store]=synthetic-data [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend [admin-console]=admin-console )
 # survey-service는 태그(survey-schema-v1.0.0)도 읽혀야 하므로 작업 트리가 있는 사본(clone, HEAD)으로 둔다
 rm -rf "$CTX/survey-service"; git clone -q --no-hardlinks "$WORKSPACE/survey-service" "$CTX/survey-service"; rm -rf "$CTX/survey-service/.git/hooks"
@@ -144,7 +146,7 @@ if want model-serving; then
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}")$SUFFIX; img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" "$MS" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(mr_version "$MS")" "$MS" >/dev/null
   record model-serving "$img" "$c"
 fi
 
@@ -173,7 +175,7 @@ if want_gpu; then
   echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" "$MSG" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(mr_version "$MSG")" "$MSG" >/dev/null
   record model-serving-gpu "$img" "$c"
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
   OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)
