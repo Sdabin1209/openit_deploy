@@ -267,6 +267,7 @@ services:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
     environment:   # 비밀은 파일 경로만(D84)
       SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 기기별 토큰 표(device_id=토큰). gateway 가 검증한 기기 토큰이 그대로 도착한다. 공유 키오스크 토큰(SURVEY_API_TOKEN)은 두지 않는다 -> /readyz 의 shared_kiosk_token 경고가 꺼진다
+      SURVEY_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 릴리스 매니페스트 lineage 와 MAJOR.MINOR 를 비교하는 기준(D109). 값의 정본은 lib.sh 한 곳이다(survey 의 기본값 0.4.3 에 기대지 않는다)
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
       SURVEY_TRACE_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service

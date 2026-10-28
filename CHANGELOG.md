@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 기준 표 갱신과 turn-engine 코드 의존 제거 반영 (wo-u3, D109)
+- `scripts/lib.sh`: boundary-contracts v2.2.1, model-runtime v0.9.0, 문진 스키마 survey-schema-v1.1.0. `DEPLOY_TE_TAG`(v0.4.3)는 코드 의존이 아니라 계약 기록의 '규칙 세대 표지'로만 남는다. v 없는 형식 `DEPLOY_TE_VERSION`(0.4.3)을 새로 내보낸다.
+- `compose.yaml`: survey-service 에 `SURVEY_TURN_ENGINE_VERSION`을 `DEPLOY_TE_VERSION`으로 넘긴다(survey 쪽 기본값에 기대지 않는다).
+- `scripts/build-images.sh`: turn-engine 빌드 컨텍스트 사본과 survey-service 의 `TURN_ENGINE_TAG` 인자를 없앴다. survey-service `build_wheels.sh`가 원격 대신 로컬 태그를 읽도록 `REPO_BASE`(사본 폴더 `build/ctx/repos`)를 준다. model-serving 이미지의 turn-engine 라벨은 영역 기본값 `n/a`를 따른다.
+
 ## 데모: 모델 서빙을 모방 백엔드로, 키오스크는 /config.json 으로 기기 설정 (작업 지시서 2, 컨테이너 검증 전)
 - `scripts/demo.sh up`: model-serving 을 `MODEL_RUNTIME_BACKEND=mimic`(+`MODEL_RUNTIME_ALLOW_FAKE=1`, `MODEL_RUNTIME_FAKE_FLOW_FILE`)으로 띄운다(`test/compose.demo-mimic.yaml`). 흐름 파일은 `--mimic-flow-file <파일>`로 받고 기본은 `test/fake-model/question_flow.json`이다. 모방기의 동작과 파일 내용은 model-runtime 이 정한다(이 영역은 경로만 넘긴다). E2E 는 계속 fake 다. 모방 이미지는 아직 만들어지지 않았다면 up 은 model-serving 이 시작을 거부해 실패한다(확인 못 함).
 - 키오스크 `/config.json`: `test/compose.demo-kiosk.yaml`(데모 전용)이 `scripts/kiosk-add-device.sh add e2e` 가 만든 기기 산출물을 kiosk-frontend 의 `CONFIG_FILE`로 마운트하고, `scripts/demo_caddyfile.py`가 만든 gateway 설정 사본(운영 Caddyfile 의 `/config.json` 404 블록 하나만 kiosk-frontend 로 넘김)을 쓴다. 운영 구성(compose.yaml, config/Caddyfile)은 그대로다. 안내 출력에 토큰 값은 없다.

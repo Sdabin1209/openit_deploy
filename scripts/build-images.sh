@@ -45,11 +45,15 @@ if [ "$ONLY" = "  " ]; then
 fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
-# 경계 계약·turn-engine·model-runtime 태그(lib.sh 의 기준값, 2.0 구조). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
+# 경계 계약·model-runtime 태그와 turn-engine 표지(lib.sh 의 기준값). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
 export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG" TE="$DEPLOY_TE_TAG"   # 태그는 lib.sh 한 곳에서 정한다
-for lib in boundary-contracts turn-engine model-runtime; do
+# 왜 turn-engine 이 없는가: 영역들이 turn-engine 코드 의존을 지웠다(D109). 아직 쓰는 release-gate 는 자기 build_image.sh 가 형제 리포의 태그를 직접 읽는다(아래).
+for lib in boundary-contracts model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
+# survey-service 의 build_wheels.sh 는 $REPO_BASE/openit_<이름>.git 에서 태그를 받는다(기본은 GitHub 원격). 로컬 태그 시점 소스를 쓰도록 같은 이름의 사본 폴더를 REPO_BASE 로 준다
+rm -rf "$CTX/repos"; mkdir -p "$CTX/repos"
+for lib in boundary-contracts model-runtime; do git clone -q --bare "$CTX/$lib" "$CTX/repos/openit_$lib.git"; done
 # 왜: 이미지 라벨 io.openit.model-runtime 의 정본은 model-runtime 의 pyproject version 이다(D50). 태그 문자열에서 추측하지 않고 빌드 컨텍스트(태그 시점 소스)의 파일을 파서로 읽는다
 # 값 없음 표기는 `n/a` 하나, 버전은 v 접두사 포함(계약 ImageLabels). 영역 Dockerfile 이 인자 기본값으로 none/unknown 을 달지 않게 deploy 가 넘기는 값은 형식을 맞춘다
 semver_v() { case "$1" in v*) echo "$1";; *) echo "v$1";; esac; }
@@ -73,13 +77,13 @@ record() { local vrc=0 vout; set -- "$1" "$(apply_test_label "$2")" "$3"   # 시
 commit_of() { git -C "$WORKSPACE/$1" rev-parse --short HEAD; }
 
 if want survey-service; then
-  ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" TURN_ENGINE_TAG="$TE" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
+  ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" REPO_BASE="$CTX/repos" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
   set -a; source "$CTX/survey-service/build/wheels/VERSIONS.env"; set +a
   # io.openit.langgraph 라벨: 이미지에 설치되는 잠금 파일(requirements.lock)의 langgraph 버전
   LG=$(sed -n 's/^langgraph==\(.*\)$/\1/p' "$CTX/survey-service/requirements.lock" | head -1); [ -n "$LG" ] || { echo "requirements.lock 에서 langgraph 버전을 못 읽었다" >&2; exit 1; }
   c=$(commit_of survey-service); img="deploy-build/survey-service:$c"
   "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$BOUNDARY_TAG" \
-    --build-arg SCHEMA_CONTRACT_VERSION="$SCHEMA_CONTRACT_VERSION" --build-arg TURN_ENGINE_TAG="$TURN_ENGINE_TAG" \
+    --build-arg SCHEMA_CONTRACT_VERSION="$SCHEMA_CONTRACT_VERSION" \
     --build-arg MODEL_RUNTIME_TAG="$MODEL_RUNTIME_TAG" --build-arg LANGGRAPH_VERSION="$LG" "$CTX/survey-service" >/dev/null
   record survey-service "$img" "$c"
 fi
@@ -152,7 +156,7 @@ if want model-serving; then
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}"); img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MS")")" "$MS" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MS")")" "$MS" >/dev/null
   record model-serving "$img" "$c"
 fi
 
@@ -181,7 +185,7 @@ if want_gpu; then
   echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg TURN_ENGINE_VERSION="$DEPLOY_TE_TAG" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MSG")")" "$MSG" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION=1 --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MSG")")" "$MSG" >/dev/null
   record model-serving-gpu "$img" "$c"
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
   OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)
