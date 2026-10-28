@@ -117,12 +117,23 @@ def http(method, k, path, token=None, body=None, raw=None, ctype="application/js
         b = e.read()
         try: return e.code, json.loads(b)
         except Exception: return e.code, b.decode(errors="replace")
+def status_www(method, k, path, token=None, body=None):
+    """(상태, WWW-Authenticate 값)만 돌려준다. 계약 CONVENTIONS.md 6절(RFC 9110 15.5.2, RFC 6750 3절): 토큰이 없거나 틀리면 401 + `WWW-Authenticate: Bearer`."""
+    req = urllib.request.Request(URL(k) + path, data=json.dumps(body).encode() if body is not None else None, method=method)
+    if token: req.add_header("Authorization", f"Bearer {token}")
+    if body is not None: req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r: return r.status, r.headers.get("WWW-Authenticate")
+    except urllib.error.HTTPError as e: return e.code, e.headers.get("WWW-Authenticate")
+def assert_401_bearer(what, method, k, path, token=None, body=None):
+    c, w = status_www(method, k, path, token, body)
+    assert c == 401 and (w or "").split(" ")[0].rstrip(",") == "Bearer", (f"{what}: 토큰이 없거나 틀리면 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절)", c, w)
 def with_user(client, user):
     """승인(POST /v1/approvals)은 X-Openit-User 가 없으면 401 이고 approver_id 는 이 헤더 값으로 기록된다(release-gate CR-0008). SDK 클라이언트는 헤더를 못 보내므로 opener 의 기본 헤더로 붙인다(gateway 가 붙이는 인증 사용자 흉내, TEST-SUB)."""
     client._opener.addheaders = [h for h in client._opener.addheaders if h[0].lower() != "x-openit-user"] + [("X-Openit-User", user)]
     return client
 
-RVH = {"X-Openit-User": "reviewer-direct-e2e"}   # 검토 게시는 X-Openit-User(gateway 가 붙이는 인증 사용자)가 없으면 403(ops-feedback D88/U7). gateway 를 거치지 않는 직접 호출에 시험용 값을 붙인다
+RVH = {"X-Openit-User": "reviewer-direct-e2e"}   # 검토 게시는 X-Openit-User(gateway 가 붙이는 인증 사용자)가 없으면 401(계약 6절·HTTP.md I7; 이전에는 403). gateway 를 거치지 않는 직접 호출에 시험용 값을 붙인다
 OPERATOR_ID = "operator-e2e-script"   # 시험용 운영자 ID: 게이트웨이가 계정 ID를 X-Openit-User 로 붙이는 것을 스크립트가 직접 흉내 낸다
 def gate_ops(path, body, user=OPERATOR_ID, token=None):
     """release-gate 의 activate·rollback 을 HTTP 로 부른다(D85: 역할은 쓰기 토큰, 행위자는 X-Openit-User 헤더. SDK 는 헤더를 못 보낸다). (상태, JSON 본문)을 돌려준다.
@@ -211,7 +222,7 @@ def step1():
     r2, _ = upload(QS, form.replace("시험 문항 Q1.D01입니다. 알려 주세요.", "시험 문항 Q1.D01입니다. 말씀해 주세요."), "form2.txt")
     ru, _ = upload(QSU, form.replace("알려 주세요.", "들려 주세요."), "unseen.txt")
     c, e_ = http("POST", "qa", "/v1/reviews", TOK("qa-author-e2e"), body={"question_set": r1, "decision": "APPROVED", "clinical_basis_approved": True}); assert c == 403, ("저자가 자기 확인을 임상 승인했다(4-eyes)", c, e_)
-    assert http("GET", "qa", "/v1/drafts")[0] == 403
+    assert_401_bearer("토큰 없는 저작 경로", "GET", "qa", "/v1/drafts")
     rd = qa_reader()   # HTTP I1, 읽기 토큰(synthetic-data 역할)
     assert http("GET", "qa", "/v1/drafts", TOK("qa-read-synthetic-data"))[0] == 403, "읽기 토큰으로 저작 경로가 열리면 안 된다"
     assert http("POST", "qa", f"/v1/materials?question_set_id=x&filename=x.txt", TOK("qa-read-synthetic-data"), raw=b"x", ctype="text/plain")[0] == 403
@@ -635,7 +646,7 @@ def step5():
     ms_tok = INF_TOK()
     c, info = http("GET", "ms", "/v1/info", ms_tok); assert c == 200 and new in info.get("loaded", []), (c, info)
     assert info["backend"] == "fake", info
-    assert http("GET", "ms", "/v1/info", None)[0] in (401, 403), "토큰 없이 추론 서버 /v1/가 열림"
+    assert_401_bearer("토큰 없는 추론 서버 /v1/info", "GET", "ms", "/v1/info")
     c, st_ = http("GET", "ms", f"/v1/releases/{new}", ms_tok); assert c == 200 and st_["state"] == "LOADED", (c, st_)
     v2chk = model_server_v2_check(new, ms_tok)
     fvc = fake_values_check(new, ms_tok)
@@ -1093,8 +1104,8 @@ def step5n():
     # (d) 다른 기기·위조·직원 토큰은 거부된다
     cb, rb, _h = tcall(B, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-b"}); assert cb in (404, 403), ("다른 기기 토큰의 재알림이 허용됐다", cb, str(rb)[:100])
     cbr, _r, _h = tcall(B, "POST", f"/v1/sessions/{sid}/staff-call/report", {"outcome": "NOT_NOTIFIED", "turn_id": "n-rep-b"}); assert cbr in (404, 403), ("다른 기기 토큰의 실패 기록이 허용됐다", cbr)
-    cf, _r, _h = tcall("forged-" + "x" * 24, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cf in (401, 403), ("위조 토큰의 재알림이 허용됐다", cf)
-    cn, _r, _h = tcall(None, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cn in (401, 403), ("토큰 없는 재알림이 허용됐다", cn)
+    cf, _r, h_f = tcall("forged-" + "x" * 24, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cf == 401 and h_f.get("www-authenticate", "").startswith("Bearer"), ("위조 토큰의 재알림은 401 + WWW-Authenticate: Bearer (계약 6절)", cf, h_f)
+    cn, _r, h_n = tcall(None, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cn == 401 and h_n.get("www-authenticate", "").startswith("Bearer"), ("토큰 없는 재알림은 401 + WWW-Authenticate: Bearer (계약 6절)", cn, h_n)
     cs = http("POST", "survey", f"/v1/sessions/{sid}/staff-call/retry", TOK("survey-api-staff"), {"turn_id": "n-retry-s"})[0]; assert cs == 403, ("직원 토큰으로 서비스에 직접 재알림이 403 이 아니다", cs)
     assert tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-2"})[0] in (200, 429), "거부 시도 뒤 기기 A 의 호출이 깨졌다"
     # (e) 실패 기록: StaffAlert 에 manual_notice_* 가 남고 직원 알림 목록에서 보인다. 같은 turn_id 같은 outcome 은 멱등, 다른 outcome 은 409
@@ -1159,10 +1170,10 @@ def step5r():
     # (A) 기기 토큰으로 세션 시작(subject_ref), 발화 한 턴
     c, st = kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "subject_ref": subj}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
     c, tr = public_turn(sid, "rk-1", utter); assert c == 200, (c, tr)
-    # (D) 위험 신호: risk-source 토큰으로 서비스에 직접. 다른 역할 토큰은 403, 게이트웨이에는 열려 있지 않다
+    # (D) 위험 신호: risk-source 토큰으로 서비스에 직접. 맞는 토큰이라도 다른 역할이면 403, 게이트웨이에는 열려 있지 않다
     sig = {"signal_id": f"sig-{RID}-1", "source": "e2e-detector", "code": "TEST_RISK", "severity": "RISK"}
     for lab, tk in (("kiosk", KDEV()), ("staff", TOK("survey-api-staff")), ("result-reader", RES())):
-        assert http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", tk, sig)[0] in (401, 403), f"{lab} 토큰으로 위험 신호 입력이 열림"
+        assert http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", tk, sig)[0] == 403, f"{lab} 토큰(맞는 토큰, 다른 역할)으로 위험 신호 입력이 열림"
     assert http("POST", "gw", f"/v1/sessions/{sid}/risk-signals", KDEV(), sig)[0] in (403, 404), "위험 신호 입력이 게이트웨이를 통과함"
     c, r1 = http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 201, (c, r1)
     assert r1["session_status"] == "PAUSED_RISK" and r1["alert_id"], r1
@@ -1191,7 +1202,7 @@ def step5r():
     assert utter not in json.dumps(rs, ensure_ascii=False), "결과 조회 응답에 환자 발화 원문이 있다"
     c, lst = http("GET", "survey", f"/v1/results?subject_ref={subj}", RES()); assert c == 200 and any(x["session_id"] == sid for x in lst["items"]), (c, str(lst)[:150])
     for lab, tk in (("kiosk", KDEV()), ("staff", TOK("survey-api-staff")), ("risk-source", RSK())):
-        assert http("GET", "survey", f"/v1/results/{sid}", tk)[0] in (401, 403), f"{lab} 토큰으로 결과 조회가 열림"
+        assert http("GET", "survey", f"/v1/results/{sid}", tk)[0] == 403, f"{lab} 토큰(맞는 토큰, 다른 역할)으로 결과 조회가 열림"
     for pth in (f"/v1/results/{sid}", f"/v1/results?subject_ref={subj}"):
         assert gw_raw("GET", pth, basic=STAFF())[0] == 404 and gw_raw("GET", pth, basic=OPERATOR())[0] == 404, f"결과 조회 {pth} 가 게이트웨이에 열려 있다"
     # 접근 기록: 읽는 공개 경로가 없다(DB 를 열지 않는다). 기록을 못 남기면 데이터를 주지 않는 설계(fail-closed)라 위 조회 성공이 기록 쓰기 성공을 뜻한다. /readyz 에 접근 기록 항목이 있으면 함께 본다
@@ -1247,9 +1258,9 @@ def step5f():
     c, en = kiosk(f"/v1/sessions/{sf}/end", {"session_id": sf, "kind": "SESSION_END"}); assert c == 200, (c, en)
     rec("5b", "REAL", "프론트의 공개 API 호출 순서가 게이트웨이(같은 출처, 토큰 없이)를 거쳐 실제 survey-service에 통과: 세션 시작 -> 발화 2턴 -> state(SessionState 스키마, ACTIVE) -> 종료")
     # (c) 직원 경로 권한 분리
-    c1 = http("GET", "gw", "/v1/staff/alerts", None)[0]; assert c1 in (401, 403), c1
+    c1 = http("GET", "gw", "/v1/staff/alerts", None)[0]; assert c1 == 401, ("인증 없는 직원 API는 401 (계약 6절, 사람 경로는 Basic)", c1)
     c2 = http("GET", "survey", "/v1/staff/alerts", KDEV())[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
-    c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 in (401, 403), c3   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
+    c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 == 401, ("Bearer 는 사람 계정 경로의 자격이 아니다: 401 (계약 6절)", c3)   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
     # (d) 위험 감지는 기본으로 켜져 있다(D88 U1·U2, survey-service ADR-0013): 모든 발화 턴의 원문에 임시 기본 목록(임상 검토 전)을 먼저 적용한다. 알림은 모델 추출·쓰기 확정과 무관하게 먼저 나간다
@@ -1298,7 +1309,7 @@ def step6():
     env = trace_env(rel, 1); STATE["trace_env"] = env; save(); r1 = ing.send(env); r2 = ing.send(env)
     assert (r1["status"], r2["status"]) == ("ACCEPTED", "DUPLICATE"), (r1, r2)
     validate("IngestResult", dict(r1)); validate("IngestResult", dict(r2))
-    assert http("POST", "ops", "/v1/traces", None, env)[0] == 403
+    assert_401_bearer("토큰 없는 Trace 수집", "POST", "ops", "/v1/traces", None, env)
     c, e4 = http("POST", "ops", "/v1/traces", TOK("ops-ingest-survey-service"), {**env, "trace": {"x": 1}}); assert c == 400; validate("BoundaryError", e4)
     rec("6a", "TEST-SUB", f"실패 신호가 든 봉투는 e2e가 만든 시험 자료(공개 API의 정상 턴으로는 실패 사례가 생기지 않음; 정상 턴의 Trace 전송은 단계 5에서 REAL로 확인; release_id는 단계 4의 실제 릴리스). 수집 REAL: HttpTraceIngest ACCEPTED→DUPLICATE, 토큰 없음 403, 스키마 위반 400")
     r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], capture_output=True, text=True)
@@ -1441,10 +1452,10 @@ def step7d():
     m2["content_hash"] = canonical.content_hash(m2); validate("DatasetManifest", m2)
     c, b = _ds_call("POST", "/v1/datasets", WT, _ds_tar(m2, root), TAR); assert c == 409, ("같은 버전에 다른 내용은 409 여야 한다", c, b[:200])
     c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions/{q(ds['version'])}", RT); assert c == 200 and json.loads(b)["content_hash"] == m["content_hash"], "409 뒤에 저장된 버전이 바뀌었다"
-    # 토큰 없음·모르는 토큰: 서버는 PERMISSION_DENIED 403 으로 답한다(synthetic-data 서버의 STATUS 표, 스모크도 403). 401 이 아니다
-    c, _ = _ds_call("GET", "/v1/datasets"); assert c == 403, ("토큰 없는 읽기", c)
-    c, _ = _ds_call("POST", "/v1/datasets", None, body, TAR); assert c == 403, ("토큰 없는 게시", c)
-    c, _ = _ds_call("GET", "/v1/datasets", "x" * 48); assert c == 403, ("모르는 토큰", c)
+    # 토큰 없음·모르는 토큰은 401 + WWW-Authenticate: Bearer, 읽기 토큰으로 게시처럼 맞는 토큰의 권한 부족만 403 이다(계약 CONVENTIONS.md 6절, HTTP.md I2, RFC 9110 15.5.2, RFC 6750 3절; D106)
+    assert_401_bearer("토큰 없는 읽기", "GET", "ds", "/v1/datasets")
+    c, _ = _ds_call("POST", "/v1/datasets", None, body, TAR); assert c == 401, ("토큰 없는 게시", c)
+    assert_401_bearer("모르는 토큰", "GET", "ds", "/v1/datasets", "x" * 48)
     rec("7d", "REAL", f"dataset-store 서버(실제 이미지)에 단계 2 와 같은 입력의 데이터셋 {ds['id']}@{ds['version']} 를 쓰기 토큰(synthetic-data)으로 게시({via}, 같은 tar 재게시는 멱등 200 -> 읽기 토큰(model-lab)으로 목록·버전·매니페스트(스키마 통과)·파일 {len(m['files'])}개 바이트(manifest 해시 일치) -> 읽기 토큰의 게시는 403 -> 같은 버전에 다른 내용은 409 이고 저장본 불변 -> 토큰 없음·모르는 토큰은 403(서버 계약이 401 이 아니다). 못 보는 것: 소비자 model-lab 의 실제 읽기 코드(그 영역), 큰 본문·동시 게시 한도, synthetic-data run(시드) 모드의 HTTP 게시(import 모드만 확인)")
 
 @step('8', repos=('release-gate', 'survey-service', 'kiosk-frontend', 'boundary-contracts'), deps=('1', '4', '6'),
