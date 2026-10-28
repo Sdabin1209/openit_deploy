@@ -37,7 +37,7 @@ DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.9.0}"     # model-runtime: 모든 이
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 # turn-engine: 2.x 동안 코드 의존이 아니라 계약 기록(turn_engine_version)에 쓰는 '규칙 세대 표지'다(D109, 마지막 태그 v0.4.3, 새 태그 없음, 이 줄이 정본).
-# 쓰는 곳: E2E 매니페스트 lineage 값(e2e_steps.py, v 없는 형식), survey-service 의 SURVEY_TURN_ENGINE_VERSION(compose, v 없음), release-gate 이미지 빌드(아직 wheel 을 쓴다), doctor 의 태그 존재 점검.
+# 쓰는 곳: E2E 매니페스트 lineage 값(e2e_steps.py, v 없는 형식), survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 release-gate 의 GATE_TURN_ENGINE_VERSION(compose, v 없음). 빌드·태그 존재 점검에는 쓰지 않는다.
 DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.4.3}"
 DEPLOY_TE_VERSION="${DEPLOY_TE_TAG#v}"             # 기록·환경 변수용 v 없는 형식(release-gate CONTRACT_COMPAT 가 설치 패키지 버전 문자열과 전체 비교, D109)
 export DEPLOY_TE_TAG DEPLOY_TE_VERSION

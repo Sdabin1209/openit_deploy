@@ -342,6 +342,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
     environment:
+      GATE_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 학습 계보와 비교하는 기준 문자열(D109). 값의 정본은 lib.sh 한 곳(survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 같은 값)
       GATE_READ_TOKENS_FILE: /run/secrets/gate-read-tokens
       GATE_WRITE_TOKENS_FILE: /run/secrets/gate-write-tokens
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
@@ -482,6 +483,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
     environment:
+      GATE_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 학습 계보와 비교하는 기준 문자열(D109). 값의 정본은 lib.sh 한 곳(survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 같은 값)
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn
     secrets: [db-gate-dsn]
     volumes: [gate-data:/data]
@@ -502,6 +504,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
     environment:
+      GATE_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 학습 계보와 비교하는 기준 문자열(D109). 값의 정본은 lib.sh 한 곳(survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 같은 값)
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
       GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn

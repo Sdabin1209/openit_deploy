@@ -46,8 +46,8 @@ fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
 # 경계 계약·model-runtime 태그와 turn-engine 표지(lib.sh 의 기준값). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
-export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG" TE="$DEPLOY_TE_TAG"   # 태그는 lib.sh 한 곳에서 정한다
-# 왜 turn-engine 이 없는가: 영역들이 turn-engine 코드 의존을 지웠다(D109). 아직 쓰는 release-gate 는 자기 build_image.sh 가 형제 리포의 태그를 직접 읽는다(아래).
+export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG"   # 태그는 lib.sh 한 곳에서 정한다
+# 왜 turn-engine 이 없는가: 모든 영역이 turn-engine 코드 의존을 지웠다(D109). 값은 표지(lib.sh DEPLOY_TE_TAG)로만 남고 빌드에 쓰이지 않는다.
 for lib in boundary-contracts model-runtime; do
   rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
 done
@@ -62,9 +62,11 @@ mr_version() { python3 -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1
 declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [dataset-store]=synthetic-data [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend [admin-console]=admin-console )
 # survey-service는 태그(survey-schema-v1.0.0)도 읽혀야 하므로 작업 트리가 있는 사본(clone, HEAD)으로 둔다
 rm -rf "$CTX/survey-service"; git clone -q --no-hardlinks "$WORKSPACE/survey-service" "$CTX/survey-service"; rm -rf "$CTX/survey-service/.git/hooks"
+if want release-gate; then rm -rf "$CTX/release-gate"; git clone -q --no-hardlinks "$WORKSPACE/release-gate" "$CTX/release-gate"; rm -rf "$CTX/release-gate/.git/hooks"; fi
 for n in "${!SRC[@]}"; do
   want "$n" || continue
   [ "$n" = survey-service ] && continue
+  [ "$n" = release-gate ] && continue   # 아래에서 clone 한다(build_image.sh 가 커밋을 git 으로 읽는다: git archive 사본에는 .git 이 없어 실패)
   [ "$n" = model-serving ] && continue
   rm -rf "$CTX/${SRC[$n]}"; mkdir -p "$CTX/${SRC[$n]}"; git -C "$WORKSPACE/${SRC[$n]}" archive HEAD | tar -x -C "$CTX/${SRC[$n]}"
 done
@@ -103,10 +105,10 @@ if want ops-feedback; then
   record ops-feedback "$img" "$c"
 fi
 if want release-gate; then
-  # 영역의 build_image.sh 를 표준 `docker` 와 일반 경로로 부른다(turn-engine/model-runtime 는 형제 리포의 태그 시점 소스, 사본 기준).
+  # 영역의 build_image.sh 를 표준 `docker` 와 일반 경로로 부른다(model-runtime 는 형제 리포의 태그 시점 소스, 사본 기준).
   # 전제: release-gate 의 build_image.sh 가 docker.exe·wslpath 를 가정하지 않는 버전이다(CR-D21). 그 전 버전은 WSL 에서 UNC 경로를 만들어 실패한다.
   c=$(commit_of release-gate); img="deploy-build/release-gate:$c"
-  ( cd "$CTX/release-gate" && DOCKER="$DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" TURN_ENGINE_TAG="$TE" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
+  ( cd "$CTX/release-gate" && DOCKER="$DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
   record release-gate "$img" "$c"
 fi
 if want model-registry; then

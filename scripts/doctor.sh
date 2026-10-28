@@ -127,7 +127,7 @@ if [ $UP_ONLY = 0 ]; then
     if git -C "$WORKSPACE/$1" rev-parse -q --verify "refs/tags/$2" >/dev/null 2>&1; then ok "태그 $1 $2"; else fail "태그가 없다: $1 $2" "git -C ../$1 fetch --tags (그래도 없으면 원격에 태그가 없다: head 에 알린다)"; fi
   }
   tagchk boundary-contracts "$DEPLOY_BC_TAG"
-  tagchk model-runtime "$DEPLOY_MR_TAG"; tagchk turn-engine "$DEPLOY_TE_TAG"; tagchk survey-service "$DEPLOY_SS_TAG"
+  tagchk model-runtime "$DEPLOY_MR_TAG"; tagchk survey-service "$DEPLOY_SS_TAG"
   # --- 디스크
   AVAIL=$(df -Pk "$DEPLOY_ROOT" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')
   # 주의: WSL 에서 df 는 WSL 가상 디스크의 여유만 알려 주고, 윈도 호스트 드라이브(Docker Desktop 의 이미지 저장 위치)의 여유는 알려 주지 않는다.
