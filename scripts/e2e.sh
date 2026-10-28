@@ -146,14 +146,14 @@ chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" b
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
 abort_if_failed
 port() { port_of "${PROJECT}-$1-1" 8080; }
-PQA=$(port question-authoring); PGATE=$(port release-gate); POPS=$(port ops-feedback-ingest); PSURVEY=$(port survey-service); PMR=$(port model-registry); PMS=$(port model-serving); PGW=$(port gateway); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS
+PQA=$(port question-authoring); PGATE=$(port release-gate); POPS=$(port ops-feedback-ingest); PSURVEY=$(port survey-service); PMR=$(port model-registry); PDS=$(port dataset-store); PMS=$(port model-serving); PGW=$(port gateway); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS
 # gateway 의 내부 CA 루트(시험용 CA): 이 시험의 클라이언트(curl --cacert, e2e_steps)가 이것만 신뢰한다. 컨테이너가 방금 떴으므로 인증서가 만들어질 때까지 잠깐 기다린다
 for _i in 1 2 3 4 5 6 7 8 9 10; do "$DOCKER" cp "${PROJECT}-gateway-1:/data/caddy/pki/authorities/local/root.crt" "$W/gateway-ca.crt" >/dev/null 2>&1 && break; sleep 1; done
 [ -s "$W/gateway-ca.crt" ] || { echo "gateway 내부 CA 루트를 가져오지 못했다"; exit 1; }
 GWCURL="curl --cacert $W/gateway-ca.crt"
-echo "  Docker가 배정한 호스트 포트: gateway=$PGW(평문) gateway-tls=$PGWS qa=$PQA gate=$PGATE ops=$POPS survey=$PSURVEY model-registry=$PMR model-serving=$PMS"
+echo "  Docker가 배정한 호스트 포트: gateway=$PGW(평문) gateway-tls=$PGWS qa=$PQA gate=$PGATE ops=$POPS survey=$PSURVEY model-registry=$PMR dataset-store=$PDS model-serving=$PMS"
 getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
-for pair in "gateway:$PGW" "question-authoring:$PQA" "release-gate:$PGATE" "ops-feedback-ingest:$POPS" "model-registry:$PMR" "model-serving:$PMS" "survey-service:$PSURVEY"; do
+for pair in "gateway:$PGW" "question-authoring:$PQA" "release-gate:$PGATE" "ops-feedback-ingest:$POPS" "model-registry:$PMR" "dataset-store:$PDS" "model-serving:$PMS" "survey-service:$PSURVEY"; do
   n=${pair%%:*}; p=${pair##*:}
   chk "/healthz $n" getj "$p" /healthz
   [ "$n" = survey-service ] && continue
@@ -190,6 +190,11 @@ chk "도달: release-gate -> question-authoring (release, I1)" reach release-gat
 chk "도달: release-gate -> model-registry (release, I3)" reach release-gate model-registry
 chk "차단: survey-service -> question-authoring" blocked survey-service question-authoring
 chk "차단: survey-service -> model-registry" blocked survey-service model-registry
+chk "차단: survey-service -> dataset-store (I2 는 datasets 네트워크뿐, ADR 0032)" blocked survey-service dataset-store
+chk "차단: release-gate -> dataset-store" blocked release-gate dataset-store
+chk "차단: model-registry -> dataset-store" blocked model-registry dataset-store
+chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
+chk "gateway 설정(Caddyfile)에 dataset-store 경로가 없다" bash -c "! grep -q 'dataset-store\|datasets' $DEPLOY_ROOT/config/Caddyfile"
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
 chk "차단: model-registry -> model-serving" blocked model-registry model-serving
 chk "차단: question-authoring -> model-serving" blocked question-authoring model-serving
@@ -221,11 +226,11 @@ chk "컨테이너 격리 실제 확인(check-containers: 비루트·읽기 전�
 nonroot() { [ "$("$DOCKER" exec "${PROJECT}-$1-1" id -u | tr -d '\r')" != 0 ]; }
 bydigest() { "$DOCKER" inspect "${PROJECT}-$1-1" --format '{{.Config.Image}}' | tr -d '\r' | grep -E '@sha256:[0-9a-f]{64}$'; }
 labels6() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.turn-engine io.openit.model-runtime; do echo "$L" | grep -q "\"$k\"" || { echo "라벨 누락 $k"; return 1; }; done; echo "$L" | cut -c1-230; }
-for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry model-serving kiosk-frontend admin-console; do
+for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry dataset-store model-serving kiosk-frontend admin-console; do
   chk "비root 실행 $s" nonroot "$s"
   chk "컨테이너가 digest로 만들어짐 $s" bydigest "$s"
 done
-for pair in "survey-service:$SURVEY_SERVICE_DIGEST" "question-authoring:$QUESTION_AUTHORING_DIGEST" "ops-feedback:$OPS_FEEDBACK_DIGEST" "release-gate:$RELEASE_GATE_DIGEST" "model-registry:$MODEL_REGISTRY_DIGEST" "model-serving:$MODEL_SERVING_DIGEST" "admin-console:$ADMIN_CONSOLE_DIGEST"; do
+for pair in "survey-service:$SURVEY_SERVICE_DIGEST" "question-authoring:$QUESTION_AUTHORING_DIGEST" "ops-feedback:$OPS_FEEDBACK_DIGEST" "release-gate:$RELEASE_GATE_DIGEST" "model-registry:$MODEL_REGISTRY_DIGEST" "dataset-store:$DATASET_STORE_DIGEST" "model-serving:$MODEL_SERVING_DIGEST" "admin-console:$ADMIN_CONSOLE_DIGEST"; do
   chk "이미지 라벨 6개(io.openit.*) ${pair%%:*}" labels6 "$DEPLOY_REGISTRY/openit/${pair%%:*}@${pair#*:}"
 done
 
@@ -235,7 +240,7 @@ langgraph_label() { local v; v=$("$DOCKER" image inspect "$DEPLOY_REGISTRY/openi
 chk "survey-service 이미지의 io.openit.langgraph 라벨이 unknown이 아니다" langgraph_label
 sect "단계 1~8 (실제 서비스의 HTTP로 잇는다)"
 IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
-PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"gw\":$PGWS,\"ms\":$PMS}"
+PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"ds\":$PDS,\"gw\":$PGWS,\"ms\":$PMS}"
 STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
 "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
@@ -282,22 +287,22 @@ gpg --homedir "$GPGH" --batch --armor --export > "$W/backup-recipient.pub" 2>/de
 printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_ENCRYPT_RECIPIENTS=%s\nBACKUP_ENCRYPT_TOOL=gpg\n' "$W/backups" "$W/backup-recipient.pub" > "$W/backup-test.env"
 if command -v age >/dev/null 2>&1; then echo "  [참고] age 가 있으나 이 단계는 gpg 로 돈다. age 분기는 scripts/test-backup.sh 의 몫"; else echo "  [미실행] age 분기: 이 호스트에 age 바이너리가 없어 실행하지 않았다(gpg 경로만 실행)"; fi
 export BACKUP_CONFIG="$W/backup-test.env"
-# 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data), 데이터베이스는 PostgreSQL(D85)
+# 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
 dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx postgres | tr '\n' ' ') >/dev/null 2>&1
-STORES="gate-data models-data"; PGDBS="survey qa ops_log ops_failure gate"
+STORES="gate-data models-data datasets-data"; PGDBS="survey qa ops_log ops_failure gate"
 for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
 for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-before-pg-$d.json"; done
 mkdir -p "$W/backups/gate-data/20200101T000000Z"; touch -d '2020-01-01' "$W/backups/gate-data/20200101T000000Z"
-chk "백업(파일 저장소 2개, SQLite backup API + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
+chk "백업(파일 저장소 3개, SQLite backup API + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
 chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
 enc_clean() { local x; for x in $STORES; do d=$(ls -d $W/backups/$x/2* | tail -1); ls $d/*.gpg >/dev/null 2>&1 || { echo "$x: 암호문(.gpg)이 없다"; return 1; }; ls $d/*.tar $d/*.dump >/dev/null 2>&1 && { echo "$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d)" = 700 ] || { echo "$x: 폴더 모드"; return 1; }; done
   for x in $PGDBS; do d=$(ls -d $W/backups/pg-$x/2* | tail -1); ls $d/$x.dump.gpg >/dev/null 2>&1 || { echo "pg-$x: 암호문이 없다"; return 1; }; [ ! -e $d/$x.dump ] || { echo "pg-$x: 평문이 남았다"; return 1; }; [ "$(stat -c %a $d/$x.dump.gpg)" = 600 ] || { echo "pg-$x: 파일 모드"; return 1; }; done
   ls -a $W/backups/*/ 2>/dev/null | grep -qE '^\.(tar|partial)-' && { echo "임시 평문/partial 이 남았다"; return 1; }; echo "백업 전부 암호문(.gpg), 평문 .tar·.dump 없음, 폴더 700·파일 600, 임시 파일 없음"; return 0; }
-NEED+=("백업(파일 저장소 2개, SQLite backup API + 해시 MANIFEST)" "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)")   # 백업이 실패하면 아래 암호문 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
+NEED+=("백업(파일 저장소 3개, SQLite backup API + 해시 MANIFEST)" "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc + 해시 MANIFEST)")   # 백업이 실패하면 아래 암호문 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
 chk "백업 산출물은 암호문뿐이다(평문 없음, 권한 700/600)" enc_clean
 chk "보관 기간(7일)이 지난 스냅샷만 삭제" bash -c "[ ! -d $W/backups/gate-data/20200101T000000Z ] && [ \$(ls $W/backups/gate-data | wc -l) = 1 ]"
 dc "$PROJECT" down >/dev/null 2>&1
-chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_pg-data >/dev/null"
+chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_datasets-data ${PROJECT}_pg-data >/dev/null"
 dc "$PROJECT" up -d --wait --wait-timeout 120 postgres >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다
 chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
 # 서버 밖 사람 몫 모사: 개인키로 복호해 같은 폴더에 평문을 둔다(복구 뒤 지운다). 서버의 복구 스크립트는 복호 키를 갖지 않는다
@@ -313,8 +318,8 @@ for d in $PGDBS; do chk_dep "복구 pg-$d" "복구 후 지문 일치 pg-$d" bash
 NEED_RESTORE=(); for s in $STORES; do NEED_RESTORE+=("복구 $s"); done; for d in $PGDBS; do NEED_RESTORE+=("복구 pg-$d"); done
 NEED+=("${NEED_RESTORE[@]}")
 chk "복구 후 서비스 기동" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
-PQA=$(port question-authoring); POPS=$(port ops-feedback-ingest); PGATE=$(port release-gate); PMR=$(port model-registry); PSURVEY=$(port survey-service)
-PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR}"
+PQA=$(port question-authoring); POPS=$(port ops-feedback-ingest); PGATE=$(port release-gate); PMR=$(port model-registry); PDS=$(port dataset-store); PSURVEY=$(port survey-service)
+PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"ds\":$PDS}"
 NEED+=("복구 후 서비스 기동")
 chk "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
   "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test

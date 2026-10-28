@@ -4,7 +4,7 @@
 
 상태: REAL(실제 서비스·잡) / TEST-SUB(시험 대역으로 대신함) / BLOCKED(지금 구현으로는 이어지지 않음) / FAIL(검증 실패)
 """
-import argparse, hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import argparse, hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.request, urllib.error, urllib.parse
 
 import boundary_contracts as bc
 from boundary_contracts import canonical
@@ -1303,6 +1303,55 @@ def step7():
     else:
         rec("7b", "BLOCKED", f"새 데이터셋 버전 {m['version']}(이전 {prev})이 만들어졌으나 시드 인용이 없다(CONFIRMED가 아닌 사례는 시드로 쓰이지 않는다). 인용 확인: {cited}. 학습(model-lab)과 저작으로의 환류는 실행하지 않았다")
 
+def _ds_call(method, path, token=None, body=None, ctype=None):
+    """dataset-store(I2) 에 HTTP 로 직접 요청한다(상태 코드와 본문). 왜 SDK 가 아니라 urllib 인가: 201/200/409/403 을 구분해 단언해야 하고, 호스트 .venv 의 boundary-contracts 가 2.1.0 미만이면 HttpDatasetStore 가 없다(5n 과 같은 사정)."""
+    req = urllib.request.Request(URL("ds") + path, data=body, method=method)
+    if token: req.add_header("Authorization", f"Bearer {token}")
+    if ctype: req.add_header("Content-Type", ctype)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r: return r.status, r.read()
+    except urllib.error.HTTPError as e: return e.code, e.read()
+
+def _ds_tar(manifest, root):
+    import io, tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as t:
+        def add(name, data):
+            ti = tarfile.TarInfo(name); ti.size = len(data); ti.mtime = 0; t.addfile(ti, io.BytesIO(data))
+        add("manifest.json", json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
+        for f in manifest["files"]: add("files/" + f["path"], (root / "files" / f["path"]).read_bytes())
+    return buf.getvalue()
+
+def step7d():
+    title("7d", "dataset-store(I2 HTTP 서버, 쓰기=synthetic-data·읽기=model-lab 토큰): 게시, 읽기, 읽기 토큰 쓰기 거부, 멱등, 불변, 토큰 없음 (D100)")
+    if "dataset" not in STATE: rec("7d", "BLOCKED", "단계 2 가 게시한 데이터셋이 없다(STATE['dataset'])"); return
+    ds = STATE["dataset"]; root = WORK / "datasets" / ds["id"] / ds["version"]
+    m = json.loads((root / "manifest.json").read_text()); assert m["content_hash"] == ds["content_hash"], "단계 2 의 매니페스트가 바뀌었다"
+    WT, RT = TOK("dataset-store-write-synthetic-data"), TOK("dataset-store-read-model-lab")
+    body = _ds_tar(m, root); TAR = "application/x-tar"; q = urllib.parse.quote
+    c1, b1 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c1 in (200, 201), ("쓰기 토큰 게시", c1, b1[:200])
+    assert json.loads(b1)["content_hash"] == m["content_hash"], "응답의 content_hash 가 다르다"
+    c2, b2 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c2 == 200 and json.loads(b2)["content_hash"] == m["content_hash"], ("같은 게시는 멱등 200 이어야 한다", c2, b2[:200])
+    # 읽기: 읽기 토큰으로 목록·버전·매니페스트·파일 바이트(해시를 manifest 와 대조)
+    c, b = _ds_call("GET", "/v1/datasets", RT); assert c == 200 and ds["id"] in b.decode(), ("목록", c, b[:200])
+    c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions", RT); assert c == 200 and ds["version"] in b.decode(), ("버전 목록", c, b[:200])
+    c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions/{q(ds['version'])}", RT); assert c == 200 and json.loads(b)["content_hash"] == m["content_hash"], ("매니페스트", c, b[:200])
+    validate("DatasetManifest", json.loads(b))
+    for f in m["files"]:
+        c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions/{q(ds['version'])}/files/{q(f['path'], safe='')}", RT)
+        assert c == 200 and "sha256:" + hashlib.sha256(b).hexdigest() == f["content_hash"], ("파일 바이트가 manifest 해시와 다르다", f["path"], c)
+    c, b = _ds_call("POST", "/v1/datasets", RT, body, TAR); assert c == 403, ("읽기 토큰으로 게시가 거부되지 않았다", c, b[:200])
+    # 불변: 같은 (id, 버전)에 내용만 다른 매니페스트(created_at 만 다름, 새 content_hash)는 409. 저장된 것이 바뀌지 않았는지 다시 읽어 확인한다
+    m2 = dict(m); m2["created_at"] = "2026-10-16T00:00:00Z" if m["created_at"] != "2026-10-16T00:00:00Z" else "2026-10-17T00:00:00Z"
+    m2["content_hash"] = canonical.content_hash(m2); validate("DatasetManifest", m2)
+    c, b = _ds_call("POST", "/v1/datasets", WT, _ds_tar(m2, root), TAR); assert c == 409, ("같은 버전에 다른 내용은 409 여야 한다", c, b[:200])
+    c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions/{q(ds['version'])}", RT); assert c == 200 and json.loads(b)["content_hash"] == m["content_hash"], "409 뒤에 저장된 버전이 바뀌었다"
+    # 토큰 없음·모르는 토큰: 서버는 PERMISSION_DENIED 403 으로 답한다(synthetic-data 서버의 STATUS 표, 스모크도 403). 401 이 아니다
+    c, _ = _ds_call("GET", "/v1/datasets"); assert c == 403, ("토큰 없는 읽기", c)
+    c, _ = _ds_call("POST", "/v1/datasets", None, body, TAR); assert c == 403, ("토큰 없는 게시", c)
+    c, _ = _ds_call("GET", "/v1/datasets", "x" * 48); assert c == 403, ("모르는 토큰", c)
+    rec("7d", "REAL", f"dataset-store 서버(실제 이미지)에 단계 2 의 데이터셋 {ds['id']}@{ds['version']} 를 쓰기 토큰(synthetic-data)으로 게시({'새로 만듦 201' if c1 == 201 else '이미 있음 200'}) -> 같은 게시는 멱등 200 -> 읽기 토큰(model-lab)으로 목록·버전·매니페스트(스키마 통과)·파일 {len(m['files'])}개 바이트(manifest 해시 일치) -> 읽기 토큰의 게시는 403 -> 같은 버전에 다른 내용은 409 이고 저장본 불변 -> 토큰 없음·모르는 토큰은 403(서버 계약이 401 이 아니다). 못 보는 것: 소비자 model-lab 의 실제 읽기 코드(그 영역), 큰 본문·동시 게시 한도, synthetic-data 잡의 HTTP 게시(잡 설정 store.kind 가 file/memory 뿐)")
+
 def step8():
     title(8, "롤백 요청이 활성 릴리스를 되돌린다 (ops-feedback -> release-gate, I5 HTTP)")
     gate_s = HttpGateService(URL("gate"), TOK("gate-write-ops-feedback")); gate_r = HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service"))
@@ -1570,7 +1619,7 @@ def step5p():
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []
