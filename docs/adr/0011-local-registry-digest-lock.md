@@ -31,3 +31,7 @@
 ## 되돌리는 조건
 
 영역 CI가 외부에서 빌드하게 되거나 서버가 둘 이상이 되면 외부 레지스트리를 쓴다. 잠금 파일 방식은 그대로 쓴다.
+
+## 후속: 레지스트리 호출 timeout (2026-10-28, FAULT_POLICY 4)
+
+`publish-images.sh`와 `publish-image.sh`는 레지스트리 호출에 상한을 둔다: push 전 `/v2/` 확인(연결 3초, 전체 5초), digest 확인 HEAD(전체 15초), `docker push` 전체 900초. 이유: 레지스트리를 pause하면 연결은 되고 응답이 없어(E2E 5g) 상한이 없던 게시가 바깥 timeout까지 매달렸다. push 전 확인이 5초에 스스로 실패하게 한다(pause 중 curl이 5초에 종료 코드 28로 끊기는 것은 이 PC에서 확인). 값은 모두 측정하지 않은 판단이며 환경 변수 `PUBLISH_CONNECT_TIMEOUT`, `PUBLISH_PROBE_TIMEOUT`, `PUBLISH_HEAD_TIMEOUT`, `PUBLISH_PUSH_TIMEOUT`으로 바꾼다. `docker push`는 연결 timeout 옵션이 없어 전체 상한만 둔다(이미지 크기별 소요는 측정 안 함).

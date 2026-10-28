@@ -55,13 +55,20 @@ done
 REV=$(label io.openit.revision); case "$REV" in unknown|"") echo "거부: io.openit.revision 이 unknown 이다" >&2; exit 3;; esac
 TAGREV=$(echo "$REV" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-100)
 
+# 레지스트리 호출 상한(FAULT_POLICY 4: 의존 호출에 연결·읽기 timeout, 무한 대기 금지). 값은 측정한 것이 아니라 판단이다(측정 안 함), 환경 변수로 바꾼다.
+#  PUBLISH_CONNECT_TIMEOUT(3s): 같은 호스트의 로컬 레지스트리라 연결은 즉시여야 한다. 3초에 안 되면 장애로 본다.
+#  PUBLISH_PROBE_TIMEOUT(5s): push 전에 /v2/ 응답을 확인하는 전체 상한. 레지스트리가 멈춰 있으면(pause: 연결은 되고 응답이 없다) docker push 가 끝없이 기다리므로 먼저 걸러 종료 코드 1/4 로 스스로 실패한다.
+#  PUBLISH_HEAD_TIMEOUT(15s): digest 확인용 HEAD 요청 전체 상한.
+#  PUBLISH_PUSH_TIMEOUT(900s): docker push 전체 상한. 이미지 크기·디스크 속도는 측정하지 않았다(작은 이미지는 수 초, 13GB GPU 이미지는 더 걸릴 수 있어 넉넉히 잡은 시작값). 초과하면 124 로 실패한다.
+CT=${PUBLISH_CONNECT_TIMEOUT:-3}; PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; HEAD_T=${PUBLISH_HEAD_TIMEOUT:-15}; PUSH_T=${PUBLISH_PUSH_TIMEOUT:-900}
 # push 와 digest 확인(레지스트리가 아는 digest와 push 출력이 같아야 한다)
 REF="$REG/openit/$SVC:build-$TAGREV"
 "$DOCKER" tag "$IMG" "$REF"
-out=$("$DOCKER" push "$REF" 2>&1) || { echo "$out" | tail -3 >&2; echo "거부: push 실패: $REF" >&2; exit 4; }
+curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "http://$REG/v2/" 2>/dev/null || { echo "거부: 레지스트리가 응답하지 않는다(${PROBE_T}초): $REG" >&2; exit 4; }
+out=$(timeout "$PUSH_T" "$DOCKER" push "$REF" 2>&1) || { echo "$out" | tail -3 >&2; echo "거부: push 실패: $REF" >&2; exit 4; }
 DIGEST=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
 [ -n "$DIGEST" ] || { echo "$out" | tail -3 >&2; echo "거부: digest 를 읽지 못했다" >&2; exit 4; }
-reg=$(curl -fsSI -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+reg=$(curl -fsSI --connect-timeout "$CT" --max-time "$HEAD_T" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
       "http://$REG/v2/openit/$SVC/manifests/build-$TAGREV" 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p') || reg=""
 [ "$reg" = "$DIGEST" ] || { echo "거부: 레지스트리 digest('$reg')와 push 출력('$DIGEST')이 다르다" >&2; exit 4; }
 

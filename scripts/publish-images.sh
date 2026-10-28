@@ -6,6 +6,12 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; mkdir -p "$(dirname "$LOCK")/history"
 source "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"   # DEPLOY_REGISTRY
+# 레지스트리 호출 상한(FAULT_POLICY 4: 의존 호출에 연결·읽기 timeout, 무한 대기 금지). 값은 측정한 것이 아니라 판단이다(측정 안 함), 환경 변수로 바꾼다.
+#  PUBLISH_CONNECT_TIMEOUT(3s): 같은 호스트의 로컬 레지스트리라 연결은 즉시여야 한다. 3초에 안 되면 장애로 본다.
+#  PUBLISH_PROBE_TIMEOUT(5s): push 전에 /v2/ 응답을 확인하는 전체 상한. 레지스트리가 멈춰 있으면(pause: 연결은 되고 응답이 없다) docker push 가 끝없이 기다리므로 먼저 걸러 종료 코드 1/4 로 스스로 실패한다.
+#  PUBLISH_HEAD_TIMEOUT(15s): digest 확인용 HEAD 요청 전체 상한.
+#  PUBLISH_PUSH_TIMEOUT(900s): docker push 전체 상한. 이미지 크기·디스크 속도는 측정하지 않았다(작은 이미지는 수 초, 13GB GPU 이미지는 더 걸릴 수 있어 넉넉히 잡은 시작값). 초과하면 124 로 실패한다.
+CT=${PUBLISH_CONNECT_TIMEOUT:-3}; PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; HEAD_T=${PUBLISH_HEAD_TIMEOUT:-15}; PUSH_T=${PUBLISH_PUSH_TIMEOUT:-900}
 only=" $* "
 tmp=$(mktemp); cp "$LOCK" "$tmp"
 while read -r area img commit _; do   # 4번째 열(bc=..,te=..,mr=.. 빌드 태그 기록, 속도 개선의 --reuse-build 용)은 무시한다
@@ -17,11 +23,12 @@ while read -r area img commit _; do   # 4번째 열(bc=..,te=..,mr=.. 빌드 태
   var=$(echo "$area" | tr 'a-z-' 'A-Z_')
   ref="$DEPLOY_REGISTRY/openit/$area:build-$commit"
   "$DOCKER" tag "$img" "$ref"
-  out=$("$DOCKER" push "$ref" 2>&1) || { echo "$out"; die "push 실패: $ref"; }
+  curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "http://${DEPLOY_REGISTRY}/v2/" || die "레지스트리가 응답하지 않는다(${PROBE_T}초): ${DEPLOY_REGISTRY}"
+  out=$(timeout "$PUSH_T" "$DOCKER" push "$ref" 2>&1) || { echo "$out"; die "push 실패: $ref"; }
   digest=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
   [ -n "$digest" ] || { echo "$out"; die "digest를 읽지 못했다: $ref"; }
   # 레지스트리가 같은 digest를 아는지 확인한다.
-  reg=$(curl -fsSI -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+  reg=$(curl -fsSI --connect-timeout "$CT" --max-time "$HEAD_T" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
         "http://${DEPLOY_REGISTRY}/v2/openit/$area/manifests/build-$commit" | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p')
   [ "$reg" = "$digest" ] || die "레지스트리 digest($reg)와 push 출력($digest)이 다르다"
   sed -i "/^${var}_DIGEST=/d; /^${var}_REVISION=/d" "$tmp"
