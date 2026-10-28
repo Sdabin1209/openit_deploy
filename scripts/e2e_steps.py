@@ -4,7 +4,7 @@
 
 상태: REAL(실제 서비스·잡) / TEST-SUB(시험 대역으로 대신함) / BLOCKED(지금 구현으로는 이어지지 않음) / FAIL(검증 실패)
 """
-import argparse, hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.request, urllib.error, urllib.parse
+import argparse, collections.abc, hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.request, urllib.error, urllib.parse
 
 import boundary_contracts as bc
 from boundary_contracts import canonical
@@ -20,13 +20,13 @@ import e2e_asserts as EA
 STEP_REGISTRY = {}
 def metric_registry():
     """계약의 지표 레지스트리(metrics.json)의 지표 목록. 설치된 계약 패키지에 metrics() 가 있으면 그것을, 없으면 이 워크스페이스의 boundary-contracts 파일을 읽는다(읽기 전용). 없거나 모양이 다르면 실패한다."""
-    if hasattr(bc, "metrics"): ms = bc.metrics(); src = "boundary_contracts.metrics()"
+    if hasattr(bc, "metrics"): ms = list(bc.metrics().values()); src = "boundary_contracts.metrics()"   # 왜: 계약의 metrics() 는 {지표 이름: 읽기 전용 항목} 이다(metrics_registry.py)
     else:
         f = pathlib.Path(__file__).resolve().parents[2] / "boundary-contracts" / "boundary_contracts" / "metrics.json"; src = str(f)
         if not f.is_file(): raise SystemExit(f"지표 레지스트리 {f} 가 없다")
         ms = json.loads(f.read_text(encoding="utf-8")).get("metrics")
     need = {"name", "group", "higher_is_better", "status", "applies_to"}
-    if not isinstance(ms, list) or not ms or any(not isinstance(m, dict) or not need <= set(m) for m in ms):
+    if not isinstance(ms, list) or not ms or any(not isinstance(m, collections.abc.Mapping) or not need <= set(m) for m in ms):
         raise SystemExit(f"{src}: metrics[] 의 각 항목에 {sorted(need)} 가 있어야 한다")
     return ms
 
