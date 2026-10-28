@@ -25,50 +25,37 @@ class Decl:
     deps: object          # tuple 또는 UNKNOWN
     why: str
     solo: bool = False
+    also: tuple = ()      # ((영역, 이유), ...) repos 에 없어도 이 단계가 경계를 보는 영역
 
 
-_GW = ("deploy:config,compose.yaml,compose.test.yaml,test",)   # 게이트웨이(Caddyfile·계정)를 거치는 단계는 deploy 의 설정도 입력이다
-_P4 = "step4 가 STATE['pointers']/['releases'] 를 쓰고 이 단계가 '\"pointers\" not in STATE' 로 BLOCKED 처리한다(e2e_steps.py 의 같은 이름 함수 앞부분)"
+_GW_SEC = ("deploy:config,compose.yaml,compose.test.yaml,test",)   # e2e_steps.py 의 _GW 와 같은 구간 입력(구간 선언 전용)
 
-# 키는 e2e_steps.py 의 STEPS 이름과 같다(자체 시험이 누락을 검출한다).
-STEP_DECLS = {
-    "1": Decl(("question-authoring", "survey-service", "boundary-contracts"), (), "step1 은 STATE 를 읽지 않고 qa 에 HTTP 로 올린다(STATE['qs'],['qsu'] 를 씀). 실행 중 스택의 question-authoring 은 필요하다"),
-    "2": Decl(("synthetic-data", "survey-service"), ("1",), "step2 는 run_import 로 STATE['qs'](step1 이 씀)를 읽는다(imp_config)"),
-    "3": Decl(("model-lab", "model-runtime", "survey-service", "boundary-contracts"), ("1", "2"), "step3 는 make_packages 에서 STATE['dataset'](step2)·['qs'](step1)를 읽는다"),
-    "4": Decl(("release-gate", "question-authoring", "survey-service", "model-lab", "boundary-contracts") + _GW, ("1", "3"), "step4 는 STATE['lora'](step3)·['qs'],['qsu'](step1)를 읽고 'lora' 가 없으면 BLOCKED 한다(e2e_steps.py step4 앞부분)"),
-    "5": Decl(("survey-service", "model-runtime", "turn-engine", "kiosk-frontend") + _GW, ("3", "4"), "step5 는 STATE['pointers'],['releases'](step4)·['system_prompt'](step3)를 읽는다. " + _P4),
-    "5s": Decl(("survey-service", "model-runtime") + _GW, ("4", "5"), "step5s 는 STATE['containers_before_swap'],['releases'](step4)를 읽는다(e2e_steps.py step5s 앞부분)"),
-    "5f": Decl(("survey-service", "ops-feedback", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽는다. " + _P4),
-    "5c": Decl(("survey-service", "model-runtime") + _GW, ("4",), "STATE['pointers'],['releases'] 를 읽는다. " + _P4),
-    "5a": Decl(("question-authoring", "admin-console") + _GW, UNKNOWN, "step5a 는 STATE 를 읽지 않는다. 그러나 앞 단계가 만든 저자 계정·문항 상태에 의존하는지는 코드를 읽어 확정하지 못했다"),
-    "5d": Decl(("survey-service", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽는다. " + _P4),
-    "5q": Decl(("survey-service", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽고 survey-service 를 stop/start 한다(끝에 되돌린다). " + _P4),
-    "5w": Decl(("survey-service", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽고 survey-service 를 pause/unpause 한다. " + _P4),
-    "5u": Decl(("release-gate", "survey-service") + _GW, UNKNOWN, "step5u 는 STATE 를 읽지 않는다. 활성 릴리스가 있어야 하는지는 코드를 읽어 확정하지 못했다"),
-    "5m": Decl(("survey-service", "model-runtime", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽고 model-serving 을 pause 한다. " + _P4),
-    "5r": Decl(("survey-service", "kiosk-frontend") + _GW, ("4",), "STATE['pointers'] 를 읽는다. " + _P4),
-    "5n": Decl(("survey-service", "model-runtime", "kiosk-frontend", "boundary-contracts") + _GW, ("4",), "STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 빌드 사본의 survey-service risk_rules.py 에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4),
-    "6": Decl(("ops-feedback", "survey-service", "boundary-contracts"), ("1", "4"), "step6 은 STATE['qs'](step1)·['releases'](step4)를 읽는다"),
-    "7": Decl(("synthetic-data", "ops-feedback", "question-authoring", "boundary-contracts") + _GW, ("1", "2", "6"), "step7 은 STATE['cases'],['extract_input'](step6)·['dataset'](step2)·['qs'](step1)를 읽는다"),
-    "7d": Decl(("synthetic-data", "boundary-contracts", "deploy:compose.yaml,compose.test.yaml,scripts/gen-secrets.sh"), ("2",), "step7d 는 STATE['dataset'](step2)와 step2 가 WORK/datasets 에 쓴 manifest.json·files/ 를 읽어 dataset-store 에 게시한다(e2e_steps.py step7d). 실행 중 스택의 dataset-store 가 필요하다"),
-    "8": Decl(("release-gate", "survey-service", "kiosk-frontend", "boundary-contracts"), ("1", "4", "6"), "step8 은 STATE['cases'](step6)·['pointers'],['releases'](step4)·['qs'](step1)를 읽는다"),
-    "5p": Decl(("survey-service", "question-authoring", "release-gate", "ops-feedback") + _GW, ("4", "5"), "STATE['pointers'] 가 없으면 활성 릴리스 없이 일부만 시험한다(has_release). postgres 를 stop/start 한다"),
-    "5pn": Decl(("survey-service", "question-authoring", "release-gate", "ops-feedback") + _GW, ("4",), "STATE['pointers'] 가 없으면 survey-service(A5)를 제외한다(has_release 와 같은 제한). postgres 를 서비스 DB 네트워크에서 disconnect/connect 하고 D1 잡을 한 번 돌린다"),
-    "5pj": Decl(("ops-feedback", "deploy:config,compose.yaml,scripts"), (), "STATE 를 읽지 않는다. 스택의 postgres 를 stop/start·pause/unpause 하고 job-ops-feedback 을 run-once 로 돌린다(OPS_JOB_CONFIG)"),
-    "5g": Decl(("deploy:scripts,compose.registry.yaml,locks",), (), "STATE 를 읽지 않는다. e2e.sh 가 띄운 임시 레지스트리(REGISTRY_PROJECT)를 stop/start·pause/unpause 하고 publish-images.sh kiosk-frontend 를 부른다"),
-    "5b": Decl(("deploy:scripts,config,compose.yaml",), (), "STATE 를 읽지 않는다. 임시 BACKUP_DIR 에 pg-backup.sh 를 돌리고 도중에 postgres 를 stop 한다"),
-    "demo4": Decl(("release-gate", "model-lab"), UNKNOWN, "demo.sh 전용. E2E 기본 실행에 들어가지 않는다"),
-    "demo_activate": Decl(("release-gate",), UNKNOWN, "demo.sh 전용"),
-    "demo_active": Decl(("release-gate",), UNKNOWN, "demo.sh 전용"),
-    "demo_swap": Decl(("release-gate",), UNKNOWN, "demo.sh 전용"),
-    "diag": Decl(("release-gate",), UNKNOWN, "demo.sh 전용 진단"),
-}
+
+def decls_from_source(path=None):
+    """e2e_steps.py 의 @step(...) 데코레이터에서 단계 선언을 읽는다(import 하면 argparse 가 돈다). 선언은 단계 코드 옆 한 곳에만 있다.
+    인자는 리터럴과 모듈 최상위 상수(_GW, _P4)의 + 조합만 허용한다. deps=None 은 미확인이다. 순서는 STEPS 목록 순서다."""
+    path = path or HERE / "e2e_steps.py"
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    consts = {}
+    for n in tree.body:
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and n.targets[0].id.startswith("_") and n.targets[0].id.isupper():
+            consts[n.targets[0].id] = eval(compile(ast.Expression(n.value), str(path), "eval"), {}, dict(consts))
+    found = {}
+    for n in tree.body:
+        if not isinstance(n, ast.FunctionDef): continue
+        for dec in n.decorator_list:
+            if isinstance(dec, ast.Call) and getattr(dec.func, "id", "") == "step":
+                ev = lambda node: eval(compile(ast.Expression(node), str(path), "eval"), {}, dict(consts))
+                name = ev(dec.args[0]); kw = {k.arg: ev(k.value) for k in dec.keywords}
+                deps = kw["deps"]
+                found[name] = Decl(tuple(kw["repos"]), UNKNOWN if deps is None else tuple(deps), kw["why"], bool(kw.get("solo", False)), tuple((kw.get("also") or {}).items()))
+    return {name: found[name] for name in steps_in_source(path) if name in found} | {k: v for k, v in found.items() if k not in steps_in_source(path)}
 
 # e2e.sh 의 구간. 구간 안의 항목 단위 선행 관계는 e2e.sh 의 chk_dep 호출이 갖는다(여기는 구간 단위 선언).
 SECTION_DECLS = {
     "prep": Decl(("deploy:scripts,compose.yaml,locks", "survey-service", "question-authoring", "ops-feedback", "release-gate", "model-lab", "model-runtime", "kiosk-frontend", "admin-console"), (), "이미지 빌드·레지스트리·잠금. 실패하면 e2e.sh 가 중단한다(abort_if_failed)"),
-    "s9-front": Decl(_GW, ("prep",), "compose up 과 도달·차단·라벨 점검은 준비의 digest 이미지에 의존한다"),
-    "s1-8": Decl(_GW, ("s9-front",), "e2e_steps.py 는 s9-front 가 띄운 스택에서 돈다. 단계별 선언은 STEP_DECLS"),
+    "s9-front": Decl(_GW_SEC, ("prep",), "compose up 과 도달·차단·라벨 점검은 준비의 digest 이미지에 의존한다"),
+    "s1-8": Decl(_GW_SEC, ("s9-front",), "e2e_steps.py 는 s9-front 가 띄운 스택에서 돈다. 단계별 선언은 e2e_steps.py 의 @step"),
     "s9-sched": Decl(("deploy:config,scripts",), ("s9-front",), "run-job 은 스택과 steps.log(단계 4 출력)를 쓴다"),
     "s9-backup": Decl(("deploy:scripts,config",), ("s1-8",), "백업 대상은 단계 1~8 이 쓴 데이터다. 서비스를 멈추고 볼륨을 지운다"),
     "s9-rollback": Decl(("survey-service", "deploy:scripts,locks"), ("s9-backup",), "복구한 스택에서 새 빌드를 올린다"),
@@ -111,6 +98,52 @@ def steps_in_source(path=HERE / "e2e_steps.py"):
         if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "STEPS" for t in node.targets):
             return [e.elts[0].value for e in node.value.elts]
     raise SystemExit("e2e_steps.py 에서 STEPS 를 찾지 못했다")
+
+
+def state_access(path=None):
+    """단계별 (읽는 STATE 키, 쓰는 STATE 키). 단계 함수가 (최상위 함수 호출로) 닿는 범위를 ast 로 분석한다.
+    읽기: STATE['k'] (Load), STATE.get('k'), 'k' in STATE.  쓰기: STATE['k'] = ... (Store).  키가 리터럴이 아니면 SystemExit(분석할 수 없는 접근은 숨기지 않는다)."""
+    path = path or HERE / "e2e_steps.py"
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    def direct(fn):
+        r, w = set(), set()
+        def key(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str): return node.value
+            raise SystemExit(f"{fn.name}: STATE 키가 리터럴이 아니다(줄 {node.lineno}). 분석할 수 없다")
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "STATE":
+                (w if isinstance(n.ctx, ast.Store) else r).add(key(n.slice))
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id == "STATE":
+                if n.func.attr == "get": r.add(key(n.args[0]))
+                elif n.func.attr == "setdefault": w.add(key(n.args[0]))   # 없을 때만 쓰는 쓰기로 본다(읽기로 세면 자기 쓰기와 구분이 안 된다)
+                else: raise SystemExit(f"{fn.name}: STATE.{n.func.attr}() 는 분석하지 못한다(줄 {n.lineno})")
+            elif isinstance(n, ast.Compare) and isinstance(n.comparators[0], ast.Name) and n.comparators[0].id == "STATE" and isinstance(n.ops[0], (ast.In, ast.NotIn)):
+                r.add(key(n.left))
+        return r, w
+    out = {}
+    for name, fname in STEPS_FN(path):
+        seen, todo, r, w = set(), [fname], set(), set()
+        while todo:
+            f = todo.pop()
+            if f in seen or f not in funcs: continue
+            seen.add(f); dr, dw = direct(funcs[f]); r |= dr; w |= dw
+            todo += [n.id for n in ast.walk(funcs[f]) if isinstance(n, ast.Name) and n.id in funcs]
+        out[name] = (r, w)
+    return out
+
+
+def computed_deps(path=None):
+    """단계가 읽는 상태 키(자기가 쓴 것 제외)를 앞선 다른 단계가 쓰면 그 단계가 deps 여야 한다. {단계: 단계 집합}."""
+    acc = state_access(path); order = list(acc)
+    res = {}
+    for i, n in enumerate(order):
+        need = acc[n][0] - acc[n][1]
+        res[n] = {m for m in order[:i] if acc[m][1] & need}
+    return res
+
+
+STEP_DECLS = decls_from_source()
 
 
 # ---------------------------------------------------------------- SKIP 전파

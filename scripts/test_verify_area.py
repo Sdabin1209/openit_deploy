@@ -34,8 +34,7 @@ class T(unittest.TestCase):
             self.assertIn(need, steps)
 
     def test_step1_only_area_does_not_pull_release_base(self):
-        cfg = copy.deepcopy(self.cfg); cfg["areas"]["synthetic-data"]["e2e"] = {"2": {"why": "x"}}
-        self.assertEqual(v.e2e_steps(cfg, "synthetic-data"), ["2"])
+        self.assertEqual(v.closure(self.cfg, {"2"}), {"1", "2"})   # 2 는 1 의 qs 를 읽는다. 4(릴리스 묶음)는 끌어오지 않는다
 
     def test_deploy_is_fast_and_none_is_none(self):
         self.assertEqual(v.e2e_steps(self.cfg, "deploy"), "fast")
@@ -43,7 +42,7 @@ class T(unittest.TestCase):
         self.assertIsNone(v.e2e_steps(cfg, "model-lab"))
 
     def _bad(self, mutate, expect):
-        cfg = copy.deepcopy(self.cfg); mutate(cfg)
+        cfg = {k: copy.deepcopy(x) for k, x in self.cfg.items() if not k.startswith("_")}; mutate(cfg)
         import yaml
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "c.yaml"; p.write_text(yaml.safe_dump(cfg))
@@ -53,19 +52,14 @@ class T(unittest.TestCase):
 
     def test_config_rejects_missing_reason_unknown_step_missing_why_missing_area(self):
         self._bad(lambda c: c["areas"]["model-lab"].update(e2e={"none": True}), "reason")
-        self._bad(lambda c: c["areas"]["model-lab"].update(e2e={"99": {"why": "x"}}), "없는 단계 99")
-        self._bad(lambda c: c["areas"]["model-lab"].update(e2e={"3": {}}), "why")
+        self._bad(lambda c: c["areas"]["model-lab"].update(e2e={"3": {"why": "x"}}), "e2e 는 auto")   # 단계 표는 yaml 에 쓰지 않는다(@step 이 유일한 자리)
         self._bad(lambda c: c["areas"].pop("deploy"), "deploy")
-        self._bad(lambda c: c.update(e2e_base=["1", "zz"]), "zz")
 
     def test_every_e2e_step_is_mapped_to_some_area(self):
         """점검 M5: e2e_steps.py 의 STEPS 에 있는 단계(demo·diag 제외)는 최소 한 영역의 e2e 에 대응해야 한다. 아니면 그 단계를 바꿔도 verify-area 가 돌리지 않는다."""
-        import re
-        steps = re.findall(r'\("([0-9a-z]+)", step', (HERE / "e2e_steps.py").read_text(encoding="utf-8").split("STEPS = [")[1].split("]")[0])
-        cfg = v.load_config(); mapped = set()
-        for a, av in cfg["areas"].items():
-            e = av.get("e2e")
-            if isinstance(e, dict) and "why" not in e: mapped |= set(e)
+        cfg = v.load_config(); steps = list(cfg["_decls"]); mapped = set()
+        for a in v.AREAS:
+            if cfg["areas"][a]["e2e"] == "auto": mapped |= v.area_steps(cfg, a)
         missing = [x for x in steps if x not in mapped and not x.startswith("demo") and x != "diag"]
         self.assertEqual(missing, [], f"어느 영역에도 대응되지 않은 E2E 단계: {missing}")
 
@@ -98,7 +92,7 @@ class T(unittest.TestCase):
         plan, _ = v.assemble(self.cfg, "kiosk-frontend", WS, changed=["app/x.ts"], stale=("kiosk-frontend",))
         self.assertEqual(plan[0][1], ["npm", "test", "--silent"]); self.assertEqual(plan[0][2], WS / "kiosk-frontend")
         self.assertEqual(plan[2][1][-1], "kiosk-frontend"); self.assertIn("build-images.sh", plan[2][1][1])
-        self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5f,5g"])
+        self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5,5f,5d,5q,5w,5m,5r,5n,6,8,5g"])   # repos 에 kiosk-frontend 가 있는 단계(+deps 닫힘)
         plan, _ = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])
         self.assertIn("--fast", plan[-1][1]); self.assertEqual(plan[0][2], v.DEPLOY_ROOT)
         plan, notes = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])

@@ -1,12 +1,10 @@
 # 영역 하나가 바뀌었을 때 전체 E2E(약 8분) 없이 확인할 범위의 대응표 (scripts/verify-area.sh 가 읽는다).
 #
 # 구조
-#   e2e_base : 활성 릴리스를 만드는 선행 단계. 단계 5 계열(5, 5s, 5c, 5q, ...)과 6 이후를 --only 로 돌릴 때 같이 돌아야 한다.
-#              근거: scripts/e2e_steps.py 의 단계 사이 상태(STATE)와 docs/E2E.md 의 예(--only 1,2,3,4,5q). 4 는 1(문항)·3(LoRA)의 결과를 읽는다.
-#   step_requires : 단계가 읽는 이전 단계의 결과(STATE 키). 7 은 2(dataset)와 6(cases), 8 은 6(cases)을 읽는다. 시험이 e2e_steps.py 와 대조한다.
+#   (단계 사실 -- 선행 단계, 단계 ↔ 영역 -- 은 여기에 없다. scripts/e2e_steps.py 의 @step(repos, deps, also)가 유일한 자리이고 verify_area.py 가 읽는다.)
 #   areas.<영역>
 #     tests    : 영역 자체 시험. pytest(영역 .venv) 또는 npm(영역 node_modules) 또는 deploy 의 스크립트 목록(commands).
-#     e2e      : 이 영역이 바뀌면 돌릴 E2E 단계 목록. 단계마다 어느 호출 경계를 보는지를 why 에 쓴다(필수).
+#     e2e: auto : 이 영역이 바뀌면 돌릴 E2E 단계를 @step 에서 계산한다(repos 에 영역이 있거나 also 에 적힌 단계).
 #     e2e: none + reason : 영역 내부만 바뀌어도 E2E 가 보는 경계가 없다는 표시. 이유 필수.
 #     e2e: fast : 영역이 구조 전체(compose, gateway, 스크립트)라 단계 일부로 줄일 수 없다. e2e.sh --fast(전체 합격 아님) 를 돌린다.
 #     image    : 이 영역이 만드는 이미지 이름들(build-images.sh 의 이름). 낡은 이미지만 다시 빌드하는 데 쓴다(소스 커밋이 라벨과 같으면 재사용).
@@ -15,14 +13,7 @@
 # 이 표는 정적 추정이다: 바뀐 코드가 표가 가리키지 않은 경계를 건드릴 수 있다. 의심이 가면 --full 로 전체 E2E 명령을 안내받는다.
 # 완료 선언의 기준은 여전히 전체 E2E(옵션 없음)이다. verify-area 는 개발 중 되먹임을 빠르게 하는 도구다.
 
-e2e_base: ["1", "2", "3", "4"]
 
-step_requires:
-  "4": ["1", "3"]
-  "5s": ["4"]
-  "7": ["2", "6"]
-  "7d": ["2"]
-  "8": ["6"]
 
 default_skip_e2e_paths: ["docs/**", "tests/**", "test/**", "examples/**", "*.md", "CHANGELOG*", "CLAUDE.md"]
 
@@ -30,94 +21,42 @@ areas:
   survey-service:
     image: [survey-service]
     tests: {kind: pytest}
-    e2e:
-      "5":  {why: "게이트웨이 경유 공개 API로 세션 시작과 턴(I4 번들 읽기, I9 model-serving 호출, I6 Trace 전송)"}
-      "5s": {why: "활성 포인터가 1에서 2로 바뀔 때 survey-service가 새 릴리스를 적재(I4 포인터 감시)"}
-      "5c": {why: "survey-service가 model-serving의 CORRECT 출력을 검증·저장(I9)"}
-      "5q": {why: "survey-service 중지 때 gateway의 503 응답과 재시작 뒤 turn_id 멱등(gateway→survey 경계)"}
-      "5w": {why: "survey-service 무응답 때 gateway 504와 마감 시간 체인(키오스크 10s > gateway 9.5s > 서버 6s)"}
-      "5m": {why: "model-serving 무응답 때 survey-service의 턴 마감과 실패 분류(survey→model-serving, I9)"}
-      "5r": {why: "외부 위험 신호 접수와 직원 조회(survey 직원 API, 위험 정지)"}
-      "5d": {why: "기기별 키오스크 토큰 표(SURVEY_KIOSK_DEVICE_TOKENS)로 세션 소유 기기만 접근, 공유 토큰 경고 없음(gateway 가 기기 토큰을 그대로 전달)"}
-      "5n": {why: "직원 호출 재알림·실패 기록·pause_reason(계약 v2.1.0 G·H절, 기기 토큰 소유 검사)"}
-      "6":  {why: "survey-service가 만든 Trace를 ops-feedback이 받는 계약(I6)"}
-      "5p": {why: "PostgreSQL 중지·재시작 때 /readyz와 복구, DB 쓰기 경계(survey→postgres)"}
-      "5pn": {why: "survey-service 의 DB 네트워크 분리(F8) 때 /readyz 2초 안 503 과 자동 복구(survey→postgres, FAULT_POLICY 11)"}
-      "5b": {why: "survey DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   release-gate:
     image: [release-gate]
     tests: {kind: pytest}
-    e2e:
-      "4":  {why: "수집기가 I1 문항과 I3 모델 패키지를 읽어 판정하고 승인 뒤 릴리스·번들 생성(I4)"}
-      "5":  {why: "활성화된 릴리스 번들을 survey-service와 model-serving이 읽는다(I4)"}
-      "5s": {why: "포인터 교체(활성화) 경계"}
-      "5u": {why: "release-gate 중지·무응답 때 gateway의 사람 경로 상한(승인 조회)"}
-      "8":  {why: "롤백 요청(I5)이 활성 포인터를 되돌린다"}
-      "5p": {why: "release-gate의 DB 중지·복구"}
-      "5pn": {why: "release-gate 의 DB 네트워크 분리(F8) 때 /readyz 503 과 자동 복구"}
-      "5b": {why: "gate DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   ops-feedback:
     image: [ops-feedback]
     tests: {kind: pytest}
-    e2e:
-      "6":  {why: "Trace 수집·비식별·실패 사례 생성(I6→I7)"}
-      "7":  {why: "실패 사례가 데이터 생성·저작으로 돌아간다(I7 HTTP 읽기)"}
-      "8":  {why: "ops-feedback이 release-gate에 롤백 요청(I5)"}
-      "5u": {why: "ops-feedback-ingest 무응답 때 gateway의 검토 경로 상한"}
-      "5p": {why: "ops-feedback의 DB 중지·복구"}
-      "5pn": {why: "ops-feedback-ingest·job-ops-feedback 의 DB 네트워크 분리(F8) 때 /readyz 503, 잡 실패 노출, 자동 복구"}
-      "5pj": {why: "DB 중지·무응답 중 job-ops-feedback run-once 가 조용히 성공하지 않고 복구 뒤 멱등으로 재실행(D1 F1·F4)"}
-      "5b": {why: "ops_log·ops_failure DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고된다(G3 F1)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   question-authoring:
     image: [question-authoring]
     tests: {kind: pytest}
-    e2e:
-      "1":  {why: "문항 자료 등록·검수 승인·미리보기와 I1 읽기"}
-      "4":  {why: "release-gate가 I1을 HTTP로 읽어 판정에 쓴다"}
-      "7":  {why: "실패 사례(I7)가 저작으로 돌아가는 읽기"}
-      "5p": {why: "question-authoring의 DB 중지·복구"}
-      "5pn": {why: "question-authoring 의 DB 네트워크 분리(F8) 때 /readyz 503 과 자동 복구"}
-      "5b": {why: "qa DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)"}
-      "5a": {why: "gateway 경유 저자 경로: QA_GATEWAY_TOKENS·X-Openit-User 신뢰, 4-eyes(저자≠임상 검수자), 역할표(QA_USER_ROLES)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   model-runtime:
     image: [model-serving]
     tests: {kind: pytest}
     # model-serving 이미지는 HEAD가 아니라 lib.sh 의 DEPLOY_MR_TAG 시점 소스로 빌드된다(build-images.sh). 태그에 없는 변경은 E2E 이미지에 들어오지 않는다.
-    e2e:
-      "5":  {why: "survey-service가 model-serving(추론 서버)을 HTTP로 부른다(I9)"}
-      "5c": {why: "추론 출력(CORRECT)의 계약 모양"}
-      "5m": {why: "model-serving 무응답 때 survey-service의 반응"}
-      "5n": {why: "가짜 A의 reasks 설정으로 REASK 를 연속 유도해 survey-service 되묻기 한도(REASK_LIMIT) 정지를 검증(5n-reask)"}
-      "5s": {why: "새 어댑터 적재(model-serving의 LOADED 상태)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   model-lab:
     image: [model-registry]
     tests: {kind: pytest}
     # E2E 에서 model-lab의 학습·평가 코드는 돌지 않는다(GPU 없음, 단계 3은 시험 대역). 이미지 model-registry(서버)와 I3 게시·읽기만 실제다.
-    e2e:
-      "3":  {why: "모델 패키지 게시(I3 HTTP 클라이언트→model-registry 서버)"}
-      "4":  {why: "release-gate가 I3 패키지를 읽어 판정"}
-      "5s": {why: "게시된 어댑터가 model-serving에 적재"}
-      "7d": {why: "model-lab 이 읽는 I2(dataset-store) 읽기 토큰 경로와 쓰기 거부(model-lab 코드는 E2E 에서 돌지 않는다)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   kiosk-frontend:
     image: [kiosk-frontend]
     tests: {kind: npm}
-    e2e:
-      "5f": {why: "gateway 경유 정적 화면과 공개 API 호출 순서, 직원 경로 권한 분리"}
-      "5g": {why: "이 이미지(kiosk-frontend)를 올리는 로컬 레지스트리가 중지·무응답일 때 publish-images.sh 가 실패하고 잠금이 깨지지 않는다(G2 F1·F4)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   admin-console:
     image: [admin-console]
     # 왜 also: 계약 검증기(generated/)는 boundary-contracts 스키마에서 생성한다(admin-console ADR 0002, D101). 스키마가 바뀌었는데 생성물이 낡으면 npm test 만으로는 못 잡을 수 있어 --check 를 같이 돌린다
     tests: {kind: npm, also: [["node", "scripts/gen-schemas.mjs", "--check"]]}
-    e2e:
-      "5f": {why: "gateway 경유 정적 화면 제공과 접근 구분"}
-      "4":  {why: "승인 화면이 쓰는 release-gate API 계약(브라우저 렌더링은 E2E에서 볼 수 없다: 4x BLOCKED)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   synthetic-data:
     image: [dataset-store]   # I2 서버 이미지(D100). 잡(import·run)은 이미지가 아니라 호스트 실행이다
     tests: {kind: pytest}
-    e2e:
-      "2":  {why: "I1 문항을 읽어 I2 데이터셋을 게시하는 import 모드"}
-      "7":  {why: "실패 사례를 시드로 데이터셋을 만드는 실행(I7→I2)"}
-      "7d": {why: "dataset-store 서버(I2 HTTP)로 게시·읽기·권한 분리·멱등·불변(실제 이미지)"}
+    e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   deploy:
     image: []
     tests:

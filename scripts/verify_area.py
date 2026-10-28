@@ -14,6 +14,8 @@ except ImportError:  # --stale-images 는 yaml 없이도 돈다. 대응표를 �
     yaml = None
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import e2e_plan as PLAN
 DEPLOY_ROOT = HERE.parent
 CONFIG = DEPLOY_ROOT / "config" / "verify-areas.yaml"
 AREAS = ["survey-service", "release-gate", "ops-feedback", "question-authoring", "model-runtime",
@@ -29,19 +31,23 @@ class ConfigError(Exception):
 
 
 def step_order(steps_py=None):
-    """e2e_steps.py 의 STEPS 목록에서 단계 이름을 실행 순서대로 읽는다."""
-    src = Path(steps_py or HERE / "e2e_steps.py").read_text(encoding="utf-8")
-    m = re.search(r"^STEPS = \[(.*)\]\s*$", src, re.M)
-    if not m:
-        raise ConfigError("e2e_steps.py 에서 STEPS 목록을 찾지 못했다")
-    return re.findall(r'\("([^"]+)",\s*\w+\)', m.group(1))
+    """e2e_steps.py 의 STEPS 목록에서 단계 이름을 실행 순서대로 읽는다(e2e_plan 과 같은 읽기)."""
+    try:
+        return PLAN.steps_in_source(Path(steps_py or HERE / "e2e_steps.py"))
+    except SystemExit as e:
+        raise ConfigError(str(e))
 
 
-def load_config(path=CONFIG, order=None):
+def step_decls(steps_py=None):
+    return PLAN.decls_from_source(Path(steps_py or HERE / "e2e_steps.py"))
+
+
+def load_config(path=CONFIG, order=None, decls=None):
     if yaml is None:
         raise ConfigError("PyYAML 이 필요하다 (deploy/.venv 의 python 으로 실행하라: scripts/verify-area.sh 가 고른다)")
     cfg = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     order = order if order is not None else step_order()
+    decls = decls if decls is not None else step_decls()
     errs = []
     areas = cfg.get("areas") or {}
     for a in AREAS:
@@ -50,9 +56,6 @@ def load_config(path=CONFIG, order=None):
     for a in areas:
         if a not in AREAS:
             errs.append(f"모르는 영역 {a}")
-    for s in list(cfg.get("e2e_base", [])) + [k for k in cfg.get("step_requires", {})] + [x for v in cfg.get("step_requires", {}).values() for x in v]:
-        if s not in order:
-            errs.append(f"e2e_steps.py 에 없는 단계 {s} (e2e_base/step_requires)")
     for a, spec in areas.items():
         t = spec.get("tests") or {}
         if t.get("kind") not in ("pytest", "npm", "commands"):
@@ -62,17 +65,13 @@ def load_config(path=CONFIG, order=None):
         e = spec.get("e2e")
         if e == "fast":
             pass
+        elif e == "auto":
+            pass
         elif isinstance(e, dict) and e.get("none"):
             if not str(e.get("reason", "")).strip():
                 errs.append(f"{a}: E2E 필요 없음에는 reason 이 필수다")
-        elif isinstance(e, dict) and e:
-            for s, v in e.items():
-                if str(s) not in order:
-                    errs.append(f"{a}: e2e_steps.py 에 없는 단계 {s}")
-                if not (isinstance(v, dict) and str(v.get("why", "")).strip()):
-                    errs.append(f"{a}: 단계 {s} 의 why(어느 호출 경계를 보는지)가 없다")
         else:
-            errs.append(f"{a}: e2e 는 단계 표, {{none: true, reason: ...}}, fast 중 하나")
+            errs.append(f"{a}: e2e 는 auto, {{none: true, reason: ...}}, fast 중 하나")
         for img in spec.get("image", None) or []:
             if img not in IMAGE_SRC:
                 errs.append(f"{a}: 모르는 이미지 {img}")
@@ -80,7 +79,14 @@ def load_config(path=CONFIG, order=None):
             errs.append(f"{a}: image 목록이 없다(없으면 [])")
     if errs:
         raise ConfigError("; ".join(errs))
-    cfg["_order"] = order
+    for n, d in decls.items():
+        for ar, why in d.also:
+            if ar not in AREAS: errs.append(f"단계 {n}: also 의 모르는 영역 {ar}")
+            if not str(why).strip(): errs.append(f"단계 {n}: also {ar} 의 이유가 없다")
+    if errs:
+        raise ConfigError("; ".join(errs))
+    cfg["_order"] = order; cfg["_decls"] = decls
+    cfg["_requires"] = {n: list(d.deps) for n, d in decls.items()}
     return cfg
 
 
@@ -89,21 +95,29 @@ def e2e_steps(cfg, area):
     e = cfg["areas"][area]["e2e"]
     if e == "fast":
         return "fast"
-    if e.get("none"):
+    if isinstance(e, dict) and e.get("none"):
         return None
-    want = {str(s) for s in e}
-    base = set(cfg.get("e2e_base", []))
-    req = cfg.get("step_requires", {})
-    if want - base - {"1", "2", "3", "4"} :
-        want |= base   # 활성 릴리스가 필요한 단계(5 계열, 6 이후)는 선행 묶음을 같이 돌린다
-    changed = True
-    while changed:
-        changed = False
-        for s in list(want):
-            for r in req.get(s, []):
-                if r not in want:
-                    want.add(r); changed = True
-    return [s for s in cfg["_order"] if s in want]
+    return [s for s in cfg["_order"] if s in closure(cfg, area_steps(cfg, area))]
+
+
+def area_steps(cfg, area):
+    """영역에 대응한 단계(데모·진단 제외): repos 에 영역이 있거나 also 에 적힌 단계."""
+    return {n for n, d in cfg["_decls"].items() if not n.startswith("demo") and n != "diag"
+            and (any(r.partition(":")[0] == area for r in d.repos) or area in dict(d.also))}
+
+
+def step_why(cfg, area, step):
+    d = cfg["_decls"][step]
+    return dict(d.also).get(area) or d.why
+
+
+def closure(cfg, want):
+    """단계가 STATE 로 읽는 앞 단계(@step 의 deps)를 모두 더한다. deps 는 ast 분석과 같음이 시험으로 강제된다."""
+    want = set(want); todo = list(want)
+    while todo:
+        for r in cfg["_requires"].get(todo.pop(), []):
+            if r not in want: want.add(r); todo.append(r)
+    return want
 
 
 def skippable(files, globs):
@@ -161,7 +175,7 @@ def assemble(cfg, area, ws, *, changed=None, no_e2e_reason=None, tests_only=Fals
         plan.append(("E2E --fast (구조 전체: 전체 합격 아님)", base + ["--fast"], DEPLOY_ROOT, env))
     else:
         plan.append((f"E2E --only {','.join(steps)}", base + ["--only", ",".join(steps)], DEPLOY_ROOT, env))
-        notes.append("E2E 범위 근거: " + "; ".join(f"{s}={spec['e2e'][s]['why']}" for s in steps if s in spec["e2e"]))
+        notes.append("E2E 범위 근거: " + "; ".join(f"{s}={step_why(cfg, area, s)}" for s in steps if s in area_steps(cfg, area)))
     return plan, notes
 
 
@@ -243,9 +257,9 @@ def main(argv=None):
             st = e2e_steps(cfg, ar)
             e = cfg["areas"][ar]["e2e"]
             print(f"{ar}: " + ("전체 구조 -> e2e.sh --fast" if st == "fast" else f"E2E 필요 없음 ({e['reason']})" if st is None else "--only " + ",".join(st)))
-            if isinstance(e, dict) and not e.get("none"):
-                for s, v in e.items():
-                    print(f"    {s}: {v['why']}")
+            if e == "auto":
+                for s in sorted(area_steps(cfg, ar), key=cfg["_order"].index):
+                    print(f"    {s}: {step_why(cfg, ar, s)}")
         return 0
     if not a.area:
         ap.error("영역이 필요하다 (--list 로 목록)")

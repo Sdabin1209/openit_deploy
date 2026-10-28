@@ -13,6 +13,25 @@ from boundary_contracts.clients import (HttpFailureStore, HttpGateService, HttpM
 import survey_schema, jsonschema
 import e2e_asserts as EA
 
+
+# ---- 단계 선언의 유일한 자리(e2e_plan.py 와 verify_area.py 가 이 파일을 ast 로 읽는다. 다른 곳에 같은 선언을 쓰지 않는다)
+# repos: 결과가 의존하는 소스 리포('deploy:경로,...' 는 deploy 안의 그 경로만). deps: 앞 단계의 STATE 를 읽으면 그 단계(None 은 미확인). why: 근거.
+# deps 는 STATE[...] 읽기·쓰기를 ast 로 분석한 값과 같아야 한다(test_e2e_steps_decl.py).
+STEP_REGISTRY = {}
+def metric_registry():
+    """boundary_contracts/metrics.json 의 지표 목록 [{name, group, higher_is_better, roles}]. 파일이 없으면 폴백 없이 실패한다(지표 이름을 여기에 다시 적지 않는다)."""
+    f = pathlib.Path(bc.__file__).resolve().parent / "metrics.json"
+    if not f.is_file(): raise SystemExit(f"지표 레지스트리 {f} 가 없다: boundary-contracts 에 metrics.json 이 들어간 태그가 필요하다")
+    ms = json.loads(f.read_text(encoding="utf-8")).get("metrics")
+    if not ms or any(not {"name", "group", "higher_is_better", "roles"} <= set(m) for m in ms): raise SystemExit(f"{f}: metrics[] 의 각 항목에 name·group·higher_is_better·roles 가 있어야 한다")
+    return ms
+def step(name, repos, deps, why, also=None):   # also: repos 에 없어도 이 단계가 호출 경계를 보는 영역 {영역: 어느 경계인지}
+    def deco(fn):
+        STEP_REGISTRY[name] = fn; return fn
+    return deco
+_GW = ("deploy:config,compose.yaml,compose.test.yaml,test",)   # 게이트웨이(Caddyfile·계정)를 거치는 단계는 deploy 의 설정도 입력이다
+_P4 = "step4 가 STATE['pointers']/['releases'] 를 쓰고 이 단계가 '\"pointers\" not in STATE' 로 BLOCKED 처리한다(e2e_steps.py 의 같은 이름 함수 앞부분)"
+
 ap = argparse.ArgumentParser()
 ap.add_argument("--project", required=True); ap.add_argument("--secrets", required=True)
 ap.add_argument("--ports", required=True); ap.add_argument("--images", required=True)
@@ -166,6 +185,8 @@ def upload(set_id, text, fname):
     c, rv = http("POST", "qa", "/v1/reviews", TOK("qa-reviewer-e2e"), body={"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB: 스크립트가 검수자 역할을 대신한다)"}); assert c in (200, 201), ("임상 근거 승인 실패", c, rv)
     return ref, raw
 
+@step('1', repos=('question-authoring', 'survey-service', 'boundary-contracts'), deps=(),
+      why="step1 은 STATE 를 읽지 않고 qa 에 HTTP 로 올린다(STATE['qs'],['qsu'] 를 씀). 실행 중 스택의 question-authoring 은 필요하다")
 def step1():
     title(1, "저자가 문항 자료를 올리고 미리보기를 확인한다 (question-authoring, I1 HTTP 읽기)")
     form = (ROOT / "test/fixtures/question-form-v2.txt").read_text()   # 학습 데이터셋 v2 의 문항 ID 31개(survey-service 의 QuestionFlow 와 같은 순서). 값은 모두 시험용
@@ -236,6 +257,8 @@ def run_import(name, max_invalid_rows, store_root):
     out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
     return r.returncode, out, json.loads((WORK / f"sd-import-{name}" / "import_report.json").read_text())
 
+@step('2', repos=('synthetic-data', 'survey-service'), deps=('1',),
+      why="step2 는 run_import 로 STATE['qs'](step1 이 씀)를 읽는다(imp_config)")
 def step2():
     title(2, "학습 데이터 게시 (synthetic-data 게시기 모드 import: 시험용 v2 jsonl 6개를 행 단위로 검증하고 허용치 안에서 게시) -- 배선 REAL, 데이터는 시험용")
     print("  !! 입력은 데이터셋 담당의 실제 학습 데이터가 아니다: 이 E2E 를 위해 직접 만든 아주 작은 모음이고 행 형식은 추정이다(실제 데이터로 게시한 적 없음) !!")
@@ -317,14 +340,11 @@ def make_packages():
         mf["content_hash"] = canonical.content_hash(mf); validate("ModelPackageManifest", mf)
         ref = {"id": mf["package_id"], "version": mf["version"], "content_hash": mf["content_hash"]}
         # 시험용 EvaluationReport: 지표 값은 고정된 시험 값이다(실제 평가가 아니다). METRICS.md의 이름을 쓴다
-        A = [("risk_signal_recall", "SAFETY", 0.97, True), ("risk_signal_false_alarm", "SAFETY", 0.02, False), ("item_recall", "ACCURACY", 0.91, True),
-             ("schema_valid_raw", "PROTECTION", 0.99, True)]
-        B = [("forbidden_expression_rate", "SAFETY", 0.0, False), ("risk_notice_verbatim_rate", "SAFETY", 1.0, True), ("slot_coverage", "ACCURACY", 0.95, True),
-             ("fallback_rate", "PROTECTION", 0.01, False)]
+        rows = [(m["name"], m["group"], 1.0 if m["higher_is_better"] else 0.0, m["higher_is_better"]) for m in metric_registry() if role in m["roles"]]   # 이름은 계약의 지표 레지스트리에서만 읽는다(폐기 이름이 단계에 박히지 않게)
         rep = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "report_id": mf["eval_report_ref"], "created_at": "2026-10-15T00:00:00Z", "role": role,
                "package": ref, "dataset": STATE["dataset"], "question_sets": STATE["qs"][-1:],
                "evaluation_backend": {"name": "test-fixed-metrics", "version": "1", "constrained_decoding": False}, "decoding": {"temperature": 0, "seed": 1},
-               "metrics": [{"name": n, "group": g, "value": v, "n": 40, "higher_is_better": h, "unit": "ratio", "slice": {"kind": "ALL", "value": "ALL"}} for n, g, v, h in (A if role == "LORA_A" else B)],
+               "metrics": [{"name": n, "group": g, "value": v, "n": 40, "higher_is_better": h, "unit": "ratio", "slice": {"kind": "ALL", "value": "ALL"}} for n, g, v, h in rows],
                "notes": ["TEST: 시험용 고정 지표. 실제 평가가 아니다(E2E 단계 3 대역)"]}
         rep["content_hash"] = canonical.content_hash(rep); validate("EvaluationReport", rep)
         pk[role] = (mf, adir[role], rep)
@@ -347,6 +367,8 @@ def publish_packages(pk):
         assert canonical.directory_hash(p) == mf["adapter_hash"]
     return refs
 
+@step('3', repos=('model-lab', 'model-runtime', 'survey-service', 'boundary-contracts'), deps=('1', '2'),
+      why="step3 는 make_packages 에서 STATE['dataset'](step2)·['qs'](step1)를 읽는다")
 def step3():
     title(3, "설정 하나로 학습·평가·패키징·게시가 돈다 (model-lab, I3) -- 시험 대역")
     if os.environ.get("E2E_GPU") == "1":
@@ -414,6 +436,9 @@ def reject_via_gateway(sid):
     rec("4x", "BLOCKED", "승인 화면(/admin/)의 브라우저 렌더링·조작은 E2E에서 볼 수 없다. /config.json 은 절대 경로라 /admin/ 아래에서는 kiosk-frontend로 가서 404가 된다(화면은 없는 것으로 처리하므로 영향 없음, admin-console CR-003 후보)")
     return ap_
 
+@step('4', repos=('release-gate', 'question-authoring', 'survey-service', 'model-lab', 'boundary-contracts') + _GW, deps=('1', '3'),
+      why="step4 는 STATE['lora'](step3)·['qs'],['qsu'](step1)를 읽고 'lora' 가 없으면 BLOCKED 한다(e2e_steps.py step4 앞부분)",
+      also={'admin-console': '승인 화면이 쓰는 release-gate API 계약(브라우저 렌더링은 E2E에서 볼 수 없다: 4x BLOCKED)'})
 def step4():
     title(4, "후보 수집기가 새 조합을 찾아 자동 검사하고, 사람 승인으로 릴리스·번들을 만든다 (release-gate, D53)")
     if "lora" not in STATE: rec(4, "BLOCKED", "단계 3의 패키지가 없다"); return
@@ -571,6 +596,9 @@ def fake_values_check(new, tok):
         EA.check_fake_extraction(out, key, val, nxt, f"[{qid} '{utt}']")
     return f"{len(cases)}건(Q4 아니요 -> Q4.answer=false·Q4_1 건너뜀, Q7 -> Q8_1, Q8_1 없어요 -> days=0·Q8_2 건너뜀 등)"
 
+@step('5', repos=('survey-service', 'model-runtime', 'turn-engine', 'kiosk-frontend') + _GW, deps=('3', '4'),
+      why="step5 는 STATE['pointers'],['releases'](step4)·['system_prompt'](step3)를 읽는다. " + _P4,
+      also={'release-gate': '활성화된 릴리스 번들을 survey-service와 model-serving이 읽는다(I4)'})
 def step5():
     title(5, "서비스가 새 포인터를 보고 새 세션부터 새 릴리스로 한 턴 이상을 처리한다 (공개 API, 게이트웨이 경유)")
     if "pointers" not in STATE: rec(5, "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -662,6 +690,8 @@ def step5():
     STATE["sess_a"] = sid; save()
     rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9 v2: 서비스 -> PUT 적재 -> extract(JSON) -> respond(text))를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 서버 직접 호출: {v2chk}. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
 
+@step('5c', repos=('survey-service', 'model-runtime') + _GW, deps=('4',),
+      why="STATE['pointers'],['releases'] 를 읽는다. " + _P4)
 def step5c():
     title("5c", "정정(CORRECT) 흐름: 값이 있는 턴 뒤 정정 발화 -> 서비스가 CORRECT 를 처리한다 (가짜 A 의 corrections, model-runtime 0.7.2)")
     if "pointers" not in STATE: rec("5c", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -753,6 +783,8 @@ def upstream_503_json(c, b, h, what):
     assert h.get("content-type", "").startswith("application/json") and h.get("retry-after"), f"{what}: Content-Type/Retry-After 헤더 {h.get('content-type')} {h.get('retry-after')}"
     assert "survey" not in json.dumps(b) and ":8080" not in json.dumps(b), f"{what}: 본문에 내부 주소"
 
+@step('5q', repos=('survey-service', 'kiosk-frontend') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽고 survey-service 를 stop/start 한다(끝에 되돌린다). " + _P4)
 def step5q():
     title("5q", "survey-service 컨테이너 중지 -> gateway 경유 환자 API 503 UPSTREAM_UNAVAILABLE, gateway /readyz 비정상, /healthz 200 -> 기동 -> 복구, 세션 보존 (FAULT_POLICY 6)")
     if "pointers" not in STATE: rec("5q", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -791,6 +823,8 @@ def gw_log_duration(path_part, since):
         if path_part in d.get("request", {}).get("uri", "") and d.get("duration") is not None: best = (float(d["duration"]), d.get("status"))
     return best
 
+@step('5w', repos=('survey-service', 'kiosk-frontend') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽고 survey-service 를 pause/unpause 한다. " + _P4)
 def step5w():
     title("5w", "survey-service 무응답(docker pause) -> gateway 경유 환자 요청이 마감 안에 504 UPSTREAM_UNAVAILABLE -> unpause 후 복구 (FAULT_POLICY 6)")
     if "pointers" not in STATE: rec("5w", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -822,6 +856,9 @@ def step5w():
     kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
     rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 클라이언트 {obs['turn'][1]}s / gateway 접근 로그 duration {obs['gw_duration']}s (설정: 연결 1s + 응답 헤더 8.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
 
+@step('5u', repos=('release-gate', 'survey-service') + _GW, deps=(),
+      why='step5u 는 STATE 를 읽지 않는다. 활성 릴리스가 있어야 하는지는 코드를 읽어 확정하지 못했다',
+      also={'ops-feedback': 'ops-feedback-ingest 무응답 때 gateway의 검토 경로 상한'})
 def step5u():
     title("5u", "사람이 쓰는 화면 경로(승인·운영·검토)의 gateway 상류 상한: release-gate 중지/무응답, ops-feedback-ingest 무응답 (FAULT_POLICY 6, config/Caddyfile proxy_limits)")
     gate, ops = f"{a.project}-release-gate-1", f"{a.project}-ops-feedback-ingest-1"
@@ -852,6 +889,8 @@ def step5u():
     wait(lambda: gw_raw("GET", "/v1/cases", basic=REVIEWER())[0] == 200, 60, "검토 목록 복구(200)", every=2)
     rec("5u", "REAL", "사람이 쓰는 화면 경로의 gateway 상류 상한: release-gate 중지 중 승인 조회 " + f"{obs['승인 조회 C7']}·운영자 읽기 {obs['운영자 active-pointer C8']}(코드, 초)가 503 {{\"code\":\"UPSTREAM_UNAVAILABLE\"}}; release-gate 무응답 중 승인 조회 {obs['승인 조회 pause']}(코드, 클라이언트 초, gateway duration 초; 설정 헤더 15s), ops-feedback-ingest 무응답 중 검토 목록 {obs['검토 목록 pause']}(설정 헤더 10s)이 504 UPSTREAM_UNAVAILABLE; 해제 뒤 모두 200 복구. 정적 화면(admin-console, kiosk-frontend) 프록시의 상한은 같은 설정이나 이 단계에서 시험하지 않았다")
 
+@step('5m', repos=('survey-service', 'model-runtime', 'kiosk-frontend') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽고 model-serving 을 pause 한다. " + _P4)
 def step5m():
     title("5m", "model-serving 무응답(docker pause) 중 환자 턴: survey 턴 마감 안에 분류된 실패, 값 미저장, unpause 뒤 같은 turn_id 확정 (FAULT_MATRIX B1, model-runtime 요청 상한)")
     if "pointers" not in STATE: rec("5m", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -917,6 +956,8 @@ def gw_bytes(method, path, data, ctype, basic=None, headers=None):
         try: return e.code, json.loads(b), dict(e.headers)
         except Exception: return e.code, b.decode(errors="replace"), dict(e.headers)
 
+@step('5a', repos=('question-authoring', 'admin-console') + _GW, deps=(),
+      why='step5a 는 STATE 를 읽지 않는다. 그러나 앞 단계가 만든 저자 계정·문항 상태에 의존하는지는 코드를 읽어 확정하지 못했다')
 def step5a():
     title("5a", "저자 경로(question-authoring)를 gateway 기본 인증 뒤에서: 자료 등록·확인(author), 임상 근거 승인(clinical-reviewer), 자기 승인 403, 본문 상한 (D88/U9)")
     qset = f"qs-{RID}-gwauthor"; form = (ROOT / "test/fixtures/question-form-v2.txt").read_bytes()
@@ -942,6 +983,8 @@ def step5a():
     rec("5a", "REAL", f"저자 경로(gateway 경유, 개별 계정): 인증 없음 401, 역할 없는 계정 403, author 계정의 자료 등록·미리보기·확인(문항 세트 {qset}@{ref['version']}), 저자의 자기 임상 승인 403(4-eyes), clinical-reviewer 계정의 승인 200(위조 X-Openit-User 는 무시되고 reviewer_id={CLINICAL()[0]} 가 기록됨), 승인 뒤 reviewed_only 최신 버전, I1 읽기 면 404, 9MiB 본문 거부({c9})")
 
 def dev_tok(d): return TOK(f"kiosk-device-{d}")
+@step('5d', repos=('survey-service', 'kiosk-frontend') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽는다. " + _P4)
 def step5d():
     title("5d", "기기별 키오스크 토큰(D88/U8): 기기 A가 만든 세션에 기기 B는 접근하지 못한다, 폐기된 기기 토큰은 거부, 공유 토큰 경고 없음")
     if "pointers" not in STATE: rec("5d", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -989,6 +1032,8 @@ def _validate_if_known(name, obj):
     except Exception: return False
     validate(name, obj); return True
 
+@step('5n', repos=('survey-service', 'model-runtime', 'kiosk-frontend', 'boundary-contracts') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 빌드 사본의 survey-service risk_rules.py 에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4)
 def step5n():
     title("5n", "직원 호출 재알림·실패 기록·정지 사유 (계약 v2.1.0 PUBLIC_API G·H절, CR-H001·H002, 가짜 모델)")
     if "pointers" not in STATE: rec("5n", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1002,16 +1047,23 @@ def step5n():
         except urllib.error.HTTPError as e: raw, code, hd = e.read(), e.code, dict(e.headers)
         try: b = json.loads(raw or b"null")
         except ValueError: b = raw.decode(errors="replace")
+        print(f"    호출 {method} {path} -> {code}", flush=True)   # 어느 호출이 어떤 코드를 받았는지 로그에 남긴다(단계 5n 첫 실행의 404 가 어느 호출인지 몰랐다)
         return code, b, {k.lower(): v for k, v in hd.items()}
+    def state_dev(tok):   # state_of 는 시험 기본 기기(e2e) 토큰이라 다른 기기가 만든 세션은 404 다(survey-service _device_denied). 세션을 만든 기기 토큰으로 조회한다
+        for _ in range(8):
+            time.sleep(0.7)
+            c, r, _h = tcall(tok, "GET", f"/v1/sessions/{sid}/state")
+            if c != 429: return c, r
+        return c, r
     # (a) 위험 발화로 정지(단계 5f 의 방식: survey-service 기본 목록의 문구). 이 구성에는 직원 콘솔 구독자가 없어 전달은 DELIVERY_FAILED 로 끝나는 것이 정상이다(survey-service alerts.py 머리말). 구독자가 있으면 DELIVERED 일 수 있고 그래도 아래 호출은 OPEN 알림이 있으므로 성립한다
     sid = f"sess-{RID}-n"; phrase, _r = risk_phrase_from_defaults()
     A = dev_tok("e2e-a"); B = dev_tok("e2e-b")
-    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[:2]; assert c == 200, ("기기 A 세션 시작", c, st)
+    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[:2]; assert c == 200, ("POST /v1/sessions(기기 A 세션 시작)", c, st)
     c, rr, _h = tcall(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": f"저는 {phrase} 있어요", "turn_id": "n-1"}); assert c == 200, (c, rr)
     fs = rr.get("turn_failure_signal") or {}; first_status = fs.get("staff_alert")
     assert first_status in ("DELIVERED", "DELIVERY_FAILED"), ("위험 발화인데 직원 알림 신호가 없다", rr)
     # (b) 정지 사유: /state 의 pause_reason 은 RISK (SessionState, 정지일 때만 의미)
-    c, stt = state_of(sid); assert c == 200 and stt["state"] == "PAUSED_RISK", (c, stt)
+    c, stt = state_dev(A); assert c == 200 and stt["state"] == "PAUSED_RISK", ("GET /state(기기 A)", c, stt)
     assert stt.get("pause_reason") == "RISK", ("위험 정지인데 /state 의 pause_reason 이 RISK 가 아니다(계약 v2.1.0 H절)", stt)
     _validate_if_known("SessionState", stt)
     # (c) 재알림: 응답 필드, 같은 turn_id 멱등, 간격 안의 다른 turn_id 는 429
@@ -1044,7 +1096,7 @@ def step5n():
     c, iv, _h = gw_raw("POST", f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "n-iv-1"}, basic=STAFF()); assert c == 200, (c, iv)
     c, nr, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-3"})
     assert c == 409 and ((nr.get("error") or nr).get("details") or {}).get("reason") == "NO_OPEN_ALERT", ("OPEN 알림이 없을 때 409 NO_OPEN_ALERT 가 아니다", c, str(nr)[:200])
-    c, st3 = state_of(sid); assert c == 200 and not st3.get("pause_reason"), ("정지가 풀렸는데 pause_reason 이 남았다(정지일 때만 의미)", st3)
+    c, st3 = state_dev(A); assert c == 200 and not st3.get("pause_reason"), ("정지가 풀렸는데 pause_reason 이 남았다(정지일 때만 의미)", st3)
     tcall(A, "POST", f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
     rec("5n", "REAL", f"위험 발화 정지(첫 전달 {first_status}) -> /state pause_reason=RISK -> staff-call/retry(필드·같은 turn_id 멱등·간격 안 새 turn_id 429+Retry-After) -> 다른 기기·위조·무토큰·직원 토큰 거부 -> staff-call/report(StaffAlert manual_notice_*, 멱등, 다른 outcome 409, 직원 알림 목록에 보임, 세션은 PAUSED_RISK 유지) -> 개입 뒤 재알림 409 NO_OPEN_ALERT")
     # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT, survey-service ADR-0020·0022): 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json 의
@@ -1079,6 +1131,8 @@ def step5n():
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
     rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, /readyz reask_limit={N}): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
 
+@step('5r', repos=('survey-service', 'kiosk-frontend') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽는다. " + _P4)
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
     if "pointers" not in STATE: rec("5r", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1127,6 +1181,9 @@ def step5r():
     c, rz = survey_ready(); acc = {k: v for k, v in (rz or {}).items() if "access" in k.lower()}
     rec("5r", "REAL", f"세션 시작(기기 토큰, subject_ref) -> 발화 -> POST /v1/sessions/{{id}}/risk-signals(risk-source 토큰, 서비스에 직접: 201 PAUSED_RISK, 재전송 200 같은 alert_id, 다른 역할 토큰·게이트웨이 경유는 거부) -> 직원 알림 목록(RISK_STOP, OPEN) -> GET /v1/staff/sessions/{{id}}(직원 계정, 게이트웨이 경유, StaffSessionView 스키마, subject_ref·turns, alerts[].rule_id e2e-detector:TEST_RISK) -> 개입 RESUME(위조 X-Openit-User 무시, alerts[].resolved_by={STAFF()[0]}) -> GET /v1/results/{{id}}·/v1/results?subject_ref(result-reader 토큰, SessionResult 스키마, 발화 원문 없음, 게이트웨이에는 404). 접근 기록: 읽는 경로가 없어 간접 확인(조회 성공 = 기록 성공, /readyz 접근 항목 {sorted(acc) or '없음'}). SSE 수신은 확인하지 않았다(목록으로 확인).")
 
+@step('5s', repos=('survey-service', 'model-runtime') + _GW, deps=('4',),
+      why="step5s 는 STATE['containers_before_swap'],['releases'](step4)를 읽는다(e2e_steps.py step5s 앞부분)",
+      also={'release-gate': '포인터 교체(활성화) 경계', 'model-lab': '게시된 어댑터가 model-serving에 적재'})
 def step5s():
     title("5s", "어댑터 교체(포인터 1 -> 2)에서 다른 서비스는 그대로이고 새 릴리스가 LOADED 이다")
     before = STATE.get("containers_before_swap")
@@ -1147,6 +1204,9 @@ def risk_phrase_from_defaults():
             d = ast.literal_eval(node.value); k = "chest-pain" if "chest-pain" in d else next(iter(d)); return d[k][0], list(d)
     raise AssertionError("risk_rules.py 에서 _PROVISIONAL 을 찾지 못했다")
 
+@step('5f', repos=('survey-service', 'ops-feedback', 'kiosk-frontend') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽는다. " + _P4,
+      also={'admin-console': 'gateway 경유 정적 화면 제공과 접근 구분'})
 def step5f():
     title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 직원 알림 입력원 없음 (kiosk-frontend)")
     if "pointers" not in STATE: rec("5f", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1212,6 +1272,8 @@ def trace_env(release_id, n):
          "session_id": f"s-{RID}", "turn_id": f"t-{RID}-{n}", "sent_at": "2026-10-15T00:00:00Z", "trace": t}
     validate("TraceEnvelope", e); validate_survey("TurnTrace", t); return e
 
+@step('6', repos=('ops-feedback', 'survey-service', 'boundary-contracts'), deps=('1', '4'),
+      why="step6 은 STATE['qs'](step1)·['releases'](step4)를 읽는다")
 def step6():
     title(6, "Trace를 수집·비식별해 실패 사례를 만든다 (ops-feedback, I6->I7)")
     rel = (STATE.get("releases") or {}).get(STATE["qs"][-1]["version"], f"rel-{RID}-none")
@@ -1242,6 +1304,8 @@ GOOD_EXPECTED = {"action": "NEXT", "next_item": "Q1.D02", "values": [{"key": "Q1
 def bad_ok():
     return {"review_status": "CONFIRMED", "expected_kind": "LORA_A", "expected": GOOD_EXPECTED}
 
+@step('7', repos=('synthetic-data', 'ops-feedback', 'question-authoring', 'boundary-contracts') + _GW, deps=('1', '2', '6'),
+      why="step7 은 STATE['cases'],['extract_input'](step6)·['dataset'](step2)·['qs'](step1)를 읽는다")
 def step7():
     title(7, "실패 사례가 데이터 생성·학습·저작으로 돌아간다 (I7 HTTP)")
     if not STATE.get("cases"): rec(7, "BLOCKED", "FailureCase가 없다(단계 6)"); return
@@ -1322,6 +1386,9 @@ def _ds_tar(manifest, root):
         for f in manifest["files"]: add("files/" + f["path"], (root / "files" / f["path"]).read_bytes())
     return buf.getvalue()
 
+@step('7d', repos=('synthetic-data', 'boundary-contracts', 'deploy:compose.yaml,compose.test.yaml,scripts/gen-secrets.sh'), deps=('1', '2'),
+      why="step7d 는 STATE['dataset'](step2)와 step2 가 WORK/datasets 에 쓴 manifest.json·files/ 를 읽어 dataset-store 에 게시한다(e2e_steps.py step7d). 실행 중 스택의 dataset-store 가 필요하다",
+      also={'model-lab': 'model-lab 이 읽는 I2(dataset-store) 읽기 토큰 경로와 쓰기 거부(model-lab 코드는 E2E 에서 돌지 않는다)'})
 def step7d():
     title("7d", "dataset-store(I2 HTTP 서버, 쓰기=synthetic-data·읽기=model-lab 토큰): 게시, 읽기, 읽기 토큰 쓰기 거부, 멱등, 불변, 토큰 없음 (D100)")
     if "dataset" not in STATE: rec("7d", "BLOCKED", "단계 2 가 게시한 데이터셋이 없다(STATE['dataset'])"); return
@@ -1363,6 +1430,9 @@ def step7d():
     c, _ = _ds_call("GET", "/v1/datasets", "x" * 48); assert c == 403, ("모르는 토큰", c)
     rec("7d", "REAL", f"dataset-store 서버(실제 이미지)에 단계 2 와 같은 입력의 데이터셋 {ds['id']}@{ds['version']} 를 쓰기 토큰(synthetic-data)으로 게시({via}, 같은 tar 재게시는 멱등 200 -> 읽기 토큰(model-lab)으로 목록·버전·매니페스트(스키마 통과)·파일 {len(m['files'])}개 바이트(manifest 해시 일치) -> 읽기 토큰의 게시는 403 -> 같은 버전에 다른 내용은 409 이고 저장본 불변 -> 토큰 없음·모르는 토큰은 403(서버 계약이 401 이 아니다). 못 보는 것: 소비자 model-lab 의 실제 읽기 코드(그 영역), 큰 본문·동시 게시 한도, synthetic-data run(시드) 모드의 HTTP 게시(import 모드만 확인)")
 
+@step('8', repos=('release-gate', 'survey-service', 'kiosk-frontend', 'boundary-contracts'), deps=('1', '4', '6'),
+      why="step8 은 STATE['cases'](step6)·['pointers'],['releases'](step4)·['qs'](step1)를 읽는다",
+      also={'ops-feedback': 'ops-feedback이 release-gate에 롤백 요청(I5)'})
 def step8():
     title(8, "롤백 요청이 활성 릴리스를 되돌린다 (ops-feedback -> release-gate, I5 HTTP)")
     gate_s = HttpGateService(URL("gate"), TOK("gate-write-ops-feedback")); gate_r = HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service"))
@@ -1395,6 +1465,8 @@ def _gate_clients():
     return (HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")), with_user(HttpGateService(URL("gate"), TOK("gate-write-operator")), "op-test"),
             HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")), with_user(HttpGateService(URL("gate"), TOK("gate-write-release-approver")), "trainer-test"))
 
+@step('demo4', repos=('release-gate', 'model-lab'), deps=('1', '3'),
+      why='demo.sh 전용. E2E 기본 실행에 들어가지 않는다')
 def demo4():
     """demo.sh 용: 후보 수집·자동 검사까지 하고, 승인은 --demo-stop 이면 사람에게 남긴다(아니면 시험용 승인자 토큰으로 대신: TEST-SUB). 승인 화면에 볼 제출 하나는 항상 대기로 둔다."""
     title("demo4", "데모 릴리스: 후보 수집·자동 검사 -> 승인 -> 활성화 (release-gate)")
@@ -1426,6 +1498,8 @@ def demo4():
     STATE["releases"] = rels; save()
     rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 토큰으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
 
+@step('demo_activate', repos=('release-gate',), deps=('1', '3'),
+      why='demo.sh 전용')
 def demo_activate():
     """사람이 /admin/ 에서 승인한 제출의 릴리스를 활성화한다(오래된 문항 세트 버전부터)."""
     title("demo_activate", "승인된 제출의 릴리스 활성화")
@@ -1442,6 +1516,8 @@ def demo_activate():
     STATE["releases"] = rels; save()
     rec("demo_activate", "REAL", f"승인된 릴리스 활성화: {rels}, 현재 활성 {dict(cur)['release_id']}")
 
+@step('diag', repos=('release-gate',), deps=('3', '4', 'demo4', 'demo_activate', 'demo_swap'),
+      why='demo.sh 전용 진단')
 def diag():
     """demo.sh diag: 켜져 있는 데모의 게이트·레지스트리 상태를 읽기 전용으로 요약한다(HTTP만, 토큰·비밀 값은 출력하지 않는다)."""
     title("diag", "진단: 제출·판정·수집기·모델 패키지")
@@ -1490,6 +1566,8 @@ def diag():
     print(f"-- 상태 파일 요약: 릴리스 {STATE.get('releases')}, 제출 {STATE.get('demo_subs')}, llm 대조 {STATE.get('llm_cfg_vs_server')}")
     rec("diag", "REAL", "진단 출력만 했다(변경 없음)")
 
+@step('demo_active', repos=('release-gate',), deps=(),
+      why='demo.sh 전용')
 def demo_active():
     """demo.sh swap-adapters 가 전후에 부른다: 활성 릴리스 포인터(읽기 전용)."""
     title("demo_active", "활성 릴리스 포인터 (읽기 전용)")
@@ -1497,6 +1575,8 @@ def demo_active():
     print(f"  활성 릴리스 {ap.get('release_id')} pointer_version {ap.get('pointer_version')}")
     rec("demo_active", "REAL", f"활성 릴리스 {ap.get('release_id')} (pointer_version {ap.get('pointer_version')})")
 
+@step('demo_swap', repos=('release-gate',), deps=('1', '2'),
+      why='demo.sh 전용')
 def demo_swap():
     """demo.sh swap-adapters: 새 모델 패키지(LORA_A/LORA_B)를 게시 -> 후보 수집·자동 검사 -> 시험용 승인자(스크립트) 승인 -> 활성화 -> model-serving 만 새 번들을 적재.
     문항 세트는 가장 최근 것을 그대로 쓰고 어댑터 쌍만 바뀐다. 단계 3(make_packages, publish_packages)·5s(container_ids, check_unchanged, check_release_loaded)와 같은 함수를 쓴다."""
@@ -1541,6 +1621,8 @@ def demo_swap():
     STATE.setdefault("swaps", []).append({"release_id": rid, "packages": refs}); save()
     rec("demo_swap", "TEST-SUB", f"새 릴리스 {rid} 활성화(승인자는 스크립트가 대신함, TEST-SUB). model-serving 에서 LOADED. {', '.join(SWAP_SERVICES)} 컨테이너의 ID·StartedAt 불변")
 
+@step('5p', repos=('survey-service', 'question-authoring', 'release-gate', 'ops-feedback') + _GW, deps=('4',),
+      why="STATE['pointers'] 가 없으면 활성 릴리스 없이 일부만 시험한다(has_release). postgres 를 stop/start 한다")
 def step5p():
     title("5p", "PostgreSQL 컨테이너 중지 -> 서비스 /readyz 비정상 관찰 -> 기동 -> /readyz 복구, 이전 데이터 보존, 새 쓰기 (D85)")
     pg = f"{a.project}-postgres-1"
@@ -1642,6 +1724,8 @@ def _run_ops_job():   # run-job.sh 는 5p/스케줄러와 같은 경로(compose 
     r = sh(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], env={"DEPLOY_PROJECT": a.project}, check=False)
     return r.returncode, ((r.stdout or "") + (r.stderr or ""))[-300:]
 
+@step('5pn', repos=('survey-service', 'question-authoring', 'release-gate', 'ops-feedback') + _GW, deps=('4',),
+      why="STATE['pointers'] 가 없으면 survey-service(A5)를 제외한다(has_release 와 같은 제한). postgres 를 서비스 DB 네트워크에서 disconnect/connect 하고 D1 잡을 한 번 돌린다")
 def step5pn():
     title("5pn", "PostgreSQL 네트워크 분리(docker network disconnect, F8) -> 서비스 /readyz 2초 안 503 -> 재연결 -> 사람 개입 없이 200 (FAULT_MATRIX A5·C4·D1·D4·E1 F8)")
     # FAULT_POLICY 11: 분리(F8)는 중지(F1)·멈춤(F2)과 같은 규칙. 연결할 수 없으면 F1 로 분류한다 -> 원칙 5: 의존이 죽으면 /readyz 는 2초 안에 503. 원칙 12: 의존이 돌아오면 사람 개입 없이 /readyz 200
@@ -1675,6 +1759,8 @@ def step5pn():
         out.append(f"{cell} {name}: 503 {el:.1f}s -> 복구 {time.time() - t1:.0f}s{job_note}")
     rec("5pn", "REAL", "postgres 를 서비스별 DB 네트워크에서 disconnect(F8) -> /readyz 503(2초 안)·/healthz 200 -> connect 뒤 자동 200. " + "; ".join(out))
 
+@step('5pj', repos=('ops-feedback', 'deploy:config,compose.yaml,scripts'), deps=(),
+      why='STATE 를 읽지 않는다. 스택의 postgres 를 stop/start·pause/unpause 하고 job-ops-feedback 을 run-once 로 돌린다(OPS_JOB_CONFIG)')
 def step5pj():
     title("5pj", "DB 중지 중 job-ops-feedback run-once: 실패가 드러나고(조용히 성공 안 함) 복구 뒤 재실행이 멱등으로 성공 (FAULT_MATRIX D1 F1·F4)")
     # FAULT_POLICY 14: 스케줄러/잡 실패는 상태 파일 또는 종료 코드로 드러난다. 원칙 4: DB 는 connect_timeout 이 있어 무한 대기하지 않는다. 원칙 12: 복구 뒤 재전송/재실행이 안전하다
@@ -1711,6 +1797,9 @@ def _registry_container():
     assert rp, "REGISTRY_PROJECT 환경이 없다(e2e.sh 가 내보낸다)"
     return rp   # compose.registry.yaml: container_name: ${REGISTRY_PROJECT}
 
+@step('5g', repos=('deploy:scripts,compose.registry.yaml,locks',), deps=(),
+      why='STATE 를 읽지 않는다. e2e.sh 가 띄운 임시 레지스트리(REGISTRY_PROJECT)를 stop/start·pause/unpause 하고 publish-images.sh kiosk-frontend 를 부른다',
+      also={'kiosk-frontend': '이 이미지(kiosk-frontend)를 올리는 로컬 레지스트리가 중지·무응답일 때 publish-images.sh 가 실패하고 잠금이 깨지지 않는다(G2 F1·F4)'})
 def step5g():
     title("5g", "로컬 레지스트리 중지(F1)·무응답(F4) 중 이미지 게시: 실패하고 잠금이 깨지지 않으며 실행 중 서비스는 영향 없음 -> 복구 뒤 재시도 성공 (FAULT_MATRIX G2 F1·F4)")
     # 기대 출처: FAULT_MATRIX G2 '레지스트리 중단: 새 이미지 적용·롤백이 막히고 이미 떠 있는 컨테이너는 영향 없음'. FAULT_POLICY 원칙 4(무한 대기 금지)·12(복구 뒤 사람 개입 없이 재시도 성공)
@@ -1742,6 +1831,9 @@ def step5g():
     wait(lambda: pub(60).returncode == 0 or None, 90, "unpause 뒤 게시 재시도 성공", every=3)
     rec("5g", "REAL", "레지스트리 컨테이너: " + "; ".join(notes) + "; 복구 뒤 재시도 성공.")
 
+@step('5b', repos=('deploy:scripts,config,compose.yaml',), deps=(),
+      why='STATE 를 읽지 않는다. 임시 BACKUP_DIR 에 pg-backup.sh 를 돌리고 도중에 postgres 를 stop 한다',
+      also={'survey-service': 'survey DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'release-gate': 'gate DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'ops-feedback': 'ops_log·ops_failure DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고된다(G3 F1)', 'question-authoring': 'qa DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)'})
 def step5b():
     title("5b", "백업 도중 postgres 중지(F1): 백업이 실패로 보고되고 불완전한 백업이 성공으로 남지 않으며 복구 뒤 다시 성공 (FAULT_MATRIX G3 F1)")
     # 기대 출처: FAULT_MATRIX G3 '.partial 에 쓰고 완료 시 mv'. pg-backup.sh: 덤프 실패 시 die + 작업 폴더 삭제. FAULT_POLICY 14(잡 실패는 종료 코드로 드러남), 12(복구 뒤 재실행)
@@ -1781,7 +1873,7 @@ only = set(filter(None, a.only.split(",")))
 TIMES = []
 order = [n for n, _ in STEPS if not (n.startswith("demo") and n not in only) and (not only or n in only)]
 _miss = PLAN.missing([n for n, _ in STEPS], PLAN.STEP_DECLS)
-if _miss: raise SystemExit(f"입력 선언이 없는 단계: {_miss} (scripts/e2e_plan.py STEP_DECLS 에 더한다)")
+if _miss: raise SystemExit(f"입력 선언이 없는 단계: {_miss} (e2e_steps.py 의 단계 함수에 @step 을 단다)")
 LAST = PLAN.load_last_pass(); CUR = {n: PLAN.input_hash(n) for n in order}
 if a.changed_only:
     sel, why = PLAN.select_changed(order, PLAN.STEP_DECLS, CUR, LAST)
