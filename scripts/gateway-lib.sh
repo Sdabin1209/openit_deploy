@@ -54,8 +54,10 @@ gw_write_accounts() {
   done
   [ -e "$D/gateway-accounts.caddy" ] || : > "$D/gateway-accounts.caddy"
   { printf '# 생성됨(scripts/gen-secrets.sh, 계정 목록은 config/gateway-accounts.conf). 직접 고치지 않는다. 해시만 있고 암호는 없다.\n'
+    # 계정이 없으면 아무도 통과할 수 없는 자리표시 계정 하나로 basic_auth 를 만든다: 빈 basic_auth 블록은 Caddy 가 거부하고, `respond 401` 은 Caddy 지시어 순서상 안쪽 `handle` 보다 뒤라
+    # 역할 부족 403 에 덮이고 WWW-Authenticate 도 없다(시험: test-gateway-auth.sh 계정 0개). 해시는 한 번 만든 뒤 버린 무작위 암호의 bcrypt 이다(`caddy hash-password`): 암호를 아는 사람이 없고 역할 매처도 모두 false.
     if [ -n "$body" ]; then printf '(authenticate) {\n\tbasic_auth {\n%s\t}\n}\n' "$body"
-    else printf '(authenticate) {\n\trespond "unauthorized: 등록된 계정이 없다" 401\n}\n'; fi   # 빈 basic_auth 블록은 Caddy 가 거부한다. 계정이 없으면 모두 401
+    else printf '(authenticate) {\n\tbasic_auth {\n\t\tno-accounts %s\n\t}\n}\n' '$2a$14$ThFaB0RPIv4Ii/aJyV6gh.W8lng/OIREUbKeN9IcdNx5hY6xdg5Im'; fi
     printf '(role_matchers) {\n%s}\n' "$roles_body"; } > "$D/gateway-accounts.caddy"
   chmod 644 "$D/gateway-accounts.caddy"
 }
