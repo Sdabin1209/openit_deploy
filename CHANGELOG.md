@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 데모: 모델 서빙을 모방 백엔드로, 키오스크는 /config.json 으로 기기 설정 (작업 지시서 2, 컨테이너 검증 전)
+- `scripts/demo.sh up`: model-serving 을 `MODEL_RUNTIME_BACKEND=mimic`(+`MODEL_RUNTIME_ALLOW_FAKE=1`, `MODEL_RUNTIME_FAKE_FLOW_FILE`)으로 띄운다(`test/compose.demo-mimic.yaml`). 흐름 파일은 `--mimic-flow-file <파일>`로 받고 기본은 `test/fake-model/question_flow.json`이다. 모방기의 동작과 파일 내용은 model-runtime 이 정한다(이 영역은 경로만 넘긴다). E2E 는 계속 fake 다. 모방 이미지는 아직 만들어지지 않았다면 up 은 model-serving 이 시작을 거부해 실패한다(확인 못 함).
+- 키오스크 `/config.json`: `test/compose.demo-kiosk.yaml`(데모 전용)이 `scripts/kiosk-add-device.sh add e2e` 가 만든 기기 산출물을 kiosk-frontend 의 `CONFIG_FILE`로 마운트하고, `scripts/demo_caddyfile.py`가 만든 gateway 설정 사본(운영 Caddyfile 의 `/config.json` 404 블록 하나만 kiosk-frontend 로 넘김)을 쓴다. 운영 구성(compose.yaml, config/Caddyfile)은 그대로다. 안내 출력에 토큰 값은 없다.
+- `scripts/test-demo-kiosk.sh`: 병합된 compose 설정과 Caddyfile 사본으로 위 배선과 운영 불변을 확인한다(컨테이너를 띄우지 않는다).
+
 ## 전체 E2E(00aa6de) 실패 둘 수정: db 네트워크 분리, 개입 단언
 - 차단 단언 `survey-service -> question-authoring` 실패 원인: 서비스 넷이 하나의 `db` 네트워크를 같이 써서 postgres 클라이언트끼리 닿았다(구성 결함). `db-survey`, `db-qa`, `db-ops`, `db-gate`로 나눴다(각 internal, postgres만 넷에 모두 가입). 이유: 데이터베이스 길이 서비스 사이의 새 길이 되면 영역 격리가 무너진다. 단언을 넓혔다: `question-authoring -> survey-service`, `model-registry -> model-serving`, `question-authoring -> model-serving` 차단, db 네트워크마다 구성원이 postgres와 자기 서비스뿐임.
 - 단계 5 `개입이 409가 아님` 원인: 단언이 `X-Openit-User` 없이 서비스에 직접 호출해 401을 받았다(낡은 단언). 헤더 없음은 401, 헤더 있으면 409로 나눠 응답 코드·본문을 메시지에 찍는다.

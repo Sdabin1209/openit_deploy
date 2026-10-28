@@ -1,0 +1,14 @@
+# 데모 전용(운영·E2E에 쓰지 않는다). 키오스크가 해시(#device=) 없이 데모 주소로 열리게 /config.json 으로 기기 설정을 낸다.
+# 운영 원칙은 그대로다: 운영 구성(compose.yaml)의 중앙 kiosk-frontend 에는 어떤 기기 파일도 마운트하지 않고, gateway 는 /config.json 을 404 로 막는다
+# (한 컨테이너가 모든 키오스크에 같은 토큰을 내면 기기별 토큰의 의미가 없다, scripts/kiosk-add-device.sh 머리말). 데모는 기기 하나(e2e)뿐이고 데모 전용 비밀 폴더의 시험 토큰이라 허용한다.
+# 1) kiosk-frontend: scripts/kiosk-add-device.sh 가 만든 기기 산출물(secrets/kiosk-config/<ID>.json)을 정적 서버의 CONFIG_FILE 로 마운트한다(kiosk-frontend 런북: CONFIG_FILE 을 /config.json 으로 낸다).
+# 2) gateway: config/Caddyfile 에서 /config.json 404 블록만 kiosk-frontend 로 넘기는 사본(scripts/demo.sh 가 state/demo/Caddyfile.demo 로 만든다)을 쓴다.
+configs:
+  gateway-caddyfile:
+    file: ${DEMO_CADDYFILE:-./state/demo/Caddyfile.demo}
+services:
+  kiosk-frontend:
+    environment:
+      CONFIG_FILE: /run/kiosk-device/config.json
+    volumes:
+      - ${DEMO_KIOSK_CONFIG:-./state/demo/secrets/kiosk-config/e2e.json}:/run/kiosk-device/config.json:ro

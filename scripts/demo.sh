@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 사람이 화면을 직접 눌러 볼 수 있는 데모 환경. 상시 구성(`deploy` 프로젝트)과 따로, 같은 서버에서 함께 돌 수 있다.
-#   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다
+#   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>] [--mimic-flow-file <파일>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다. 모델 서빙은 모방 백엔드(MODEL_RUNTIME_BACKEND=mimic), 키오스크는 /config.json 으로 기기 설정을 받는다(#device= 없이 열린다)
 #   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen3-1.7B(프로파일 gpu-12g, 파이프라인 데모) + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
 #   scripts/demo.sh up --llm --profile rtx4090-24g --adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE   중립 LoRA 대신 학습 서버에서 가져온 진짜 어댑터를 얹는다(docs/GPU_HOLE.md H2)
 #   scripts/demo.sh check-secrets                              데모 스택(state/demo/secrets)의 비밀 노출 점검(up 끝에도 자동으로 돈다)
@@ -17,12 +17,14 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1   # 사용법·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
 source "$(dirname "$0")/lib.sh"
 CMD=${1:-}; shift || true
-STOP=0; REBUILD=0; EXT=""; LLM=0; REBUILD_GPU=0; YES_LARGE=0; LLM_PROFILE_NAME=""; AD_A=""; AD_B=""; PR_A=""; PR_B=""; PURGE_CACHE=0; PURGE_YES=0
+STOP=0; REBUILD=0; EXT=""; LLM=0; REBUILD_GPU=0; YES_LARGE=0; LLM_PROFILE_NAME=""; AD_A=""; AD_B=""; PR_A=""; PR_B=""; PURGE_CACHE=0; PURGE_YES=0; MIMIC_FLOW=""
 while [ $# -gt 0 ]; do case "$1" in
   --stop-before-approval) STOP=1; shift;; --rebuild) REBUILD=1; shift;;
   --external-inference) [ $# -ge 2 ] || die "--external-inference 에는 URL이 필요하다"; EXT=$2; shift 2;;
   --external-inference=*) EXT=${1#*=}; shift;;
   --purge-cache) PURGE_CACHE=1; shift;; --yes-purge-"${HF_CACHE_VOLUME:-deploy-llm-hf-cache}") PURGE_YES=1; shift;;
+  --mimic-flow-file) [ $# -ge 2 ] || die "--mimic-flow-file 에는 파일이 필요하다"; MIMIC_FLOW=$2; shift 2;;
+  --mimic-flow-file=*) MIMIC_FLOW=${1#*=}; shift;;
   --llm) LLM=1; shift;; --rebuild-gpu) REBUILD_GPU=1; shift;; --yes-large) YES_LARGE=1; shift;;
   --profile) [ $# -ge 2 ] || die "--profile 에는 이름이 필요하다 (예: gpu-12g)"; LLM_PROFILE_NAME=$2; shift 2;;
   --profile=*) LLM_PROFILE_NAME=${1#*=}; shift;;
@@ -57,7 +59,13 @@ set_llm_image() { # 데모는 방금 빌드한 로컬 GPU 이미지를 태그로
 env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트가 같은 값을 본다)
   export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT="$P" DEPLOY_SKIP_DOCTOR=1
   export REGISTRY_PROJECT="$P-reg" REGISTRY_HOST_BIND="${DEMO_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
-  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
+  # 모방기 흐름 파일(작업 지시서 2): 내용은 model-runtime 이 정한다. 여기서는 경로만 받는다(--mimic-flow-file 또는 up 때 기록한 값, 기본 test/fake-model/question_flow.json)
+  if [ -n "$MIMIC_FLOW" ]; then [ -f "$MIMIC_FLOW" ] || die "모방기 흐름 파일이 없다: $MIMIC_FLOW"; MIMIC_FLOW=$(cd "$(dirname "$MIMIC_FLOW")" && pwd)/$(basename "$MIMIC_FLOW"); [ "$CMD" != up ] || { mkdir -p "$W"; printf '%s\n' "$MIMIC_FLOW" > "$W/mimic-flow"; }
+  elif [ -f "$W/mimic-flow" ]; then MIMIC_FLOW=$(sed -n 1p "$W/mimic-flow"); else MIMIC_FLOW="$DEPLOY_ROOT/test/fake-model/question_flow.json"; fi
+  export DEMO_MIMIC_FLOW_FILE="$MIMIC_FLOW"
+  # 키오스크 기기 설정(데모 전용): 기기 산출물과 /config.json 을 내는 gateway 설정 사본의 경로. 파일은 up 이 만든다(demo_kiosk_prepare)
+  export DEMO_KIOSK_DEVICE=e2e DEMO_CADDYFILE="$W/Caddyfile.demo" DEMO_KIOSK_CONFIG="$W/secrets/kiosk-config/e2e.json"
+  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.demo-mimic.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
   # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 compose.test.yaml 의 fake 백엔드를 덮는다. 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
 
@@ -68,13 +76,23 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     export DEMO_LLM_PROFILE="/app/profiles/$LLM_PROFILE_NAME.json"
     set_llm_image
     # 이미지는 파일로 고른다(compose.llm.local.yaml = 로컬 태그). 중첩 기본값 한 파일로는 안쪽 필수 변수가 먼저 평가되어 실패한다
-    COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml"; export COMPOSE_EXTRA
+    COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
   fi
   # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
   if [ -n "$EXT" ]; then external_inference_setup "$EXT"; printf '%s\n%s\n' "$EXT" "$INFERENCE_TOKEN_FILE" > "$W/external-inference"
   elif [ -f "$W/external-inference" ]; then
     EXT=$(sed -n 1p "$W/external-inference"); export INFERENCE_TOKEN_FILE; INFERENCE_TOKEN_FILE=$(sed -n 2p "$W/external-inference"); external_inference_setup "$EXT"
   fi
+}
+demo_kiosk_prepare() { # 데모 때만 키오스크가 /config.json 으로 기기 설정을 받게 준비한다. 토큰 값은 읽지도 출력하지도 않는다
+  # 1) 기존 도구가 기기 산출물을 만든다(secrets/kiosk-config/<ID>.json, 기기 토큰은 gen-secrets.sh 가 만든 시험 기기 e2e 것)
+  SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" >/dev/null 2>&1 || die "기기 산출물 생성 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
+  [ -s "$DEMO_KIOSK_CONFIG" ] || die "기기 산출물이 없다: $DEMO_KIOSK_CONFIG"
+  # 왜 644: 컨테이너 사용자(node)가 읽어야 한다. 600 이면 호스트 사용자와 uid 가 같을 때만 우연히 읽힌다. 폴더가 700 이고 이 비밀 폴더는 데모 전용이다(docs/adr/0022-secret-file-permissions.md 와 같은 규칙)
+  chmod 644 "$DEMO_KIOSK_CONFIG"
+  # 2) gateway 설정 사본: /config.json 404 블록 하나만 kiosk-frontend 로 넘긴다. 운영 config/Caddyfile 은 그대로다
+  python3 -I "$DEPLOY_ROOT/scripts/demo_caddyfile.py" "$DEPLOY_ROOT/config/Caddyfile" "$DEMO_CADDYFILE" || die "Caddyfile 에서 /config.json 404 블록을 찾지 못했다 (config/Caddyfile 이 바뀌었다: scripts/demo_caddyfile.py 를 맞춘다)"
+  chmod 644 "$DEMO_CADDYFILE"   # gateway 컨테이너(uid 10001)가 configs 로 읽는다. 비밀 값은 없다(토큰은 {file./run/secrets/...} 로 읽는다)
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
@@ -115,7 +133,9 @@ guide() {
    trainer-e2e      $W/secrets/tokens/account-trainer-e2e-password
    reviewer-e2e     $W/secrets/tokens/account-reviewer-e2e-password
    예: cat $W/secrets/tokens/account-staff-e2e-password
- 키오스크 기기 토큰(D85 F절): $W/secrets/tokens/kiosk-device-e2e  (키오스크 API는 이 값을 Authorization: Bearer 로 보내야 통과한다. 키오스크 앱이 기기 토큰을 받는 방식은 kiosk-frontend 쪽 구현에 달렸고 이 데모에서 브라우저로는 확인하지 못했다)
+ 키오스크 기기 설정(D85 F절·D88/U8): 데모 때만 gateway 가 /config.json 으로 기기 설정을 내므로 키오스크 주소가 #device= 없이 열린다 (기기 ID e2e, 산출물 $DEMO_KIOSK_CONFIG, 토큰 값은 출력하지 않는다).
+   이 데모 주소에 닿는 누구나 /config.json 으로 이 시험 토큰을 읽는다: DEMO_BIND 를 127.0.0.1 밖으로 열면 그 범위 안에서 노출된다(운영 구성은 /config.json 을 404 로 막는다).
+ 모델 서빙: LoRA-A/LoRA-B 자리만 모방 백엔드(MODEL_RUNTIME_BACKEND=mimic, 시험 전용). 흐름 파일: $DEMO_MIMIC_FLOW_FILE (--mimic-flow-file 로 바꾼다). 나머지는 진짜 코드다.
 
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )
  $( [ $LLM = 1 ] && [ -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 기반 모델(프로파일 $LLM_PROFILE_NAME) + 학습 서버에서 가져온 LoRA-A/B(평가하지 않음, 릴리스 평가 보고서는 시험용 고정값) + 사용자가 준 시스템 프롬프트. 어댑터가 학습 때와 같은 프롬프트로 만든 것인지는 사용자가 보증한다. 첫 응답은 적재가 끝난 뒤부터 된다." )
@@ -219,6 +239,7 @@ case "$CMD" in
     bash "$DEPLOY_ROOT/scripts/publish-images.sh" $( [ $LLM = 1 ] && echo $SERVICES ) || die "게시 실패"   # --llm: GPU 이미지는 게시하지 않는다(이름 지정으로 제외)
     bash "$DEPLOY_ROOT/scripts/check-compose.sh" || exit 1
     bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$SECRETS_DIR" >/dev/null || die "비밀 생성 실패"
+    demo_kiosk_prepare
     if [ $LLM = 1 ]; then
       echo "== 기동 직전 병합 검증 (실제 잠금·레지스트리·로컬 GPU 이미지 태그)"
       llm_config_check real || die "병합 검증 실패: 이미지는 다시 빌드·게시하지 않았다. 원인을 고친 뒤 scripts/demo.sh down 후 다시 (GPU 이미지는 로컬에 남아 재빌드하지 않는다)"
@@ -291,7 +312,7 @@ case "$CMD" in
     if [ $PURGE_CACHE = 1 ]; then hf_cache_purge $PURGE_YES; else hf_cache_report; fi ;;
   reset)
     "$0" down || true
-    exec "$0" up $( [ $STOP = 1 ] && echo --stop-before-approval ) $( [ $LLM = 1 ] && echo --llm ) $( [ -n "$LLM_PROFILE_NAME" ] && echo --profile "$LLM_PROFILE_NAME" ) $( [ $YES_LARGE = 1 ] && echo --yes-large ) $( [ $ATTACH = 1 ] && echo --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" ) ;;
+    exec "$0" up $( [ $STOP = 1 ] && echo --stop-before-approval ) $( [ $LLM = 1 ] && echo --llm ) $( [ -n "$LLM_PROFILE_NAME" ] && echo --profile "$LLM_PROFILE_NAME" ) $( [ $YES_LARGE = 1 ] && echo --yes-large ) $( [ $ATTACH = 1 ] && echo --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" ) $( [ -n "$MIMIC_FLOW" ] && echo --mimic-flow-file "$MIMIC_FLOW" ) ;;
   ""|-h|--help|help) usage; [ -z "$CMD" ] && exit 2 || exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
