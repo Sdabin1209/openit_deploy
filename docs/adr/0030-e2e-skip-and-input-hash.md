@@ -9,7 +9,7 @@
 
 ## 결정
 
-1. 입력 선언: `scripts/e2e_plan.py`의 `STEP_DECLS`(e2e_steps.py의 단계)와 `SECTION_DECLS`(e2e.sh의 구간)가 단계마다 `repos`(결과를 좌우하는 소스 리포 커밋), `deps`(상태를 의존하는 앞 단계, 없으면 `()`), `why`(근거 코드 위치), `solo`(단독 실행 증명 여부)를 선언한다. 근거를 코드에서 읽지 못한 단계(5a, 5u, demo류)는 `deps=미확인`이다. 자체 시험이 STEPS 이름과 선언의 일치, 순환, 빈 근거, 실행 순서상 뒤에 있는 deps를 검출한다. 선언이 없는 단계가 있으면 e2e_steps.py가 시작하지 않는다.
+1. 입력 선언: 단계 선언은 `scripts/e2e_steps.py`의 단계 함수 위 `@step(repos, deps, why, also)` 데코레이터가 유일한 자리이고(`e2e_plan.decls_from_source`가 ast로 읽어 `STEP_DECLS`를 만든다, verify_area.py도 같은 선언을 읽는다), deps는 `STATE[...]` 읽기·쓰기 ast 분석과 같음을 `test_e2e_plan.py`가 강제한다. e2e.sh 구간은 `scripts/e2e_plan.py`의 `SECTION_DECLS`(e2e.sh의 구간)가 단계마다 `repos`(결과를 좌우하는 소스 리포 커밋), `deps`(상태를 의존하는 앞 단계, 없으면 `()`), `why`(근거 코드 위치), `solo`(단독 실행 증명 여부)를 선언한다. 근거를 코드에서 읽지 못한 단계(5a, 5u, demo류)는 `deps=미확인`이다. 자체 시험이 STEPS 이름과 선언의 일치, 순환, 빈 근거, 실행 순서상 뒤에 있는 deps를 검출한다. 선언이 없는 단계가 있으면 e2e_steps.py가 시작하지 않는다.
 2. SKIP: 선행(확인된 deps)이 FAIL 또는 SKIP이면 의존 항목은 돌리지 않고 `SKIP(선행 실패: 항목명)`으로 표시한다. 뿌리 항목명을 전이해 남긴다. 집계는 PASS/FAIL/SKIP을 따로 세고 종료 코드는 FAIL만 본다. e2e.sh는 같은 규칙을 `chk_dep`와 `NEED` 배열로 구현한다(예: 백업이 실패하면 볼륨 삭제도 하지 않는다). E2E_RESULTS.md는 표 칸을 바꾸지 않고(옛 행 호환) SKIP이 있을 때만 출처 칸에 `SKIP n개`를 적는다.
 3. `--fail-fast`: 첫 FAIL에서 요약을 내고 중단한다. 정본에는 기록하지 않는다.
 4. 해시 기록과 `--changed-only`: 단계마다 (선언한 리포의 HEAD 커밋 + 추적 파일 변경 해시, 단계 함수와 그것이 부르는 최상위 함수의 소스 해시, deps)를 해시해 `deploy/state/e2e-last-pass.json`(state/는 .gitignore, 리포 밖)에 마지막 PASS 때의 값으로 적는다. `--changed-only`는 해시가 바뀐 단계, 그에 의존하는 단계, `solo`가 증명되지 않았거나 deps가 미확인인 단계를 고르고, 스냅샷이 없어 상태를 재구성해야 하므로 고른 단계의 상류도 같이 돌린다. 기본 동작은 그대로이고 정본에 기록하지 않는다.

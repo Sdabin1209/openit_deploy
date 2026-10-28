@@ -81,7 +81,7 @@ class T(unittest.TestCase):
     def test_metric_registry_reader_fails_loudly_without_file(self):
         """지표 이름은 boundary_contracts/metrics.json 에서만 읽는다. 파일이 없으면 폴백 없이 SystemExit."""
         src = (HERE / "e2e_steps.py").read_text(encoding="utf-8")
-        self.assertIn("def metric_registry", src); self.assertIn("raise SystemExit", src.split("def metric_registry")[1].split("def step(")[0])
+        self.assertIn("def sample_metrics", src); self.assertIn("def metric_registry", src); self.assertIn("raise SystemExit", src.split("def metric_registry")[1].split("def step(")[0])
 
     def test_e2e_sh_sections_declared(self):
         sh = (HERE / "e2e.sh").read_text(encoding="utf-8")

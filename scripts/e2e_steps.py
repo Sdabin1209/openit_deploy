@@ -19,12 +19,29 @@ import e2e_asserts as EA
 # deps 는 STATE[...] 읽기·쓰기를 ast 로 분석한 값과 같아야 한다(test_e2e_steps_decl.py).
 STEP_REGISTRY = {}
 def metric_registry():
-    """boundary_contracts/metrics.json 의 지표 목록 [{name, group, higher_is_better, roles}]. 파일이 없으면 폴백 없이 실패한다(지표 이름을 여기에 다시 적지 않는다)."""
-    f = pathlib.Path(bc.__file__).resolve().parent / "metrics.json"
-    if not f.is_file(): raise SystemExit(f"지표 레지스트리 {f} 가 없다: boundary-contracts 에 metrics.json 이 들어간 태그가 필요하다")
-    ms = json.loads(f.read_text(encoding="utf-8")).get("metrics")
-    if not ms or any(not {"name", "group", "higher_is_better", "roles"} <= set(m) for m in ms): raise SystemExit(f"{f}: metrics[] 의 각 항목에 name·group·higher_is_better·roles 가 있어야 한다")
+    """계약의 지표 레지스트리(metrics.json)의 지표 목록. 설치된 계약 패키지에 metrics() 가 있으면 그것을, 없으면 이 워크스페이스의 boundary-contracts 파일을 읽는다(읽기 전용). 없거나 모양이 다르면 실패한다."""
+    if hasattr(bc, "metrics"): ms = bc.metrics(); src = "boundary_contracts.metrics()"
+    else:
+        f = pathlib.Path(__file__).resolve().parents[2] / "boundary-contracts" / "boundary_contracts" / "metrics.json"; src = str(f)
+        if not f.is_file(): raise SystemExit(f"지표 레지스트리 {f} 가 없다")
+        ms = json.loads(f.read_text(encoding="utf-8")).get("metrics")
+    need = {"name", "group", "higher_is_better", "status", "applies_to"}
+    if not isinstance(ms, list) or not ms or any(not isinstance(m, dict) or not need <= set(m) for m in ms):
+        raise SystemExit(f"{src}: metrics[] 의 각 항목에 {sorted(need)} 가 있어야 한다")
     return ms
+
+
+def sample_metrics(role):
+    """EvaluationReport 샘플 지표: 레지스트리에서 ACTIVE 이고 역할(LORA_A->A, LORA_B->B)에 맞는(applies_to 가 그 역할이거나 both) 방향이 정해진 지표만. 이름은 여기에 적지 않는다."""
+    r = {"LORA_A": "A", "LORA_B": "B"}[role]
+    rows = [(m["name"], m["group"], 1.0 if m["higher_is_better"] else 0.0, m["higher_is_better"]) for m in metric_registry()
+            if m["status"] == "ACTIVE" and m["applies_to"] in (r, "both") and isinstance(m["higher_is_better"], bool) and m.get("unit") == "ratio"]
+    assert rows, f"레지스트리에 {role} 용 ACTIVE ratio 지표가 없다"
+    by = {m["name"]: m for m in metric_registry()}
+    assert all(by[n]["status"] == "ACTIVE" and by[n]["applies_to"] in (r, "both") for n, *_ in rows)   # 단계가 쓰는 이름은 ACTIVE 이고 역할에 맞아야 한다
+    return rows
+
+
 def step(name, repos, deps, why, also=None):   # also: repos 에 없어도 이 단계가 호출 경계를 보는 영역 {영역: 어느 경계인지}
     def deco(fn):
         STEP_REGISTRY[name] = fn; return fn
@@ -340,7 +357,7 @@ def make_packages():
         mf["content_hash"] = canonical.content_hash(mf); validate("ModelPackageManifest", mf)
         ref = {"id": mf["package_id"], "version": mf["version"], "content_hash": mf["content_hash"]}
         # 시험용 EvaluationReport: 지표 값은 고정된 시험 값이다(실제 평가가 아니다). METRICS.md의 이름을 쓴다
-        rows = [(m["name"], m["group"], 1.0 if m["higher_is_better"] else 0.0, m["higher_is_better"]) for m in metric_registry() if role in m["roles"]]   # 이름은 계약의 지표 레지스트리에서만 읽는다(폐기 이름이 단계에 박히지 않게)
+        rows = sample_metrics(role)   # 이름은 계약의 지표 레지스트리에서만 읽는다
         rep = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "report_id": mf["eval_report_ref"], "created_at": "2026-10-15T00:00:00Z", "role": role,
                "package": ref, "dataset": STATE["dataset"], "question_sets": STATE["qs"][-1:],
                "evaluation_backend": {"name": "test-fixed-metrics", "version": "1", "constrained_decoding": False}, "decoding": {"temperature": 0, "seed": 1},
