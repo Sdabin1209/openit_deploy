@@ -1,0 +1,4 @@
+# 키오스크 기기 인증서 검증(2.3.0, D113, ADR 0040) 설정 조각. 이 기본 파일은 검증이 **꺼진** 상태다(조각이 비어 있다): 기기 토큰(2.x 호환)만 쓴다.
+# 켜려면 config/device-tls.mtls.caddy.example 의 내용을 이 자리에 쓰고(DEVICE_TLS_CONF 로 다른 파일을 지정해도 된다) 조직 PKI 의 신뢰 CA 인증서를 DEVICE_CA_FILE(기본 config/device-ca.pem)에 둔다. CA 인증서는 비밀이 아니다.
+(device_client_auth) {
+}

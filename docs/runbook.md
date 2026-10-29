@@ -286,6 +286,13 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 - `gateway-data`(Caddy 내부 CA 루트 인증서와 **비밀키**, `/data/caddy/pki`)는 `scripts/backup.sh`가 다른 파일 저장소와 같은 restic 저장소(암호화)에 백업한다(기본 대상에 포함).
 - **루트가 바뀌면(볼륨을 잃었거나 새 서버면) 모든 키오스크와 직원 PC가 새 루트를 다시 신뢰해야 한다. 백업에서 복원하면 루트가 유지되어 기기는 아무것도 하지 않아도 된다.** 복원: 서비스(gateway)를 멈추고 `bash scripts/restore.sh gateway-data latest --yes`(소유자·모드는 백업 때 값 그대로 돌아온다) 후 gateway를 시작한다. 복원 시험은 자체 시험(`test-backup.sh`)이 한다.
 
+### 9-2. 키오스크 기기 인증서(mTLS, 계약 2.3.0, ADR 0040)
+
+- 켜기: 조직 PKI의 신뢰 CA 인증서(PEM, 비밀 아님)를 `config/device-ca.pem`(또는 `DEVICE_CA_FILE`)에 두고, `config/device-tls.mtls.caddy.example`의 내용을 `config/device-tls.caddy`(또는 `DEVICE_TLS_CONF`)에 쓴 뒤 gateway를 다시 만든다(`up.sh deploy`). 기본은 꺼져 있고(기기 토큰 2.x 호환만) 켜도 토큰 경로는 남는다.
+- 기기 인증서의 주체 CN이 기기 ID다(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`). 발급·갱신·폐기는 조직 PKI/MDM 몫이고 이 프로젝트는 하지 않는다. 키오스크 앱은 자격을 보내지 않는다(브라우저가 TLS에서 인증서를 낸다).
+- 시험·데모: `bash scripts/device-pki.sh init|issue <기기 ID>|gateway-config`가 일회용 CA와 기기 인증서를 만든다(**운영 사용 금지**, 키는 `state/device-pki/` 권한 600). 확인: `bash scripts/test-device-mtls.sh`(Docker 필요) 또는 `--static`.
+- 직원 PC에 클라이언트 인증서가 설치돼 있으면 브라우저가 선택 창을 띄울 수 있다(`verify_if_given`). 기기 인증서는 키오스크에만 둔다.
+
 ## 10. 병원 서버에 올리기 전 요건 (사용자가 확인하는 것)
 
 이 절의 항목은 이 리포의 시험으로 확인되지 않는다. 각 항목이 왜 필요한지는 아래에 적는다.

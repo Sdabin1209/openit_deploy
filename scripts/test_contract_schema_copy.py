@@ -24,7 +24,7 @@ class T(unittest.TestCase):
         self.assertEqual(diff, [], "contract-ready 사본이 계약 패키지와 다르다(계약이 정본: 사본을 맞춘다)")
 
     def test_checker_prefers_package(self):
-        labels = {"io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.2.2", "io.openit.contracts.survey-schema": "1"}
+        labels = {"io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.3.0", "io.openit.contracts.survey-schema": "1"}
         p = subprocess.run([sys.executable, "-W", "ignore", str(HERE / "check_image_labels.py")], input=json.dumps(labels), capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("스키마 출처: 계약 패키지", p.stdout)

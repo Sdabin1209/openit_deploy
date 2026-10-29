@@ -1,0 +1,9 @@
+# 클라이언트 인증서 검증을 **켠** 조각(config/device-tls.caddy 자리에 쓴다). 신뢰 CA 는 하나(config/device-ca.pem 또는 DEVICE_CA_FILE, 컨테이너 안 /etc/caddy/device-ca.pem).
+# mode verify_if_given: 인증서를 낸 클라이언트는 신뢰 CA 가 발급한 것이어야 핸드셰이크가 된다(아니면 TLS 오류). 인증서를 안 낸 클라이언트(직원 브라우저)는 통과하되 키오스크 경로(/v1/sessions*)에서는
+# 주체 CN 이 없어 기기 인증이 안 되므로 401 이다(2.x 기기 토큰이 있으면 그쪽으로 통과). 모든 경로에서 인증서를 강제하지 않는 이유: 직원 콘솔은 계정 인증(Basic)이라 인증서가 없다.
+(device_client_auth) {
+	client_auth {
+		mode verify_if_given
+		trusted_ca_cert_file /etc/caddy/device-ca.pem
+	}
+}

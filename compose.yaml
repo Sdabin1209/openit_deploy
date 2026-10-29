@@ -59,6 +59,10 @@ configs:
     file: ${CONFIG_DIR:-./config}/Caddyfile
   gateway-accounts:
     file: ${SECRETS_DIR:-./secrets}/gateway-accounts.caddy   # 개별 계정 인증 블록(해시)과 계정 -> 역할(staff, operator, release-approver, reviewer) 매핑(비밀, D85 E절)
+  gateway-device-tls:
+    file: ${DEVICE_TLS_CONF:-./config/device-tls.caddy}   # 클라이언트 인증서 검증 조각(기본은 꺼짐, ADR 0040)
+  gateway-device-ca:
+    file: ${DEVICE_CA_FILE:-./config/device-ca.pem}   # 키오스크 기기 인증서의 신뢰 CA(비밀 아님)
   gateway-devices:
     file: ${SECRETS_DIR:-./secrets}/gateway-devices.caddy    # 키오스크 기기 토큰 목록(비밀, D85 F절)
 
@@ -220,6 +224,8 @@ services:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
       - {source: gateway-accounts, target: /etc/caddy/accounts.caddy}
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
+      - {source: gateway-device-tls, target: /etc/caddy/device-tls.caddy}
+      - {source: gateway-device-ca, target: /etc/caddy/device-ca.pem}
     secrets: [qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
@@ -269,8 +275,8 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
     environment:   # 비밀은 파일 경로만(D84)
-      SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 기기별 토큰 표(device_id=토큰). gateway 가 검증한 기기 토큰이 그대로 도착한다. 공유 키오스크 토큰(SURVEY_API_TOKEN)은 두지 않는다 -> /readyz 의 shared_kiosk_token 경고가 꺼진다
       SURVEY_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 릴리스 매니페스트 lineage 와 MAJOR.MINOR 를 비교하는 기준(D109). 값의 정본은 lib.sh 한 곳이다(survey 의 기본값 0.4.3 에 기대지 않는다)
+      SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 2.x 호환(선택, 3.0.0에서 없어진다): 기기 토큰(Bearer)을 쓰는 기기만. 2.3.0 의 기기 인증은 게이트웨이가 붙이는 X-Openit-Device 이고 survey 는 헤더가 있으면 헤더를 쓴다(ADR 0040). 토큰 기기가 없으면 빈 파일이다
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
       SURVEY_TRACE_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service

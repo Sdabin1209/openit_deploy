@@ -29,5 +29,5 @@ mk "kim.staff staff ${H1}x"; t "해시 길이가 다르면 거부" 1 bash "$HERE
 mk "kim.staff staff $H1"; chmod 666 "$CONF"; t "다른 사용자가 쓸 수 있는 파일은 거부" 1 bash "$HERE/apply-accounts.sh"
 ck "거부된 뒤에도 기존 조각이 그대로다" bash -c "cmp -s '$T/good.caddy' '$S/gateway-accounts.caddy'"
 ck "옛 발급·회전 스크립트가 없다(rotate-account.sh)" test ! -e "$HERE/rotate-account.sh"
-ck "예시 파일의 주석 해시는 형식 검사를 통과한다" bash -c "grep -m1 '^# kim.staff' '$HERE/../config/staff-accounts.conf.example' | sed 's/^# //' > '$T/ex.conf' && chmod 600 '$T/ex.conf' && GATEWAY_ACCOUNTS_CONF='$T/ex.conf' bash -c 'source \"$HERE/lib.sh\"; source \"$HERE/gateway-lib.sh\"; gw_parse_accounts' >/dev/null"
+ck "예시 파일의 주석 해시는 형식 검사를 통과한다" bash -c "grep -m1 '^# kim.staff' '$HERE/../config/staff-accounts.conf.example' | sed 's/^# //' > '$T/ex.conf' && chmod 600 '$T/ex.conf' && GATEWAY_ACCOUNTS_CONF='$T/ex.conf' bash -c 'DEPLOY_NO_DOCKER=1; source \"$HERE/lib.sh\"; source \"$HERE/gateway-lib.sh\"; gw_parse_accounts' >/dev/null"
 echo; [ $F = 0 ] && echo "통과: 직원 계정 파일 자체 시험 $N건" || { echo "실패: $F건 ($N건)"; exit 1; }
