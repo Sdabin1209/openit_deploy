@@ -24,9 +24,9 @@ if [ "${1:-}" = --static ]; then echo "  SKIP 동적 시험(--static): 통과로
 # ---- 동적 ----
 PROJ=deploy-montest-$$; FS=$(mktemp -d); chmod 755 "$FS"; echo ok > "$FS/mode"; chmod 644 "$FS/mode"
 MET="$FS/metrics"; mkdir -p "$MET"; chmod 755 "$MET"
-# 가짜 서비스의 --project-directory 상대 경로(./fake-services.py)는 test/monitoring 이 아니라 deploy 루트 기준이라 절대 경로로 바꾼 사본을 쓴다
-sed "s|- ./fake-services.py:|- $DEPLOY_ROOT/test/monitoring/fake-services.py:|" "$DEPLOY_ROOT/test/monitoring/compose.fake.yaml" > "$FS/compose.fake.yaml"
-dc_mon(){ FAKE_STATE_DIR="$FS" METRICS_DIR="$MET" "$DOCKER" compose -p "$PROJ" --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.monitoring.yaml" -f "$FS/compose.fake.yaml" --env-file "$LOCK" "$@"; }
+# 가짜 서비스 파일의 상대 경로(./test/monitoring/…)는 프로젝트 디렉터리(deploy 루트) 기준으로 쓰여 있어 사본 없이 그대로 쓴다(check-all 규칙 11 이 같은 기준으로 확인한다)
+FAKE_COMPOSE="$DEPLOY_ROOT/test/monitoring/compose.fake.yaml"
+dc_mon(){ FAKE_STATE_DIR="$FS" METRICS_DIR="$MET" "$DOCKER" compose -p "$PROJ" --project-directory "$DEPLOY_ROOT" -f "$DEPLOY_ROOT/compose.monitoring.yaml" -f "$FAKE_COMPOSE" --env-file "$LOCK" "$@"; }
 SERVICE_RESULT=success METRICS_DIR="$MET" bash "$DEPLOY_ROOT/scripts/job-metrics.sh" demo 600
 SERVICE_RESULT=exit-code EXIT_STATUS=1 METRICS_DIR="$MET" bash "$DEPLOY_ROOT/scripts/job-metrics.sh" brokenjob 600
 dc_mon up -d >/dev/null 2>&1 || { no "스택을 띄우지 못했다"; dc_mon logs --tail 20 2>&1 | tail -20; exit 1; }

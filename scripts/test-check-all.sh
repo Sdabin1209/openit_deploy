@@ -149,6 +149,11 @@ run 11; expect "원본 파일이 없으면 FAIL" FAIL "가 없다"
 mkdir "$W/deploy/config/job.yaml"; run 11; expect "원본이 (Docker 가 만든) 디렉터리면 FAIL" FAIL "디렉터리다"
 rmdir "$W/deploy/config/job.yaml"; echo "a: 1" > "$W/deploy/config/job.yaml"; run 11; expect "실제 파일이면 PASS" PASS "검증됨 1/1"
 printf 'services:\n  j:\n    image: x\n    volumes:\n      - data:/data\n      - ./dir:/d\n' > "$W/deploy/compose.yaml"; run 11; expect "이름 있는 볼륨·확장자 없는 경로는 대상 아님" PASS
+# 덧붙임 compose 파일(test/ 아래, e2e.sh 의 COMPOSE_EXTRA)의 상대 경로는 프로젝트 디렉터리(deploy 루트) 기준이다(Docker Compose 규격, lib.sh dc() 의 --project-directory)
+mkdir -p "$W/deploy/test"; echo '{}' > "$W/deploy/test/extra.json"; printf 'services:\n  j:\n    image: x\n    volumes:\n      - ./test/extra.json:/c/extra.json:ro\n' > "$W/deploy/test/compose.extra.yaml"
+run 11; expect "덧붙임 파일의 ./test/x.json 은 deploy 루트 기준이라 PASS(파일 자신의 폴더 기준으로 풀면 오판)" PASS "검증됨 1/2"
+printf 'services:\n  j:\n    image: x\n    volumes:\n      - ./extra.json:/c/extra.json:ro\n' > "$W/deploy/test/compose.extra.yaml"
+run 11; expect "덧붙임 파일 자신의 폴더 기준 경로(./extra.json)는 루트에 없으니 FAIL" FAIL "가 없다"
 
 echo "== record-e2e.sh (정본에 한 줄 더하기)"
 RF="$T/E2E_RESULTS.md"; cp "$ROOT/docs/E2E_RESULTS.md" "$RF"

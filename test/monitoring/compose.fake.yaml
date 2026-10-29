@@ -4,7 +4,7 @@ services:
     image: ${UTIL_IMAGE:?}
     command: ["python", "/fake/fake-services.py"]
     volumes:
-      - ./fake-services.py:/fake/fake-services.py:ro
+      - ./test/monitoring/fake-services.py:/fake/fake-services.py:ro   # 상대 경로는 프로젝트 디렉터리(deploy 루트) 기준이다
       - ${FAKE_STATE_DIR:?}:/state:ro
     networks:
       serving: {aliases: [gateway, release-gate, model-serving]}

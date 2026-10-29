@@ -863,6 +863,13 @@ def rule_collect() -> R:
 
 
 # ---------- 규칙 11 ----------
+def compose_base(repo: str, f: str) -> Path:
+    """상대 경로 마운트 원본을 푸는 기준 폴더. Docker Compose 는 여러 -f 파일의 상대 경로를 **프로젝트 디렉터리**(--project-directory, 없으면 첫 파일의 폴더) 기준으로 푼다.
+    deploy 의 compose 파일은 전부 lib.sh 의 dc() 로만 실행되고 dc() 는 --project-directory 를 deploy 루트로 준다(test/ 아래 덧붙임 파일 포함). 그래서 deploy 리포는 루트 기준이다.
+    덧붙임 파일을 판별하는 곳은 여기 한 곳이다: 다른 영역의 compose 파일은 단독으로 실행하는 것으로 보고 자기 폴더 기준으로 푼다."""
+    return WS / repo if repo == "deploy" else (WS / repo / f).parent
+
+
 def rule_mount_sources() -> R:
     """compose 의 바인드 마운트 원본 중 확장자가 있는 것(설정 파일)은 실제 파일이어야 한다.
     파일이 없는 채로 마운트하면 Docker 가 그 자리에 빈 디렉터리를 만들고(root 소유) 서비스가 설정을 못 읽는다(config/ops-feedback-job.yaml 결함의 재발 방지)."""
@@ -876,7 +883,7 @@ def rule_mount_sources() -> R:
             if not COMPOSE_FILE.search(f):
                 continue
             rel = f"{repo}/{f}"
-            base = (WS / repo / f).parent
+            base = compose_base(repo, f)
             try:
                 doc = yaml.safe_load((WS / repo / f).read_text(encoding="utf-8")) or {}
             except Exception:

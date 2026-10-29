@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-305: check-all 규칙 11의 상대 경로 기준
+- 덧붙임 compose 파일(`test/compose.*.yaml`, e2e.sh의 `COMPOSE_EXTRA`)의 상대 마운트 경로는 Docker Compose 규격상 프로젝트 디렉터리 기준이다(`lib.sh`의 `dc()`가 `--project-directory`를 deploy 루트로 준다). 규칙 11이 각 파일 자신의 폴더 기준으로 풀어 `test/compose.risk-rules.yaml`을 오판했다. `check_all.compose_base()` 한 곳에서 deploy 리포는 루트 기준, 다른 영역은 자기 폴더 기준으로 푼다.
+- 같은 오판이 숨기고 있던 것: `test/monitoring/compose.fake.yaml`은 자기 폴더 기준 경로(`./fake-services.py`)를 적고 `test-monitoring.sh`가 실행 때 절대 경로로 바꾼 사본을 썼다. 파일을 루트 기준(`./test/monitoring/fake-services.py`)으로 고치고 사본 만들기를 지웠다.
+
 ## wo-303: 영역 목록은 areas.json만 (turn-engine 퇴역 반영)
 - areas.json에서 turn-engine이 빠지자 `test-check-all.sh`가 영역 이름을 직접 적어 어긋났다. 시험이 `areas.py`로 영역을 읽는다(대조 대상 수도 `version_train`에서 계산). `test-build-images.sh`의 가짜 작업 공간도 같다.
 - `verify_area.AREAS`는 `areas.py`(python·node·compose 종류)에서 읽는다. 하드코딩 목록을 지웠다.
