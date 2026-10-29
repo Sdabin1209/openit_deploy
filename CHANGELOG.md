@@ -1,5 +1,10 @@
 # 변경 이력
 
+## E2E 후속(전체 E2E 첫 실행에서 나온 3건)
+- 단계 5o: 진행 시뮬레이션이 칸 없는 문항(Q3, Q4_1, Q5_1 …)에서 `KeyError: 'Q3'`로 멈췄다(`types[q]`). 칸이 없으면 값 없이 NEXT 만 나오므로 `types.get(q)`로 처리한다. 그 뒤 마지막 두 턴의 turn_id(`rng-8`, `rng-9`)가 진행 루프의 turn_id와 겹쳐 409 였다 -> 고유 id. `--only 1,2,3,4,5o` 로 5o REAL 통과(6.0s).
+- `test-systemd-units.sh`의 "scheduler.py 참조" 점검이 git 이 추적하지 않는 `__pycache__/*.pyc` 를 찾았다 -> `git ls-files` 로 추적 파일만 본다(리포 밖이면 `__pycache__`·`*.pyc` 제외).
+- e2e 정리가 감시 compose 프로젝트의 네트워크(`<프로젝트>_monitoring`)를 남겼다: 정리의 `down`이 `compose.monitoring.yaml`을 읽지 않아 그 파일에만 있는 네트워크를 몰랐다 -> 정리에서 그 파일을 포함해 내린다.
+
 ## 버전 열차 올림과 D115(LoRA-A 출력 값 규칙) E2E 단계 5o
 - `lib.sh` 기준표: boundary-contracts v2.4.1, model-runtime v0.10.0, 문진 스키마 survey-schema-v1.2.0(SlotDef 칸 규격). 시험 값도 맞췄다.
 - E2E 문항지(`test/fixtures/question-form-v2.txt`)의 Q8_1 일수 칸에 칸 규격 줄(`자료형: integer`, `값 단위: day/week`, `최소: 0`, `최대: 7`)을 넣었다. question-authoring 2f7d2b7의 작성 양식이 읽는 줄이다.

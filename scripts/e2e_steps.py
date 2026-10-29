@@ -795,19 +795,20 @@ def step5o():
     def skipped(item): return any(s["skip_item"] == item and s["slot"] in answers and type(answers[s["slot"]]) is type(s["value"]) and answers[s["slot"]] == s["value"] for s in ff["skips"])
     idx, turns = 0, 0
     while ff["order"][idx] != "Q8_1":
-        q = ff["order"][idx]; slot = ff["slots"][q][0]["key"]; text = "네 있어요" if types[q] == "boolean" else "3일이요"
+        q = ff["order"][idx]; qt = types.get(q)   # 칸이 없는 문항(Q3, Q4_1 …)은 값 없이 NEXT 만 낸다
+        text = "3일이요" if qt == "integer" else "네 있어요"
         turns += 1; c, rp = public_turn(sid, f"rng-{turns}", text); assert c == 200, (q, c, rp); validate_survey("FrontendInput", rp)
-        answers[slot] = True if types[q] == "boolean" else 3
+        if qt: answers[ff["slots"][q][0]["key"]] = 3 if qt == "integer" else True
         idx += 1
         while idx < len(ff["order"]) and skipped(ff["order"][idx]): idx += 1
     sv0 = staff_sv(sid); got = {v["key"] for v in sv0["values"]}
     assert "Q7.does_not_drink" in got and "Q8_1.days" not in got, ("Q8_1 에 도달하지 못했다(진행 시뮬레이션이 서비스와 어긋남)", sorted(got)[-5:])
-    c, bad = public_turn(sid, "rng-8", "8일이요"); assert c == 200, (c, bad); validate_survey("FrontendInput", bad)
+    c, bad = public_turn(sid, "rng-out-of-range", "8일이요"); assert c == 200, (c, bad); validate_survey("FrontendInput", bad)
     sv1 = staff_sv(sid); said = [t for t in sv1["turns"] if t["utterance"]]
     vals = {v["key"]: v for v in sv1["values"]}
     assert said[-1]["action"] == "REASK", ("범위 밖 값 뒤의 턴 action 이 REASK 가 아니다", said[-1])
     assert "Q8_1.days" not in vals or vals["Q8_1.days"].get("value") != 8, ("범위 밖 값 8 이 저장됐다", vals.get("Q8_1.days"))
-    c, ok_ = public_turn(sid, "rng-9", "3일이요"); assert c == 200, (c, ok_)
+    c, ok_ = public_turn(sid, "rng-retry", "3일이요"); assert c == 200, (c, ok_)
     sv2 = staff_sv(sid); v2 = {v["key"]: v for v in sv2["values"]}
     assert v2["Q8_1.days"]["value"] == 3 and v2["Q8_1.days"]["status"] == "ANSWERED", ("다시 답한 3일이 저장되지 않았다", v2.get("Q8_1.days"))
     kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})

@@ -26,7 +26,10 @@ while IFS='|' read -r name iv cmd; do
   case "$cmd" in *run-job.sh*) svc=${cmd##* }; grep -q "^  $svc:" "$HERE/compose.yaml" || fail "$name: compose.yaml 에 서비스 $svc 가 없다";; esac
   ok "$name: 쌍, 주기 ${iv}s, oneshot, 스크립트"
 done <<<"$TABLE"
-bad=$(grep -rln 'scheduler\.py' "$HERE/config" "$HERE/scripts" "$HERE/compose.yaml" --include='*' 2>/dev/null | grep -v 'test-systemd-units.sh' || true)
+# git 이 추적하는 파일만 본다(생성물 __pycache__·*.pyc 는 보지 않는다). git 리포지토리 밖이면 생성물을 제외하고 찾는다
+if files=$(git -C "$HERE" ls-files config scripts compose.yaml 2>/dev/null) && [ -n "$files" ]; then
+  bad=$(cd "$HERE" && grep -ls 'scheduler\.py' $files 2>/dev/null | grep -v 'test-systemd-units.sh' || true)
+else bad=$(grep -rls 'scheduler\.py' "$HERE/config" "$HERE/scripts" "$HERE/compose.yaml" --exclude-dir=__pycache__ --exclude='*.pyc' 2>/dev/null | grep -v 'test-systemd-units.sh' || true); fi
 [ -z "$bad" ] && ok "scheduler.py 를 부르는 곳이 없다" || fail "scheduler.py 참조: $bad"
 if command -v systemd-analyze >/dev/null 2>&1; then
   T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; cp "$U"/openit-*.service "$U"/openit-*.timer "$T/"

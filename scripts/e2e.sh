@@ -90,7 +90,8 @@ cleanup() {
   local rc=$?
   [ $KEEP = 1 ] && { echo "--keep: 프로젝트 $PROJECT, 레지스트리 $RPROJ, 작업 폴더 $W 를 남겼다"; return; }
   echo; echo "== 정리"
-  dc "$PROJECT" --profile jobs down -v --remove-orphans >/dev/null 2>&1
+  # 감시 스택(compose.monitoring.yaml)의 서비스·네트워크(${PROJECT}_monitoring)는 그 파일을 읽어야 내려간다: 파일 없이 내리면 고아 컨테이너만 지워지고 네트워크가 남아 Docker 주소 풀을 쓴다
+  COMPOSE_EXTRA="$COMPOSE_EXTRA $DEPLOY_ROOT/compose.monitoring.yaml" dc "$PROJECT" --profile jobs down -v --remove-orphans >/dev/null 2>&1
   bash "$DEPLOY_ROOT/scripts/registry.sh" down -v >/dev/null 2>&1
   for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -E '^127\.0\.0\.1:[0-9]+/openit/'); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done
   if [ $KEEPIMG = 0 ]; then for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -E '^deploy-build/' | grep -v '^deploy-build/model-serving-gpu:'); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done; fi   # 사용자가 따로 빌드한 13GB GPU 이미지(데모용)는 지우지 않는다
