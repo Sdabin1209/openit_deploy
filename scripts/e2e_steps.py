@@ -266,12 +266,15 @@ def run_job(job_name, cfg_path, extra_ro=()):
     job = sd_jobs.find_job(labels, job_name, bc.validator)
     cfg = json.loads(pathlib.Path(cfg_path).read_text())
     if job.get("config", {}).get("schema"): validate(job["config"]["schema"], cfg)   # 영역이 선언한 설정 스키마(계약)로 deploy 가 만든 설정을 먼저 검사한다
-    return subprocess.run(sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro), capture_output=True, text=True)
+    r = subprocess.run(sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro), capture_output=True, text=True)
+    # 종료 코드 2 는 설정 오류다(계약 SyntheticJobError): 우리가 만든 설정이 거부된 것이므로 어떤 단계도 기대하지 않는다. 계약으로 읽어 사유를 보고한다
+    assert r.returncode != 2, f"{job_name}: {sd_jobs.describe_failure(r.returncode, r.stderr, bc.validator)}"
+    return r
 
 def run_sd(name, seeds, failure=False):
     p = sd_config(name, seeds, failure)
     r = run_job("synthetic-run", p)
-    assert r.returncode == 0, f"synthetic-data 종료 {r.returncode}: {(r.stderr + r.stdout)[-800:]}"
+    assert r.returncode == 0, f"synthetic-data {sd_jobs.describe_failure(r.returncode, r.stderr, bc.validator)}"
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 def read_manifest(out):

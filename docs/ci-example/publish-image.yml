@@ -39,11 +39,12 @@ jobs:
           cd /tmp/deploy
           git checkout -b "publish/${SERVICE_NAME}-${REV}"
           bash scripts/publish-image.sh "$SERVICE_NAME" "local/${SERVICE_NAME}:${REV}" --registry "$DEPLOY_REGISTRY" | tee /tmp/publish.out
-          tail -1 /tmp/publish.out
+          # 마지막 줄은 계약 PublishResult JSON(docs/ci.md 4~5절): 종료 코드는 위에서 이미 확인됐고(set -e), status 로 변경 여부를 본다
+          tail -1 /tmp/publish.out | tee /tmp/publish.result
       - name: digest 제출 (deploy 리포지토리에 브랜치로 올린다. 병합은 담당자)
         run: |
           cd /tmp/deploy
           git add locks/
-          git diff --cached --quiet && { echo "변경 없음(UNCHANGED)"; exit 0; }
+          git diff --cached --quiet && { echo "변경 없음($(jq -r .status /tmp/publish.result))"; exit 0; }
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -m "이미지 게시: ${SERVICE_NAME} ${REV}"
           git push origin "publish/${SERVICE_NAME}-${REV}"

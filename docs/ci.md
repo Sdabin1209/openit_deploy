@@ -10,7 +10,7 @@
 2. **필수 라벨 검사(D50).** `io.openit.service`, `io.openit.revision`, `io.openit.contracts.boundary`, `io.openit.contracts.survey-schema`가 있고 비어 있지 않으며 `unknown`이 아니어야 한다. `io.openit.turn-engine`, `io.openit.model-runtime`은 해당 있는 영역만 필수(해당 없으면 `n/a` 또는 생략; `none`은 거부). `publish-image.sh`가 앞의 네 개(와 revision != unknown)를 다시 검사하고 어기면 종료 코드 3으로 거부한다. 값은 계약 `ImageLabels` 스키마(필수 4개, turn-engine·model-runtime·langgraph는 해당 서비스에만, 값 없음은 `n/a` 하나, 버전은 `v` 접두사, revision은 hex)를 따라야 하고 `publish-image.sh`가 게시 전에 이 스키마로 검증한다(어기면 종료 코드 3, ADR 0035).
 3. **스모크 통과.** 영역의 `scripts/smoke.sh`(이미지 빌드, `/healthz`·`/readyz`, 비root, 라벨, 영역별 확인; 고정 포트 금지)가 통과해야 한다.
 4. **게시.** `scripts/publish-image.sh <서비스 이름> <이미지 ID|이미지 이름|tar> --registry <host:port>` 를 부른다. 레지스트리에 push하고 레지스트리가 아는 digest를 push 출력과 대조한 뒤, `locks/images.lock`과 `locks/history/`에 기록한다.
-5. **digest 제출.** 표준 출력 마지막 줄 `PUBLISHED <서비스> <digest> <revision>` 또는 `UNCHANGED …`이 제출 내용이다. CI는 이 줄과 `locks/images.lock` 변경분을 deploy 리포지토리의 변경으로 올린다(아래 3절).
+5. **digest 제출.** 표준 출력 마지막 줄은 계약 `PublishResult` JSON 한 줄이다(boundary-contracts v2.6.0). 성공이면 `{"exit_code":0,"status":"PUBLISHED"|"UNCHANGED","service":…,"digest":"sha256:…","revision":…}`, 실패면 `{"exit_code":N,"service":…}`(status·digest 없음). CI는 이 줄의 `status`·`digest`와 `locks/images.lock` 변경분을 deploy 리포지토리의 변경으로 올린다(아래 3절). 예전의 `PUBLISHED <서비스> <digest> <revision>` 문자열 줄은 없다. `--help`는 이 줄을 내지 않는다.
 
 서비스 이름은 다음 중 하나다: `survey-service`, `question-authoring`, `ops-feedback`, `release-gate`, `model-registry`(model-lab 소스), `model-serving`(model-runtime 소스), `kiosk-frontend`, `admin-console`. 목록에 없으면 종료 코드 2로 거부한다(새 서비스는 deploy가 `scripts/lib.sh`의 목록과 `compose.yaml`에 먼저 등록한다).
 
@@ -21,7 +21,7 @@
 | 호출 | `scripts/publish-image.sh <서비스 이름> <이미지 ID 또는 이름 또는 tar 파일> [--registry host:port]` |
 | 레지스트리 주소 | `--registry`, 없으면 `DEPLOY_REGISTRY`, 없으면 `state/registry.env`. `http://` 접두사는 떼어 낸다 |
 | 잠금 위치 | `DEPLOY_LOCK`(기본 `locks/images.lock`), 이전 잠금은 같은 폴더의 `history/` |
-| 멱등 | 같은 이미지를 다시 올리면 같은 digest이고 `UNCHANGED`, 잠금·history 변화 없음 |
+| 멱등 | 같은 이미지를 다시 올리면 같은 digest이고 `status: "UNCHANGED"`, 잠금·history 변화 없음 |
 | 새 digest | 잠금 줄 `<서비스>_DIGEST`, `<서비스>_REVISION`만 바꾸고 이전 잠금을 history에 보관, 다른 줄(다른 서비스, 외부 이미지)은 그대로. 형식은 머리말 한 줄 + 정렬된 `KEY=value` |
 | 동시 호출 | `flock`으로 직렬화하고 임시 파일에 쓴 뒤 바꿔 넣는다(여러 영역 CI가 동시에 불러도 안전) |
 | 종료 코드 | 0 성공/이미 같음, 1 Docker 실행 파일/데몬에 닿지 않음(인자 검사 뒤에 확인), 2 사용법 또는 서비스 이름이 목록에 없음(Docker 없이도 항상 동작, `--help`는 0), 3 필수 라벨 누락 또는 라벨 값이 ImageLabels 를 어김, 4 이미지 없음·push·digest 확인 실패, 5 잠금 기록 실패 |

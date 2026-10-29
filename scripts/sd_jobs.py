@@ -33,3 +33,24 @@ def docker_cmd(docker, image, job, cfg_path, work, secrets_dir, uid, gid, extra_
             raise AssertionError(f"잡 선언의 비밀 파일 {nf} 에 연결할 토큰을 deploy 가 정하지 않았다")
         cmd += ["-v", f"{pathlib.Path(secrets_dir) / 'tokens' / SECRET_FILES[nf]}:/run/secrets/{nf.lower()}:ro", "-e", f"{nf}=/run/secrets/{nf.lower()}"]
     return cmd + [image] + job["argv"]
+
+
+def describe_failure(returncode: int, stderr: str, validator) -> str:
+    """잡 종료 코드에 따라 stderr 를 계약으로 읽어 한 줄로 보고한다(계약 SyntheticJobError 의 설명).
+    2: stderr 마지막 줄이 SyntheticJobError JSON(설정 오류). 3·75: BoundaryError 레코드. 그 밖: 계약에 정한 형식이 없으므로 stderr 끝을 그대로 보인다(비밀은 잡이 내지 않는다: D84).
+    파싱·검증에 실패하면 그 사실을 적고 원문 끝을 보인다(읽지 못한 것을 읽은 것처럼 쓰지 않는다)."""
+    lines = [l for l in (stderr or "").splitlines() if l.strip()]
+    tail = lines[-1] if lines else ""
+    if returncode in (2, 3, 75):
+        name = "SyntheticJobError" if returncode == 2 else "BoundaryError"
+        try:
+            rec = json.loads(tail)
+            errs = [e.message for e in validator(name).iter_errors(rec)]
+            if not errs:
+                if returncode == 2:
+                    return f"잡 종료 코드 2 (설정 오류 {rec['error']}): {rec['message']}"
+                return f"잡 종료 코드 {returncode} (BoundaryError {rec['code']}, 재시도 {'가능' if rec['retryable'] else '불가'}): {rec['message']}"
+            return f"잡 종료 코드 {returncode}: stderr 마지막 줄이 {name} 계약을 어긴다({errs[0][:80]}): {tail[:200]}"
+        except ValueError:
+            return f"잡 종료 코드 {returncode}: stderr 마지막 줄이 JSON 이 아니라 {name} 로 읽지 못했다: {tail[:200]}"
+    return f"잡 종료 코드 {returncode}: {tail[:200]}"

@@ -1,5 +1,10 @@
 # 변경 이력
 
+## wo-30: U47 deploy 몫 (노출 선언 대조, PublishResult, SyntheticJobError)
+- `scripts/check-exposure.sh`(+`check_exposure.py`, ADR 0043): `config/Caddyfile`을 영역 이미지의 라벨 `io.openit.exposure`(계약 Exposure)와 대조한다. 생성이 아니라 대조인 이유는 ADR(Exposure가 CSRF·mTLS·SSE·상태 변환 같은 게이트웨이 기능을 아직 표현하지 못한다). 포트·사용자는 이미지 OCI 설정(`ExposedPorts`, `User`)에서 읽는다. 알려진 어긋남 2건은 `config/exposure-known-diffs.json`에 이유와 함께 둔다. e2e.sh 자체 점검에 포함.
+- `publish-image.sh`: 표준 출력 마지막 줄이 계약 `PublishResult` JSON이다(모든 종료 코드 0~5; `--help` 제외). 옛 `PUBLISHED|UNCHANGED …` 문자열 줄은 없다. `docs/ci.md`, `docs/ci-example/publish-image.yml`을 맞췄고 `test-publish.sh`가 마지막 줄을 계약 validator로 검증하고 `exit_code`가 실제 종료 코드와 같은지 본다.
+- `sd_jobs.describe_failure`: 잡 종료 코드 2의 stderr 마지막 줄을 계약 `SyntheticJobError`로, 3·75는 `BoundaryError`로 읽어 보고한다(검증 실패나 JSON이 아니면 그 사실을 적는다). E2E의 `run_job`은 종료 코드 2를 설정 오류로 바로 보고한다.
+
 ## wo-29: 기준표 bc v2.7.0·문진 스키마 v1.3.0, U43 소비(CR-D30 3단계), U48 CR
 - 기준표: `DEPLOY_BC_TAG` v2.7.0, `DEPLOY_SS_TAG` survey-schema-v1.3.0 (model-runtime v0.10.0 그대로).
 - 영역 시험 환경: `prepare-areas.sh`가 영역 `setup-env.sh` 표준 출력 마지막 줄을 계약 `SetupEnvReport`로 검증해 `state/setup-env/`에 모은다(`scripts/setup_env_report.py`). `doctor.sh`, `check_all.py`(규칙 3·8), `verify_area.py`는 그 보고의 `environment.path`·`test_command`만 쓴다. 이웃의 `.venv/bin/python`, `node_modules`, pytest/npm 짐작을 지웠다. 규칙 8은 수집이 아니라 보고된 `test_command` 실행이다(영역이 정한 명령이라 collect-only를 deploy가 만들 수 없다). 그래서 규칙 8이 시험 시간만큼 걸린다(측정: 4개 영역 약 140초, check-all 전체).

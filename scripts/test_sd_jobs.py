@@ -44,6 +44,29 @@ class T(unittest.TestCase):
         job2 = dict(job, secret_files=["UNKNOWN_FILE"])
         with self.assertRaises(AssertionError): sd_jobs.docker_cmd("docker", "i", job2, "/c", "/w", "/s", 1, 1)
 
+    def test_describe_failure(self):
+        d = lambda rc, err: sd_jobs.describe_failure(rc, err, validator)
+        self.assertEqual(d(2, 'noise\n{"error": "CONFIG", "message": "seed 가 정수가 아니다"}\n'), "잡 종료 코드 2 (설정 오류 CONFIG): seed 가 정수가 아니다")
+        self.assertIn("계약을 어긴다", d(2, '{"error": "OTHER", "message": "x"}'))
+        self.assertIn("JSON 이 아니라", d(2, "Traceback ..."))
+        bnd = {"pipeline_schema_version": "1.0", "code": "UNAVAILABLE", "message": "닿지 않는다", "retryable": True}
+        self.assertIn("BoundaryError UNAVAILABLE, 재시도 가능", d(75, json.dumps(bnd)))
+        self.assertEqual(d(4, "허용치 초과"), "잡 종료 코드 4: 허용치 초과")
+
+    def test_real_import_job_config_error_is_exit_2(self):
+        img = find_image()
+        if not img: self.skipTest("SKIP: io.openit.jobs 라벨이 있는 dataset-store 이미지가 없다(확인 못 함)")
+        labels = json.loads(subprocess.check_output(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], text=True))
+        job = sd_jobs.find_job(labels, "synthetic-import", validator)
+        with tempfile.TemporaryDirectory() as w:
+            os.chmod(w, 0o755); sec = pathlib.Path(w) / "sec"; (sec / "tokens").mkdir(parents=True)
+            (sec / "tokens/dataset-store-write-synthetic-data").write_text("x" * 32)
+            cp = pathlib.Path(w) / "bad.json"; cp.write_text(json.dumps({"dataset_id": "ds-bad"}))   # 필수 키가 없는 설정(계약 위반)
+            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid()), capture_output=True, text=True)
+            self.assertEqual(r.returncode, 2, r.stderr[-300:])
+            msg = sd_jobs.describe_failure(r.returncode, r.stderr, validator)
+            self.assertIn("설정 오류 CONFIG", msg, msg)
+
     def test_real_import_job(self):
         img = find_image()
         if not img: self.skipTest("SKIP: io.openit.jobs 라벨이 있는 dataset-store 이미지가 없다(확인 못 함)")
