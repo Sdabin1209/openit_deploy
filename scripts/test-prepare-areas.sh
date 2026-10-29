@@ -10,9 +10,14 @@ cat > "$T/head/shared/areas.json" <<'J'
  {"name":"c-none","kind":"node","version_train":false},{"name":"d-ok","kind":"library","version_train":false},{"name":"deploy","kind":"compose","version_train":false}]}
 J
 for a in a-ok b-fail c-none d-ok; do mkdir -p "$T/$a/scripts"; done
-printf 'echo ran-a-ok\n' > "$T/a-ok/scripts/setup-env.sh"
-printf 'echo ran-b-fail; exit 3\n' > "$T/b-fail/scripts/setup-env.sh"
-printf 'echo ran-d-ok\n' > "$T/d-ok/scripts/setup-env.sh"
+# 영역 setup-env.sh 는 표준 출력 마지막 줄에 SetupEnvReport 를 낸다(계약 v2.6.0). 시험에서는 deploy .venv 의 계약 패키지로 검증한다.
+# 계약 패키지가 있는 파이썬: 이 트리의 .venv, 없으면(worktree) 주 작업 트리의 .venv
+[ -z "${SETUP_PY:-}" ] && for c in "$HERE/../.venv/bin/python" "$(git -C "$HERE" rev-parse --git-common-dir 2>/dev/null)/../.venv/bin/python"; do [ -x "$c" ] && SETUP_PY=$c && break; done; export SETUP_PY
+export SETUP_ENV_DIR="$T/state-setup-env"
+rep() { printf "echo ran-%s; echo '{\"area\":\"%s\",\"status\":\"%s\",\"exit_code\":%s,\"seconds\":1,\"environment\":{\"kind\":\"python-venv\",\"path\":\".venv\",\"test_command\":[\".venv/bin/python\",\"-m\",\"pytest\"]}}'; exit %s\n" "$1" "$1" "$2" "$3" "$3"; }
+rep a-ok ok 0 > "$T/a-ok/scripts/setup-env.sh"
+rep b-fail fail 3 > "$T/b-fail/scripts/setup-env.sh"
+rep d-ok ok 0 > "$T/d-ok/scripts/setup-env.sh"
 rc=0; N=0
 chk() { # chk <설명> <기대 종료코드> <기대 문자열|-> <인자...>
   local d=$1 want=$2 pat=$3; shift 3; N=$((N+1))
@@ -29,6 +34,9 @@ out=$(bash "$HERE/prepare-areas.sh" --ws "$T" --no-self 2>&1); grep -q '실패(�
 chk "성공하는 영역만 지정하면 종료 코드 0" 0 "전부 성공" a-ok d-ok
 chk "지정하지 않은 영역은 실행하지 않는다" 0 - a-ok
 out=$(bash "$HERE/prepare-areas.sh" --ws "$T" --no-self a-ok 2>&1); grep -q ran-d-ok <<<"$out" && { echo "  FAIL 지정 밖 실행"; rc=1; } || echo "  ok   지정 밖 영역은 실행하지 않았다"
+chk "성공하는 영역의 보고를 검증해 state 에 모은다" 0 - a-ok
+[ "$(python3 -c "import json;print(json.load(open('$SETUP_ENV_DIR/a-ok.json'))['environment']['path'])")" = .venv ] && echo "  ok   a-ok 보고가 저장됐다" || { echo "  FAIL 보고 저장"; rc=1; }
+printf 'echo not-a-report\n' > "$T/a-ok/scripts/setup-env.sh"; chk "마지막 줄이 SetupEnvReport 가 아니면 실패로 센다" 1 "계약 위반" a-ok
 chk "대상이 아닌 이름은 사용 오류(2)" 2 "대상 영역이 아니다" nope
 rm -rf "$T/d-ok"; chk "영역 폴더가 없으면 실패로 보고" 1 "폴더없음" d-ok
 rm "$T/head/shared/areas.json"; chk "영역 목록을 읽지 못하면 실패(1)" 1 "영역 목록을 읽지 못했다"

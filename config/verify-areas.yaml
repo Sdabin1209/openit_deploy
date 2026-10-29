@@ -3,7 +3,7 @@
 # 구조
 #   (단계 사실 -- 선행 단계, 단계 ↔ 영역 -- 은 여기에 없다. scripts/e2e_steps.py 의 @step(repos, deps, also)가 유일한 자리이고 verify_area.py 가 읽는다.)
 #   areas.<영역>
-#     tests    : 영역 자체 시험. pytest(영역 .venv) 또는 npm(영역 node_modules) 또는 deploy 의 스크립트 목록(commands).
+#     tests    : 영역 자체 시험. pytest/npm = 영역의 setup-env 보고(SetupEnvReport)가 알려 준 test_command 를 돌린다(kind 이름은 옛 표기). 또는 deploy 의 스크립트 목록(commands).
 #     e2e: auto : 이 영역이 바뀌면 돌릴 E2E 단계를 @step 에서 계산한다(repos 에 영역이 있거나 also 에 적힌 단계).
 #     e2e: none + reason : 영역 내부만 바뀌어도 E2E 가 보는 경계가 없다는 표시. 이유 필수.
 #     e2e: fast : 영역이 구조 전체(compose, gateway, 스크립트)라 단계 일부로 줄일 수 없다. e2e.sh --fast(전체 합격 아님) 를 돌린다.

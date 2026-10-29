@@ -11,4 +11,8 @@ grep -q 'doctor: 통과' <<<"$out" && { echo "  FAIL 못 읽었는데 '통과'�
 grep -q '형제 리포 0개' <<<"$out" && { echo "  FAIL 형제 리포를 0개로 셌다"; rc=1; } || echo "  ok   형제 리포 '0개'를 세지 않는다"
 out=$(bash "$HERE/doctor.sh" 2>&1)
 grep -q '\[확인 못 함\]' <<<"$out" && { echo "  FAIL 읽을 수 있는데 '확인 못 함'이 나왔다"; rc=1; } || echo "  ok   읽을 수 있으면 '확인 못 함'이 없다"
+# 영역 시험 환경은 setup-env 보고만 본다(U43): 보고 폴더가 비어 있으면 WARN 으로 prepare-areas.sh 를 안내하고 통과로 세지 않는다
+E=$(mktemp -d); out=$(SETUP_ENV_DIR="$E" bash "$HERE/doctor.sh" 2>&1); rm -rf "$E"
+grep -q '영역 시험 환경 보고가 없거나 환경이 없다' <<<"$out" && grep -q 'prepare-areas.sh' <<<"$out" && echo "  ok   보고가 없으면 prepare-areas.sh 를 안내한다" || { echo "  FAIL 보고 없음 안내"; rc=1; }
+grep -q 'install_msg\|영역 시험 환경이 준비됐다' <<<"$out" && { echo "  FAIL 보고가 없는데 환경 준비됨으로 셌다"; rc=1; } || echo "  ok   보고가 없으면 준비됨으로 세지 않는다"
 [ $rc = 0 ] && echo "통과: doctor 영역 목록 자체 시험" || exit 1

@@ -31,6 +31,16 @@ if [ ${#ONLY[@]} -gt 0 ]; then
   SELF=$WANT_SELF
 else read -r -a TARGETS <<< "$ALL"; fi
 
+# 영역의 setup-env.sh 를 돌리고 표준 출력 마지막 줄(SetupEnvReport)을 계약 validator 로 검증해 state/setup-env/ 에 모은다(U43: doctor·check-all 은 이 보고만 쓴다).
+# 왜 한 번만 검증하나: 영역이 낸 값은 받는 쪽이 다시 검증하지 않는다(R7). 보고가 계약을 어기면 그 영역은 실패로 센다.
+setup_one() {
+  local a=$1 out rc py=${SETUP_PY:-$DEPLOY_ROOT/.venv/bin/python}   # deploy 자신의 .venv 는 위에서 먼저 준비한다(계약 패키지가 거기 있다)
+  [ -x "$py" ] || py=python3
+  out=$(cd "$WORKSPACE/$a" && bash scripts/setup-env.sh); rc=$?
+  printf '%s\n' "$out" | sed '$d'
+  printf '%s\n' "$out" | "$py" "$DEPLOY_ROOT/scripts/setup_env_report.py" record "$a" || { [ $rc = 0 ] && rc=70; }
+  return $rc
+}
 NAMES=(); STATUS=(); SECS=(); FAILS=0
 run_one() { # run_one <이름> <명령...>: 로그는 그대로 보이고 결과만 기록한다
   local name=$1; shift; local t0=$SECONDS rc st
@@ -52,7 +62,7 @@ for a in "${TARGETS[@]}"; do
   s="$WORKSPACE/$a/scripts/setup-env.sh"
   if [ ! -d "$WORKSPACE/$a" ]; then echo "== $a"; echo "  영역 폴더가 없다: $WORKSPACE/$a (head/setup.sh 로 받는다)"; NAMES+=("$a"); STATUS+=("폴더없음"); SECS+=(0); FAILS=$((FAILS+1))
   elif [ ! -f "$s" ]; then echo "== $a"; missing "$a/scripts/setup-env.sh" "$a"
-  else run_one "$a" bash -c 'cd "$1" && bash scripts/setup-env.sh' _ "$WORKSPACE/$a"; fi
+  else run_one "$a" setup_one "$a"; fi
 done
 
 echo; echo "== 요약"

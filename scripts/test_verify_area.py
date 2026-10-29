@@ -10,6 +10,16 @@ HERE = Path(__file__).resolve().parent
 WS = Path("/ws")
 
 
+import json, os
+_SE = tempfile.mkdtemp()   # setup-env 보고 폴더(시험용): test_command 는 보고에서 온다
+os.environ["SETUP_ENV_DIR"] = _SE
+for _a in ("survey-service", "release-gate", "ops-feedback", "question-authoring", "model-runtime", "model-lab", "synthetic-data", "kiosk-frontend", "admin-console"):
+    _node = _a in ("kiosk-frontend", "admin-console")
+    _env = {"kind": "node-modules", "path": "node_modules", "test_command": ["npm", "test"]} if _node else {"kind": "python-venv", "path": ".venv", "test_command": [".venv/bin/python", "-m", "pytest", "-q"]}
+    if _a != "ops-feedback":   # ops-feedback 은 보고가 없는 경우의 시험용
+        Path(_SE, f"{_a}.json").write_text(json.dumps({"area": _a, "status": "ok", "exit_code": 0, "seconds": 1, "environment": _env}))
+
+
 class T(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -75,7 +85,7 @@ class T(unittest.TestCase):
         self.assertEqual(names[0], "survey-service 시험"); self.assertEqual(names[1], "check-all (정적 일관성)")
         e2e = plan[-1]
         self.assertIn("--only", e2e[1]); self.assertEqual(e2e[3]["DEPLOY_SKIP_CHECK_ALL"], "1"); self.assertEqual(e2e[3]["DEPLOY_NO_RECORD"], "1")
-        self.assertTrue(plan[0][1][0].endswith("survey-service/.venv/bin/python"))
+        self.assertEqual(plan[0][1], [".venv/bin/python", "-m", "pytest", "-q"])   # 시험 명령은 setup-env 보고가 정한다
         self.assertTrue(any("5q=" in n for n in notes))   # 근거를 알린다
 
     def test_assemble_docs_only_skips_e2e(self):
@@ -90,7 +100,7 @@ class T(unittest.TestCase):
 
     def test_assemble_npm_and_deploy_and_stale(self):
         plan, _ = v.assemble(self.cfg, "kiosk-frontend", WS, changed=["app/x.ts"], stale=("kiosk-frontend",))
-        self.assertEqual(plan[0][1], ["npm", "test", "--silent"]); self.assertEqual(plan[0][2], WS / "kiosk-frontend")
+        self.assertEqual(plan[0][1], ["npm", "test"]); self.assertEqual(plan[0][2], WS / "kiosk-frontend")
         self.assertEqual(plan[2][1][-1], "kiosk-frontend"); self.assertIn("build-images.sh", plan[2][1][1])
         self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5,5f,5d,5q,5w,5m,5r,5n,6,8,5g"])   # repos 에 kiosk-frontend 가 있는 단계(+deps 닫힘)
         plan, _ = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])
@@ -135,6 +145,11 @@ class T(unittest.TestCase):
     def test_admin_console_runs_gen_schemas_check(self):   # D101: 생성된 계약 검증기가 낡으면 잡는다
         cmds, _ = v.test_command(self.cfg["areas"]["admin-console"], Path("/ws"), "admin-console")
         self.assertIn(("node", "scripts/gen-schemas.mjs", "--check"), cmds)
+
+    def test_missing_report_is_config_error(self):
+        with self.assertRaises(v.ConfigError) as cm:
+            v.test_command(self.cfg["areas"]["ops-feedback"], WS, "ops-feedback")
+        self.assertIn("prepare-areas.sh ops-feedback", str(cm.exception))
 
     def test_image_src_comes_from_lib_sh(self):
         """서비스 -> 리포 대응의 정본은 lib.sh 한 곳이다: verify_area 가 같은 값을 읽고, 알려진 대응이 맞고, 코드에 따로 적은 표가 없다."""

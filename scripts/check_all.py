@@ -24,6 +24,9 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import setup_env_report as SER  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 WS = Path(os.environ.get("CHECK_ALL_WORKSPACE") or HERE.parent.parent)
 EXCLUDE_FILE = Path(os.environ.get("CHECK_ALL_EXCLUDE") or HERE / "check-all.exclude")
@@ -388,9 +391,11 @@ RELAX_SNIPPET = (
 def rule_relax() -> R:
     r = R()
     T = "ActionExtraction 완화"
-    py = os.environ.get("CHECK_ALL_MR_PY") or str(WS / "model-runtime" / ".venv" / "bin" / "python")
-    if not os.path.exists(py):
-        r.un.append((T, "model-runtime/.venv 가 없다 (해결: model-runtime/README.md 실행 방법의 설치 줄, docs/SETUP.md F절)"))
+    # 파이썬 위치는 model-runtime 의 setup-env 보고(SetupEnvReport.environment)에서 얻는다(U43: 이웃의 환경 배치를 짐작하지 않는다). 시험은 CHECK_ALL_MR_PY 로 대신한다
+    py = os.environ.get("CHECK_ALL_MR_PY") or (str(SER.env_python("model-runtime", WS) or ""))
+    if not py or not os.path.exists(py):
+        _, why = SER.env_status("model-runtime", WS)
+        r.un.append((T, why or "model-runtime 의 환경이 python-venv 가 아니다"))
         return r
     try:
         p = subprocess.run([py, "-I", "-c", RELAX_SNIPPET], capture_output=True, text=True, timeout=60, cwd="/")
@@ -848,44 +853,26 @@ def collect_area(repo: str):
             return "fail", "시험 스크립트(scripts/test-*.sh)가 없다"
         errs = [s.name for s in scripts if subprocess.run(["bash", "-n", str(s)], capture_output=True).returncode != 0]
         return ("fail", f"문법 오류 {errs}") if errs else ("ok", f"시험 스크립트 {len(scripts)}개 수집(bash -n)")
-    if kind == "node":
-        if not (d / "node_modules").is_dir():
-            return "un", "node_modules 가 없다 (해결: 그 영역에서 npm ci, docs/SETUP.md F절)"
-        try:
-            pj = json.loads((d / "package.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return "fail", "package.json 을 읽지 못했다"
-        if "test" not in (pj.get("scripts") or {}):
-            return "fail", "package.json 에 test 스크립트가 없다"
-        try:
-            p = subprocess.run(["npm", "test", "--silent"], cwd=d, capture_output=True, text=True, timeout=180)
-        except Exception as e:
-            return "fail", f"npm test 를 실행하지 못했다({type(e).__name__})"
-        m = re.search(r"tests\s+(\d+)", p.stdout + p.stderr)
-        total = int(m.group(1)) if m else 0
-        if p.returncode != 0:
-            return "fail", f"npm test 종료 코드 {p.returncode} (수집 {total}개)"
-        return ("fail", "수집된 시험이 0개") if total == 0 else ("ok", f"npm test 시험 {total}개 수집·통과")
-    py = d / ".venv" / "bin" / "python"
-    if not py.exists():
-        return "un", ".venv 가 없다 (해결: 그 영역 README 실행 방법의 설치 줄, docs/SETUP.md F절)"
+    return run_area_tests(repo, d)
+
+
+def run_area_tests(repo: str, d: Path):
+    """영역의 setup-env 보고(SetupEnvReport)가 알려 준 시험 명령을 영역 루트에서 그대로 실행한다. 환경 모양(.venv, node_modules)·시험 도구는 deploy 가 모른다(U43)."""
+    rep, why = SER.env_status(repo, WS)
+    if why:
+        return "un", why
+    cmd = rep["environment"]["test_command"]
     try:
-        if subprocess.run([str(py), "-c", "import pytest"], capture_output=True, timeout=30).returncode != 0:
-            return "un", ".venv 에 pytest 가 없다 (해결: 그 영역 .venv 에 pytest 설치, docs/SETUP.md F절)"
-        p = subprocess.run([str(py), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"], cwd=d, capture_output=True, text=True, timeout=180)
+        p = subprocess.run(cmd, cwd=d, capture_output=True, text=True, timeout=900)
     except Exception as e:
-        return "fail", f"pytest 를 실행하지 못했다({type(e).__name__})"
-    out = p.stdout
-    m = re.search(r"(\d+) tests? collected", out)
-    total = int(m.group(1)) if m else sum(int(x) for x in re.findall(r"^\S+\.py: (\d+)$", out, re.M))
-    errs = len(re.findall(r"^ERROR ", out, re.M))
-    em = re.search(r"(\d+) errors?", out.splitlines()[-1] if out.splitlines() else "")
-    if em:
-        errs = max(errs, int(em.group(1)))
-    if p.returncode != 0 or errs:
-        names = re.findall(r"^ERROR (?:collecting )?(\S+)", out, re.M)[:3]
-        return "fail", f"수집 오류 {errs or '?'}건 (종료 코드 {p.returncode}) {names}"
-    return ("fail", "수집된 시험이 0개") if total == 0 else ("ok", f"시험 {total}개 수집, 수집 오류 0")
+        return "fail", f"{cmd[0]} 시험 명령을 실행하지 못했다({type(e).__name__})"
+    out = p.stdout + p.stderr
+    # 시험 개수는 러너마다 다른 요약 줄에서 읽는다(pytest '12 passed', node:test 'tests 12', unittest 'Ran 12 tests'). 읽지 못하면 0개로 본다
+    m = re.search(r"(\d+) passed", out) or re.search(r"\btests\s+(\d+)", out) or re.search(r"Ran (\d+) tests?", out)
+    total = int(m.group(1)) if m else 0
+    if p.returncode != 0:
+        return "fail", f"시험 명령 종료 코드 {p.returncode} (통과 {total}개 확인)"
+    return ("fail", "통과한 시험 개수를 확인하지 못했다(0개)") if total == 0 else ("ok", f"시험 {total}개 통과")
 
 
 def rule_collect() -> R:
@@ -957,7 +944,7 @@ RULES = [
     ("5", "하드코딩된 계약 문자열", rule_hardcoded_contract),
     ("6", "설정 파일의 인라인 비밀", rule_inline_secrets),
     ("7", "compose 의 환경 변수 비밀", rule_compose_secrets),
-    ("8", "영역별 시험 수집", rule_collect),
+    ("8", "영역별 시험 실행", rule_collect),
     ("11", "compose 마운트 원본이 실제 파일", rule_mount_sources),
 ]
 

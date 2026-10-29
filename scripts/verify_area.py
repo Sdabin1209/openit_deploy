@@ -8,6 +8,9 @@
 import argparse, fnmatch, os, re, subprocess, sys, time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import setup_env_report as SER  # noqa: E402
+
 try:
     import yaml
 except ImportError:  # --stale-images 는 yaml 없이도 돈다. 대응표를 읽는 쪽에서 필요하면 알린다
@@ -141,11 +144,12 @@ def is_stale(record, image_exists, expected_rev, expected_stamp):
 
 def test_command(spec, ws, area):
     t = spec["tests"]
-    if t["kind"] == "pytest":
-        py = ws / area / ".venv" / "bin" / "python"
-        return [(str(py), "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider")], ws / area
-    if t["kind"] == "npm":
-        return [("npm", "test", "--silent")] + [tuple(c) for c in t.get("also", [])], ws / area   # also: 같은 폴더에서 이어 돌릴 명령(예: 생성물이 최신인지)
+    if t["kind"] in ("pytest", "npm"):
+        # 시험 명령은 영역의 setup-env 보고(SetupEnvReport.environment.test_command)가 정한다(U43): 도구·환경 배치를 deploy 가 짐작하지 않는다. also: 같은 폴더에서 이어 돌릴 명령
+        rep = SER.load(area)
+        if rep is None or rep.get("status") != "ok":
+            raise ConfigError(f"{area} 의 setup-env 보고가 없거나 실패다 (해결: bash scripts/prepare-areas.sh {area})")
+        return [tuple(rep["environment"]["test_command"])] + [tuple(c) for c in t.get("also", [])], ws / area
     return [tuple(c) for c in t["commands"]], DEPLOY_ROOT
 
 

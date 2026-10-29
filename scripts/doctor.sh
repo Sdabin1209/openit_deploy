@@ -104,14 +104,16 @@ if [ $UP_ONLY = 0 ]; then
   MISSING=""; for r in $NEED; do [ -e "$WORKSPACE/$r/.git" ] || MISSING="$MISSING $r"; done
   if [ $AREAS_OK = 0 ]; then :
   elif [ -z "$MISSING" ]; then ok "형제 리포 $(echo $NEED | wc -w)개가 $WORKSPACE 옆에 있다"; else fail "형제 리포가 없다:$MISSING" "docs/SETUP.md C절: head 를 clone 한 뒤 bash <루트>/head/setup.sh (폴더 이름은 head/workspace.yaml 과 같아야 한다)"; fi
-  # --- 영역 시험 환경(check-all 의 SKIP 원인). 없으면 WARN: 점검 항목이 검증되지 않는다
-  NOENV=""; for r in $( [ $AREAS_OK = 1 ] && areas_list --kind python,library 2>/dev/null ); do
+  # --- 영역 시험 환경(check-all 의 SKIP 원인). 환경 위치와 시험 명령은 영역의 setup-env 보고(SetupEnvReport, prepare-areas.sh 가 state/setup-env/ 에 모은 것)만 본다(U43: 이웃의 .venv·node_modules 를 짐작하지 않는다)
+  SEP="${LABELS_PYTHON:-$DEPLOY_ROOT/.venv/bin/python}"; [ -x "$SEP" ] || SEP=python3
+  NOENV=""; NODEAREAS=""
+  for r in $( [ $AREAS_OK = 1 ] && areas_list --kind python,node,library 2>/dev/null ); do
     [ -e "$WORKSPACE/$r/.git" ] || continue
-    { [ -x "$WORKSPACE/$r/.venv/bin/python" ] && "$WORKSPACE/$r/.venv/bin/python" -c 'import pytest' >/dev/null 2>&1; } || NOENV="$NOENV $r"; done
+    "$SEP" "$DEPLOY_ROOT/scripts/setup_env_report.py" check "$r" --ws "$WORKSPACE" >/dev/null || NOENV="$NOENV $r"
+    [ "$("$SEP" "$DEPLOY_ROOT/scripts/setup_env_report.py" field "$r" kind 2>/dev/null)" = node-modules ] && NODEAREAS="$NODEAREAS $r"; done
   if [ $AREAS_OK = 0 ]; then :
-  elif [ -z "$NOENV" ]; then ok "파이썬 영역 시험 환경(.venv와 pytest)이 있다"; else warn "파이썬 영역 시험 환경이 없다(.venv 또는 그 안의 pytest):$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "bash scripts/prepare-areas.sh (각 영역의 scripts/setup-env.sh 를 실행한다). docs/SETUP.md F절"; fi
-  # --- 노드 영역(admin-console, kiosk-frontend): 호스트에 node(>= $DEPLOY_NODE_MIN_MAJOR)와 npm 이 있어야 시험할 수 있다. 이미지 빌드는 컨테이너 안의 node 를 쓰므로 이 검사와 무관하다
-  NODEAREAS=""; for r in kiosk-frontend admin-console; do [ -e "$WORKSPACE/$r/.git" ] && NODEAREAS="$NODEAREAS $r"; done
+  elif [ -z "$NOENV" ]; then ok "영역 시험 환경이 준비됐다(setup-env 보고와 환경 경로)"; else warn "영역 시험 환경 보고가 없거나 환경이 없다:$NOENV -> check-all 의 해당 규칙이 SKIP(통과 아님)" "bash scripts/prepare-areas.sh (영역의 setup-env.sh 를 돌려 보고를 모은다)"; fi
+  # --- 환경이 node-modules 인 영역: 호스트에 node(>= $DEPLOY_NODE_MIN_MAJOR)와 npm 이 있어야 시험할 수 있다. 이미지 빌드는 컨테이너 안의 node 를 쓰므로 이 검사와 무관하다
   if [ -n "$NODEAREAS" ]; then
     NV=$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')
     if [ -z "$NV" ] || ! command -v npm >/dev/null 2>&1; then
@@ -119,8 +121,6 @@ if [ $UP_ONLY = 0 ]; then
     elif [ "$NV" -lt "$DEPLOY_NODE_MIN_MAJOR" ]; then
       unable "노드 영역 시험 불가:$NODEAREAS 는 node >= $DEPLOY_NODE_MIN_MAJOR 이 필요한데 v$NV 이다 (package.json engines)" "node $DEPLOY_NODE_MIN_MAJOR 이상으로 올린다. docs/SETUP.md F절"
     else ok "node v$NV(>= $DEPLOY_NODE_MIN_MAJOR), npm $(npm --version 2>/dev/null)"; fi
-    NONM=""; for r in $NODEAREAS; do [ -d "$WORKSPACE/$r/node_modules" ] || NONM="$NONM $r"; done
-    [ -z "$NONM" ] && ok "노드 영역 node_modules 가 있다" || warn "노드 영역 node_modules 가 없다:$NONM -> check-all 의 해당 규칙이 SKIP(통과 아님)" "bash scripts/prepare-areas.sh (노드 영역은 setup-env.sh 가 npm ci). docs/SETUP.md F절"
   fi
   tagchk() { # tagchk <리포> <태그>
     [ -e "$WORKSPACE/$1/.git" ] || return 0

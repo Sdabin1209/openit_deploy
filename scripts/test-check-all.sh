@@ -11,7 +11,7 @@ FAILS=0; N=0
 # mk <이름>... : 임시 워크스페이스 $W 에 영역(.git 과 올바른 README 포함)을 만든다
 mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; done; }
 # run <규칙번호> [환경...] : 출력을 $OUT, 종료 코드를 $RC 에
-run() { local r=$1; shift; OUT=$(env CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
+run() { local r=$1; shift; OUT=$(env SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
 expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   N=$((N+1)); local ok=1
   grep -q ": $2\$" <<<"$OUT" || ok=0
@@ -56,7 +56,7 @@ printf '#!/bin/sh\necho "[\\"allOf@/values[0]:unsupported\\"]"\n' > "$W/py-bad";
 run 3 CHECK_ALL_MR_PY="$W/py-ok"; expect "허용 집합 안이면 PASS" PASS
 run 3 CHECK_ALL_MR_PY="$W/py-bad"; expect "규칙을 빼면 FAIL" FAIL
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "venv 가 없으면 SKIP(검증 안 함 1)" SKIP "검증 안 함 1"
-run 3 CHECK_ALL_MR_PY="$W/없음"; expect "SKIP 이유에 해결 방법이 붙는다" SKIP "docs/SETUP.md F절"
+run 3 CHECK_ALL_MR_PY="$W/없음"; expect "SKIP 이유에 해결 방법이 붙는다" SKIP "prepare-areas.sh model-runtime"
 
 echo "== 4 정본에 없는 이름 (ast 로 읽는다)"
 truth(){ mkdir -p "$W/model-runtime/src/model_runtime" "$W/turn-engine/turn_engine" "$W/boundary-contracts/boundary_contracts"
@@ -123,18 +123,22 @@ printf 'services:\n  web:\n    image: x\n    env_file: [./e.env]\n' > "$W/deploy
 echo "== 8 시험 수집"
 mk deploy; mkdir -p "$W/deploy/scripts"; echo 'true' > "$W/deploy/scripts/test-a.sh"; run 8; expect "deploy 시험 스크립트 수집은 PASS" PASS
 echo 'if [' > "$W/deploy/scripts/test-a.sh"; run 8; expect "문법 오류는 FAIL" FAIL
-mk admin-console; run 8; expect "node_modules 없으면 SKIP(검증 안 함)" SKIP "검증 안 함 1"
-mkdir -p "$W/admin-console/node_modules"; cat > "$W/admin-console/package.json" <<'J'
-{"scripts":{"test":"node -e \"console.log('tests 3')\""}}
-J
-run 8; expect "npm test 통과는 PASS" PASS "검증됨 1/1"
-echo '{"scripts":{"test":"node -e \"process.exit(1)\""}}' > "$W/admin-console/package.json"; run 8; expect "npm test 실패는 FAIL" FAIL
-mk model-lab; run 8; expect ".venv 없으면 SKIP" SKIP "검증 안 함 1"
+# 영역 시험은 setup-env 보고(SetupEnvReport)의 environment.test_command 를 영역 루트에서 실행한다(U43). 보고를 state 대신 $W/setup-env 에 쓴다
+# report <영역> <kind> <path> <test_command argv...>
+report() { local a=$1 k=$2 p=$3; shift 3; mkdir -p "$W/setup-env"; python3 -c 'import json,sys;a,k,p,*c=sys.argv[1:];print(json.dumps({"area":a,"status":"ok","exit_code":0,"seconds":1,"environment":{"kind":k,"path":p,"test_command":c}}))' "$a" "$k" "$p" "$@" > "$W/setup-env/$a.json"; }
+mk admin-console; run 8; expect "보고가 없으면 SKIP(검증 안 함)" SKIP "검증 안 함 1"
+run 8; expect "SKIP 이유에 prepare-areas.sh 가 붙는다" SKIP "prepare-areas.sh admin-console"
+report admin-console node-modules node_modules node -e "console.log('tests 3')"; run 8; expect "보고의 환경 경로가 없으면 SKIP" SKIP "환경 경로 node_modules 가 없다"
+mkdir -p "$W/admin-console/node_modules"; run 8; expect "보고의 test_command 통과는 PASS" PASS "검증됨 1/1"
+report admin-console node-modules node_modules node -e "process.exit(1)"; run 8; expect "test_command 실패는 FAIL" FAIL
+report admin-console node-modules node_modules node -e "console.log('no summary')"; run 8; expect "통과 개수를 못 읽으면 FAIL(0개)" FAIL "0개"
+mk model-lab; run 8; expect "보고 없으면 SKIP" SKIP "검증 안 함 1"
 if [ -n "$PYT" ]; then
   mkdir -p "$W/model-lab/.venv/bin" "$W/model-lab/tests"; printf '#!/bin/sh\nexec %s "$@"\n' "$PYT" > "$W/model-lab/.venv/bin/python"; chmod +x "$W/model-lab/.venv/bin/python"
-  printf 'def test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "시험이 수집되면 PASS" PASS "검증됨 1/1"
-  printf 'import 없는_모듈\ndef test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "수집 오류는 FAIL" FAIL "model-lab/"
-else echo "  skip pytest 가 있는 venv 가 없어 py 수집 시험을 건너뛴다"; fi
+  report model-lab python-venv .venv .venv/bin/python -m pytest -q
+  printf 'def test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "시험이 통과하면 PASS" PASS "검증됨 1/1"
+  printf 'import 없는_모듈\ndef test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "시험 실패(수집 오류)는 FAIL" FAIL "model-lab"
+else echo "  skip pytest 가 있는 venv 가 없어 py 시험을 건너뛴다"; fi
 
 echo "== 11 compose 마운트 원본이 실제 파일"
 mk deploy; mkdir -p "$W/deploy/config"; printf 'services:\n  j:\n    image: x\n    volumes:\n      - ${J:-./config/job.yaml}:/config/job.yaml:ro\n' > "$W/deploy/compose.yaml"
