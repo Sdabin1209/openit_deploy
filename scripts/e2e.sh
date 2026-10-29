@@ -13,8 +13,35 @@
 #  - --fail-fast: 첫 FAIL 에서 요약을 내고 중단한다(정본에 기록하지 않는다). --changed-only: 입력 해시가 마지막 PASS 와 달라진 단계(scripts/e2e_plan.py)와 그에 의존하는 단계만 e2e_steps.py 에서 돌린다
 #    (준비·단계 9 구간은 항상 돈다. 정본에 기록하지 않는다. 전체 합격이 아니며 최종 관문은 옵션 없는 전체 1회다).
 # 사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--fail-fast] [--changed-only] [--keep] [--keep-images] [--reuse-build] [--sections jobs,backup,rollback]
+#  --sections: 단계 1~8 을 모두 돌린 뒤 단계 9 뒷구간 일부만. 뒷구간이 단계 1~8 의 상태를 전제하므로 --only 와 함께 쓰면 사용 오류(종료 2, 맨 앞에서 거부한다). -h/--help 는 사용법만 내고 0.
 #  --reuse-build: 이미지가 있고 소스 커밋·의존 태그가 라벨과 같으면 다시 빌드하지 않는다(낡은 것만 빌드). 끝나도 이미지를 지우지 않는다.
 set -o pipefail
+# 옵션 검사(아무것도 실행하기 전에): --help/-h 는 사용법만 내고 0, 모르는 옵션·값 없는 옵션·잘못된 값·못 쓰는 조합은 사용법을 표준 오류로 내고 2.
+# 왜 맨 앞인가: 예전에는 모르는 옵션(--help 포함)이 무시되어 전체 E2E 가 시작됐다. 정적 점검·doctor·빌드는 분 단위라 사용 오류를 그 뒤에 알리면 안 된다.
+e2e_usage() { cat <<'USAGE'
+사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--sections <jobs,backup,rollback>] [--fail-fast] [--changed-only] [--keep] [--keep-images] [--reuse-build] [-h|--help]
+  (옵션 없음)   전체 합격 시나리오(인도 전 필수). 정본 docs/E2E_RESULTS.md 에 결과를 더한다.
+  --fast        단계 1~8 과 단계 9 앞부분만(스케줄러·백업·롤백 생략). 전체 합격 아님.
+  --only 단계   e2e_steps.py 의 단계 일부만(예: 5o 또는 1,2,3,4,5o). 단계 9 뒷구간은 생략. 전체 합격 아님.
+  --sections 구간  단계 1~8 을 모두 돌린 뒤 단계 9 뒷구간 중 지정한 것만(jobs, backup, rollback 를 쉼표로). 뒷구간은 단계 1~8 이 만든 상태(수집기 실행, 문항 버전, 활성 릴리스)를 전제하므로 --only 와 함께 쓸 수 없다.
+  --fail-fast / --changed-only / --keep / --keep-images / --reuse-build   docs/E2E.md 참고.
+  -h, --help    이 사용법만 낸다(아무것도 실행하지 않는다).
+USAGE
+}
+e2e_bad() { echo "오류: $*" >&2; e2e_usage >&2; exit 2; }
+_only=0; _sec=0; _args=("$@"); _i=0
+while [ $_i -lt ${#_args[@]} ]; do a_=${_args[$_i]}; case "$a_" in
+  -h|--help) e2e_usage; exit 0;;
+  --fast|--fail-fast|--changed-only|--keep|--keep-images|--reuse-build) ;;
+  --only) _i=$((_i+1)); [ $_i -lt ${#_args[@]} ] && [ -n "${_args[$_i]}" ] && [[ "${_args[$_i]}" != -* ]] || e2e_bad "--only 에는 단계 목록이 필요하다 (예: --only 5o)"; _only=1;;
+  --only=*) [ -n "${a_#*=}" ] || e2e_bad "--only 에는 단계 목록이 필요하다"; _only=1;;
+  --sections) _i=$((_i+1)); [ $_i -lt ${#_args[@]} ] && [[ "${_args[$_i]}" != -* ]] || e2e_bad "--sections 에는 jobs,backup,rollback 중 일부가 필요하다"; _v=${_args[$_i]}; _sec=1
+    for _x in ${_v//,/ }; do case "$_x" in jobs|backup|rollback) ;; *) e2e_bad "알 수 없는 구간: $_x (가능: jobs, backup, rollback)";; esac; done; [ -n "${_v//,/}" ] || e2e_bad "--sections 가 비었다";;
+  --sections=*) _sec=1; _v=${a_#*=}; [ -n "${_v//,/}" ] || e2e_bad "--sections 가 비었다"; for _x in ${_v//,/ }; do case "$_x" in jobs|backup|rollback) ;; *) e2e_bad "알 수 없는 구간: $_x (가능: jobs, backup, rollback)";; esac; done;;
+  *) e2e_bad "알 수 없는 옵션: $a_";;
+esac; _i=$((_i+1)); done
+[ $_only = 0 ] || [ $_sec = 0 ] || e2e_bad "--only 와 --sections 는 함께 쓸 수 없다: 단계 9 뒷구간은 단계 1~8 이 만든 상태를 전제한다(--only 로 일부 단계만 돌리면 그 상태가 없어 뒷구간이 실패한다). 뒷구간만 보려면 --sections 만 준다(단계 1~8 을 모두 돌린다)"
+unset _only _sec _args _i a_ _v _x
 # 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
 CA_TXT=""
 if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
@@ -32,6 +59,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --fast) FAST=1;; --fail-fast) FAILFAST=1;; --changed-only) CHANGED=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;;
   --only) [ $# -ge 2 ] || { echo "--only 에는 단계 목록이 필요하다 (예: --only 5p)" >&2; exit 2; }; ONLY=$2; shift;;
   --only=*) ONLY=${1#*=};;
+  --sections=*) SECTIONS=${1#*=}; SECTIONS_SET=1; export DEPLOY_NO_RECORD=1;;
   --sections) [ $# -ge 2 ] || { echo "--sections 에는 jobs,backup,rollback 중 일부가 필요하다" >&2; exit 2; }; SECTIONS=$2; SECTIONS_SET=1; export DEPLOY_NO_RECORD=1; shift;;   # 단계 9 뒷구간 중 일부만(단계 1~8 은 모두 돈다). 정본에 기록하지 않는다. 전체 합격이 아니다
 esac; shift; done
 # --only: e2e_steps.py 의 단계 일부만 돌린다(개발 중 한 단계 확인용). 스택 기동과 준비는 같이 하고, 스케줄러·백업·롤백 구간은 생략하며 결과를 정본에 기록하지 않는다. 전체 합격이 아니다
@@ -143,6 +171,7 @@ chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰,
 chk "시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검)" bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
 chk "계정 암호가 docker 인자로 보이지 않는다 (표준 입력, 문서 일치)" bash "$DEPLOY_ROOT/scripts/test-hash-password-argv.sh"
 chk "images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다)" bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
+chk "e2e 옵션 처리 자기 점검 (--help 는 실행 없이 0, 모르는 옵션·--only 와 --sections 조합은 2)" bash "$DEPLOY_ROOT/scripts/test-e2e-options.sh"
 chk "감시 스택 정적 시험 (promtool check/test rules, 변이 시험, amtool, blackbox)" bash "$DEPLOY_ROOT/scripts/test-monitoring.sh" --static
 chk "job-metrics 자체 시험 (textfile 지표)" bash "$DEPLOY_ROOT/scripts/test-job-metrics.sh"
 chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"

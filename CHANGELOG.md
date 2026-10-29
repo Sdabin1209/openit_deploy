@@ -1,5 +1,9 @@
 # 변경 이력
 
+## e2e.sh 옵션 처리: 모르는 옵션을 거부하고 --only 와 --sections 조합을 사용 오류로
+- `bash scripts/e2e.sh --help`가 전체 E2E를 시작했다(모르는 옵션이 조용히 무시됐다). 이제 맨 앞(정적 점검·doctor·빌드 앞)에서 옵션을 검사한다: `-h/--help`는 사용법만 내고 0, 모르는 옵션·값 없는 `--only/--sections`·알 수 없는 구간은 사용법을 표준 오류로 내고 2. 시험 `scripts/test-e2e-options.sh`(수정 전 8건 실패 -> 통과 8건)를 e2e.sh 앞단 자체 점검에 넣었다.
+- `--only 5r --sections jobs,backup,rollback`은 뒷구간이 전제하는 상태(수집기 실행 기록, 문항 버전, 활성 릴리스, 단계 4~8의 산출물)가 없어 FAIL 3건이 났다. **거부(사용 오류)로 정했다.** 이유: (1) 자동으로 선행 단계를 함께 돌리려면 구간별 필요 단계 표를 따로 유지해야 하는데 이미 `e2e_plan.py`/`@step`의 deps가 정본이라 표가 둘이 된다. (2) 뒷구간이 실제로 필요로 하는 것은 단계 1~8 전체(수집기 로그, `e2e_verify_restore.py`가 읽는 문항·모델 패키지·Trace·포인터)라 `--only`로 줄여 얻는 시간이 없다. (3) 조용히 더 많은 단계를 돌리면 사용자가 지정한 범위와 실제 실행이 어긋난다. 뒷구간만 보려면 `--sections`만 준다(단계 1~8을 모두 돌린다).
+
 ## E2E 후속(전체 E2E 첫 실행에서 나온 3건)
 - 단계 5o: 진행 시뮬레이션이 칸 없는 문항(Q3, Q4_1, Q5_1 …)에서 `KeyError: 'Q3'`로 멈췄다(`types[q]`). 칸이 없으면 값 없이 NEXT 만 나오므로 `types.get(q)`로 처리한다. 그 뒤 마지막 두 턴의 turn_id(`rng-8`, `rng-9`)가 진행 루프의 turn_id와 겹쳐 409 였다 -> 고유 id. `--only 1,2,3,4,5o` 로 5o REAL 통과(6.0s).
 - `test-systemd-units.sh`의 "scheduler.py 참조" 점검이 git 이 추적하지 않는 `__pycache__/*.pyc` 를 찾았다 -> `git ls-files` 로 추적 파일만 본다(리포 밖이면 `__pycache__`·`*.pyc` 제외).
