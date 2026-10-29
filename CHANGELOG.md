@@ -1,5 +1,12 @@
 # 변경 이력
 
+## wo-29: 기준표 bc v2.7.0·문진 스키마 v1.3.0, U43 소비(CR-D30 3단계), U48 CR
+- 기준표: `DEPLOY_BC_TAG` v2.7.0, `DEPLOY_SS_TAG` survey-schema-v1.3.0 (model-runtime v0.10.0 그대로).
+- 영역 시험 환경: `prepare-areas.sh`가 영역 `setup-env.sh` 표준 출력 마지막 줄을 계약 `SetupEnvReport`로 검증해 `state/setup-env/`에 모은다(`scripts/setup_env_report.py`). `doctor.sh`, `check_all.py`(규칙 3·8), `verify_area.py`는 그 보고의 `environment.path`·`test_command`만 쓴다. 이웃의 `.venv/bin/python`, `node_modules`, pytest/npm 짐작을 지웠다. 규칙 8은 수집이 아니라 보고된 `test_command` 실행이다(영역이 정한 명령이라 collect-only를 deploy가 만들 수 없다). 그래서 규칙 8이 시험 시간만큼 걸린다(측정: 4개 영역 약 140초, check-all 전체).
+- synthetic-data 잡: 호스트 `build/venv-sd`·영역 소스 사본·cwd를 지웠다. `e2e_steps.py`가 dataset-store 이미지의 라벨 `io.openit.jobs`(JobsDeclaration)를 읽어 `docker run <이미지> <argv>`로 돌린다(`scripts/sd_jobs.py`). 설정은 `SyntheticJobConfigRun/Import` 스키마로 먼저 검사해 `config.container_path`에 마운트하고, 비밀은 `secret_files`(NAME_FILE)로 넘긴다. 실제 이미지로 import 잡을 돌리는 시험 `test_sd_jobs.py`. `prepare-host.sh wheels`는 호스트 잡 환경을 더 만들지 않는다.
+- 짐작 경로 검사 `scripts/test-no-guessed-paths.sh`(e2e.sh 자체 점검에 포함). 예외와 이유: deploy 자신의 `.venv`, 저장소 스캔에서 건너뛸 폴더 목록, 계약이 설정 값으로 정한 `adapters.factory`(`synthetic_data.adapters:...`, 계약 SyntheticJobConfigRun), `e2e_gpu.sh`의 model-lab GPU 잡(영역이 잡을 아직 선언하지 않음: 영역 쪽 선언이 필요한 남은 구멍).
+- `docs/change-requests/CR-U48-risk-rules-read.md`: E2E가 survey-service 내부 `risk_rules.py`를 읽는 곳과 대안(코드 변경 없음).
+
 ## build-images: 영역 리포 루트에서 진입점을 부른다 (git archive 사본 아님)
 - kiosk-frontend 의 새 진입점(0e94776)이 `Cannot find module 'ajv/dist/runtime/equal'`로 실패했다: 진입점이 영역의 `node_modules`(setup-env 가 준비한 환경)를 쓰는데 git archive 사본에는 환경이 없다. 진입점은 영역이 정하므로(구조 규칙 1) deploy 가 환경을 추측해 사본에 링크하지 않고, 계약 BuildImageRequest 의 `source_dir`(영역 리포 루트) 그대로 영역 리포 루트에서 부른다. 이미지가 HEAD 와 같도록 추적 파일에 커밋 안 된 변경이 있으면 멈춘다(`BUILD_ALLOW_DIRTY=1` 은 개발 중에만). 추론 서버(model-runtime)만 기준표 태그 시점의 소스가 필요해 태그의 git archive 사본을 쓴다.
 - e2e_steps 의 `risk_rules.py` 읽기는 사본 대신 survey-service 리포 경로를 읽는다(영역 내부 파일 읽기라 여전히 정리 대상).

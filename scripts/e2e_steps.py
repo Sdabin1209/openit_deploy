@@ -12,6 +12,7 @@ from boundary_contracts.clients import (HttpFailureStore, HttpGateService, HttpM
                                          HttpReleaseReader, HttpTraceIngest)
 import survey_schema, jsonschema
 import e2e_asserts as EA
+import sd_jobs
 
 
 # ---- 단계 선언의 유일한 자리(e2e_plan.py 와 verify_area.py 가 이 파일을 ast 로 읽는다. 다른 곳에 같은 선언을 쓰지 않는다)
@@ -200,7 +201,9 @@ def wait_review_report(get_report, sid, label, timeout=60):
     raise AssertionError(f"시간 초과({timeout}s): 자동 검사 후 승인 요청 보고서 {label}.\n{explain_submission(sid)[1]}")
 
 qa_reader = lambda role="synthetic-data": HttpQuestionReader(URL("qa"), TOK(f"qa-read-{role}"))
-SD = {"venv": ROOT / "build/venv-sd/bin/python", "src": ROOT / "build/ctx/synthetic-data", "schema": ROOT / "build/ctx/dep/survey_schema/schema"}
+# synthetic-data 잡은 dataset-store 이미지에서 이미지 라벨 io.openit.jobs(계약 JobsDeclaration)가 선언한 argv 로 돌린다(U43): 명령 조립은 scripts/sd_jobs.py.
+# 설정 스키마가 survey_schema_dir 를 필수로 요구하지만 위치는 이미지가 정한다(이미지 환경 변수가 우선: synthetic-data ADR 0019, 설정 생략은 CR-009). 값은 쓰이지 않는다
+SD_UNUSED_DIR = "image-env-takes-precedence"
 QS, QSU = f"qs-{RID}", f"qs-{RID}-unseen"
 
 def upload(set_id, text, fname):
@@ -244,23 +247,30 @@ def step1():
 
 def sd_config(name, seeds, failure=False, version=None):
     cfg = {"dataset_id": f"ds-{RID}", "seed": 20261015, "created_at": "2026-10-15T00:00:00Z",
-           "turn_engine_version": a.turn_engine_version, "survey_schema_dir": str(SD["schema"]),
-           "adapters": {"question_reader": {"factory": "synthetic_data.adapters:http_question_reader", "kwargs": {"base_url": URL("qa"), "token_env": "SD_QA_TOKEN"}}},
+           "turn_engine_version": a.turn_engine_version, "survey_schema_dir": SD_UNUSED_DIR,
+           "adapters": {"question_reader": {"factory": "synthetic_data.adapters:http_question_reader", "kwargs": {"base_url": URL("qa"), "token_env": "QUESTION_READER_TOKEN"}}},   # 계약 factory (SyntheticJobConfigRun adapters.factory: 계약이 정한 설정 값)
            "question_sets": [{"id": QS, "version": STATE["qs"][-1]["version"], "usage": "TRAIN_POOL"}, {"id": QSU, "usage": "HELD_OUT_EVAL"}],
            "reviewed_only": True, "seeds": {"enabled": seeds},
            "split": {"ratios": {"TRAIN": 0.8, "VALIDATION": 0.1, "EVAL": 0.1}},
            "review": {"per_kind": 2}, "regeneration": {"mode": "full"},
            "output": {"work_dir": str(WORK / f"sd-work-{name}"), "store": {"kind": "file", "root": str(WORK / "datasets")}}}
     if failure:
-        cfg["adapters"]["failure_store"] = {"factory": "synthetic_data.adapters:http_failure_store", "kwargs": {"base_url": URL("ops"), "token_env": "SD_OPS_TOKEN"}}
+        cfg["adapters"]["failure_store"] = {"factory": "synthetic_data.adapters:http_failure_store", "kwargs": {"base_url": URL("ops"), "token_env": "FAILURE_STORE_TOKEN"}}   # 계약 factory
         cfg["seeds"]["question_set_id"] = QS
     p = WORK / f"sd-{name}.job.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
+def run_job(job_name, cfg_path, extra_ro=()):
+    """dataset-store 이미지의 라벨 io.openit.jobs 에서 잡 job_name 을 찾아 docker run 으로 돌린다(명령 조립: sd_jobs.docker_cmd)."""
+    img = IMAGES["dataset-store"]
+    labels = json.loads(sh([a.docker, "image", "inspect", img, "--format", "{{json .Config.Labels}}"]).stdout)
+    job = sd_jobs.find_job(labels, job_name, bc.validator)
+    cfg = json.loads(pathlib.Path(cfg_path).read_text())
+    if job.get("config", {}).get("schema"): validate(job["config"]["schema"], cfg)   # 영역이 선언한 설정 스키마(계약)로 deploy 가 만든 설정을 먼저 검사한다
+    return subprocess.run(sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro), capture_output=True, text=True)
+
 def run_sd(name, seeds, failure=False):
     p = sd_config(name, seeds, failure)
-    r = sh([str(SD["venv"]), "-m", "synthetic_data", "run", "--config", str(p)], env={"SD_QA_TOKEN": TOK("qa-read-synthetic-data"), "SD_OPS_TOKEN": TOK("ops-read-synthetic-data"), "PYTHONPATH": str(SD["src"])}, check=False) if False else \
-        subprocess.run([str(SD["venv"]), "-m", "synthetic_data", "run", "--config", str(p)], cwd=str(SD["src"]), capture_output=True, text=True,
-                       env={**os.environ, "SD_QA_TOKEN": TOK("qa-read-synthetic-data"), "SD_OPS_TOKEN": TOK("ops-read-synthetic-data"), "PYTHONDONTWRITEBYTECODE": "1"})
+    r = run_job("synthetic-run", p)
     assert r.returncode == 0, f"synthetic-data 종료 {r.returncode}: {(r.stderr + r.stdout)[-800:]}"
     return json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -271,7 +281,7 @@ def read_manifest(out):
 IMPORT_DIR = ROOT / "test/import-v2"   # 이 E2E 를 위해 직접 만든 아주 작은 v2 형식 jsonl 6개(실제 학습 데이터가 아니다, test/import-v2/make_rows.py)
 def imp_config(name, max_invalid_rows, store_root):
     q = STATE["qs"][-1]   # 문항 세트 출처: CR-006 미정이라 임시로 이 E2E 가 단계 1 에서 만든 문항 세트 참조를 적는다(deploy 가 정한 값이 아니다)
-    cfg = {"dataset_id": f"ds-{RID}", "input_dir": str(IMPORT_DIR), "survey_schema_dir": str(SD["schema"]),
+    cfg = {"dataset_id": f"ds-{RID}", "input_dir": str(IMPORT_DIR), "survey_schema_dir": SD_UNUSED_DIR,
            "question_sets": [{"id": QS, "version": q["version"], "content_hash": q["content_hash"]}],
            "source_label": "deploy-e2e-test-data", "turn_engine_version": a.turn_engine_version, "created_at": "2026-10-27T00:00:00Z",
            "tolerance": {"max_invalid_rows": max_invalid_rows, "max_invalid_rate": 1.0},
@@ -280,8 +290,7 @@ def imp_config(name, max_invalid_rows, store_root):
 
 def run_import(name, max_invalid_rows, store_root):
     p = imp_config(name, max_invalid_rows, store_root)
-    r = subprocess.run([str(SD["venv"]), "-m", "synthetic_data", "import", "--config", str(p)], cwd=str(SD["src"]), capture_output=True, text=True,
-                       env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DATASET_STORE_WRITE_TOKEN_FILE": str(pathlib.Path(a.secrets) / "tokens" / "dataset-store-write-synthetic-data")})   # 잡 쪽 단수형 이름(서버 쪽 DATASET_STORE_WRITE_TOKENS_FILE 과 다르다, synthetic-data ADR 0013). kind=http 일 때만 읽힌다
+    r = run_job("synthetic-import", p, extra_ro=[IMPORT_DIR])
     out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
     return r.returncode, out, json.loads((WORK / f"sd-import-{name}" / "import_report.json").read_text())
 
@@ -1480,18 +1489,13 @@ def step7d():
     WT, RT = TOK("dataset-store-write-synthetic-data"), TOK("dataset-store-read-model-lab")
     body = _ds_tar(m, root); TAR = "application/x-tar"; q = urllib.parse.quote
     # 실제 생산자 잡(synthetic-data import, store.kind=http)이 dataset-store 로 게시한다. 같은 입력이라 단계 2 의 파일 저장소 게시와 버전·content_hash 가 같아야 한다(결정적)
-    # 잡 실행 환경(build/venv-sd)의 boundary-contracts 가 2.1.0 미만이면 HttpDatasetStore 가 없어 잡이 http 로 게시할 수 없다(DEPLOY_BC_TAG_SD 를 올리기 전). 그때는 tar 직접 게시로 대신하고 그 사실을 기록에 남긴다
-    job = subprocess.run([str(SD["venv"]), "-c", "from boundary_contracts.clients import HttpDatasetStore"], capture_output=True).returncode == 0
-    if job:
-        hs = {"kind": "http", "base_url": URL("ds"), "timeout": 60}
-        rc, o, _ = run_import("http", 2, hs)
-        assert rc == 0 and o.get("status") in ("PUBLISHED", "ALREADY_PUBLISHED"), f"잡의 HTTP 게시 실패: {rc} {o}"
-        assert (o["version"], o["content_hash"]) == (ds["version"], ds["content_hash"]), ("잡이 HTTP 로 게시한 버전·해시가 단계 2 와 다르다", o)
-        rc2, o2, _ = run_import("http2", 2, hs); assert rc2 == 0 and o2["status"] == "ALREADY_PUBLISHED", ("같은 잡 재실행이 멱등이 아니다", rc2, o2)
-        via = f"실제 생산자 잡 import, store.kind=http, 결과 {o['status']}, 버전·해시는 단계 2 와 같다) -> 같은 잡 재실행 ALREADY_PUBLISHED"
-    else:
-        c1, b1 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c1 in (200, 201), ("쓰기 토큰 게시", c1, b1[:200])
-        via = "잡 실행 환경의 boundary-contracts 가 2.1.0 미만이라 잡 경유가 아니라 단계 2 의 파일을 tar 로 직접 게시, 생산자 잡의 HTTP 게시는 확인 못 함)"
+    # (잡은 이미지 안의 계약 패키지로 도므로 호스트 잡 환경의 버전을 따로 확인하지 않는다)
+    hs = {"kind": "http", "base_url": URL("ds"), "timeout": 60}
+    rc, o, _ = run_import("http", 2, hs)
+    assert rc == 0 and o.get("status") in ("PUBLISHED", "ALREADY_PUBLISHED"), f"잡의 HTTP 게시 실패: {rc} {o}"
+    assert (o["version"], o["content_hash"]) == (ds["version"], ds["content_hash"]), ("잡이 HTTP 로 게시한 버전·해시가 단계 2 와 다르다", o)
+    rc2, o2, _ = run_import("http2", 2, hs); assert rc2 == 0 and o2["status"] == "ALREADY_PUBLISHED", ("같은 잡 재실행이 멱등이 아니다", rc2, o2)
+    via = f"실제 생산자 잡 import, store.kind=http, 결과 {o['status']}, 버전·해시는 단계 2 와 같다) -> 같은 잡 재실행 ALREADY_PUBLISHED"
     c2, b2 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c2 == 200 and json.loads(b2)["content_hash"] == m["content_hash"], ("같은 게시는 멱등 200 이어야 한다", c2, b2[:200])
     # 읽기: 읽기 토큰으로 목록·버전·매니페스트·파일 바이트(해시를 manifest 와 대조)
     c, b = _ds_call("GET", "/v1/datasets", RT); assert c == 200 and ds["id"] in b.decode(), ("목록", c, b[:200])

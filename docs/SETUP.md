@@ -123,13 +123,13 @@ bash scripts/demo.sh status | down | reset
 
 ## F. 영역 시험 환경 (check-all의 SKIP을 없애는 사전조건)
 
-`scripts/check-all.sh`의 규칙 3(완화 정책)과 규칙 8(영역별 시험 수집)은 형제 영역의 가상환경을 실제로 불러서 확인한다. 영역에 `.venv`(파이썬 영역) 또는 `node_modules`(admin-console, kiosk-frontend)가 없으면 그 영역은 **검증 안 함**이 되고 규칙은 SKIP이다. SKIP은 통과가 아니다. `e2e.sh`는 영역 소스로 이미지를 빌드할 뿐 영역의 개발용 가상환경을 만들지 않으므로, 새 머신에서 C절만 하고 check-all을 돌리면 SKIP이 나온다.
+`scripts/check-all.sh`의 규칙 3(완화 정책)과 규칙 8(영역별 시험 실행)은 형제 영역의 시험 환경을 실제로 불러서 확인한다. 환경의 위치와 시험 명령은 deploy가 짐작하지 않고 영역의 `scripts/setup-env.sh`가 표준 출력 마지막 줄에 내는 `SetupEnvReport`(계약 v2.6.0)에서만 안다. `prepare-areas.sh`가 그 줄을 계약 validator로 검증해 `state/setup-env/<영역>.json`에 모으고, `doctor.sh`·`check-all`·`verify-area`는 그 보고만 읽는다(`environment.path`, `environment.test_command`). 보고가 없거나 환경 경로가 없으면 그 영역은 **검증 안 함**이 되고 규칙은 SKIP이다. SKIP은 통과가 아니다. `e2e.sh`는 영역 소스로 이미지를 빌드할 뿐 영역의 개발용 가상환경을 만들지 않으므로, 새 머신에서 C절만 하고 check-all을 돌리면 SKIP이 나온다.
 
 해결: `bash scripts/prepare-areas.sh` 한 줄. 영역 환경(파이썬은 `.venv`와 pytest, 노드는 `npm ci`)을 만드는 명령은 각 영역의 `scripts/setup-env.sh`가 정본이고 여기에 옮기지 않는다(이 리포는 형제 폴더를 직접 만들지 않고 그 스크립트를 부를 뿐이다). 표에서 `스크립트없음`인 영역은 아직 그 스크립트가 없는 것이니 영역 쪽에서 만든다. 확인: `bash scripts/check-all.sh`가 `SKIP 0`으로 끝나야 한다. `bash scripts/doctor.sh`는 빠진 영역을 WARN으로 알려 준다.
 
 **전제와 예외.**
-- **노드 영역은 node/npm이 먼저 필요하다.** admin-console, kiosk-frontend는 `npm ci`로 `node_modules`를 만들고 `npm test`로 수집한다. 필요한 node 주 버전 하한은 두 영역의 `package.json` `engines`(`>=24`)와 Dockerfile(`node:24`)에서 읽어 `scripts/lib.sh`의 `DEPLOY_NODE_MIN_MAJOR`에 한 곳으로 두었다(영역 파일이 바뀌면 거기를 따라 고친다). `doctor.sh`는 호스트의 node 버전과 npm을 검사하고, 없거나 낮으면 `[불가] 노드 영역 시험 불가`와 해결을 낸다(E2E를 막지는 않는다: 이미지 빌드는 컨테이너 안의 node를 쓴다). check-all의 규칙 8은 `node_modules`가 있을 때만 `npm test`를 부르므로, node가 PATH에 없는 호스트는 doctor가 알려 준다.
-- **파이썬 영역 모두에 pytest가 있어야 한다.** 규칙 8은 `.venv`에 pytest가 없으면 그 영역을 검증 안 함으로 둔다. pytest를 넣는 것은 각 영역 `setup-env.sh`의 몫이다. doctor가 `.venv`는 있는데 pytest가 없는 영역도 짚는다.
+- **환경 종류가 node-modules인 영역(지금 admin-console, kiosk-frontend)은 호스트 node/npm이 먼저 필요하다.** 영역의 `setup-env.sh`가 의존을 설치하고 보고한 `test_command`로 시험을 돌린다. 필요한 node 주 버전 하한은 두 영역의 `package.json` `engines`(`>=24`)와 Dockerfile(`node:24`)에서 읽어 `scripts/lib.sh`의 `DEPLOY_NODE_MIN_MAJOR`에 한 곳으로 두었다(영역 파일이 바뀌면 거기를 따라 고친다). `doctor.sh`는 호스트의 node 버전과 npm을 검사하고, 없거나 낮으면 `[불가] 노드 영역 시험 불가`와 해결을 낸다(E2E를 막지는 않는다: 이미지 빌드는 컨테이너 안의 node를 쓴다). check-all의 규칙 8은 `node_modules`가 있을 때만 `npm test`를 부르므로, node가 PATH에 없는 호스트는 doctor가 알려 준다.
+- **시험 도구(pytest 등)를 넣는 것은 각 영역 `setup-env.sh`의 몫이다.** deploy는 도구 이름을 모르고 보고된 `test_command`를 실행할 뿐이다.
 
 **sudo 없이 홈에 node를 설치하는 표준 경로.** 공식 배포본을 받아 해시를 검증하고 홈에 푼다.
 
