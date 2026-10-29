@@ -171,6 +171,7 @@ chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰,
 chk "시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검)" bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
 chk "계정 암호가 docker 인자로 보이지 않는다 (표준 입력, 문서 일치)" bash "$DEPLOY_ROOT/scripts/test-hash-password-argv.sh"
 chk "images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다)" bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
+chk "게시 서비스 목록(lib.sh) == 계약 PublishRequest.service enum" "$VENV/bin/python" -I "$DEPLOY_ROOT/scripts/test_services_enum.py"
 chk "e2e 옵션 처리 자기 점검 (--help 는 실행 없이 0, 모르는 옵션·--only 와 --sections 조합은 2)" bash "$DEPLOY_ROOT/scripts/test-e2e-options.sh"
 chk "감시 스택 정적 시험 (promtool check/test rules, 변이 시험, amtool, blackbox)" bash "$DEPLOY_ROOT/scripts/test-monitoring.sh" --static
 chk "job-metrics 자체 시험 (textfile 지표)" bash "$DEPLOY_ROOT/scripts/test-job-metrics.sh"
@@ -272,17 +273,17 @@ chk "보존 정리 잡이 Compose 에서 실행된다: question-authoring purge(
 chk "컨테이너 격리 실제 확인(check-containers: 비루트·읽기 전용·cap_drop ALL·no-new-privileges·자원 한도·로그 회전)" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$PROJECT"
 nonroot() { [ "$("$DOCKER" exec "${PROJECT}-$1-1" id -u | tr -d '\r')" != 0 ]; }
 bydigest() { "$DOCKER" inspect "${PROJECT}-$1-1" --format '{{.Config.Image}}' | tr -d '\r' | grep -E '@sha256:[0-9a-f]{64}$'; }
-labels6() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.turn-engine io.openit.model-runtime; do echo "$L" | grep -q "\"$k\"" || { echo "라벨 누락 $k"; return 1; }; done; echo "$L" | cut -c1-230; validate_image_labels "$1" >/dev/null; }   # 계약 ImageLabels 검사 포함(wo8)
+labels6() { validate_image_labels "$1" "$2"; }   # 라벨 검사는 계약 ImageLabels 검증 하나다(손으로 키를 따로 보지 않는다, U44). 필수 키·빈 값·revision 형식·n/a 표기를 스키마가 본다
 for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry dataset-store model-serving kiosk-frontend admin-console; do
   chk "비root 실행 $s" nonroot "$s"
   chk "컨테이너가 digest로 만들어짐 $s" bydigest "$s"
 done
 for pair in "survey-service:$SURVEY_SERVICE_DIGEST" "question-authoring:$QUESTION_AUTHORING_DIGEST" "ops-feedback:$OPS_FEEDBACK_DIGEST" "release-gate:$RELEASE_GATE_DIGEST" "model-registry:$MODEL_REGISTRY_DIGEST" "dataset-store:$DATASET_STORE_DIGEST" "model-serving:$MODEL_SERVING_DIGEST" "admin-console:$ADMIN_CONSOLE_DIGEST"; do
-  chk "이미지 라벨 6개(io.openit.*) ${pair%%:*}" labels6 "$DEPLOY_REGISTRY/openit/${pair%%:*}@${pair#*:}"
+  chk "이미지 라벨이 계약 ImageLabels 를 따른다 ${pair%%:*}" labels6 "$DEPLOY_REGISTRY/openit/${pair%%:*}@${pair#*:}" "${pair%%:*}"
 done
 
-labels_kiosk() { local L; L=$("$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r'); for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema io.openit.app-version; do echo "$L" | grep -q "\"$k\":\"[^\"]\+\"" || { echo "라벨 누락/빈값 $k"; return 1; }; done; echo "$L" | grep -q '"unknown"' && { echo "unknown 라벨이 있다"; return 1; }; echo "$L" | cut -c1-230; }
-chk "이미지 라벨(io.openit.* + app-version, unknown 없음) kiosk-frontend" labels_kiosk "$DEPLOY_REGISTRY/openit/kiosk-frontend@$KIOSK_FRONTEND_DIGEST"
+labels_kiosk() { validate_image_labels "$1" kiosk-frontend; }   # 계약 ImageLabels 검증 하나(app-version 은 계약의 선택 확장 키로 스키마가 형식을 본다)
+chk "이미지 라벨이 계약 ImageLabels 를 따른다 kiosk-frontend" labels_kiosk "$DEPLOY_REGISTRY/openit/kiosk-frontend@$KIOSK_FRONTEND_DIGEST"
 langgraph_label() { local v; v=$("$DOCKER" image inspect "$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST" --format '{{index .Config.Labels "io.openit.langgraph"}}' | tr -d '\r'); [ -n "$v" ] && [ "$v" != unknown ] && echo "io.openit.langgraph=$v"; }
 chk "survey-service 이미지의 io.openit.langgraph 라벨이 unknown이 아니다" langgraph_label
 sect "단계 1~8 (실제 서비스의 HTTP로 잇는다)"

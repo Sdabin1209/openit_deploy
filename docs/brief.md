@@ -1,6 +1,6 @@
 # 영역 브리프: deploy (배포)
 
-> **계약 상태.** 이 리포지토리는 계약을 소비하거나 생산하지 않는다. 각 리포지토리가 게시한 이미지 digest만 입력으로 받는다. 일부 서비스(gateway, ingest-api, gate-service, authoring-app)의 최종 형태는 각 영역의 설계에 따라 정해지므로, 이 브리프의 서비스 목록은 시드다.
+> **계약 상태.** 이 리포지토리는 계약을 생산하지 않고 소비한다(ImageLabels 검증, E2E 검증기·클라이언트 등: docs/boundary.md 2절). 각 리포지토리가 게시한 이미지 digest만 입력으로 받는다. 일부 서비스(gateway, ingest-api, gate-service, authoring-app)의 최종 형태는 각 영역의 설계에 따라 정해지므로, 이 브리프의 서비스 목록은 시드다.
 
 ## 1. 목적과 범위
 

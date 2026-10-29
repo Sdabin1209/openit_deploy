@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 계약 소비 정리 (U44·U46, U43 설계안)
+- U44: 이미지 라벨 검사가 두 번이던 것을 계약 ImageLabels 검증 하나로 정리했다. `publish-image.sh`는 필수 키를 손으로 먼저 보고 `:57`에서 계약 검증을 또 했고, `e2e.sh`의 `labels6`/`labels_kiosk`도 키를 따로 봤다. 모두 `validate_image_labels`(`check_image_labels.py`) 하나만 부른다(필수 4개 존재·빈 값·revision 형식·n/a 표기·오타 키는 스키마가 본다).
+- U46: `docs/boundary.md`·`docs/brief.md`의 "계약을 소비하거나 생산하지 않는다"를 사실로 고쳤다(소비 중: ImageLabels(+JobsDeclaration·Exposure), E2E의 validator·clients·metrics·canonical / 아직 쓰지 않음: BuildImage*, SetupEnvReport, Publish*). `PublishRequest.service` enum과 `lib.sh` 서비스 목록은 시험 `scripts/test_services_enum.py`로 같음을 보장한다(계약 enum이 정본, 어긋나면 실패; 점검 자체도 단위 시험).
+- U43 준비: 이웃의 `.venv`·`node_modules`·synthetic-data 실행을 추측하는 곳의 목록과 SetupEnvReport·영역 진입점으로의 설계안을 `docs/change-requests/CR-D30-setup-env-report.md`에 적었다(코드 변경 없음).
+
 ## check-versions: 영역 소스 grep 대신 빌드된 이미지 라벨을 기준표와 비교 (U39, ADR 0042)
 - 옛 점검이 model-runtime Dockerfile의 `ARG BOUNDARY_VERSION=...`을 놓쳤다(영역마다 핀 이름이 달라 패턴을 따라가는 방식의 한계, 구조 규칙 1·6 위반). `check-versions.sh`가 `build/images.env`의 이미지 라벨(`contracts.boundary`, `model-runtime`, `contracts.survey-schema`)을 `lib.sh` 표와 비교한다. `check_versions.py`(소스 grep)는 지웠다.
 - 이미지가 없으면 종료 3(검증하지 못함): check-all은 SKIP, E2E의 빌드 전 check-all은 `CHECK_ALL_IMAGES=defer`(대상 아님+이유), 빌드 뒤 E2E 점검은 3을 실패로 본다.

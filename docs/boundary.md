@@ -4,7 +4,7 @@
 
 - 소유 저장소: 없음(브리프). 인프라 정의와 운영 스크립트를 소유한다: `compose.yaml`, `compose.registry.yaml`, `locks/`, `config/`, `scripts/`, 로컬 레지스트리의 내용.
 - 제공: 배포 절차(적용, 롤백), 백업·복구 절차, E2E 실행 스크립트(`scripts/e2e.sh`, 헤드 전달본 E2E.md에 따라 deploy가 소유).
-- 제공하지 않음: SDK, 계약. 이 영역은 계약을 소비하거나 생산하지 않는다.
+- 제공하지 않음: SDK, 계약 스키마(계약은 헤드 소유다). deploy는 계약을 **소비하는 쪽**이다(생산하지 않는다). 소비하는 계약은 2절 표의 '사용 중'과 '아직 쓰지 않음'으로 나눠 적었다(코드에서 확인한 것만: `scripts/`에서 계약 이름을 검색한 결과).
 
 ## 2. 소비하는 것
 
@@ -12,7 +12,8 @@
 | --- | --- |
 | 각 영역 이미지 | 영역 리포지토리 HEAD를 `git archive`로 꺼내 deploy가 빌드하고 digest를 잠근다(CI가 생기면 영역 CI가 digest를 제출, D24) |
 | 영역의 환경 변수·포트·볼륨·헬스체크 | 아래 3절. 각 영역 boundary/runbook/Dockerfile이 출처 |
-| boundary-contracts | E2E의 검증기로만(`boundary_contracts.validator`, `scripts/lib.sh`의 `DEPLOY_BC_TAG`가 정한 태그). 이미지 안의 버전은 영역이 정한다 |
+| boundary-contracts (사용 중) | `scripts/lib.sh`의 `DEPLOY_BC_TAG`가 정한 태그. **ImageLabels**(이미지 라벨 검증: `publish-image.sh`, `build-images.sh`, `check-versions.sh`, E2E 라벨 점검 모두 `scripts/check_image_labels.py` 하나로), 그 안의 **JobsDeclaration**·**Exposure**(라벨 `io.openit.jobs`·`io.openit.exposure` 값), E2E의 `boundary_contracts.validator`·`clients`·`metrics`·`canonical`. 이미지 안의 버전은 영역이 정한다 |
+| boundary-contracts (**아직 쓰지 않음**) | **BuildImageRequest/Result**(영역 `build-image.sh` 호출 면, U42: `build-images.sh`가 아직 영역 스크립트를 직접 부른다), **SetupEnvReport**(영역 `setup-env.sh`가 내는 한 줄, U43: `doctor.sh`·`e2e_steps.py`가 이웃 `.venv`·`node_modules` 경로를 추측한다 -> `docs/change-requests/CR-D30-setup-env-report.md`), **PublishRequest/Result**(게시 면: `publish-image.sh`는 인자로 서비스 이름을 받고 `PublishResult` 모양의 결과를 형식 검증하지 않는다. `PublishRequest.service` enum과 `lib.sh`의 서비스 목록은 시험 `scripts/test_services_enum.py`가 같음을 보장한다) |
 | 문진 스키마 | E2E의 QuestionBank 검증(`openit-survey-schema` wheel, 정수 버전 1) |
 
 ## 3. 서비스 9개와 잡 2개(아래 표는 영역 서비스 5개, 그 뒤에 model-serving·게이트웨이·정적 화면 2개): 환경 변수, 포트, 볼륨, 헬스체크

@@ -47,15 +47,11 @@ if [ -f "$SRC" ]; then
   [ -n "$IMG" ] || { echo "$out" >&2; echo "거부: tar에서 이미지를 찾지 못했다" >&2; exit 4; }
 fi
 "$DOCKER" image inspect "$IMG" >/dev/null 2>&1 || { echo "거부: 이미지가 없다: $IMG" >&2; exit 4; }
-label() { "$DOCKER" image inspect "$IMG" --format "{{index .Config.Labels \"$1\"}}" | tr -d '\r'; }
-# 필수 라벨(D50): service, revision, contracts.boundary, contracts.survey-schema. turn-engine·model-runtime 은 해당 없으면 없어도 된다.
-for k in io.openit.service io.openit.revision io.openit.contracts.boundary io.openit.contracts.survey-schema; do
-  v=$(label "$k"); { [ -n "$v" ] && [ "$v" != "<no value>" ]; } || { echo "거부: 필수 라벨 없음 또는 빈 값: $k" >&2; exit 3; }
-done
-REV=$(label io.openit.revision); case "$REV" in unknown|"") echo "거부: io.openit.revision 이 unknown 이다" >&2; exit 3;; esac
-# 라벨 값 검사(계약 ImageLabels): 필수 4개의 존재만 보던 위 검사로는 none/unknown/v 접두사 없음/오타 키가 통과했다. 종료 코드 3 으로 거부한다(검사를 못 한 경우도 통과가 아니다)
+# 라벨 검사는 계약 ImageLabels 검증 하나다(필수 키 4개의 존재·빈 값·revision 형식·n/a 표기·오타 키를 스키마가 모두 본다). 예전에는 필수 키를 손으로 먼저 보고 계약 검증을 또 했다(이중 검사, U44).
+# 검사를 못 한 경우(jsonschema 없음 등)도 통과가 아니다: 종료 코드 3.
 vrc=0; vout=$(validate_image_labels "$IMG" "$SVC" 2>&1) || vrc=$?
 [ $vrc = 0 ] || { echo "$vout" >&2; echo "거부: 이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다(종료 코드 3): $SVC" >&2; exit 3; }
+REV=$("$DOCKER" image inspect "$IMG" --format '{{index .Config.Labels "io.openit.revision"}}' | tr -d '\r')   # 태그 이름에 쓸 값만 읽는다(형식은 위 계약 검증이 보증한다)
 TAGREV=$(echo "$REV" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-100)
 
 # 레지스트리 호출 상한(FAULT_POLICY 4: 의존 호출에 연결·읽기 timeout, 무한 대기 금지). 값은 측정한 것이 아니라 판단이다(측정 안 함), 환경 변수로 바꾼다.
