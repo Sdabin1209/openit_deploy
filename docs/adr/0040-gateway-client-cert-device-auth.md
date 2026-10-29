@@ -35,7 +35,8 @@
 
 - 얻는 것: 기기 자격 발급·복제 코드가 운영 경로에서 사라진다(토큰 경로는 3.0.0까지 호환용으로만 남는다).
 - 감수: 서비스는 헤더를 믿는다(게이트웨이 뒤 내부망, ADR 0005). 게이트웨이를 우회해 survey에 직접 닿는 경로는 네트워크 분리(compose `serving`)가 막는다.
-- **검증 상태**: 이 변경을 쓴 시점에 Docker가 꺼져 Caddy를 띄우는 시험(`scripts/test-device-mtls.sh` 동적 부분: Caddyfile 검증, 인증서 통과/거부, CN 전달, 위조 헤더 덮어쓰기)을 실행하지 못했다. 정적 시험 9건(일회용 CA 스크립트, 설정 조각, Caddyfile 구조)만 통과했다. `tls { ... import ... }`, `request_header` 플레이스홀더, `header_regexp` 캡처 문법은 **Caddy로 검증되지 않았다**: Docker가 돌 때 `bash scripts/test-device-mtls.sh`를 먼저 돌려야 한다.
+- **호스트 이름으로 접속해야 한다(측정함)**: 클라이언트 인증을 쓰는 사이트에서 Caddy는 요청의 Host와 TLS SNI가 같기를 요구하고 다르면 421을 낸다. 시험이 `https://127.0.0.1:<포트>`로(SNI 없음) 붙었을 때 인증서 통과·거부 6건이 모두 421이었고, `localhost` 이름으로 붙이자(`curl --resolve`) 18건이 모두 통과했다. 그래서 **키오스크는 IP가 아니라 게이트웨이 사이트 이름(`GATEWAY_HOSTS`의 이름)으로 접속해야 한다**(IP 접속은 SNI가 없어 421). 인증서를 쓰지 않는 직원 PC의 IP 접속도 `client_auth`를 켜면 영향받을 수 있다(켠 뒤에는 이름으로 접속).
+- **검증 상태**: `bash scripts/test-device-mtls.sh` 18건 통과(Caddy 2 이미지: Caddyfile 검증 2건, 신뢰 CA 인증서 통과 + CN 전달, 위조 헤더 덮어쓰기, 인증서 없음 401 + Bearer, 다른 CA 거부, 직원 경로, 토큰 경로 위조 헤더 제거). `tls { ... import ... }`, `request_header` 플레이스홀더, `header_regexp` 캡처가 모두 동작함을 확인했다.
 
 ## 되돌리는 조건
 

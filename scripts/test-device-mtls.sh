@@ -56,10 +56,11 @@ val "$T/pki/device-tls.caddy" "$T/pki/device-ca.pem" && pass "Caddyfile 검증 �
 docker network create $NET >/dev/null
 docker run -d --name $CE --network $NET --network-alias survey-service -v "$DEPLOY_ROOT/test/device-mtls-echo.py:/echo.py:ro" "$UTIL" python /echo.py >/dev/null
 gwrun $CG "$T/pki/device-tls.caddy" "$T/pki/device-ca.pem"
-P=""; for i in $(seq 1 40); do P=$(docker port $CG 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$P" ] && curl -sk -o /dev/null -m 2 "https://127.0.0.1:$P/healthz" && break; sleep 0.5; done
+P=""; for i in $(seq 1 40); do P=$(docker port $CG 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$P" ] && curl -sk -o /dev/null -m 2 --resolve "localhost:$P:127.0.0.1" "https://localhost:$P/healthz" && break; sleep 0.5; done
 [ -n "$P" ] || { echo "게이트웨이가 뜨지 않았다"; docker logs $CG 2>&1 | tail -5; exit 1; }
-cv() { curl -sk -m 8 -D "$T/h.out" -o "$T/b.out" -w '%{http_code}' "$@"; }
-U="https://127.0.0.1:$P"
+# 이름으로 붙는다: 클라이언트 인증을 쓰는 사이트에서 Caddy 는 Host 와 TLS SNI 가 같기를 요구한다(strict_sni_host, 421). IP 로 붙으면 SNI 가 없어 421 이다
+cv() { curl -sk -m 8 --resolve "localhost:$P:127.0.0.1" -D "$T/h.out" -o "$T/b.out" -w '%{http_code}' "$@"; }
+U="https://localhost:$P"
 c=$(cv --cert "$T/pki/kiosk-lobby-1.crt" --key "$T/pki/kiosk-lobby-1.key" -X POST "$U/v1/sessions"); dev=$(python3 -c 'import json;print(json.load(open("'$T'/b.out")).get("x-openit-device",""))' 2>/dev/null)
 [ "$c" = 200 ] && [ "$dev" = kiosk-lobby-1 ] && pass "신뢰 CA 의 인증서 -> 키오스크 경로 통과, 서비스가 받은 X-Openit-Device=kiosk-lobby-1(CN)" || fail "인증서 통과/CN 전달 (코드 $c, 헤더 '$dev')"
 c=$(cv --cert "$T/pki/kiosk-lobby-1.crt" --key "$T/pki/kiosk-lobby-1.key" -H "X-Openit-Device: attacker" -X POST "$U/v1/sessions"); dev=$(python3 -c 'import json;print(json.load(open("'$T'/b.out")).get("x-openit-device",""))' 2>/dev/null)
@@ -68,7 +69,7 @@ c=$(cv -X POST "$U/v1/sessions"); w=$(grep -ic '^www-authenticate: bearer' "$T/h
 [ "$c" = 401 ] && [ "$w" = 1 ] && pass "인증서 없음 -> 401 + WWW-Authenticate: Bearer" || fail "인증서 없음 (코드 $c)"
 c=$(cv -H "X-Openit-Device: attacker" -X POST "$U/v1/sessions")
 [ "$c" = 401 ] && pass "인증서 없이 위조 헤더만 보내도 401" || fail "무인증서 위조 헤더 (코드 $c)"
-curl -sk -m 8 --cert "$T/pki2/rogue-1.crt" --key "$T/pki2/rogue-1.key" -o /dev/null "$U/v1/sessions" -X POST; rc=$?
+curl -sk -m 8 --resolve "localhost:$P:127.0.0.1" --cert "$T/pki2/rogue-1.crt" --key "$T/pki2/rogue-1.key" -o /dev/null "$U/v1/sessions" -X POST; rc=$?
 [ "$rc" != 0 ] && pass "신뢰하지 않는 CA 의 인증서는 TLS 에서 거부된다(curl 종료 $rc)" || fail "다른 CA 인증서가 받아들여졌다"
 c=$(cv "$U/staff/"); [ "$c" = 401 ] && grep -qi '^www-authenticate: basic' "$T/h.out" && pass "직원 경로는 인증서 없이도 열려 계정 인증(Basic 401)을 요구한다" || fail "직원 경로 (코드 $c)"
 TOK=$(cat "$S/tokens/kiosk-device-e2e")

@@ -3,7 +3,7 @@
 ## 4b 게이트웨이: 키오스크 기기 인증서 검증, 계약 v2.3.0 (D113, ADR 0040)
 - `config/Caddyfile`: 사이트 `tls { issuer internal; import device_client_auth }`, 주체를 `X-Openit-Dn`으로 받아 `header_regexp`로 CN을 꺼내 키오스크 경로에서 `X-Openit-Device`로 넘긴다. survey로 가는 모든 프록시에서 클라이언트의 `X-Openit-Device`·`X-Openit-Dn`을 지운다. 인증서 없음은 기존대로 401 + Bearer, 2.x 기기 토큰 경로는 호환으로 남는다.
 - `config/device-tls.caddy`(기본: 검증 꺼짐), `config/device-tls.mtls.caddy.example`, `config/device-ca.pem`(자리), compose `gateway-device-tls`·`gateway-device-ca`. survey의 기기 토큰 표는 2.x 호환 선택으로 표시했다.
-- `scripts/device-pki.sh`(시험·데모용 일회용 CA, 운영 금지), `scripts/test-device-mtls.sh`(정적 9건 통과, Caddy를 띄우는 부분은 Docker가 꺼져 **미실행**), `lib.sh` DEPLOY_BC_TAG v2.3.0.
+- `scripts/device-pki.sh`(시험·데모용 일회용 CA, 운영 금지), `scripts/test-device-mtls.sh`(18건 통과; 시험은 호스트 이름으로 접속: Caddy는 클라이언트 인증 사이트에서 Host=SNI를 요구해 IP 접속은 421), `lib.sh` DEPLOY_BC_TAG v2.3.0.
 
 ## 백업 저장소를 서버 밖 append-only(restic rest-server)로 (D112, ADR 0038 갱신)
 - `BACKUP_REPOSITORY=rest:http(s)://…`(운영) + `BACKUP_REST_CREDENTIAL_FILE`(서버 자격, 값은 env 파일로만 전달) 모드 추가. 서버는 쓰기·읽기만 되고 스냅샷·데이터 삭제와 덮어쓰기는 403. 로컬 `BACKUP_DIR`는 개발·시험 전용(경고).

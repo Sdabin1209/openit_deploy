@@ -291,6 +291,7 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 - 켜기: 조직 PKI의 신뢰 CA 인증서(PEM, 비밀 아님)를 `config/device-ca.pem`(또는 `DEVICE_CA_FILE`)에 두고, `config/device-tls.mtls.caddy.example`의 내용을 `config/device-tls.caddy`(또는 `DEVICE_TLS_CONF`)에 쓴 뒤 gateway를 다시 만든다(`up.sh deploy`). 기본은 꺼져 있고(기기 토큰 2.x 호환만) 켜도 토큰 경로는 남는다.
 - 기기 인증서의 주체 CN이 기기 ID다(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`). 발급·갱신·폐기는 조직 PKI/MDM 몫이고 이 프로젝트는 하지 않는다. 키오스크 앱은 자격을 보내지 않는다(브라우저가 TLS에서 인증서를 낸다).
 - 시험·데모: `bash scripts/device-pki.sh init|issue <기기 ID>|gateway-config`가 일회용 CA와 기기 인증서를 만든다(**운영 사용 금지**, 키는 `state/device-pki/` 권한 600). 확인: `bash scripts/test-device-mtls.sh`(Docker 필요) 또는 `--static`.
+- **호스트 이름으로 접속한다**: 클라이언트 인증을 켠 사이트에서 Caddy는 Host와 TLS SNI가 같기를 요구한다(다르면 421). 키오스크·직원 PC는 IP가 아니라 `GATEWAY_HOSTS`의 이름으로 접속한다(DNS 또는 hosts 설정 필요). IP 접속은 SNI가 없어 421이다(시험으로 확인).
 - 직원 PC에 클라이언트 인증서가 설치돼 있으면 브라우저가 선택 창을 띄울 수 있다(`verify_if_given`). 기기 인증서는 키오스크에만 둔다.
 
 ## 10. 병원 서버에 올리기 전 요건 (사용자가 확인하는 것)
