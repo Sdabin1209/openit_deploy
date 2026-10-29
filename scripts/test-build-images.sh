@@ -30,11 +30,12 @@ if [ "$bad" = "$REPO" ]; then case "$mode" in
   nolabels) echo '{"image":"'$(python3 -c "import json;print(json.load(open('$REQ'))['image_tag'])")'","image_id":"sha256:'$(printf 'a%.0s' $(seq 64))'","labels":{}}'; exit 0;;
   otherimage) echo '{"image":"x/other:1","image_id":"sha256:'$(printf 'a%.0s' $(seq 64))'","labels":{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.0.0","io.openit.contracts.survey-schema":"n/a"}}'; exit 0;;
   badid) ID=sha256:$(printf 'b%.0s' $(seq 64));;
+  wrongsvc) SVC_LABEL=$REPO;;   # 영역 이름을 서비스 라벨로 내는 경우(model-runtime 이 model-serving 이미지에 model-runtime 을 단 것)
 esac; fi
 ID=${ID:-sha256:$(printf 'a%.0s' $(seq 64))}
-IMG=$(python3 -c "import json;print(json.load(open('$REQ'))['image_tag'])"); REV=$(python3 -c "import json;print(json.load(open('$REQ'))['revision'])")
+IMG=$(python3 -c "import json;print(json.load(open('$REQ'))['image_tag'])"); SVC=$(python3 -c "import sys;print(sys.argv[1].split('/')[-1].split(':')[0])" "$IMG"); REV=$(python3 -c "import json;print(json.load(open('$REQ'))['revision'])")
 echo "진행 기록(표준 오류)" >&2
-echo '{"image":"'$IMG'","image_id":"'$ID'","labels":{"io.openit.service":"'$REPO'","io.openit.revision":"'$REV'","io.openit.contracts.boundary":"'$(python3 -c "import json;print(json.load(open('$REQ'))['versions']['boundary'])")'","io.openit.contracts.survey-schema":"n/a"}}'
+echo '{"image":"'$IMG'","image_id":"'$ID'","labels":{"io.openit.service":"'${SVC_LABEL:-$SVC}'","io.openit.revision":"'$REV'","io.openit.contracts.boundary":"'$(python3 -c "import json;print(json.load(open('$REQ'))['versions']['boundary'])")'","io.openit.contracts.survey-schema":"n/a"}}'
 EN
 AREAS_JSON="${AREAS_FILE:-$HERE/../../head/shared/areas.json}"   # 영역 목록의 정본(areas.py 로 읽는다)
 for r in $(python3 "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node,library); do mkrepo "$r"; done
@@ -78,6 +79,7 @@ bad survey-service fail survey-service "영역 진입점이 실패했다"
 bad survey-service nolabels survey-service "BuildImageResult"
 bad ops-feedback otherimage ops-feedback "요청한"
 bad question-authoring badid question-authoring "image_id"
+bad model-runtime wrongsvc model-serving "io.openit.service(model-runtime)가 서비스 이름 model-serving"
 N=$((N+1)); echo "# dirty" >> "$T/ops-feedback/scripts/build-image.sh"; o=$(cd "$D" && bash scripts/build-images.sh ops-feedback 2>&1); [ $? != 0 ] && grep -q "커밋 안 된 변경" <<<"$o" && echo "  PASS 영역 리포에 커밋 안 된 추적 파일 변경이 있으면 멈춘다" || { echo "  FAIL dirty 감지"; F=$((F+1)); }
 N=$((N+1)); o=$(cd "$D" && BUILD_ALLOW_DIRTY=1 bash scripts/build-images.sh ops-feedback 2>&1); [ $? = 0 ] && echo "  PASS BUILD_ALLOW_DIRTY=1 이면 허용" || { echo "  FAIL BUILD_ALLOW_DIRTY"; F=$((F+1)); }
 ( cd "$T/ops-feedback" && git checkout -q scripts/build-image.sh )

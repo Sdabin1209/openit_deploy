@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-306: model-runtime v0.11.1, 서비스 라벨 일치 확인
+- `DEPLOY_MR_TAG` v0.11.1(추론 서버 이미지 라벨 `io.openit.service`가 model-serving / model-serving-gpu).
+- `build-images.sh`가 BuildImageResult의 `io.openit.service`가 deploy의 서비스 이름과 같은지 확인한다(영역 이름이나 다른 값이면 실패). v0.11.0의 `model-runtime` 라벨 같은 경우를 빌드 때 잡는다. `test-build-images.sh`의 가짜 진입점은 요청의 이미지 태그에서 서비스 이름을 읽어 라벨로 내고(예전에는 리포 이름), `wrongsvc` 모드 시험을 더했다. "model-runtime 라벨"을 전제로 둔 코드는 deploy에 없었다.
+
 ## wo-305: check-all 규칙 11의 상대 경로 기준
 - 덧붙임 compose 파일(`test/compose.*.yaml`, e2e.sh의 `COMPOSE_EXTRA`)의 상대 마운트 경로는 Docker Compose 규격상 프로젝트 디렉터리 기준이다(`lib.sh`의 `dc()`가 `--project-directory`를 deploy 루트로 준다). 규칙 11이 각 파일 자신의 폴더 기준으로 풀어 `test/compose.risk-rules.yaml`을 오판했다. `check_all.compose_base()` 한 곳에서 deploy 리포는 루트 기준, 다른 영역은 자기 폴더 기준으로 푼다.
 - 같은 오판이 숨기고 있던 것: `test/monitoring/compose.fake.yaml`은 자기 폴더 기준 경로(`./fake-services.py`)를 적고 `test-monitoring.sh`가 실행 때 절대 경로로 바꾼 사본을 썼다. 파일을 루트 기준(`./test/monitoring/fake-services.py`)으로 고치고 사본 만들기를 지웠다.

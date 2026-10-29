@@ -98,7 +98,9 @@ r = json.loads(sys.stdin.read())
 errs = list(validator("BuildImageResult").iter_errors(r))
 if errs: sys.exit("BuildImageResult 위반: /" + "/".join(map(str, errs[0].absolute_path)) + ": " + errs[0].message[:200])
 if r["image"] != sys.argv[1]: sys.exit("결과의 image(%s)가 요청한 %s 와 다르다" % (r["image"], sys.argv[1]))
-print(r["image_id"])' "$img" > "$CTX/id-$svc.txt" || die "$svc: 영역 진입점의 결과(BuildImageResult)가 계약을 어긴다"
+# 이미지 라벨 io.openit.service 는 deploy 의 서비스 이름(게시·compose 가 쓰는 이름)과 같아야 한다: 영역 이름(예: model-runtime)이나 다른 값이면 게시된 이미지가 어느 서비스인지 라벨로 알 수 없다
+if r["labels"].get("io.openit.service") != sys.argv[2]: sys.exit("라벨 io.openit.service(%s)가 서비스 이름 %s 와 다르다" % (r["labels"].get("io.openit.service"), sys.argv[2]))
+print(r["image_id"])' "$img" "$svc" > "$CTX/id-$svc.txt" || die "$svc: 영역 진입점의 결과(BuildImageResult)가 계약을 어긴다"
   [ "$("$DOCKER" image inspect "$img" --format '{{.Id}}' | tr -d '\r')" = "$(cat "$CTX/id-$svc.txt")" ] || die "$svc: 결과의 image_id 가 로컬 이미지의 ID 와 다르다: $img"
   record "$svc" "$img" "$commit"
 }
