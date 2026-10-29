@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-300 후속: deploy 자기 설정을 계약으로 검증
+- `config/ops-feedback-job.yaml`의 `rollback: null`이 계약 OpsFeedbackJobConfig(rollback은 object, 없으면 키를 뺀다)를 어겼다. 2.7.0부터 어떤 시험에도 걸리지 않았다. 키를 빼고 이유를 주석으로 남겼다(기준 값은 사용자 결정 전이라 객체를 채우지 않는다).
+- `scripts/test_config_contracts.py`(e2e.sh 자체 점검): 계약 스키마가 있는 deploy 설정(ops-feedback 잡 설정 2개, E2E 위험 규칙 파일)을 계약 validator로 검증하고, `config/` 바로 아래 yaml·json이 계약 대상(CONTRACT)인지 deploy 자신의 형식(OWN, 이유 필수)인지 분류되지 않았으면 실패한다.
+
 ## wo-300: 계약 3.0.0 전환 (deploy 몫)
 - 기준표: `DEPLOY_BC_TAG` v3.0.0. `DEPLOY_TE_TAG`·`DEPLOY_TE_VERSION`을 지웠다(D109). 문진 스키마는 survey-service가 2.0.0을 낼 때까지 survey-schema-v1.3.0 그대로. compose의 `SURVEY_TURN_ENGINE_VERSION`·`GATE_TURN_ENGINE_VERSION` 환경 변수 4곳을 지웠다: 규칙 세대 표지는 서비스가 설치된 계약의 `ActionExtractionRules.rules_version`에서 읽는 것으로 가정한다(해당 영역의 wo-300; 영역이 여전히 이 환경 변수를 요구하면 헤드가 알려야 한다).
 - `build-images.sh`의 BuildImageRequest에는 `versions.turn_engine`이 없었다(U42에서 이미 뺐다). `images.env` 도장 스키마에서 `te=`를 뺐다. 이미지 라벨 `io.openit.turn-engine` 기대값을 시험 고정값에서 지웠다(3.0 ImageLabels가 거부한다).
