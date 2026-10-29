@@ -58,7 +58,14 @@ for lib in boundary-contracts model-runtime; do git clone -q --bare "$CTX/$lib" 
 # 값 없음 표기는 `n/a` 하나, 버전은 v 접두사 포함(계약 ImageLabels). 영역 Dockerfile 이 인자 기본값으로 none/unknown 을 달지 않게 deploy 가 넘기는 값은 형식을 맞춘다
 semver_v() { case "$1" in v*) echo "$1";; *) echo "v$1";; esac; }
 ss_major() { sed -n 's/^survey-schema-v\([0-9][0-9]*\)\..*/\1/p' <<<"$1" | grep . || echo "$1"; }   # survey-schema-v1.0.0 -> 1 (맞지 않으면 그대로 넘겨 검사가 잡는다)
-mr_version() { python3 -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1]+"/pyproject.toml","rb"))["project"]["version"])' "$1"; }
+# model-runtime 이미지 라벨 io.openit.model-runtime 의 값은 deploy 기준표의 태그(DEPLOY_MR_TAG)에서 얻는다(영역의 pyproject.toml 을 읽지 않는다, ADR 0041). 이미지가 정말 그 버전인지는
+# 빌드한 이미지가 스스로 내는 model_runtime.RUNTIME_VERSION 으로 확인한다(영역이 내는 산출물을 읽는다. 어긋나면 빌드를 멈춘다).
+mr_label() { semver_v "$DEPLOY_MR_TAG"; }
+verify_mr_label() { # verify_mr_label <이미지>
+  local got; got=$("$DOCKER" run --rm --entrypoint python "$1" -c 'import model_runtime;print(model_runtime.RUNTIME_VERSION)' 2>/dev/null | tr -d '\r') || true
+  [ -n "$got" ] || die "이미지에서 model_runtime.RUNTIME_VERSION 을 읽지 못했다(확인 못 함): $1"
+  [ "$(semver_v "$got")" = "$(mr_label)" ] || die "라벨(기준표 $DEPLOY_MR_TAG)과 이미지의 RUNTIME_VERSION($got)이 다르다: $1. 기준표를 영역 릴리스에 맞추거나 영역이 태그를 바로잡아야 한다"
+}
 declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [dataset-store]=synthetic-data [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend [admin-console]=admin-console )
 # survey-service는 태그(survey-schema-v1.0.0)도 읽혀야 하므로 작업 트리가 있는 사본(clone, HEAD)으로 둔다
 rm -rf "$CTX/survey-service"; git clone -q --no-hardlinks "$WORKSPACE/survey-service" "$CTX/survey-service"; rm -rf "$CTX/survey-service/.git/hooks"
@@ -160,15 +167,16 @@ if want model-serving; then
   git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
   c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}"); img="deploy-build/model-serving:$c"
   "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MS")")" "$MS" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(mr_label)" "$MS" >/dev/null
+  verify_mr_label "$img"
   record model-serving "$img" "$c"
 fi
 
 if want kiosk-frontend; then
   # 키오스크 앱+직원 콘솔 정적 이미지(태그 없음 = main). 빌드 컨텍스트는 git archive 사본
-  KF="$CTX/kiosk-frontend"; AV=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$KF/package.json" | head -1)
+  KF="$CTX/kiosk-frontend"   # io.openit.app-version 은 영역 Dockerfile 의 ARG 기본값을 쓴다(deploy 가 영역의 패키지 파일을 읽어 넘기지 않는다, ADR 0041)
   c=$(commit_of kiosk-frontend); img="deploy-build/kiosk-frontend:$c"
-  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA="$(ss_major "$DEPLOY_SS_TAG")" --build-arg APP_VERSION="${AV:-unknown}" "$KF" >/dev/null
+  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA="$(ss_major "$DEPLOY_SS_TAG")" "$KF" >/dev/null
   record kiosk-frontend "$img" "$c"
 fi
 
@@ -189,7 +197,8 @@ if want_gpu; then
   echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
   "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
     --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(semver_v "$(mr_version "$MSG")")" "$MSG" >/dev/null
+    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(mr_label)" "$MSG" >/dev/null
+  verify_mr_label "$img"
   record model-serving-gpu "$img" "$c"
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
   OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)

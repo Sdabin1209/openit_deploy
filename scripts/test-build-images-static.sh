@@ -7,4 +7,10 @@ bad=$(grep -nE '(cat|sed|source|head|tr)[^|;]*"\$CTX/[a-z-]+/(src|tests?|docs|sc
 [ -z "$bad" ] && echo "ok: 영역 소스 트리 내부 경로를 읽지 않는다(build/ 산출물만)" || { echo "FAIL: 내부 경로를 읽는다:"; echo "$bad"; rc=1; }
 grep -q 'ops_feedback/_schemas' "$F" && { echo "FAIL: ops-feedback 내부 경로 _schemas"; rc=1; } || echo "ok: ops-feedback _schemas 경로 없음"
 grep -q 'requirements.lock' "$F" && { echo "FAIL: requirements.lock 경로"; rc=1; } || echo "ok: 잠금 파일 경로 없음"
+# 영역 내부 파일의 버전을 직접 읽지 않는다(model-runtime pyproject.toml, kiosk-frontend package.json): 라벨 값은 deploy 기준표(lib.sh)나 이미지 산출물에서 얻는다(ADR 0041)
+for pat in 'pyproject\.toml' 'package\.json' 'tomllib' 'mr_version'; do
+  hit=$(grep -nE "$pat" "$F" | grep -v '^[0-9]*:[[:space:]]*#' || true)
+  [ -z "$hit" ] && echo "ok: build-images.sh 가 $pat 를 읽지 않는다" || { echo "FAIL: 영역 내부 버전 파일/파서 사용 ($pat):"; echo "$hit" | cut -c1-160; rc=1; }
+done
+grep -nE 'APP_VERSION' "$F" | grep -v '^[0-9]*:[[:space:]]*#' | grep -q . && { echo "FAIL: APP_VERSION 을 deploy 가 넘긴다(영역 Dockerfile 의 기본값을 쓴다)"; rc=1; } || echo "ok: APP_VERSION 을 넘기지 않는다(영역이 정한다)"
 [ $rc = 0 ] && echo "통과: build-images 정적 시험"; exit $rc

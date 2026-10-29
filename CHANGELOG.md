@@ -1,5 +1,9 @@
 # 변경 이력
 
+## build-images: 영역 내부 버전 파일을 읽지 않는다 (ADR 0041)
+- model-runtime 라벨은 `DEPLOY_MR_TAG`에서 만들고 빌드한 이미지의 `model_runtime.RUNTIME_VERSION`과 대조한다(어긋나면 빌드 중단). kiosk-frontend `app-version`은 deploy가 넘기지 않는다(영역 Dockerfile 기본값, CR-D29). `pyproject.toml`·`package.json`·`mr_version` 제거.
+- `test-build-images-static.sh`에 영역 내부 버전 파일 사용 금지 검사를 더했다(수정 전 5건 실패, 수정 뒤 통과).
+
 ## 복구 뒤 비root 서비스가 unhealthy 이던 것: 볼륨 루트의 소유자·모드 복원
 - 원인(재현으로 확정): `restic restore <스냅샷>:/data --target /dst` 는 /data 아래 항목의 소유자·모드는 되살리지만 볼륨 루트(/dst) 자체는 건드리지 않는다. 지웠다 새로 만든 볼륨의 루트는 root:root 755 라 uid 10001 서비스(model-registry, dataset-store)가 쓰지 못한다. 재현: 루트 10001:10001 750 인 볼륨을 백업 -> 볼륨 삭제 -> restore.sh -> 루트 0:0 755 (파일은 10001 그대로).
 - 고침: `restore.sh` 가 스냅샷에 기록된 /data 노드(`restic ls --json`)의 uid·gid·mode 를 읽어 볼륨 루트에 적용한다(못 읽으면 실패). `test-backup.sh` 에 루트 속성 단언을 더했다.
