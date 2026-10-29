@@ -212,6 +212,11 @@ def rule_versions() -> R:
     for a in VERSION_AREAS:
         if a not in areas:
             r.un.append((a, "워크스페이스에 영역이 없다"))
+    if os.environ.get("CHECK_ALL_IMAGES") == "defer":
+        # e2e.sh 의 빌드 전 점검: 이 규칙은 이미지 라벨을 보는데, 빌드 전에 있는 이미지는 낡은 것일 수 있다(이전 빌드 잔재). 판정하지 않고 뒤로 미룬다.
+        # 같은 검사(check-versions.sh)를 e2e.sh 가 빌드·게시 뒤에 실제로 돌린다(test-check-all.sh 가 e2e.sh 에 그 단계가 있는지 본다).
+        for a in app: r.na.append((a, "빌드 전이라 이미지 라벨을 판정하지 않는다(낡은 이미지일 수 있다): 빌드 뒤 e2e.sh 가 check-versions.sh 를 실행한다"))
+        return r
     cmd = os.environ.get("CHECK_ALL_VERSIONS_CMD") or str(HERE / "check-versions.sh")
     try:
         p = subprocess.run(["bash", cmd] if cmd.endswith(".sh") else cmd.split(), capture_output=True, text=True, timeout=120)
@@ -221,10 +226,7 @@ def rule_versions() -> R:
     lines = [l for l in (p.stdout + p.stderr).splitlines() if l.strip()]
     if p.returncode == 3:   # 검증하지 못했다(빌드된 이미지가 없다): 통과로 세지 않는다. ADR 0042
         why = next((l.strip() for l in lines if "검증하지 못했다" in l), "빌드된 이미지가 없어 라벨을 볼 수 없다")
-        if os.environ.get("CHECK_ALL_IMAGES") == "defer":   # e2e.sh 의 빌드 전 점검만 쓴다: 라벨 점검은 빌드 뒤 e2e.sh 가 같은 스크립트로 한다
-            for a in app: r.na.append((a, "빌드 전이라 이미지 라벨을 아직 볼 수 없다(빌드 뒤 e2e.sh 가 check-versions.sh 를 실행한다)"))
-        else:
-            for a in app: r.un.append((a, why))
+        for a in app: r.un.append((a, why))
         return r
     if p.returncode == 0:
         r.ok += app

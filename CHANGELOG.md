@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-307: check-all 규칙 1(버전표)이 CHECK_ALL_IMAGES=defer를 따른다
+- e2e.sh의 빌드 전 점검(`CHECK_ALL_IMAGES=defer check-all --strict`)이 이전 빌드의 낡은 이미지 라벨을 보고 시작 전에 FAIL했다. U39 이후 규칙 1이 이미지 라벨을 보는데 defer는 "검증하지 못함(종료 3)"일 때만 적용됐다. 이제 defer이면 `check-versions.sh`를 실행하지 않고 대상 아님(이유 출력)으로 둔다. 같은 검사는 빌드·게시 뒤 e2e.sh의 `check-versions.sh` 단계가 실제로 돌린다(`test-check-all.sh`가 그 단계가 빌드 뒤에 있는지 본다).
+
 ## wo-306: model-runtime v0.11.1, 서비스 라벨 일치 확인
 - `DEPLOY_MR_TAG` v0.11.1(추론 서버 이미지 라벨 `io.openit.service`가 model-serving / model-serving-gpu).
 - `build-images.sh`가 BuildImageResult의 `io.openit.service`가 deploy의 서비스 이름과 같은지 확인한다(영역 이름이나 다른 값이면 실패). v0.11.0의 `model-runtime` 라벨 같은 경우를 빌드 때 잡는다. `test-build-images.sh`의 가짜 진입점은 요청의 이미지 태그에서 서비스 이름을 읽어 라벨로 내고(예전에는 리포 이름), `wrongsvc` 모드 시험을 더했다. "model-runtime 라벨"을 전제로 둔 코드는 deploy에 없었다.

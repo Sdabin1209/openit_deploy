@@ -41,6 +41,14 @@ run 1 CHECK_ALL_VERSIONS_CMD=false; expect "버전표 불일치(대리 명령 �
 printf '#!/usr/bin/env bash\necho "검증하지 못했다: 빌드 기록이 없다"\nexit 3\n' > "$W/rc3.sh"
 run 1 CHECK_ALL_VERSIONS_CMD="$W/rc3.sh"; expect "이미지를 검증하지 못하면(종료 3) SKIP(통과 아님)" SKIP "검증하지 못했다"
 run 1 CHECK_ALL_VERSIONS_CMD="$W/rc3.sh" CHECK_ALL_IMAGES=defer; expect "빌드 전 점검(defer)은 대상 아님 + 이유로 PASS" PASS "빌드 전이라"
+# 낡은 이미지(이전 빌드 잔재): 빌드 전 점검(defer)은 판정하지 않고(스크립트를 실행하지도 않는다), 빌드 뒤 점검(defer 없음)은 FAIL 이다
+printf '#!/usr/bin/env bash\ntouch "%s/ran-stale"\necho "다름: survey-service: io.openit.model-runtime v0.11.0 (표: v0.11.1)"\nexit 1\n' "$W" > "$W/stale.sh"
+rm -f "$W/ran-stale"; run 1 CHECK_ALL_VERSIONS_CMD="$W/stale.sh" CHECK_ALL_IMAGES=defer; expect "defer + 낡은 이미지: 시작 전 FAIL 아님(대상 아님)" PASS "빌드 전이라"
+N=$((N+1)); [ ! -e "$W/ran-stale" ] && echo "  ok   defer 일 때 check-versions 를 실행하지 않는다" || { echo "  FAIL defer 인데 실행했다"; FAILS=$((FAILS+1)); }
+run 1 CHECK_ALL_VERSIONS_CMD="$W/stale.sh"; expect "defer 없음 + 낡은 이미지: FAIL(빌드 뒤 검사가 돈다)" FAIL "model-runtime"
+# 빌드 뒤 검사가 e2e.sh 에 단계로 남아 있다: build-images 호출보다 뒤에 check-versions.sh 를 실행하는 chk 가 있다
+bl=$(grep -n 'build-images.sh' "$ROOT/scripts/e2e.sh" | grep -v '^\s*[0-9]*:\s*#' | head -1 | cut -d: -f1); cl=$(grep -n '^chk .*check-versions.sh' "$ROOT/scripts/e2e.sh" | head -1 | cut -d: -f1)
+N=$((N+1)); if [ -n "$bl" ] && [ -n "$cl" ] && [ "$cl" -gt "$bl" ]; then echo "  ok   e2e.sh 에 빌드(행 $bl) 뒤 check-versions 단계(행 $cl)가 있다"; else echo "  FAIL e2e.sh 에 빌드 뒤 check-versions 단계가 없다(빌드 $bl, 검사 $cl)"; FAILS=$((FAILS+1)); fi
 
 echo "== 2 예시 키 순서"
 mk $BC; mkschema; echo '{"a":"1","b":[{"x":1,"y":2}]}' > "$W/$BC/examples/Foo.json"; run 2; expect "올바른 순서는 PASS" PASS "검증됨 1/1"
