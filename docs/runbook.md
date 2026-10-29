@@ -90,7 +90,7 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 1. 서비스 멈추기: 복구할 데이터베이스를 쓰는 서비스를 멈춘다(`docker compose -p deploy stop <서비스>`). 다른 접속이 있으면 `pg-restore.sh`가 거부한다.
 2. 볼륨을 잃은 경우: `docker compose -p deploy up -d --wait postgres`. 초기화 스크립트가 빈 데이터베이스와 계정을 만든다.
 3. 새 서버라면 저장소와 암호 파일을 먼저 놓는다(`BACKUP_DIR`에 `restic/` 폴더, `BACKUP_PASSWORD_FILE`에 서버 밖 보관본의 암호). 어떤 스냅샷이 있는지: `docker run --rm -v $BACKUP_DIR:/backup -v $BACKUP_PASSWORD_FILE:/pw:ro -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD_FILE=/pw <RESTIC_IMAGE> snapshots`(RESTIC_IMAGE 는 `locks/images.lock`).
-4. `bash scripts/pg-restore.sh <db> latest --yes`(또는 스냅샷 ID). 파일 저장소는 `bash scripts/restore.sh <저장소> latest --yes`(서비스 정지 필요, 볼륨을 비우고 `--verify`로 내용 해시를 확인하며 복원, 소유자·모드는 백업 때 값 그대로). 데이터베이스 5개는 가능하면 **같은 백업 세트(같은 `set-` 태그)**의 스냅샷 ID로 복구한다.
+4. `bash scripts/pg-restore.sh <db> latest --yes`(또는 스냅샷 ID). 파일 저장소는 `bash scripts/restore.sh <저장소> latest --yes`(서비스 정지 필요, 볼륨을 비우고 `--verify`로 내용 해시를 확인하며 복원. 항목의 소유자·모드와 **볼륨 루트의 소유자·모드**도 백업 때 값으로 되돌린다: 새 볼륨의 루트는 root 소유라 이것이 없으면 비root 서비스가 못 써서 unhealthy 가 된다). 데이터베이스 5개는 가능하면 **같은 백업 세트(같은 `set-` 태그)**의 스냅샷 ID로 복구한다.
 5. 복호 단계는 없다(restic이 저장소 암호로 직접 읽는다). 평문 파일이 디스크에 남지 않는다.
 6. `bash scripts/up.sh deploy`, 그다음 gateway `/readyz`와 `bash scripts/check-monitoring-live.sh deploy`(감시 스택이 떠 있을 때).
 7. 게이트 INTEGRITY_ERROR(릴리스 파일 변조): 해당 릴리스를 활성화하지 말고, 활성이면 롤백 요청 후 이 절차로 gate 데이터베이스와 gate-data를 같은 세트로 복구한다(게이트 런북).

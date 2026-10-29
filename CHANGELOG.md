@@ -1,5 +1,9 @@
 # 변경 이력
 
+## 복구 뒤 비root 서비스가 unhealthy 이던 것: 볼륨 루트의 소유자·모드 복원
+- 원인(재현으로 확정): `restic restore <스냅샷>:/data --target /dst` 는 /data 아래 항목의 소유자·모드는 되살리지만 볼륨 루트(/dst) 자체는 건드리지 않는다. 지웠다 새로 만든 볼륨의 루트는 root:root 755 라 uid 10001 서비스(model-registry, dataset-store)가 쓰지 못한다. 재현: 루트 10001:10001 750 인 볼륨을 백업 -> 볼륨 삭제 -> restore.sh -> 루트 0:0 755 (파일은 10001 그대로).
+- 고침: `restore.sh` 가 스냅샷에 기록된 /data 노드(`restic ls --json`)의 uid·gid·mode 를 읽어 볼륨 루트에 적용한다(못 읽으면 실패). `test-backup.sh` 에 루트 속성 단언을 더했다.
+
 ## E2E 백업 저장소(compose.backup-target.yaml) 500 수정
 - 원인(rest-server 로그로 확인): 새 이름 있는 볼륨은 root 소유인데 rest-server 가 비root(65534)로 돌아 `mkdir /data/openit: permission denied` -> restic init/backup 이 HTTP 500. `test-backup.sh` 의 rest 시험은 컨테이너를 기본 사용자(root)로 띄워 이 차이를 못 잡았다.
 - 고침: 일회용 `backup-target-perms`(root, CHOWN·DAC_OVERRIDE 만, 네트워크 없음)가 볼륨 소유자를 65534 로 바꾸고 `backup-target` 이 `service_completed_successfully` 뒤에 뜬다(레지스트리 perms 서비스와 같은 방식). 같은 구성을 compose 로 띄워 `up --wait` -> restic init/backup 성공, 서버 자격 forget 403 을 확인했다.

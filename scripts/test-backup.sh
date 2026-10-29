@@ -56,7 +56,7 @@ rc "틀린 암호로 복구하면 실패한다" 1 env BACKUP_CONFIG="$W/bw.env" 
 echo "== 파일 저장소: models-data, 레지스트리 볼륨(별도 프로젝트 이름)"
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 if "$DOCKER" image inspect "$UTIL" >/dev/null 2>&1 || "$DOCKER" pull -q "$UTIL" >/dev/null 2>&1; then
-  for v in "${P}_models-data" "${REGISTRY_PROJECT}_registry-data"; do "$DOCKER" volume create "$v" >/dev/null; "$DOCKER" run --rm -v "$v:/d" "$UTIL" sh -c "echo hello-$v > /d/f.txt; chown 10001:10001 /d/f.txt; chmod 600 /d/f.txt"; done
+  for v in "${P}_models-data" "${REGISTRY_PROJECT}_registry-data"; do "$DOCKER" volume create "$v" >/dev/null; "$DOCKER" run --rm -v "$v:/d" "$UTIL" sh -c "echo hello-$v > /d/f.txt; chown 10001:10001 /d/f.txt; chmod 600 /d/f.txt; chown 10001:10001 /d; chmod 750 /d"; done
   ok "backup.sh (기본 저장소: gate-data 는 볼륨이 없어 실패해야 하므로 두 저장소만 지정)" bash "$DEPLOY_ROOT/scripts/backup.sh" models-data registry-data
   ok "저장소 파일 소유자가 호스트 사용자다(root 로 쓴 파일을 되돌렸다)" bash -c "[ -z \"\$(find '$W/backups/restic' ! -user $(id -u) | head -1)\" ]"
   ok "저장소에 평문 표지(hello-)가 없다" bash -c "! grep -rqa 'hello-' '$W/backups/restic'"
@@ -64,6 +64,7 @@ if "$DOCKER" image inspect "$UTIL" >/dev/null 2>&1 || "$DOCKER" pull -q "$UTIL" 
   rc "서비스가 볼륨을 쓰는 동안은 거부" 1 bash -c "docker run -d --name bkuse-$ID -v ${P}_models-data:/d $UTIL sleep 60 >/dev/null; bash $DEPLOY_ROOT/scripts/restore.sh models-data latest --yes; r=\$?; docker rm -f bkuse-$ID >/dev/null; exit \$r"
   ok "restore.sh models-data latest" bash "$DEPLOY_ROOT/scripts/restore.sh" models-data latest --yes
   ok "복구된 파일 내용" bash -c "[ \"\$('$DOCKER' run --rm -v ${P}_models-data:/d '$UTIL' cat /d/f.txt)\" = hello-${P}_models-data ]"
+  ok "복구된 볼륨 루트의 소유자·모드가 백업 때와 같다(10001:750, 비root 서비스가 쓸 수 있다)" bash -c "[ \"\$('$DOCKER' run --rm -v ${P}_models-data:/d '$UTIL' stat -c '%u:%a' /d)\" = 10001:750 ]"
   ok "복구된 파일의 소유자·모드가 백업 때와 같다(10001, 600)" bash -c "[ \"\$('$DOCKER' run --rm -v ${P}_models-data:/d '$UTIL' stat -c '%u:%a' /d/f.txt)\" = 10001:600 ]"
 else echo "  SKIP 파일 저장소 시험: 유틸 이미지($UTIL)를 받지 못했다(확인 못 함, 통과 아님)"; fi
 echo "== 정기 복원 시험 스크립트(임시 저장소로 사슬 왕복 + 실제 저장소 무결성)"
