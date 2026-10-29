@@ -9,8 +9,6 @@ deid:
   salt_env: OPS_DEID_SALT
   pseudonymize_keys: [session_id, turn_id]
   keep_string_keys: [question_id, slot_id, repeat_key, code, path, action, next_item]
-  scrub_string_keys: []
-  scrub_patterns: {}
   unlisted_string_action: mask
   mask_defs: [Value]
   drop_defs: []   # v2 TurnTrace 에는 QuestionBank 정의가 없다(있으면 비식별이 실패로 닫힌다)

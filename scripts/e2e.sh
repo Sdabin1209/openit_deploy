@@ -191,7 +191,7 @@ chk "이미지 라벨 검사기 자체 점검 (계약 ImageLabels: 필수 4개, 
 chk "시험 빌드 라벨 자체 점검 (롤백 시험의 새 버전은 revision 이 아니라 시험 라벨로 다른 digest 를 얻는다)" bash "$DEPLOY_ROOT/scripts/test-build-test-label.sh"
 chk "e2e 계약 열거 값 점검 (직원 알림 kind = RISK_STOP, 낡은 RISK 기대 없음)" python3 "$DEPLOY_ROOT/scripts/test_e2e_contract_values.py"
 chk "e2e 인증 실패 기대 점검 (토큰 없음/틀림 = 401 + Bearer, 권한 부족만 403: 계약 CONVENTIONS.md 6절)" python3 "$DEPLOY_ROOT/scripts/test_e2e_auth_expectations.py"
-chk "e2e turn-engine 버전 한 출처 점검 (DEPLOY_TE_TAG 만 읽는다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_turn_engine_version.py"
+chk "e2e 규칙 세대 표지(action_rules_version)는 계약 규칙 데이터에서만 온다, turn-engine 잔재 없음" python3 "$DEPLOY_ROOT/scripts/test_e2e_action_rules_version.py"
 chk "deploy 내부 스키마 자기 점검 (images.env·images.lock·jobs·verify-areas 가 schemas/ 와 맞는다)" python3 -I "$DEPLOY_ROOT/scripts/test_check_schemas.py"
 abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)

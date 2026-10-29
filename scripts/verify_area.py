@@ -193,9 +193,9 @@ def _run(argv, cwd=None):
 
 
 def lib_tags():
-    p = _run(["bash", "-c", 'DEPLOY_NO_DOCKER=1 source scripts/lib.sh; echo "$DEPLOY_BC_TAG $DEPLOY_TE_TAG $DEPLOY_MR_TAG"'], DEPLOY_ROOT)
-    bc, te, mr = p.stdout.split()
-    return {"DEPLOY_BC_TAG": bc, "DEPLOY_TE_TAG": te, "DEPLOY_MR_TAG": mr}
+    p = _run(["bash", "-c", 'DEPLOY_NO_DOCKER=1 source scripts/lib.sh; echo "$DEPLOY_BC_TAG $DEPLOY_MR_TAG"'], DEPLOY_ROOT)
+    bc, mr = p.stdout.split()
+    return {"DEPLOY_BC_TAG": bc, "DEPLOY_MR_TAG": mr}
 
 
 def stale_images(images, ws):

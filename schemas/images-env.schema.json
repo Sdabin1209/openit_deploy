@@ -8,7 +8,7 @@
     "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "서비스 이름(publish-image.sh 의 서비스 이름 목록과 같은 집합 + model-serving-gpu)"},
     "image": {"type": "string", "minLength": 1, "pattern": "^\\S+$", "description": "로컬 이미지 참조 deploy-build/<이름>:<태그>"},
     "commit": {"type": "string", "pattern": "^[0-9a-f]{7,40}$", "description": "소스 커밋(짧은 해시)"},
-    "tags": {"type": "string", "pattern": "^bc=v[0-9]+\\.[0-9]+\\.[0-9]+,(te=v[0-9]+\\.[0-9]+\\.[0-9]+,)?mr=v[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "선택 4열: 빌드에 쓴 태그 기록(bc=계약, mr=model-runtime). --reuse-build 가 현재 lib.sh 표와 비교한다. turn-engine 은 D109 로 동결돼 도장에서 뺐다: 옛 기록의 te= 는 읽되 도장이 달라 낡은 기록으로 다시 빌드한다"}
+    "tags": {"type": "string", "pattern": "^bc=v[0-9]+\\.[0-9]+\\.[0-9]+,mr=v[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "선택 4열: 빌드에 쓴 태그 기록(bc=계약, mr=model-runtime). --reuse-build 가 현재 lib.sh 표와 비교한다. turn-engine 은 D109 로 동결돼 도장에서 뺐다: 옛 기록의 te= 는 읽되 도장이 달라 낡은 기록으로 다시 빌드한다"}
   },
   "required": ["name", "image", "commit"],
   "additionalProperties": false

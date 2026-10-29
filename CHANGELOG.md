@@ -1,5 +1,13 @@
 # 변경 이력
 
+## wo-300: 계약 3.0.0 전환 (deploy 몫)
+- 기준표: `DEPLOY_BC_TAG` v3.0.0. `DEPLOY_TE_TAG`·`DEPLOY_TE_VERSION`을 지웠다(D109). 문진 스키마는 survey-service가 2.0.0을 낼 때까지 survey-schema-v1.3.0 그대로. compose의 `SURVEY_TURN_ENGINE_VERSION`·`GATE_TURN_ENGINE_VERSION` 환경 변수 4곳을 지웠다: 규칙 세대 표지는 서비스가 설치된 계약의 `ActionExtractionRules.rules_version`에서 읽는 것으로 가정한다(해당 영역의 wo-300; 영역이 여전히 이 환경 변수를 요구하면 헤드가 알려야 한다).
+- `build-images.sh`의 BuildImageRequest에는 `versions.turn_engine`이 없었다(U42에서 이미 뺐다). `images.env` 도장 스키마에서 `te=`를 뺐다. 이미지 라벨 `io.openit.turn-engine` 기대값을 시험 고정값에서 지웠다(3.0 ImageLabels가 거부한다).
+- check-all 규칙 4: turn-engine 공개 API 대조를 지우고, 어느 영역이든 `turn_engine`을 import하면(정적·`__import__`·`importlib`) FAIL로 바꿨다(퇴역 확인). turn-engine 리포 자신은 제외한다. 프롬프트 템플릿 검사는 그대로.
+- E2E: 매니페스트·잡 설정의 `turn_engine_version`을 `action_rules_version`으로, 값은 `boundary_contracts.action_rules.load_rules()["rules_version"]`(리터럴 없음, `test_e2e_action_rules_version.py`가 지킨다). extract 호출 3곳과 `probe-serving.py`는 `ExtractRequest{input, flow, fields}`로 보낸다(fields는 가짜 백엔드 흐름 파일의 slots에서 만든다). 5의 추론 서버 직접 호출 단계는 옛 본문·fields 없는 요청·skips 없는 flow가 400임을 확인한다. `llm_attach_package.py` 매니페스트, ops-feedback 잡 설정(`scrub_string_keys`, `scrub_patterns` 삭제)을 3.0에 맞췄다.
+- StaticImageInterface는 deploy 코드에 없었다(포트·사용자는 U47에서 이미지 OCI 설정으로 읽는다). 주석만 갱신했다.
+- 발견(고치지 않음): `config/ops-feedback-job.yaml`의 `rollback: null`이 계약 `OpsFeedbackJobConfig`(rollback은 object)를 어긴다. 2.7.0에서도 같았다. 값은 사용자 결정 전이라 deploy가 정하지 않는다(ops-feedback이 null을 받는다면 계약 변경 요청 후보).
+
 ## wo-30 후속: U48 안 A (위험 규칙 파일 주입)
 - E2E가 survey-service 내부 `risk_rules.py`를 읽던 `risk_phrase_from_defaults()`를 지웠다. deploy가 시험용 규칙 파일 `test/risk-rules.e2e.json`(계약 SurveyRiskRulesFile, 임상 규칙 아님)을 만들고 `test/compose.risk-rules.yaml`(E2E 전용, `e2e.sh`의 `COMPOSE_EXTRA`)로 survey-service의 `SURVEY_RISK_RULES_FILE`에 마운트한다. 운영 compose에는 연결하지 않는다(시험 문구가 운영에서 켜지면 안 된다). 5f·5m·5n은 그 파일의 문구를 쓴다.
 - 5f의 옛 검사 "임시 기본 목록(PROVISIONAL_DEFAULT) 켜짐, provisional=true, clinically_reviewed=false"는 규칙 파일을 주입하면 성립하지 않아 뺐고 `active=true`와 `rule_count == 규칙 수`로 바꿨다. 규칙 파일일 때 `/readyz`의 source·provisional 값은 deploy가 알지 못해 단정하지 않는다(첫 E2E에서 실제 값을 보고 정할 일).

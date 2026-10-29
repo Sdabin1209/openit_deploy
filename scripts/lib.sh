@@ -32,15 +32,10 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v2.7.0}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.0.0}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.10.0}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
-# turn-engine: 2.x 동안 코드 의존이 아니라 계약 기록(turn_engine_version)에 쓰는 '규칙 세대 표지'다(D109, 마지막 태그 v0.4.3, 새 태그 없음, 이 줄이 정본).
-# 쓰는 곳: E2E 매니페스트 lineage 값(e2e_steps.py, v 없는 형식), survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 release-gate 의 GATE_TURN_ENGINE_VERSION(compose, v 없음). 빌드·태그 존재 점검에는 쓰지 않는다.
-DEPLOY_TE_TAG="${TURN_ENGINE_TAG_ALL:-v0.4.3}"
-DEPLOY_TE_VERSION="${DEPLOY_TE_TAG#v}"             # 기록·환경 변수용 v 없는 형식(release-gate CONTRACT_COMPAT 가 설치 패키지 버전 문자열과 전체 비교, D109)
-export DEPLOY_TE_TAG DEPLOY_TE_VERSION
 DEPLOY_SS_TAG="survey-schema-v1.3.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
 # 영역(리포) 목록은 head/shared/areas.json 이 정본이다. 셸에서는 이 함수 하나로 읽는다(python3 areas.py 를 부른다. 왜: jq 가 없는 호스트가 있고 셸로 JSON 을 파싱하면 깨지기 쉽다).
 # 사용: areas_list [--kind python,node,library,compose,docs] [--train] [--except 이름,이름]  -> 공백으로 이은 이름. 시험용 위치: AREAS_FILE

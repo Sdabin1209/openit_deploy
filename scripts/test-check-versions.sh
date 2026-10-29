@@ -12,7 +12,7 @@ if [ "$1 $2" = "image inspect" ]; then f="$FAKE_DIR/$(tr '/:' '__' <<<"$3")"; [ 
 exit 1
 FD
 chmod +x "$T/docker"; mkdir -p "$T/img"; export FAKE_DIR="$T/img" DOCKER="$T/docker"
-lab() { printf '{"io.openit.service":"%s","io.openit.contracts.boundary":"%s","io.openit.model-runtime":"%s","io.openit.contracts.survey-schema":"%s","io.openit.turn-engine":"n/a"}' "$1" "$2" "$3" "$4" > "$T/img/$(tr '/:' '__' <<<"$5")"; }
+lab() { printf '{"io.openit.service":"%s","io.openit.contracts.boundary":"%s","io.openit.model-runtime":"%s","io.openit.contracts.survey-schema":"%s"}' "$1" "$2" "$3" "$4" > "$T/img/$(tr '/:' '__' <<<"$5")"; }
 good() { lab survey-service "$BC" "$MR" "$SS" deploy-build/survey-service:aaa1111; lab ops-feedback "$BC" n/a "$SS" deploy-build/ops-feedback:bbb2222; lab model-serving "$BC" "$MR" "$SS" deploy-build/model-serving:ccc3333; lab admin-console "$BC" n/a n/a deploy-build/admin-console:ddd4444
   printf 'survey-service deploy-build/survey-service:aaa1111 aaa1111 bc=x,mr=y\nops-feedback deploy-build/ops-feedback:bbb2222 bbb2222 bc=x,mr=y\nmodel-serving deploy-build/model-serving:ccc3333 ccc3333 bc=x,mr=y\nadmin-console deploy-build/admin-console:ddd4444 ddd4444 bc=x,mr=y\n' > "$T/images.env"; }
 t() { local name=$1 want=$2 pat=$3; shift 3; N=$((N+1)); local out rc; out=$(CHECK_VERSIONS_IMAGES_ENV="$T/images.env" bash "$HERE/check-versions.sh" 2>&1); rc=$?

@@ -207,7 +207,7 @@ def compare(svc, label, handlers, hosts, oci):
     for h in handlers:
         if h["kind"] == "proxy" and h["host"] in mine_hosts and id(h) not in used:
             diffs.append(f"{svc} {','.join(h['methods']) or '*'} {','.join(h['paths'])}: Caddyfile 은 노출하는데 라벨 선언이 이 핸들러에 닿는 경로가 없다")
-    # 포트·사용자: 이미지 OCI 설정에서 읽는다(StaticImageInterface 대신)
+    # 포트·사용자: 이미지 OCI 설정에서 읽는다(계약 3.0 에서 StaticImageInterface 는 없어졌다)
     ports = {x.split("/")[0] for x in oci.get("exposed_ports", [])}
     for h in handlers:
         if h["kind"] == "proxy" and h["host"] in mine_hosts and h["port"] and h["port"] not in ports:

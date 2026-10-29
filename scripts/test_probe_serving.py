@@ -5,7 +5,7 @@ import http.server, importlib.util, json, os, pathlib, sys, tempfile, threading,
 here = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("probe_serving", here / "probe-serving.py"); P = importlib.util.module_from_spec(spec); spec.loader.exec_module(P)
 
-INV = lambda v: {"pipeline_schema_version": "2.0", "code": "UNAVAILABLE", "message": "x", "retryable": True, "details": {"reason": "OUTPUT_INVALID", "attempts": 3, "violations": v}}
+INV = lambda v: {"pipeline_schema_version": "3.0", "code": "UNAVAILABLE", "message": "x", "retryable": True, "details": {"reason": "OUTPUT_INVALID", "attempts": 3, "violations": v}}
 
 
 class T(unittest.TestCase):
@@ -34,7 +34,7 @@ class T(unittest.TestCase):
     def test_inputs(self):
         self.assertEqual(len(P.build_inputs(None, 2)), 2 * len(P.DEFAULT_UTTERANCES))
         with tempfile.TemporaryDirectory() as d:
-            f = pathlib.Path(d) / "i.json"; f.write_text(json.dumps({"inputs": [{"a": 1}]})); self.assertEqual(P.build_inputs(str(f), 3), [{"a": 1}] * 3)
+            f = pathlib.Path(d) / "i.json"; f.write_text(json.dumps({"inputs": [{"input": {}, "flow": {}, "fields": {}}]})); self.assertEqual(P.build_inputs(str(f), 3), [{"input": {}, "flow": {}, "fields": {}}] * 3)
             f.write_text("[]")
             with self.assertRaises(SystemExit): P.build_inputs(str(f), 1)
 

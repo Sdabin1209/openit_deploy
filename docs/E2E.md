@@ -85,7 +85,7 @@
 
 못 보는 것: 의미 검사(targets, next_item, 건너뛰기 순서, save: 게시기가 아직 하지 않음, synthetic-data CR-006 2번), 실제 데이터 형식, 보지 못한 문항 세트(HELD_OUT) 평가 분리(이전 생성 경로가 확인하던 항목이었으나 이 입력에는 없다).
 
-CR-006의 미해결 항목을 deploy가 정하지 않고 임시로 채운 값: 문항 세트 출처는 단계 1이 만든 문항 세트 참조(id, version, content_hash)를 설정에 넣었고, `turn_engine_version`은 lib.sh의 기준 태그(e2e.sh가 넘기는 값)이며, `source_label`은 `deploy-e2e-test-data`, `generator_version`은 게시기가 정하는 값을 그대로 둔다. 미검수(`human_review: pending`) 행은 만들지 않았다(전부 `auto_only`).
+CR-006의 미해결 항목을 deploy가 정하지 않고 임시로 채운 값: 문항 세트 출처는 단계 1이 만든 문항 세트 참조(id, version, content_hash)를 설정에 넣었고, `action_rules_version`은 설치된 계약의 `ActionExtractionRules.rules_version`이며, `source_label`은 `deploy-e2e-test-data`, `generator_version`은 게시기가 정하는 값을 그대로 둔다. 미검수(`human_review: pending`) 행은 만들지 않았다(전부 `auto_only`).
 
 ## 단계 5u: 사람이 쓰는 화면 경로의 gateway 상류 상한 (FAULT_MATRIX C7·C8·D6)
 

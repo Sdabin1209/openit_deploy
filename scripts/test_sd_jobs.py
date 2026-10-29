@@ -6,7 +6,8 @@ import json, os, pathlib, shutil, subprocess, sys, tempfile, unittest
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import sd_jobs
-from boundary_contracts import validator
+from boundary_contracts import validator, PIPELINE_SCHEMA_VERSION
+from boundary_contracts.action_rules import load_rules
 
 DECL = {"jobs": [{"name": "synthetic-import", "argv": ["python", "-m", "x", "import", "--config", "/config/import.json"], "idempotent": True,
                   "secret_files": ["DATASET_STORE_WRITE_TOKEN_FILE"], "config": {"container_path": "/config/import.json", "schema": "SyntheticJobConfigImport"}}]}
@@ -18,7 +19,9 @@ def find_image():
     for img in r.stdout.split() if r.returncode == 0 else []:
         if "dataset-store" not in img: continue
         lab = subprocess.run(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True).stdout
-        if "io.openit.jobs" in lab and "io.openit.exposure" in lab: return img
+        # 이미지가 설치된 계약과 같은 MAJOR 로 빌드된 것만 쓴다(옛 계약의 설정 모양을 3.0 설정으로 돌리면 의미 없는 실패가 난다)
+        major = json.loads(lab).get("io.openit.contracts.boundary", "v?").lstrip("v").split(".")[0]
+        if "io.openit.jobs" in lab and "io.openit.exposure" in lab and major == PIPELINE_SCHEMA_VERSION.split(".")[0]: return img
     return None
 
 
@@ -55,7 +58,7 @@ class T(unittest.TestCase):
 
     def test_real_import_job_config_error_is_exit_2(self):
         img = find_image()
-        if not img: self.skipTest("SKIP: io.openit.jobs 라벨이 있는 dataset-store 이미지가 없다(확인 못 함)")
+        if not img: self.skipTest("SKIP: 설치된 계약과 같은 MAJOR 로 빌드된 io.openit.jobs 라벨의 dataset-store 이미지가 없다(확인 못 함)")
         labels = json.loads(subprocess.check_output(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], text=True))
         job = sd_jobs.find_job(labels, "synthetic-import", validator)
         with tempfile.TemporaryDirectory() as w:
@@ -69,7 +72,7 @@ class T(unittest.TestCase):
 
     def test_real_import_job(self):
         img = find_image()
-        if not img: self.skipTest("SKIP: io.openit.jobs 라벨이 있는 dataset-store 이미지가 없다(확인 못 함)")
+        if not img: self.skipTest("SKIP: 설치된 계약과 같은 MAJOR 로 빌드된 io.openit.jobs 라벨의 dataset-store 이미지가 없다(확인 못 함)")
         labels = json.loads(subprocess.check_output(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], text=True))
         job = sd_jobs.find_job(labels, "synthetic-import", validator)
         inp = HERE.parent / "test/import-v2"
@@ -79,7 +82,7 @@ class T(unittest.TestCase):
             (sec / "tokens/dataset-store-write-synthetic-data").write_text("x" * 32)   # 파일 저장소 게시라 값은 쓰이지 않는다(시험용 임의 값)
             cfg = {"dataset_id": "ds-sdjobs", "input_dir": str(inp), "survey_schema_dir": "image-env-takes-precedence",
                    "question_sets": [{"id": "qs-x", "version": "1", "content_hash": "sha256:" + "a" * 64}], "source_label": "sd-jobs-test",
-                   "turn_engine_version": "0.0.0", "created_at": "2026-10-27T00:00:00Z", "tolerance": {"max_invalid_rows": 2, "max_invalid_rate": 1.0},
+                   "action_rules_version": load_rules()["rules_version"], "created_at": "2026-10-27T00:00:00Z", "tolerance": {"max_invalid_rows": 2, "max_invalid_rate": 1.0},
                    "output": {"work_dir": f"{w}/work", "store": {"kind": "file", "root": f"{w}/store"}}}
             self.assertEqual(list(validator("SyntheticJobConfigImport").iter_errors(cfg)), [])
             cp = pathlib.Path(w) / "import.json"; cp.write_text(json.dumps(cfg))

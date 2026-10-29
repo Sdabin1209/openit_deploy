@@ -78,6 +78,7 @@ def main():
         print(f"검사 통과: 두 어댑터가 {base}(순위 한도 {max_rank})에 맞는다. 텐서 모양이 기반 모델과 맞는지는 vLLM 적재 때 알게 된다(미확인)."); return
     import model_runtime as mr
     from boundary_contracts import PIPELINE_SCHEMA_VERSION, validator
+    from boundary_contracts.action_rules import load_rules
     from boundary_contracts.canonical import content_hash, directory_hash, file_hash, sha256_hash
     mr.load_profile(Path(a.profile))
     out = Path(a.out)
@@ -96,7 +97,7 @@ def main():
              "serving_config": cfg, "serving_config_hash": sha256_hash(cfg),
              "system_prompt": {"path": "system_prompt.txt", "sha256": file_hash(d / "adapter" / "system_prompt.txt")},
              "lineage": {"dataset": {"id": "attached-no-dataset", "version": "0", "content_hash": sha256_hash({"attached": True})},
-                         "training_run_id": "attached-external", "turn_engine_version": "none", "model_runtime_version": mr.RUNTIME_VERSION},
+                         "training_run_id": "attached-external", "action_rules_version": load_rules()["rules_version"], "model_runtime_version": mr.RUNTIME_VERSION},
              "eval_report_ref": "attached-no-eval",
              "ext": {"deploy": {"attached": True, "evaluated": False, "adapter_config_r": confs[r][0].get("r"), "lora_tensors": confs[r][1],
                                 "note": "학습 서버에서 가져온 어댑터를 그대로 얹었다. 이 길은 평가하지 않았고 릴리스 후보로 승인된 것이 아니다."}}}

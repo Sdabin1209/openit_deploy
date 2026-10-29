@@ -549,20 +549,6 @@ def truth_templates():
     return keys, ""
 
 
-def truth_te_public():
-    """turn-engine 의 공개 API(__all__). (집합, 문제 문자열)."""
-    rel = "turn-engine/turn_engine/__init__.py"
-    ops, _ = _module_assigns(rel, "__all__")
-    if not ops:
-        return None, f"{rel}:1: __all__ 를 읽지 못했다"
-    names: set = set()
-    for op, v in ops:
-        if op not in ("=", "+=") or not isinstance(v, (ast.List, ast.Tuple)) or not all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts):
-            return None, f"{rel}:1: __all__ 를 문자열 리스트 리터럴로 읽지 못했다"
-        names |= {e.value for e in v.elts}
-    return names, ""
-
-
 def truth_schema_version():
     """계약의 파이프라인 스키마 버전. (값, 문제 문자열)."""
     rel = "boundary-contracts/boundary_contracts/schemas_api.py"
@@ -572,54 +558,31 @@ def truth_schema_version():
     return ops[0][1].value, ""
 
 
-def _te_submodule_exists(sub: str) -> bool:
-    base = WS / "turn-engine" / "turn_engine" / sub.split(".")[0]
-    return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
-
-
 PROMPT_NAME = re.compile(r"prompt-\d+")
 
 
 def rule_removed_names() -> R:
     tpl, tpl_why = truth_templates()
-    pub, pub_why = truth_te_public()
     unread = 0   # 읽지 못한 동적 import 수
 
     def tree_check(repo, f, tree):
         nonlocal unread
         out = []
-        aliases = set()   # `import turn_engine as te` 의 te
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Import):
-                for a in n.names:
-                    if a.name == "turn_engine" or a.name.startswith("turn_engine."):
-                        if pub is not None and a.name != "turn_engine" and not _te_submodule_exists(a.name.split(".", 1)[1]):
-                            out.append((n.lineno, f"turn_engine 에 없는 하위 모듈 import {a.name}"))
-                        if a.name == "turn_engine":
-                            aliases.add(a.asname or "turn_engine")
-            elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module and (n.module == "turn_engine" or n.module.startswith("turn_engine.")) and pub is not None:
-                if n.module == "turn_engine":
-                    gone = sorted(a.name for a in n.names if a.name != "*" and a.name not in pub and not _te_submodule_exists(a.name))
-                    if gone:
-                        out.append((n.lineno, f"turn_engine 공개 API 에도 하위 모듈에도 없는 이름 import {gone}(공개 API {sorted(pub)})"))
-                elif not _te_submodule_exists(n.module.split(".", 1)[1]):
-                    out.append((n.lineno, f"turn_engine 에 없는 하위 모듈 import {n.module}"))
+        # turn-engine 은 퇴역했다(D109, 계약 3.0): 어느 영역도 turn_engine 을 import 하면 안 된다. 정적 import, __import__, importlib.import_module 의 문자열 상수를 본다
+        for n in ([] if repo == "turn-engine" else ast.walk(tree)):   # 퇴역한 turn-engine 리포 자신은 제외한다
+            mods = []
+            if isinstance(n, ast.Import): mods = [a.name for a in n.names]
+            elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module: mods = [n.module]
             elif isinstance(n, ast.Call):
                 fn = n.func
                 dyn = (isinstance(fn, ast.Name) and fn.id == "__import__") or (isinstance(fn, ast.Attribute) and fn.attr == "import_module" and isinstance(fn.value, ast.Name) and fn.value.id == "importlib")
                 if dyn and n.args:
                     a0 = n.args[0]
-                    if isinstance(a0, ast.Constant) and isinstance(a0.value, str):
-                        m = a0.value
-                        if pub is not None and m.startswith("turn_engine.") and not _te_submodule_exists(m.split(".", 1)[1]):
-                            out.append((n.lineno, f"turn_engine 에 없는 하위 모듈 동적 import {m}"))
-                    else:
-                        unread += 1
-        if aliases and pub is not None:
-            for n in ast.walk(tree):
-                if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in aliases and not n.attr.startswith("__") \
-                        and n.attr not in pub and not _te_submodule_exists(n.attr):
-                    out.append((n.lineno, f"turn_engine 공개 API 에 없는 이름 {n.value.id}.{n.attr}(공개 API {sorted(pub)})"))
+                    if isinstance(a0, ast.Constant) and isinstance(a0.value, str): mods = [a0.value]
+                    else: unread += 1
+            for m in mods:
+                if m == "turn_engine" or m.startswith("turn_engine."):
+                    out.append((n.lineno, f"turn_engine 은 퇴역했다(D109, 계약 3.0): {m} 를 import 하지 않는다"))
         if tpl is not None:
             for n in ast.walk(tree):
                 if isinstance(n, ast.Constant) and isinstance(n.value, str) and PROMPT_NAME.fullmatch(n.value) and n.value not in tpl:
@@ -641,7 +604,7 @@ def rule_removed_names() -> R:
                 out.append((0, f"지원하지 않는 프롬프트 템플릿 {x}(model-runtime 의 지원 목록 {sorted(tpl)})"))
         return out
     r = scan_code(tree_check, data_check)
-    for why in (tpl_why, pub_why):
+    for why in (tpl_why,):
         if why:
             r.fail("정본", why)   # 정본을 못 읽거나 정본이 거짓이면 SKIP 이 아니라 FAIL 이다
     r.info.append("읽는 방법: 파이썬은 ast(import·별칭 속성·__import__·importlib.import_module 의 문자열 상수·문자열 상수 노드), JSON/YAML/TOML 은 파서. 상대 import 는 자기 패키지 내부라 보지 않는다. 하위 모듈은 turn-engine 의 파일 존재로 판단한다.")

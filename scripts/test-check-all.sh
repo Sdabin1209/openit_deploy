@@ -58,23 +58,18 @@ run 3 CHECK_ALL_MR_PY="$W/py-bad"; expect "규칙을 빼면 FAIL" FAIL
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "venv 가 없으면 SKIP(검증 안 함 1)" SKIP "검증 안 함 1"
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "SKIP 이유에 해결 방법이 붙는다" SKIP "prepare-areas.sh model-runtime"
 
-echo "== 4 정본에 없는 이름 (ast 로 읽는다)"
+echo "== 4 삭제된 이름의 잔존 (ast 로 읽는다): 지원하지 않는 프롬프트 템플릿, 퇴역한 turn_engine"
 truth(){ mkdir -p "$W/model-runtime/src/model_runtime" "$W/turn-engine/turn_engine" "$W/boundary-contracts/boundary_contracts"
   printf 'def _u7(role, i):\n    return ""\n\n\n_USER = {"prompt-7": _u7}\n' > "$W/model-runtime/src/model_runtime/prompts.py"
-  printf '__all__ = ["validate_extraction", "ENGINE_VERSION"]\n' > "$W/turn-engine/turn_engine/__init__.py"; : > "$W/turn-engine/turn_engine/validation.py"
   printf 'PIPELINE_SCHEMA_VERSION = "9.9"\n' > "$W/boundary-contracts/boundary_contracts/schemas_api.py"; }
 mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "깨끗하면 PASS" PASS
 echo 'v = "prompt-7"' > "$W/deploy/app/a.py"; run 4; expect "정본에 있는 템플릿은 PASS" PASS
 echo 'v = "prompt-3"' > "$W/deploy/app/a.py"; run 4; expect "정본에 없는 템플릿(문자열 상수)은 FAIL" FAIL "deploy/app/a.py:1"
-printf 'from turn_engine import (\n    validate_extraction,\n    plan,\n)\n' > "$W/deploy/app/a.py"; run 4; expect "공개 API 에 없는 turn_engine 이름 import 는 FAIL" FAIL "deploy/app/a.py:1"
-printf 'from turn_engine import validate_extraction as v\n' > "$W/deploy/app/a.py"; run 4; expect "공개 API 의 이름은 별칭이 있어도 PASS" PASS
-printf 'from turn_engine import validation\n' > "$W/deploy/app/a.py"; run 4; expect "하위 모듈 import 는 합법(파일 존재)" PASS
-printf 'from turn_engine.validation import anything\n' > "$W/deploy/app/a.py"; run 4; expect "하위 모듈에서 가져오기는 PASS" PASS
-printf 'from turn_engine.gone import x\n' > "$W/deploy/app/a.py"; run 4; expect "없는 하위 모듈은 FAIL" FAIL "deploy/app/a.py:1"
-printf 'import turn_engine as te\nte.validate_extraction()\n' > "$W/deploy/app/a.py"; run 4; expect "별칭 import 의 공개 속성은 PASS" PASS
-printf 'import turn_engine as te\nte.plan()\n' > "$W/deploy/app/a.py"; run 4; expect "별칭 import 의 없는 속성은 FAIL(줄)" FAIL "deploy/app/a.py:2"
-printf 'import importlib\nimportlib.import_module("turn_engine.gone")\n' > "$W/deploy/app/a.py"; run 4; expect "importlib 의 없는 하위 모듈은 FAIL" FAIL "deploy/app/a.py:2"
-printf '__import__("turn_engine.gone")\n' > "$W/deploy/app/a.py"; run 4; expect "__import__ 의 없는 하위 모듈은 FAIL" FAIL "deploy/app/a.py:1"
+printf 'from turn_engine import validate_extraction\n' > "$W/deploy/app/a.py"; run 4; expect "turn_engine import 는 FAIL(퇴역, D109)" FAIL "deploy/app/a.py:1"
+printf 'import turn_engine as te\n' > "$W/deploy/app/a.py"; run 4; expect "import turn_engine 도 FAIL" FAIL "퇴역"
+printf 'from turn_engine.validation import anything\n' > "$W/deploy/app/a.py"; run 4; expect "하위 모듈 import 도 FAIL" FAIL "deploy/app/a.py:1"
+printf 'import importlib\nimportlib.import_module("turn_engine.gone")\n' > "$W/deploy/app/a.py"; run 4; expect "importlib 의 turn_engine 도 FAIL" FAIL "deploy/app/a.py:2"
+printf '__import__("turn_engine")\n' > "$W/deploy/app/a.py"; run 4; expect "__import__ 의 turn_engine 도 FAIL" FAIL "deploy/app/a.py:1"
 printf 'from .turn_engine import plan\n' > "$W/deploy/app/a.py"; run 4; expect "상대 import 는 보지 않는다" PASS
 echo '# prompt-3 은 제거됨' > "$W/deploy/app/a.py"; run 4; expect "주석의 설명은 통과" PASS
 printf 'v = "prompt-" + "3"\n' > "$W/deploy/app/a.py"; run 4; expect "조합한 이름은 보지 못한다고 명시한다" PASS "조합"

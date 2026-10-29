@@ -275,7 +275,6 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
     environment:   # 비밀은 파일 경로만(D84)
-      SURVEY_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 릴리스 매니페스트 lineage 와 MAJOR.MINOR 를 비교하는 기준(D109). 값의 정본은 lib.sh 한 곳이다(survey 의 기본값 0.4.3 에 기대지 않는다)
       SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 2.x 호환(선택, 3.0.0에서 없어진다): 기기 토큰(Bearer)을 쓰는 기기만. 2.3.0 의 기기 인증은 게이트웨이가 붙이는 X-Openit-Device 이고 survey 는 헤더가 있으면 헤더를 쓴다(ADR 0040). 토큰 기기가 없으면 빈 파일이다
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
@@ -351,7 +350,6 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
     environment:
-      GATE_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 학습 계보와 비교하는 기준 문자열(D109). 값의 정본은 lib.sh 한 곳(survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 같은 값)
       GATE_READ_TOKENS_FILE: /run/secrets/gate-read-tokens
       GATE_WRITE_TOKENS_FILE: /run/secrets/gate-write-tokens
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
@@ -492,7 +490,6 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
     environment:
-      GATE_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 학습 계보와 비교하는 기준 문자열(D109). 값의 정본은 lib.sh 한 곳(survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 같은 값)
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn
     secrets: [db-gate-dsn]
     volumes: [gate-data:/data]
@@ -513,7 +510,6 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
     environment:
-      GATE_TURN_ENGINE_VERSION: ${DEPLOY_TE_VERSION:?scripts/lib.sh}   # 학습 계보와 비교하는 기준 문자열(D109). 값의 정본은 lib.sh 한 곳(survey-service 의 SURVEY_TURN_ENGINE_VERSION 과 같은 값)
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
       GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn

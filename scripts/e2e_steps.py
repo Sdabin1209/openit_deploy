@@ -13,6 +13,8 @@ from boundary_contracts.clients import (HttpFailureStore, HttpGateService, HttpM
 import survey_schema, jsonschema
 import e2e_asserts as EA
 import sd_jobs
+from boundary_contracts.action_rules import load_rules
+ACTION_RULES_VERSION = load_rules()["rules_version"]   # 매니페스트·잡 설정의 규칙 세대 표지(3.0, D109): 값은 설치된 계약의 ActionExtractionRules.rules_version 에서 읽는다(리터럴을 적지 않는다)
 
 
 # ---- 단계 선언의 유일한 자리(e2e_plan.py 와 verify_area.py 가 이 파일을 ast 로 읽는다. 다른 곳에 같은 선언을 쓰지 않는다)
@@ -63,7 +65,6 @@ ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(내용이 토큰 하나). 비우면 이 구성이 만든 토큰")
 ap.add_argument("--llm-package", default="", help="실제 LLM 데모: make_neutral_package.py 가 만든 폴더(LORA_A, LORA_B). 단계 3이 시험용 fake 어댑터 대신 이 중립 LoRA 패키지(vllm 서빙 설정)를 게시한다")
-ap.add_argument("--turn-engine-version", default=os.environ["DEPLOY_TE_TAG"].lstrip("v"), help="매니페스트 lineage 의 turn-engine 버전(게이트 기준과 문자열이 같아야 한다, D80). e2e.sh 가 lib.sh 의 값을 넘긴다")
 ap.add_argument("--fail-fast", action="store_true", help="첫 FAIL 에서 중단한다(뒤 단계는 돌리지 않는다). 전체 합격이 아니다")
 ap.add_argument("--changed-only", action="store_true", help="입력 해시가 마지막 PASS 와 다른 단계와 그에 의존하는 단계(+상태 재구성에 필요한 상류)만 돌린다. 단독 실행이 증명되지 않은 단계는 항상 포함(e2e_plan.py)")
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
@@ -247,7 +248,7 @@ def step1():
 
 def sd_config(name, seeds, failure=False, version=None):
     cfg = {"dataset_id": f"ds-{RID}", "seed": 20261015, "created_at": "2026-10-15T00:00:00Z",
-           "turn_engine_version": a.turn_engine_version, "survey_schema_dir": SD_UNUSED_DIR,
+           "action_rules_version": ACTION_RULES_VERSION, "survey_schema_dir": SD_UNUSED_DIR,
            "adapters": {"question_reader": {"factory": "synthetic_data.adapters:http_question_reader", "kwargs": {"base_url": URL("qa"), "token_env": "QUESTION_READER_TOKEN"}}},   # 계약 factory (SyntheticJobConfigRun adapters.factory: 계약이 정한 설정 값)
            "question_sets": [{"id": QS, "version": STATE["qs"][-1]["version"], "usage": "TRAIN_POOL"}, {"id": QSU, "usage": "HELD_OUT_EVAL"}],
            "reviewed_only": True, "seeds": {"enabled": seeds},
@@ -286,7 +287,7 @@ def imp_config(name, max_invalid_rows, store_root):
     q = STATE["qs"][-1]   # 문항 세트 출처: CR-006 미정이라 임시로 이 E2E 가 단계 1 에서 만든 문항 세트 참조를 적는다(deploy 가 정한 값이 아니다)
     cfg = {"dataset_id": f"ds-{RID}", "input_dir": str(IMPORT_DIR), "survey_schema_dir": SD_UNUSED_DIR,
            "question_sets": [{"id": QS, "version": q["version"], "content_hash": q["content_hash"]}],
-           "source_label": "deploy-e2e-test-data", "turn_engine_version": a.turn_engine_version, "created_at": "2026-10-27T00:00:00Z",
+           "source_label": "deploy-e2e-test-data", "action_rules_version": ACTION_RULES_VERSION, "created_at": "2026-10-27T00:00:00Z",
            "tolerance": {"max_invalid_rows": max_invalid_rows, "max_invalid_rate": 1.0},
            "output": {"work_dir": str(WORK / f"sd-import-{name}"), "store": store_root if isinstance(store_root, dict) else {"kind": "file", "root": str(store_root)}}}
     p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
@@ -372,7 +373,7 @@ def make_packages():
               "created_at": "2026-10-15T00:00:00Z", "runtime_contract_version": 1,
               "base_model": (gm[role]["base_model"] if a.llm_package else {"id": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "main"}),   # 실제 LLM 데모는 패키지(프로파일)의 기반 모델(gpu-12g = Qwen3-1.7B)
               "adapter_hash": d["adapter_hash"][role], "serving_config": d["cfgs"][role], "serving_config_hash": d["hashes"][role],
-              "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "turn_engine_version": a.turn_engine_version,
+              "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "action_rules_version": ACTION_RULES_VERSION,
                           "model_runtime_version": d["runtime"], "question_sets": STATE["qs"][-1:]},
               "eval_report_ref": f"eval-{RID}-{role.lower().replace('_', '-')}"}
         mf["system_prompt"] = d["system_prompt"][role]   # 모델 패키지의 일부(D75): 어댑터 디렉터리 안 파일의 {path, sha256}
@@ -592,32 +593,37 @@ def ms_call(path, body, token):
 FAKE_EXTRACTION = {"action": "NEXT", "next_item": "Q1.D04", "values": [{"key": "Q1.D03.diagnosed", "precision": "exact", "save": True, "status": "ANSWERED", "value": True}]}
 FAKE_RESPONSE_TEXT = "(가짜 응답)"
 
+def ereq_of(ein):
+    """I9 요청 본문 ExtractRequest{input, flow, fields}(계약 3.0, flow·fields 필수). 가짜 백엔드의 흐름 파일(test/fake-model/question_flow.json)에서 문항 순서표(order·skips)와 칸 규격(slots -> QuestionFieldSpec)을 만든다.
+    칸 규격은 이 시험 구성이 정한 값이다(범위는 두지 않는다: 값 규칙 시험은 5o 가 자기 fields 로 한다)."""
+    ff = json.loads((pathlib.Path(__file__).resolve().parents[1] / "test" / "fake-model" / "question_flow.json").read_text(encoding="utf-8"))
+    fields = {"fields": [{"slot": sl["key"], "data_type": sl["type"]} for v in ff["slots"].values() for sl in v]}
+    req = {"input": ein, "flow": {"order": ff["order"], "skips": ff["skips"]}, "fields": fields}
+    validate("ExtractRequest", req); return req
+
 def model_server_v2_check(new, tok):
     """PUT 적재(서비스가 이미 함) 뒤 extract(JSON) -> respond(text) 를 직접 한 번씩 부른다."""
     ein = {"question_id": "Q1.D03", "current_question": "다음은 고혈압입니다. 진단받은 적이 있으신지, 지금 약을 드시는지 알려 주세요.", "user_utterance": "십 년 전에 고혈압 진단을 받았어요.",
            "state": {"Q1.D02.diagnosed": {"value": False, "status": "ANSWERED"}}}
     validate("ActionExtractionInput", ein)
-    c, body, h = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 200, (c, body[:200])
+    # 3.0: 옛 본문(ActionExtractionInput 그대로)과 fields 없는 요청은 400 INVALID_RECORD 다. 정상 호출은 ExtractRequest{input, flow, fields}뿐이다
+    c, old, _ = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 400, ("옛 본문(ActionExtractionInput)이 400이 아니다", c, old[:100])
+    ereq = ereq_of(ein)
+    c, body, h = ms_call(f"/v1/releases/{new}/extract", ereq, tok); assert c == 200, (c, body[:200])
     out = json.loads(body); validate("ActionExtraction", out); assert out == FAKE_EXTRACTION, out
     assert h.get("content-type", "").startswith("application/json") and h.get("x-openit-outcome") == "ok", h
     rin = {"action": "START", "topic": "고혈압 진단과 복약", "next": {"type": "NEXT", "question_id": "Q1.D01", "text": "혹시 고혈압으로 진단받으셨나요?"}}
     validate("ResponseRequest", rin)
     c, body, h = ms_call(f"/v1/releases/{new}/respond", rin, tok); assert c == 200, (c, body[:200])
     assert body == FAKE_RESPONSE_TEXT and h.get("content-type", "").startswith("text/plain") and h.get("x-openit-outcome") == "ok", (body[:80], h)
-    # I9 ExtractRequest{input, flow}(계약 2.2, D108): 문항 순서표를 실으면 서버가 규칙을 보증한다. 정상 출력은 옛 본문과 같고(200), flow 가 불완전한 본문은 두 형식 모두 아니므로 400이다.
-    # flow 는 가짜 백엔드가 쓰는 흐름 파일(test/fake-model/question_flow.json)에서 order·skips 만 뽑아 만든다(QuestionFlowTable). 규칙 위반 출력을 내는 가짜 설정은 없어 위반 거부는 보지 않는다.
-    ff = json.loads((pathlib.Path(__file__).resolve().parents[1] / "test" / "fake-model" / "question_flow.json").read_text())
-    flow = {"order": ff["order"], "skips": ff["skips"]}; ereq = {"input": ein, "flow": flow}
-    validate("QuestionFlowTable", flow); validate("ExtractRequest", ereq)
-    c, body, h = ms_call(f"/v1/releases/{new}/extract", ereq, tok); assert c == 200, ("ExtractRequest 가 200이 아니다", c, body[:200])
-    out2 = json.loads(body); validate("ActionExtraction", out2); assert out2 == FAKE_EXTRACTION, out2
-    assert h.get("x-openit-outcome") == "ok", h
-    c, bad2, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": {"order": flow["order"]}}, tok); assert c == 400, ("skips 없는 flow 가 400이 아니다", c, bad2[:100])
+    # I9 ExtractRequest{input, flow, fields}(계약 3.0, D108·D115): flow·fields 가 항상 있으니 서버가 규칙과 값 규칙을 보증한다. 불완전한 본문(fields 없음, skips 없는 flow)은 400이다.
+    c, bad1, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": ereq["flow"]}, tok); assert c == 400, ("fields 없는 요청이 400이 아니다", c, bad1[:100])
+    c, bad2, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": {"order": ereq["flow"]["order"]}, "fields": ereq["fields"]}, tok); assert c == 400, ("skips 없는 flow 가 400이 아니다", c, bad2[:100])
     c, bad, _ = ms_call(f"/v1/releases/{new}/extract", {"question_id": "Q1"}, tok); assert c == 400, ("계약 위반 입력이 400이 아니다", c, bad[:100])
     c, nf, _ = ms_call("/v1/releases/rel-none-x/extract", ein, tok); assert c == 404, ("적재되지 않은 릴리스가 404가 아니다", c)
     c, info = http("GET", "ms", "/v1/info", tok)
     assert info.get("system_prompt_sha256") == STATE.get("system_prompt"), f"서버가 쓰는 시스템 프롬프트 해시가 패키지와 다르다: {info.get('system_prompt_sha256')} / {STATE.get('system_prompt')}"
-    return "extract(JSON, ActionExtraction 스키마, X-Openit-Outcome ok; ExtractRequest{input, flow} 도 200·같은 출력, flow 불완전은 400) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
+    return "extract(ExtractRequest{input, flow, fields} 200·JSON ActionExtraction 스키마·X-Openit-Outcome ok; 옛 본문·fields 없음·skips 없는 flow 는 400) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
 
 SWAP_SERVICES = ["survey-service", "release-gate", "model-registry", "ops-feedback-ingest", "question-authoring", "gateway"]
 def container_ids():
@@ -640,7 +646,7 @@ def fake_values_check(new, tok):
     for qid, utt, key, val, nxt in cases:
         ein = {"question_id": qid, "current_question": f"시험 문항 {qid}입니다.", "user_utterance": utt, "state": {}}
         validate("ActionExtractionInput", ein)
-        c, body, h = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 200, (qid, c, body[:200])
+        c, body, h = ms_call(f"/v1/releases/{new}/extract", ereq_of(ein), tok); assert c == 200, (qid, c, body[:200])
         out = json.loads(body); validate("ActionExtraction", out)
         EA.check_fake_extraction(out, key, val, nxt, f"[{qid} '{utt}']")
     return f"{len(cases)}건(Q4 아니요 -> Q4.answer=false·Q4_1 건너뜀, Q7 -> Q8_1, Q8_1 없어요 -> days=0·Q8_2 건너뜀 등)"
@@ -751,7 +757,7 @@ def step5c():
     def ext(qid, text, state):
         ein = {"question_id": qid, "current_question": f"시험 문항 {qid}입니다.", "user_utterance": text, "state": state}
         validate("ActionExtractionInput", ein)
-        c, body, _ = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 200, (qid, c, body[:200])
+        c, body, _ = ms_call(f"/v1/releases/{new}/extract", ereq_of(ein), tok); assert c == 200, (qid, c, body[:200])
         out = json.loads(body); validate("ActionExtraction", out); return out
     o1 = ext("Q1.D02", utt, {"Q1.D01.diagnosed": {"value": True, "status": "ANSWERED"}})
     assert o1["action"] == "CORRECT" and o1["next_item"] == "Q1.D02", o1

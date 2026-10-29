@@ -7,7 +7,7 @@ H1(24GB 실측)용 지연 표: extract·respond 각각의 호출 수, 성공률,
 사용:
   scripts/probe-serving.py --demo [--token-file F] [--repeat N] [--inputs FILE]      데모 스택(기본 프로젝트 deploy-demo)의 model-serving. 토큰 기본은 state/demo/secrets/tokens/inference-survey-service
   scripts/probe-serving.py --url http://HOST:PORT --token-file F [--release-id ID] [--inputs FILE] [--repeat N] [--concurrency K]
-입력 파일: ActionExtractionInput 하나, 그 배열, 또는 {"inputs": [...]}. 없으면 boundary-contracts 예제 입력에 내장 발화 목록을 바꿔 넣는다.
+입력 파일: ExtractRequest{input, flow, fields}(계약 3.0) 하나, 그 배열, 또는 {"inputs": [...]}. 없으면 boundary-contracts 예제 ExtractRequest.with-fields 의 발화를 내장 발화 목록으로 바꿔 넣는다.
 종료 코드: 0 = 호출 전부 응답을 받아 집계함(OUTPUT_INVALID 가 있어도 0: 측정 도구이지 합격 판정이 아니다), 2 = 사용 오류, 3 = 서버에 닿지 못함·릴리스를 못 찾음.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
-EXAMPLE = ROOT.parent / "boundary-contracts" / "examples" / "ActionExtractionInput.json"
+EXAMPLE = ROOT.parent / "boundary-contracts" / "examples" / "ExtractRequest.with-fields.json"
 DEFAULT_UTTERANCES = [
     "십 년 전에 고혈압 진단을 받았어요.", "아니요 없어요.", "네 있어요.", "잘 모르겠어요.", "약은 안 먹어요.",
     "작년부터 먹고 있어요.", "아버지가 당뇨가 있으셨어요.", "하루에 한 갑 정도 피워요.", "술은 안 마셔요.", "일주일에 세 번이요.",
@@ -27,10 +27,10 @@ def build_inputs(path: str | None, repeat: int) -> list[dict]:
     if path:
         data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
         items = data["inputs"] if isinstance(data, dict) and "inputs" in data else (data if isinstance(data, list) else [data])
-        if not items or not all(isinstance(x, dict) for x in items): raise SystemExit("입력 파일은 ActionExtractionInput 객체(들)여야 한다")
+        if not items or not all(isinstance(x, dict) and {"input", "flow", "fields"} <= set(x) for x in items): raise SystemExit("입력 파일은 ExtractRequest{input, flow, fields} 객체(들)여야 한다(계약 3.0: flow·fields 필수)")
     else:
         base = json.loads(EXAMPLE.read_text(encoding="utf-8"))
-        items = [{**base, "user_utterance": u} for u in DEFAULT_UTTERANCES]
+        items = [{**base, "input": {**base["input"], "user_utterance": u}} for u in DEFAULT_UTTERANCES]
     return [dict(x) for _ in range(repeat) for x in items]
 
 
