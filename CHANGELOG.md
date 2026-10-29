@@ -1,5 +1,10 @@
 # 변경 이력
 
+## check-versions: 영역 소스 grep 대신 빌드된 이미지 라벨을 기준표와 비교 (U39, ADR 0042)
+- 옛 점검이 model-runtime Dockerfile의 `ARG BOUNDARY_VERSION=...`을 놓쳤다(영역마다 핀 이름이 달라 패턴을 따라가는 방식의 한계, 구조 규칙 1·6 위반). `check-versions.sh`가 `build/images.env`의 이미지 라벨(`contracts.boundary`, `model-runtime`, `contracts.survey-schema`)을 `lib.sh` 표와 비교한다. `check_versions.py`(소스 grep)는 지웠다.
+- 이미지가 없으면 종료 3(검증하지 못함): check-all은 SKIP, E2E의 빌드 전 check-all은 `CHECK_ALL_IMAGES=defer`(대상 아님+이유), 빌드 뒤 E2E 점검은 3을 실패로 본다.
+- 시험: `test-check-versions.sh`를 가짜 docker 라벨로 다시 썼다(11건: 같으면 0, 계약·model-runtime·문진 스키마·빈 라벨 어긋남 1, 이미지·기록·docker 없음 3). `test-check-all.sh`에 종료 3 -> SKIP, defer -> 대상 아님 사례를 더했다.
+
 ## e2e.sh 옵션 처리: 모르는 옵션을 거부하고 --only 와 --sections 조합을 사용 오류로
 - `bash scripts/e2e.sh --help`가 전체 E2E를 시작했다(모르는 옵션이 조용히 무시됐다). 이제 맨 앞(정적 점검·doctor·빌드 앞)에서 옵션을 검사한다: `-h/--help`는 사용법만 내고 0, 모르는 옵션·값 없는 `--only/--sections`·알 수 없는 구간은 사용법을 표준 오류로 내고 2. 시험 `scripts/test-e2e-options.sh`(수정 전 8건 실패 -> 통과 8건)를 e2e.sh 앞단 자체 점검에 넣었다.
 - `--only 5r --sections jobs,backup,rollback`은 뒷구간이 전제하는 상태(수집기 실행 기록, 문항 버전, 활성 릴리스, 단계 4~8의 산출물)가 없어 FAIL 3건이 났다. **거부(사용 오류)로 정했다.** 이유: (1) 자동으로 선행 단계를 함께 돌리려면 구간별 필요 단계 표를 따로 유지해야 하는데 이미 `e2e_plan.py`/`@step`의 deps가 정본이라 표가 둘이 된다. (2) 뒷구간이 실제로 필요로 하는 것은 단계 1~8 전체(수집기 로그, `e2e_verify_restore.py`가 읽는 문항·모델 패키지·Trace·포인터)라 `--only`로 줄여 얻는 시간이 없다. (3) 조용히 더 많은 단계를 돌리면 사용자가 지정한 범위와 실제 실행이 어긋난다. 뒷구간만 보려면 `--sections`만 준다(단계 1~8을 모두 돌린다).

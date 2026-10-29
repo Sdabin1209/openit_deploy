@@ -127,7 +127,7 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 
 ## 4-2. 버전 표 (드리프트 점검)
 
-경계 계약·turn-engine·model-runtime의 태그 기준은 `scripts/lib.sh`의 표 한 곳이다. 형제 영역(대상은 `head/shared/areas.json`의 `version_train`)의 requirements/lock/pyproject/Dockerfile/스크립트에 손으로 적힌 같은 태그가 표와 다르면 `bash scripts/check-versions.sh`가 실패하고 `파일:줄`을 알려 준다(읽기 전용, 문서·시험·변경 이력 제외). 점검기 자체의 시험은 `bash scripts/test-check-versions.sh`, 비밀 점검기는 `bash scripts/test-check-secrets-hidden.sh`. 태그를 바꿀 때는 표를 먼저 고치고 이 점검이 가리키는 곳을 영역 세션에서 맞춘다.
+경계 계약·model-runtime·문진 스키마의 태그 기준은 `scripts/lib.sh`의 표 한 곳이다. `bash scripts/check-versions.sh`가 **빌드된 이미지의 라벨**(`io.openit.contracts.boundary`, `io.openit.model-runtime`, `io.openit.contracts.survey-schema`; `build/images.env`의 이미지)을 표와 비교한다. 영역 소스 파일(requirements, Dockerfile ARG)은 읽지 않는다(영역마다 이름이 달라 deploy가 구조를 배워 따라가면 구조 규칙 1·6에 어긋난다, [ADR 0042](adr/0042-check-versions-image-labels.md)). 어긋나면 종료 1, 이미지를 아직 안 만들었으면 종료 3(검증하지 못함: check-all은 SKIP, 통과가 아니다). E2E는 빌드 뒤에 이 점검을 하고 3도 실패로 본다.
 
 ## 4-3. 정적 일관성 점검 (check-all, 수 초)
 

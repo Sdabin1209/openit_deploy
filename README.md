@@ -118,6 +118,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0005 TLS는 gateway에서 HTTPS 필수, 기본은 Caddy 내부 CA(`tls internal`)](docs/adr/0005-tls-internal-ca.md)
 - [0010 주기 잡은 호스트의 가벼운 스케줄러는 폐기됨 -> 0036](docs/adr/0010-host-scheduler.md)
 - [0036 주기 잡은 systemd timer가 run-job.sh로 돌린다(0010 대체)](docs/adr/0036-systemd-timers.md)
+- [0042 버전 표 점검은 빌드된 이미지 라벨을 기준표와 비교한다](docs/adr/0042-check-versions-image-labels.md)
 - [0041 build-images는 영역의 내부 버전 파일을 읽지 않는다](docs/adr/0041-build-images-no-area-internal-version-files.md)
 - [0040 키오스크 기기 인증은 게이트웨이 클라이언트 인증서 검증(주체 CN = 기기 ID)](docs/adr/0040-gateway-client-cert-device-auth.md)
 - [0039 직원 계정은 조직이 주는 bcrypt 계정 파일을 쓴다(프로젝트는 발급하지 않음)](docs/adr/0039-org-supplied-staff-accounts.md)

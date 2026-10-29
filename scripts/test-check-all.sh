@@ -36,6 +36,9 @@ unset EXC
 echo "== 1 버전표"
 mk survey-service release-gate model-lab ops-feedback question-authoring synthetic-data turn-engine model-runtime kiosk-frontend admin-console; run 1 CHECK_ALL_VERSIONS_CMD=true; expect "버전표 일치(대리 명령 성공)" PASS "검증됨 9/10"
 run 1 CHECK_ALL_VERSIONS_CMD=false; expect "버전표 불일치(대리 명령 실패)는 FAIL" FAIL
+printf '#!/usr/bin/env bash\necho "검증하지 못했다: 빌드 기록이 없다"\nexit 3\n' > "$W/rc3.sh"
+run 1 CHECK_ALL_VERSIONS_CMD="$W/rc3.sh"; expect "이미지를 검증하지 못하면(종료 3) SKIP(통과 아님)" SKIP "검증하지 못했다"
+run 1 CHECK_ALL_VERSIONS_CMD="$W/rc3.sh" CHECK_ALL_IMAGES=defer; expect "빌드 전 점검(defer)은 대상 아님 + 이유로 PASS" PASS "빌드 전이라"
 
 echo "== 2 예시 키 순서"
 mk $BC; mkschema; echo '{"a":"1","b":[{"x":1,"y":2}]}' > "$W/$BC/examples/Foo.json"; run 2; expect "올바른 순서는 PASS" PASS "검증됨 1/1"

@@ -210,6 +210,13 @@ def rule_versions() -> R:
         r.fail("check-versions", f"deploy/scripts/check-versions.sh: 실행하지 못했다({type(e).__name__})")
         return r
     lines = [l for l in (p.stdout + p.stderr).splitlines() if l.strip()]
+    if p.returncode == 3:   # 검증하지 못했다(빌드된 이미지가 없다): 통과로 세지 않는다. ADR 0042
+        why = next((l.strip() for l in lines if "검증하지 못했다" in l), "빌드된 이미지가 없어 라벨을 볼 수 없다")
+        if os.environ.get("CHECK_ALL_IMAGES") == "defer":   # e2e.sh 의 빌드 전 점검만 쓴다: 라벨 점검은 빌드 뒤 e2e.sh 가 같은 스크립트로 한다
+            for a in app: r.na.append((a, "빌드 전이라 이미지 라벨을 아직 볼 수 없다(빌드 뒤 e2e.sh 가 check-versions.sh 를 실행한다)"))
+        else:
+            for a in app: r.un.append((a, why))
+        return r
     if p.returncode == 0:
         r.ok += app
         if lines:
@@ -217,7 +224,7 @@ def rule_versions() -> R:
     else:
         bad = [l.strip().replace("다름: ", "") for l in lines if "다름:" in l] or lines[-3:] or [f"deploy/scripts/check-versions.sh:1: 종료 코드 {p.returncode}"]
         for b in bad:
-            r.fail(b.split("/")[0], b)
+            r.fail(b.split(":")[0], b)
         r.ok += [a for a in app if a not in r.fail_targets]
     return r
 

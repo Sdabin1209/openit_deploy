@@ -46,7 +46,7 @@ unset _only _sec _args _i a_ _v _x
 CA_TXT=""
 if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
   bash -n "$0" || { echo "e2e.sh 문법 오류: E2E를 시작하지 않는다"; exit 1; }   # 긴 셸은 줄 휴리스틱이 아니라 문법 검사와 준비 단계의 실제 실행에 맡긴다(ADR 0033)
-  CA_TXT=$(bash "$(dirname "$0")/check-all.sh" --strict 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
+  CA_TXT=$(CHECK_ALL_IMAGES=defer bash "$(dirname "$0")/check-all.sh" --strict 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
   [ $CA_RC = 0 ] || { echo "check-all.sh --strict 가 FAIL 또는 SKIP 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
 fi
 # 사전 점검: 실패하면 바로 멈춘다(건너뛰기 DEPLOY_SKIP_DOCTOR=1). 하위 up.sh 가 다시 점검하지 않게 export 한다
@@ -165,7 +165,7 @@ printf '%s\n%s\n' "$BKPW" "$BKPW" | "$DOCKER" run --rm -i "$(sed -n 's/^GATEWAY_
 chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/registry.sh" up
 chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
 chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
-chk "버전 표 드리프트 없음 (check-versions: lib.sh 표 == 형제 영역 표기)" bash "$DEPLOY_ROOT/scripts/check-versions.sh"
+chk "버전 표 드리프트 없음 (check-versions: 빌드된 이미지 라벨 == lib.sh 표; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-versions.sh"
 chk "check-versions 자기 점검" bash "$DEPLOY_ROOT/scripts/test-check-versions.sh"
 chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰, caddy validate)" bash "$DEPLOY_ROOT/scripts/test-gateway-auth.sh"
 chk "시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검)" bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
