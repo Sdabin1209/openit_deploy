@@ -12,6 +12,17 @@ def check_fake_extraction(out, key, value, next_item, label=""):
     return True
 
 
+def check_out_of_range_reask(out, item, key, label=""):
+    """범위 밖 값이 서버(model-runtime 0.10.0, 계약 2.4.0 value_rules)에서 데이터셋 정답 모양 REASK/OUT_OF_RANGE 로 바뀌었는지.
+    같은 문항을 다시 묻고(next_item=item), 그 칸은 저장하지 않는 UNCLEAR(save false, value null)이며 reason·targets 가 범위 밖을 가리킨다. 틀리면 AssertionError."""
+    assert out.get("action") == "REASK", f"{label} action 이 REASK 가 아니다: {out}"
+    assert out.get("reason") == "OUT_OF_RANGE", f"{label} reason 이 OUT_OF_RANGE 가 아니다: {out}"
+    assert out.get("next_item") == item, f"{label} 같은 문항을 다시 묻지 않는다: {out.get('next_item')} != {item}"
+    assert out.get("targets") == [key], f"{label} targets 가 {[key]} 가 아니다: {out.get('targets')}"
+    assert out.get("values") == [{"key": key, "precision": "unspecified", "save": False, "status": "UNCLEAR", "value": None}], f"{label} values 가 저장하지 않는 UNCLEAR 가 아니다: {out.get('values')}"
+    return True
+
+
 def check_turns_clean(replies, ready_before, ready_after):
     """값이 나오는 턴들이 서비스의 검증·저장을 통과했는지. 각 응답에 실패 신호가 없고, 추론 호출이 턴마다 늘었으며,
     추론 실패·출력 형식 위반·재시도가 늘지 않았고, Trace 가 턴마다 전송 대기열에 들어갔는지(/readyz 숫자만 본다)."""

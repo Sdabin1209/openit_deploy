@@ -7,7 +7,7 @@ import json, os, pathlib, subprocess, sys, tempfile, unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
 CHECK = HERE / "check_image_labels.py"
-B = {"io.openit.service": "svc", "io.openit.revision": "85b3552", "io.openit.contracts.boundary": "v2.3.0", "io.openit.contracts.survey-schema": "1"}
+B = {"io.openit.service": "svc", "io.openit.revision": "85b3552", "io.openit.contracts.boundary": "v2.4.1", "io.openit.contracts.survey-schema": "1"}
 
 
 def run(labels, *extra):

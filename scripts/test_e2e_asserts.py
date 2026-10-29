@@ -17,6 +17,13 @@ class T(unittest.TestCase):
         with self.assertRaises(AssertionError): ea.check_fake_extraction({**OK_OUT, "values": []}, "Q4.answer", False, "Q5")   # 빈 values(옛 동작)
         with self.assertRaises(AssertionError): ea.check_fake_extraction(OK_OUT, "Q4.answer", 0, "Q5")   # bool 과 int 구분
 
+    def test_out_of_range_reask(self):
+        ok = {"action": "REASK", "next_item": "Q8_1", "values": [{"key": "Q8_1.days", "precision": "unspecified", "save": False, "status": "UNCLEAR", "value": None}], "reason": "OUT_OF_RANGE", "targets": ["Q8_1.days"]}
+        self.assertTrue(ea.check_out_of_range_reask(ok, "Q8_1", "Q8_1.days"))
+        for bad in ({**ok, "action": "NEXT"}, {**ok, "reason": "MISSING"}, {**ok, "next_item": "Q8_2"}, {**ok, "targets": ["Q9_1.days"]},
+                    {**ok, "values": [{**ok["values"][0], "save": True}]}, {**ok, "values": [{**ok["values"][0], "value": 8, "status": "ANSWERED"}]}):
+            with self.assertRaises(AssertionError): ea.check_out_of_range_reask(bad, "Q8_1", "Q8_1.days")
+
     def test_turns(self):
         self.assertTrue(ea.check_turns_clean(REP, RB, RA))
         bad = copy.deepcopy(REP); bad[1] = {"response_text": "(가짜 응답)", "turn_failure_signal": {"write_committed": "NOT_COMMITTED"}}

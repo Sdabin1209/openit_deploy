@@ -768,6 +768,51 @@ def step5c():
     for s_ in (sid, sid2): kiosk(f"/v1/sessions/{s_}/end", {"session_id": s_, "kind": "SESSION_END"})
     rec("5c", "REAL", "정정 흐름(가짜 A corrections: '아까 말'+at Q1.D02, 키 Q1.D01.diagnosed). 추론 서버 직접: Q1.D02 에서 CORRECT(CORRECTION, 값 false, next_item Q1.D02), Q1.D03 에서는 NEXT. 서비스 경유: 'cor-1' 뒤 직원 세션 조회에서 Q1.D01.diagnosed=true ANSWERED -> 'cor-2' 뒤 턴 기록 action [NEXT, CORRECT], 값 false·status CORRECTION, 세션 IN_PROGRESS, 실패 신호 없음, Trace 전송. 대조 세션(Q1.D01 에서 같은 발화)은 NEXT·ANSWERED. 못 보는 것: 이력의 이전 값(NEW_REVISION)과 다음 질문 문항(공개 조회에 없음)")
 
+@step('5o', repos=('survey-service', 'model-runtime', 'question-authoring', 'boundary-contracts') + _GW, deps=('4',),
+      why="STATE['pointers'],['releases'] 를 읽는다. " + _P4,
+      also={'question-authoring': '작성 양식의 칸 규격 줄(최소·최대)이 문항 은행의 칸 규격이 되어 extract 의 fields 로 간다(U24)'})
+def step5o():
+    title("5o", "칸 규격(일수 0~7)을 가진 문항에서 범위 밖 값(8일)이 REASK/OUT_OF_RANGE 로 바뀌어 저장되지 않는다 (model-runtime 0.10.0 값 규칙, 계약 2.4.0, D115)")
+    if "pointers" not in STATE: rec("5o", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    new = STATE["releases"]["2"]
+    wait(lambda: (lambda cr: cr[0] == 200 and cr[1].get("active_release") == new)(survey_ready()), 300, f"survey가 릴리스 {new} 적재", every=3)
+    ff = json.loads((pathlib.Path(__file__).resolve().parents[1] / "test" / "fake-model" / "question_flow.json").read_text(encoding="utf-8"))
+    flow = {"order": ff["order"], "skips": ff["skips"]}
+    fields = {"fields": [{"slot": "Q8_1.days", "data_type": "integer", "unit": "day/week", "minimum": 0, "maximum": 7}]}   # 시험 문항지(test/fixtures/question-form-v2.txt)의 Q8_1 칸 규격과 같다
+    validate("QuestionFieldSpec", fields)
+    tok = INF_TOK()
+    def ext(text):
+        ein = {"question_id": "Q8_1", "current_question": "시험 문항 Q8_1입니다.", "user_utterance": text, "state": {}}
+        ereq = {"input": ein, "flow": flow, "fields": fields}; validate("ExtractRequest", ereq)
+        c, body, h = ms_call(f"/v1/releases/{new}/extract", ereq, tok); assert c == 200, (text, c, body[:200]); out = json.loads(body); validate("ActionExtraction", out); return out
+    # (1) 추론 서버 직접: fields 가 있으면 범위·값 규칙을 서버가 보증한다. 경계(0, 7)는 통과, 8 은 REASK/OUT_OF_RANGE
+    EA.check_out_of_range_reask(ext("8일이요"), "Q8_1", "Q8_1.days", "[8일]")
+    EA.check_fake_extraction(ext("7일이요"), "Q8_1.days", 7, "Q8_2", "[7일: 최대 포함]")
+    EA.check_fake_extraction(ext("없어요"), "Q8_1.days", 0, "Q9_1", "[0일: 최소 포함]")
+    # (2) 서비스 경유: 문항 은행에 칸 규격이 있으면 서비스가 extract 에 fields 를 싣는다(U24). Q8_1 까지 가짜 A 가 값을 내는 발화로 진행한 뒤 '8일이요'
+    sid = f"sess-{RID}-range"; assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    types = {k: v[0]["type"] for k, v in ff["slots"].items()}; answers = {}
+    def skipped(item): return any(s["skip_item"] == item and s["slot"] in answers and type(answers[s["slot"]]) is type(s["value"]) and answers[s["slot"]] == s["value"] for s in ff["skips"])
+    idx, turns = 0, 0
+    while ff["order"][idx] != "Q8_1":
+        q = ff["order"][idx]; slot = ff["slots"][q][0]["key"]; text = "네 있어요" if types[q] == "boolean" else "3일이요"
+        turns += 1; c, rp = public_turn(sid, f"rng-{turns}", text); assert c == 200, (q, c, rp); validate_survey("FrontendInput", rp)
+        answers[slot] = True if types[q] == "boolean" else 3
+        idx += 1
+        while idx < len(ff["order"]) and skipped(ff["order"][idx]): idx += 1
+    sv0 = staff_sv(sid); got = {v["key"] for v in sv0["values"]}
+    assert "Q7.does_not_drink" in got and "Q8_1.days" not in got, ("Q8_1 에 도달하지 못했다(진행 시뮬레이션이 서비스와 어긋남)", sorted(got)[-5:])
+    c, bad = public_turn(sid, "rng-8", "8일이요"); assert c == 200, (c, bad); validate_survey("FrontendInput", bad)
+    sv1 = staff_sv(sid); said = [t for t in sv1["turns"] if t["utterance"]]
+    vals = {v["key"]: v for v in sv1["values"]}
+    assert said[-1]["action"] == "REASK", ("범위 밖 값 뒤의 턴 action 이 REASK 가 아니다", said[-1])
+    assert "Q8_1.days" not in vals or vals["Q8_1.days"].get("value") != 8, ("범위 밖 값 8 이 저장됐다", vals.get("Q8_1.days"))
+    c, ok_ = public_turn(sid, "rng-9", "3일이요"); assert c == 200, (c, ok_)
+    sv2 = staff_sv(sid); v2 = {v["key"]: v for v in sv2["values"]}
+    assert v2["Q8_1.days"]["value"] == 3 and v2["Q8_1.days"]["status"] == "ANSWERED", ("다시 답한 3일이 저장되지 않았다", v2.get("Q8_1.days"))
+    kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
+    rec("5o", "REAL", f"일수 칸 규격(0~7, 값 단위 day/week). 추론 서버 직접(ExtractRequest{{input, flow, fields}}): 8일 -> REASK/OUT_OF_RANGE(같은 문항, 저장 안 하는 UNCLEAR, targets Q8_1.days), 7일·0일 -> NEXT(경계 포함). 서비스 경유: {turns}턴으로 Q8_1 도달 뒤 '8일이요' -> 턴 action REASK, Q8_1.days=8 저장 없음 -> '3일이요' -> 3 저장(ANSWERED).")
+
 # ---- 시간 단언의 상수: 설정(config/Caddyfile, 서비스 문서)에서 도출한 값과 측정 환경별 관찰값을 이름으로 둔다. 단언의 의미(상한 안에 들어와야 한다)는 그대로이고, 한 환경의 측정값을 불변식처럼 쓰지 않는다.
 KIOSK_WAIT_S = 10.0          # 키오스크 대기(kiosk-frontend 영역, ADR 0003)
 SURVEY_TURN_DEADLINE_S = 6.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS 기본)
@@ -1923,7 +1968,7 @@ def step5b():
     ok = done_dirs(); assert "pg-qa" in ok and "pg-gate" in ok, f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
     rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 실패한 qa 의 스냅샷 없음(EOF 전에 restic 을 죽여 만들지 않음; 성공한 다른 데이터베이스의 것은 남는다); 복구 뒤 재실행 성공(스냅샷 {len(ok)}개: {ok}).")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []

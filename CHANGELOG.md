@@ -1,5 +1,10 @@
 # 변경 이력
 
+## 버전 열차 올림과 D115(LoRA-A 출력 값 규칙) E2E 단계 5o
+- `lib.sh` 기준표: boundary-contracts v2.4.1, model-runtime v0.10.0, 문진 스키마 survey-schema-v1.2.0(SlotDef 칸 규격). 시험 값도 맞췄다.
+- E2E 문항지(`test/fixtures/question-form-v2.txt`)의 Q8_1 일수 칸에 칸 규격 줄(`자료형: integer`, `값 단위: day/week`, `최소: 0`, `최대: 7`)을 넣었다. question-authoring 2f7d2b7의 작성 양식이 읽는 줄이다.
+- 새 단계 `5o`(`--only 1,2,3,4,5o`): 추론 서버에 ExtractRequest{input, flow, fields}로 직접 '8일'을 보내면 REASK/OUT_OF_RANGE(같은 문항, 저장 안 하는 UNCLEAR), 7일·0일은 NEXT(경계 포함). 서비스 경유는 가짜 A가 값을 내는 발화로 Q8_1까지 24턴 진행한 뒤 '8일이요' -> 턴 action REASK, 8 저장 없음 -> '3일이요' -> 3 저장. 모방(mimic) 백엔드가 아니라 E2E의 fake 백엔드(흐름 파일의 integer 칸이 발화의 첫 숫자를 값으로 낸다)로 범위 밖 값을 만든다. 구현만 했고 이 단계는 아직 돌리지 않았다.
+
 ## build-images: 영역 내부 버전 파일을 읽지 않는다 (ADR 0041)
 - model-runtime 라벨은 `DEPLOY_MR_TAG`에서 만들고 빌드한 이미지의 `model_runtime.RUNTIME_VERSION`과 대조한다(어긋나면 빌드 중단). kiosk-frontend `app-version`은 deploy가 넘기지 않는다(영역 Dockerfile 기본값, CR-D29). `pyproject.toml`·`package.json`·`mr_version` 제거.
 - `test-build-images-static.sh`에 영역 내부 버전 파일 사용 금지 검사를 더했다(수정 전 5건 실패, 수정 뒤 통과).
