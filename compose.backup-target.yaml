@@ -8,7 +8,22 @@ x-bkhard: &bkhard
   read_only: true
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 services:
+  backup-target-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 비root(65534)로 도는 rest-server 가 저장소 폴더를 못 만든다(500, 측정함: "mkdir /data/openit: permission denied"). 소유자만 바꾼다(멱등)
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    user: "0:0"
+    entrypoint: ["chown", "-R", "65534:65534", "/data"]
+    restart: "no"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    network_mode: none
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    volumes:
+      - backup-target-data:/data
   backup-target:
+    depends_on:
+      backup-target-perms: {condition: service_completed_successfully}
     <<: *bkhard
     image: ${REST_SERVER_IMAGE:?locks/images.lock}
     restart: unless-stopped

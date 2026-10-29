@@ -1,5 +1,9 @@
 # 변경 이력
 
+## E2E 백업 저장소(compose.backup-target.yaml) 500 수정
+- 원인(rest-server 로그로 확인): 새 이름 있는 볼륨은 root 소유인데 rest-server 가 비root(65534)로 돌아 `mkdir /data/openit: permission denied` -> restic init/backup 이 HTTP 500. `test-backup.sh` 의 rest 시험은 컨테이너를 기본 사용자(root)로 띄워 이 차이를 못 잡았다.
+- 고침: 일회용 `backup-target-perms`(root, CHOWN·DAC_OVERRIDE 만, 네트워크 없음)가 볼륨 소유자를 65534 로 바꾸고 `backup-target` 이 `service_completed_successfully` 뒤에 뜬다(레지스트리 perms 서비스와 같은 방식). 같은 구성을 compose 로 띄워 `up --wait` -> restic init/backup 성공, 서버 자격 forget 403 을 확인했다.
+
 ## 4b 후속: 게이트웨이를 띄우는 자체 시험이 device-tls 조각을 마운트하지 않아 실패하던 것
 - 원인: `config/Caddyfile`이 `/etc/caddy/device-tls.caddy`를 import하는데 `test-gateway-auth.sh`(4곳), `test-secret-fixtures.sh`, `test-demo-kiosk.sh`가 Caddy를 직접 띄우거나 검증하면서 그 파일과 `device-ca.pem`을 마운트하지 않았다("File to import not found"). compose(운영·데모 겹침)는 기본 compose의 `gateway-device-tls`·`gateway-device-ca` 설정으로 이미 마운트한다.
 - 고침: 세 스크립트의 Caddy 실행에 두 마운트를 더했다. `e2e.sh`가 앞단에서 부르는 자체 점검 전부를 이 PC에서 돌려 통과를 확인했다.
