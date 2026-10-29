@@ -835,6 +835,10 @@ def run_area_tests(repo: str, d: Path):
     cmd = rep["environment"]["test_command"]
     try:
         p = subprocess.run(cmd, cwd=d, capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired as e:
+        raw = e.stdout or b""
+        path = save_area_log(repo, (raw.decode(errors="replace") if isinstance(raw, bytes) else raw) + "\n[check-all] 900초 시간 초과로 중단\n")
+        return "fail", f"{cmd[0]} 시험 명령이 900초 안에 끝나지 않았다; 지금까지의 출력 {path}"
     except Exception as e:
         return "fail", f"{cmd[0]} 시험 명령을 실행하지 못했다({type(e).__name__})"
     out = p.stdout + p.stderr
@@ -842,8 +846,28 @@ def run_area_tests(repo: str, d: Path):
     m = re.search(r"(\d+) passed", out) or re.search(r"\btests\s+(\d+)", out) or re.search(r"Ran (\d+) tests?", out)
     total = int(m.group(1)) if m else 0
     if p.returncode != 0:
-        return "fail", f"시험 명령 종료 코드 {p.returncode} (통과 {total}개 확인)"
+        # 어떤 시험이 실패했는지 알 수 있게 실패 줄을 몇 개 남기고 전체 출력은 파일로 둔다(예전에는 개수만 남겨 원인을 알 수 없었다)
+        path = save_area_log(repo, out)
+        fails = [l.strip()[:160] for l in out.splitlines() if FAIL_LINE.match(l)]
+        shown = "; ".join(fails[:5]) + (f" 외 {len(fails) - 5}줄" if len(fails) > 5 else "")
+        return "fail", f"시험 명령 종료 코드 {p.returncode} (통과 {total}개 확인)" + (f"; 실패 줄: {shown}" if fails else "; 출력에서 실패 줄을 찾지 못했다") + f"; 전체 출력 {path}"
     return ("fail", "통과한 시험 개수를 확인하지 못했다(0개)") if total == 0 else ("ok", f"시험 {total}개 통과")
+
+
+# 러너별 실패 줄: pytest 요약(FAILED/ERROR <id>), node:test(not ok, ✖), unittest(FAIL:/ERROR:)
+FAIL_LINE = re.compile(r"^\s*(FAILED |ERROR |not ok |✖ |FAIL: |ERROR: )")
+
+
+def save_area_log(repo: str, text: str) -> str:
+    """영역 시험의 전체 출력을 state/check-all/<영역>.log 에 둔다(덮어쓴다: 마지막 실행). 경로를 deploy 루트 기준으로 돌려준다. 시험용 위치: CHECK_ALL_LOG_DIR"""
+    d = Path(os.environ.get("CHECK_ALL_LOG_DIR") or HERE.parent / "state" / "check-all")
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"{repo}.log"
+    f.write_text(text, encoding="utf-8")
+    try:
+        return str(f.relative_to(HERE.parent))
+    except ValueError:
+        return str(f)
 
 
 def rule_collect() -> R:

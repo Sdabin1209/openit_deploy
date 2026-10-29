@@ -11,7 +11,7 @@ FAILS=0; N=0
 # mk <이름>... : 임시 워크스페이스 $W 에 영역(.git 과 올바른 README 포함)을 만든다
 mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; done; }
 # run <규칙번호> [환경...] : 출력을 $OUT, 종료 코드를 $RC 에
-run() { local r=$1; shift; OUT=$(env SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
+run() { local r=$1; shift; OUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
 expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   N=$((N+1)); local ok=1
   grep -q ": $2\$" <<<"$OUT" || ok=0
@@ -142,6 +142,14 @@ run 8; expect "SKIP 이유에 prepare-areas.sh 가 붙는다" SKIP "prepare-area
 report admin-console node-modules node_modules node -e "console.log('tests 3')"; run 8; expect "보고의 환경 경로가 없으면 SKIP" SKIP "환경 경로 node_modules 가 없다"
 mkdir -p "$W/admin-console/node_modules"; run 8; expect "보고의 test_command 통과는 PASS" PASS "검증됨 1/1"
 report admin-console node-modules node_modules node -e "process.exit(1)"; run 8; expect "test_command 실패는 FAIL" FAIL
+# 실패하면 실패한 시험 이름(러너 출력의 실패 줄)과 전체 출력 파일 경로를 남긴다(예전에는 "종료 코드 1 (통과 N개)"만 남겨 원인을 알 수 없었다)
+report admin-console node-modules node_modules node -e "console.log('tests 5'); console.log('not ok 3 - 위험 규칙 시험'); console.log('ok 4 - 다른 시험'); process.exit(1)"; run 8
+expect "node:test 의 not ok 줄을 메시지에 남긴다" FAIL "not ok 3 - 위험 규칙 시험"
+N=$((N+1)); grep -q "전체 출력 .*admin-console.log" <<<"$OUT" && grep -q "ok 4 - 다른 시험" "$W/logs/admin-console.log" && echo "  ok   전체 출력은 파일로 남고 경로를 알려 준다" || { echo "  FAIL 전체 출력 파일/경로"; FAILS=$((FAILS+1)); }
+report admin-console node-modules node_modules node -e "console.log('12 passed'); console.log('FAILED tests/test_x.py::test_a - assert 1 == 2'); console.log('ERROR tests/test_y.py - ImportError'); process.exit(1)"; run 8
+expect "pytest 요약의 FAILED/ERROR 줄도 남긴다" FAIL "FAILED tests/test_x.py::test_a"
+report admin-console node-modules node_modules node -e "console.log('tests 2'); process.exit(1)"; run 8
+expect "실패 줄이 없으면 그 사실을 적는다" FAIL "실패 줄을 찾지 못했다"
 report admin-console node-modules node_modules node -e "console.log('no summary')"; run 8; expect "통과 개수를 못 읽으면 FAIL(0개)" FAIL "0개"
 mk model-lab; run 8; expect "보고 없으면 SKIP" SKIP "검증 안 함 1"
 if [ -n "$PYT" ]; then

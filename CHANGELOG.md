@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-307 추가: 영역 시험 실패의 원인을 남긴다
+- check-all 규칙 8(영역별 시험 실행)이 실패하면 "종료 코드 N (통과 M개)"만 남겨 어떤 시험인지 알 수 없었다(E2E에서 question-authoring이 이렇게 실패했다). 이제 러너 출력의 실패 줄(pytest `FAILED`/`ERROR`, node:test `not ok`/`✖`, unittest `FAIL:`/`ERROR:`)을 최대 5줄 메시지에 남기고(없으면 그 사실을 적는다) 전체 출력은 `state/check-all/<영역>.log`에 두어 경로를 알린다(시간 초과 때는 그때까지의 출력). 마지막 실행이 덮어쓴다.
+
 ## wo-307: check-all 규칙 1(버전표)이 CHECK_ALL_IMAGES=defer를 따른다
 - e2e.sh의 빌드 전 점검(`CHECK_ALL_IMAGES=defer check-all --strict`)이 이전 빌드의 낡은 이미지 라벨을 보고 시작 전에 FAIL했다. U39 이후 규칙 1이 이미지 라벨을 보는데 defer는 "검증하지 못함(종료 3)"일 때만 적용됐다. 이제 defer이면 `check-versions.sh`를 실행하지 않고 대상 아님(이유 출력)으로 둔다. 같은 검사는 빌드·게시 뒤 e2e.sh의 `check-versions.sh` 단계가 실제로 돌린다(`test-check-all.sh`가 그 단계가 빌드 뒤에 있는지 본다).
 
