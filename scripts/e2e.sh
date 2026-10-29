@@ -27,15 +27,15 @@ fi
 export DEPLOY_SKIP_DOCTOR=1
 source "$(dirname "$0")/lib.sh"
 KEEP=0; REUSE=0; KEEPIMG=0; FAST=0; FAILFAST=0; CHANGED=0
-ONLY=""; SECTIONS="jobs,backup,rollback"
+ONLY=""; SECTIONS="jobs,backup,rollback"; SECTIONS_SET=0
 while [ $# -gt 0 ]; do case "$1" in
   --fast) FAST=1;; --fail-fast) FAILFAST=1;; --changed-only) CHANGED=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;;
   --only) [ $# -ge 2 ] || { echo "--only 에는 단계 목록이 필요하다 (예: --only 5p)" >&2; exit 2; }; ONLY=$2; shift;;
   --only=*) ONLY=${1#*=};;
-  --sections) [ $# -ge 2 ] || { echo "--sections 에는 jobs,backup,rollback 중 일부가 필요하다" >&2; exit 2; }; SECTIONS=$2; export DEPLOY_NO_RECORD=1; shift;;   # 단계 9 뒷구간 중 일부만(단계 1~8 은 모두 돈다). 정본에 기록하지 않는다. 전체 합격이 아니다
+  --sections) [ $# -ge 2 ] || { echo "--sections 에는 jobs,backup,rollback 중 일부가 필요하다" >&2; exit 2; }; SECTIONS=$2; SECTIONS_SET=1; export DEPLOY_NO_RECORD=1; shift;;   # 단계 9 뒷구간 중 일부만(단계 1~8 은 모두 돈다). 정본에 기록하지 않는다. 전체 합격이 아니다
 esac; shift; done
 # --only: e2e_steps.py 의 단계 일부만 돌린다(개발 중 한 단계 확인용). 스택 기동과 준비는 같이 하고, 스케줄러·백업·롤백 구간은 생략하며 결과를 정본에 기록하지 않는다. 전체 합격이 아니다
-if [ -n "$ONLY" ]; then FAST=1; export DEPLOY_NO_RECORD=1; fi
+if [ -n "$ONLY" ]; then export DEPLOY_NO_RECORD=1; [ "$SECTIONS_SET" = 1 ] || FAST=1; fi   # --only 와 --sections 를 같이 주면 지정한 단계만 돌린 뒤 지정한 단계 9 뒷구간을 돈다(예: --only 1,2,3,4,6 --sections backup)
 [ "$FAILFAST$CHANGED" = 00 ] || export DEPLOY_NO_RECORD=1   # 일부만 돌린 결과는 정본에 쓰지 않는다
 ID=$$; PROJECT=deploy-e2e-$ID; RPROJ=deploy-e2e-reg-$ID
 W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
