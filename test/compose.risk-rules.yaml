@@ -1,0 +1,8 @@
+# E2E 전용: survey-service 에 시험용 위험 규칙 파일을 연결한다(U48 안 A). 운영 compose.yaml 에는 두지 않는다: 시험 문구가 운영에서 켜지면 안 된다.
+# 설정 이름 SURVEY_RISK_RULES_FILE 은 survey-service 의 설정이고, 파일 형식은 계약 SurveyRiskRulesFile 이다. 운영의 규칙 파일은 병원이 임상 검토 뒤에 같은 방식으로 준다.
+services:
+  survey-service:
+    environment:
+      SURVEY_RISK_RULES_FILE: /config/risk-rules.json
+    volumes:
+      - ./test/risk-rules.e2e.json:/config/risk-rules.json:ro

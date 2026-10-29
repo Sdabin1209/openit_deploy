@@ -1,0 +1,7 @@
+{
+  "_comment": "E2E 시험용 위험 규칙(계약 SurveyRiskRulesFile). 임상 검토를 거친 규칙이 아니다: 병원 운영 규칙이 아니라 위험 정지 경로를 시험하려고 deploy 가 정한 입력이다. compose 에는 test/compose.risk-rules.yaml 로만 연결하고 운영 compose 에는 없다.",
+  "version": "e2e-test-1",
+  "rules": [
+    {"id": "e2e-test-phrase", "description": "E2E 시험용 문구(임상 규칙 아님)", "match": {"any_of": [{"contains": "E2E위험시험문구"}]}}
+  ]
+}

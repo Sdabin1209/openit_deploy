@@ -1,4 +1,6 @@
-# CR-U48: E2E가 survey-service 내부 파일을 읽어 위험 문구를 얻는다 (헤드가 정할 때까지 코드 변경 없음)
+# CR-U48: E2E가 survey-service 내부 파일을 읽어 위험 문구를 얻는다
+
+> 처리됨(wo-30): 헤드가 안 A로 정했다. deploy가 `test/risk-rules.e2e.json`(계약 SurveyRiskRulesFile)을 만들어 `test/compose.risk-rules.yaml`로 `SURVEY_RISK_RULES_FILE`에 연결하고, 5f·5m·5n은 그 파일의 문구를 쓴다. `risk_phrase_from_defaults()`는 지웠다. 아래는 결정 전의 기록이다.
 
 작성: deploy, 2026-10-30, wo-29. 상태: 제안(코드 변경 없음). 결정: 헤드.
 

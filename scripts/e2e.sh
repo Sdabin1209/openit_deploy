@@ -70,7 +70,7 @@ W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT=$PROJECT
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT= GATEWAY_TLS_PORT=
+export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT= GATEWAY_TLS_PORT=
 export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
@@ -168,6 +168,7 @@ chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/che
 chk "버전 표 드리프트 없음 (check-versions: 빌드된 이미지 라벨 == lib.sh 표; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-versions.sh"
 chk "게이트웨이 노출이 영역 이미지의 노출 선언(io.openit.exposure)과 같다 (check-exposure: Caddyfile 대조, ADR 0043; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-exposure.sh"
 chk "check-exposure 자체 점검" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_check_exposure.py"
+chk "E2E 시험 위험 규칙 파일이 계약 SurveyRiskRulesFile 을 따르고 E2E 전용 compose 에만 연결된다" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_risk_rules_file.py"
 chk "check-versions 자기 점검" bash "$DEPLOY_ROOT/scripts/test-check-versions.sh"
 chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰, caddy validate)" bash "$DEPLOY_ROOT/scripts/test-gateway-auth.sh"
 chk "시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검)" bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"

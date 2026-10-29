@@ -1,5 +1,11 @@
 # 변경 이력
 
+## wo-30 후속: U48 안 A (위험 규칙 파일 주입)
+- E2E가 survey-service 내부 `risk_rules.py`를 읽던 `risk_phrase_from_defaults()`를 지웠다. deploy가 시험용 규칙 파일 `test/risk-rules.e2e.json`(계약 SurveyRiskRulesFile, 임상 규칙 아님)을 만들고 `test/compose.risk-rules.yaml`(E2E 전용, `e2e.sh`의 `COMPOSE_EXTRA`)로 survey-service의 `SURVEY_RISK_RULES_FILE`에 마운트한다. 운영 compose에는 연결하지 않는다(시험 문구가 운영에서 켜지면 안 된다). 5f·5m·5n은 그 파일의 문구를 쓴다.
+- 5f의 옛 검사 "임시 기본 목록(PROVISIONAL_DEFAULT) 켜짐, provisional=true, clinically_reviewed=false"는 규칙 파일을 주입하면 성립하지 않아 뺐고 `active=true`와 `rule_count == 규칙 수`로 바꿨다. 규칙 파일일 때 `/readyz`의 source·provisional 값은 deploy가 알지 못해 단정하지 않는다(첫 E2E에서 실제 값을 보고 정할 일).
+- `test-no-guessed-paths.sh`가 이웃 영역 소스 파일 읽기(`ROOT.parent / "<영역>/…"`, `risk_rules.py`)도 잡는다.
+- 기준표는 v2.7.0 그대로다(헤드: 곧 3.0.0으로 한 번에 옮긴다). SurveyRiskRulesFile 스키마는 설치된 패키지(2.7.0)에 없어, `E2E`는 검증하지 못했다는 안내를 내고 `test_risk_rules_file.py`의 스키마 검증은 SKIP으로 출력한다(통과로 세지 않음). v2.8.0 패키지로는 통과를 확인했다.
+
 ## wo-30: U47 deploy 몫 (노출 선언 대조, PublishResult, SyntheticJobError)
 - `scripts/check-exposure.sh`(+`check_exposure.py`, ADR 0043): `config/Caddyfile`을 영역 이미지의 라벨 `io.openit.exposure`(계약 Exposure)와 대조한다. 생성이 아니라 대조인 이유는 ADR(Exposure가 CSRF·mTLS·SSE·상태 변환 같은 게이트웨이 기능을 아직 표현하지 못한다). 포트·사용자는 이미지 OCI 설정(`ExposedPorts`, `User`)에서 읽는다. 알려진 어긋남 2건은 `config/exposure-known-diffs.json`에 이유와 함께 둔다. e2e.sh 자체 점검에 포함.
 - `publish-image.sh`: 표준 출력 마지막 줄이 계약 `PublishResult` JSON이다(모든 종료 코드 0~5; `--help` 제외). 옛 `PUBLISHED|UNCHANGED …` 문자열 줄은 없다. `docs/ci.md`, `docs/ci-example/publish-image.yml`을 맞췄고 `test-publish.sh`가 마지막 줄을 계약 validator로 검증하고 `exit_code`가 실제 종료 코드와 같은지 본다.

@@ -994,7 +994,7 @@ def step5m():
     assert kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
     c, r1 = public_turn(sid, "m-1", "네 있어요"); assert c == 200 and not r1.get("turn_failure_signal"), (c, r1)
     sidr = f"sess-{RID}-outmr"; assert kiosk("/v1/sessions", {"session_id": sidr, "kind": "SESSION_START"})[0] == 200
-    phrase, _rules = risk_phrase_from_defaults()
+    phrase, _rules = risk_phrase()
     sh([a.docker, "pause", MS_CONTAINER])
     try:
         # 모델 서버가 멈춘 턴에서도 위험 발화의 직원 알림이 먼저 나간다(D88 U1: 규칙 감지는 모델 추출·쓰기 확정과 무관). 추출 호출 없이 정지하므로 마감 안에 끝난다
@@ -1128,7 +1128,7 @@ def _validate_if_known(name, obj):
     validate(name, obj); return True
 
 @step('5n', repos=('survey-service', 'model-runtime', 'kiosk-frontend', 'boundary-contracts') + _GW, deps=('4',),
-      why="STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 빌드 사본의 survey-service risk_rules.py 에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4)
+      why="STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 E2E 가 주입한 시험 규칙 파일(test/risk-rules.e2e.json)에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4)
 def step5n():
     title("5n", "직원 호출 재알림·실패 기록·정지 사유 (계약 v2.1.0 PUBLIC_API G·H절, CR-H001·H002, 가짜 모델)")
     if "pointers" not in STATE: rec("5n", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1150,8 +1150,8 @@ def step5n():
             c, r, _h = tcall(tok, "GET", f"/v1/sessions/{sid}/state")
             if c != 429: return c, r
         return c, r
-    # (a) 위험 발화로 정지(단계 5f 의 방식: survey-service 기본 목록의 문구). 이 구성에는 직원 콘솔 구독자가 없어 전달은 DELIVERY_FAILED 로 끝나는 것이 정상이다(survey-service alerts.py 머리말). 구독자가 있으면 DELIVERED 일 수 있고 그래도 아래 호출은 OPEN 알림이 있으므로 성립한다
-    sid = f"sess-{RID}-n"; phrase, _r = risk_phrase_from_defaults()
+    # (a) 위험 발화로 정지(단계 5f 의 방식: E2E 가 주입한 시험 규칙의 문구). 이 구성에는 직원 콘솔 구독자가 없어 전달은 DELIVERY_FAILED 로 끝나는 것이 정상이다(survey-service alerts.py 머리말). 구독자가 있으면 DELIVERED 일 수 있고 그래도 아래 호출은 OPEN 알림이 있으므로 성립한다
+    sid = f"sess-{RID}-n"; phrase, _r = risk_phrase()
     A = dev_tok("e2e-a"); B = dev_tok("e2e-b")
     c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[:2]; assert c == 200, ("POST /v1/sessions(기기 A 세션 시작)", c, st)
     c, rr, _h = tcall(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": f"저는 {phrase} 있어요", "turn_id": "n-1"}); assert c == 200, (c, rr)
@@ -1290,14 +1290,16 @@ def step5s():
     EA.check_release_loaded(st, new)
     rec("5s", "REAL", f"포인터 교체(활성화 2회째) 전후로 {', '.join(SWAP_SERVICES)} 컨테이너의 ID 와 StartedAt 이 같다(docker inspect 의 두 필드만 읽음). model-serving 의 /v1/releases/{new} 가 LOADED(오류 없음). 변경된 것은 model-serving 의 적재 릴리스뿐이다. 어댑터는 시험용 가짜(TEST-SUB)")
 
-def risk_phrase_from_defaults():
-    """survey-service 기본(임시) 위험 문구 목록에서 문구 하나를 읽는다(지어내지 않는다). 빌드 사본의 survey_service/risk_rules.py 의 _PROVISIONAL 을 ast 로 읽는다. (문구, 규칙 키 목록)"""
-    import ast
-    src = (ROOT.parent / "survey-service/survey_service/risk_rules.py").read_text(encoding="utf-8")
-    for node in ast.parse(src).body:
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "_PROVISIONAL" for t in node.targets):
-            d = ast.literal_eval(node.value); k = "chest-pain" if "chest-pain" in d else next(iter(d)); return d[k][0], list(d)
-    raise AssertionError("risk_rules.py 에서 _PROVISIONAL 을 찾지 못했다")
+RISK_RULES = ROOT / "test/risk-rules.e2e.json"   # deploy 가 정한 시험용 규칙(계약 SurveyRiskRulesFile). survey-service 에는 test/compose.risk-rules.yaml 이 SURVEY_RISK_RULES_FILE 로 연결한다
+
+def risk_phrase():
+    """E2E 가 survey-service 에 넣은 시험용 규칙 파일에서 위험 문구를 읽는다(영역 내부 파일을 읽지 않는다, U48). (문구, 규칙 id 목록)"""
+    doc = json.loads(RISK_RULES.read_text(encoding="utf-8"))
+    try: v = bc.validator("SurveyRiskRulesFile")
+    except Exception: v = None   # 계약 2.8.0 이전 패키지에는 스키마가 없다: 검증하지 못했음을 알린다(통과로 세지 않는다)
+    if v is None: print("  !! SurveyRiskRulesFile 스키마가 설치된 계약 패키지에 없어 시험 규칙 파일을 검증하지 못했다(계약 2.8.0 이상 필요) !!")
+    else: validate("SurveyRiskRulesFile", doc)
+    rule = doc["rules"][0]; return rule["match"]["any_of"][0]["contains"], [r["id"] for r in doc["rules"]]
 
 @step('5f', repos=('survey-service', 'ops-feedback', 'kiosk-frontend') + _GW, deps=('4',),
       why="STATE['pointers'] 를 읽는다. " + _P4,
@@ -1330,16 +1332,17 @@ def step5f():
     c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 == 401, ("Bearer 는 사람 계정 경로의 자격이 아니다: 401 (계약 6절)", c3)   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
-    # (d) 위험 감지는 기본으로 켜져 있다(D88 U1·U2, survey-service ADR-0013): 모든 발화 턴의 원문에 임시 기본 목록(임상 검토 전)을 먼저 적용한다. 알림은 모델 추출·쓰기 확정과 무관하게 먼저 나간다
+    # (d) 위험 감지: 모든 발화 턴의 원문에 규칙을 먼저 적용한다(D88 U1·U2). 규칙은 E2E 가 SURVEY_RISK_RULES_FILE 로 넣은 시험용 파일(계약 SurveyRiskRulesFile)이다. 알림은 모델 추출·쓰기 확정과 무관하게 먼저 나간다
+    # (옛 검사 '임시 기본 목록(PROVISIONAL_DEFAULT) 켜짐'은 규칙 파일을 주입하면 성립하지 않아 뺐다. /readyz 의 source·provisional 값은 규칙 파일일 때의 모양을 deploy 가 알지 못해 단정하지 않는다)
     c, rz = survey_ready(); sas = rz.get("staff_alert_source") or {}
-    assert sas.get("active") is True and sas.get("provisional") is True and sas.get("clinically_reviewed") is False and sas.get("source") == "PROVISIONAL_DEFAULT" and sas.get("rule_count", 0) > 0, f"/readyz 의 staff_alert_source 가 '켜짐, 임시 기본 목록, 임상 검토 전'이 아니다: {sas}"
-    phrase, rule_ids = risk_phrase_from_defaults()
+    phrase, rule_ids = risk_phrase()
+    assert sas.get("active") is True and sas.get("rule_count") == len(rule_ids), f"/readyz 의 staff_alert_source 가 '켜짐, 규칙 {len(rule_ids)}개'가 아니다: {sas}"
     s0 = f"sess-{RID}-risk0"; assert kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
     c, ok_ = public_turn(s0, "rk0-1", "네 있어요"); assert c == 200 and not ok_.get("turn_failure_signal"), ("위험 문구가 없는 발화는 정상 진행해야 한다", c, ok_)
     c, stn = state_of(s0); validate("SessionState", stn); assert stn["state"] == "ACTIVE", ("위험 문구가 없는데 세션이 멈췄다", stn)
     c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); assert not [x for x in pg0["items"] if x["session_id"] == s0], "위험 문구가 없는데 알림이 있다"
     vals_before = staff_sv(s0)["values"]
-    risk_text = f"저는 {phrase} 있어요"   # 기본 목록(survey-service risk_rules.py)에서 읽은 위험 문구로 만든 시험 문장
+    risk_text = f"저는 {phrase} 있어요"   # E2E 가 주입한 시험 규칙 파일의 위험 문구로 만든 시험 문장
     c, rr = public_turn(s0, "rk0-2", risk_text); assert c == 200, (c, rr); validate_survey("FrontendInput", rr)
     fs = rr.get("turn_failure_signal") or {}
     assert fs.get("staff_alert") in ("DELIVERED", "DELIVERY_FAILED"), ("위험 발화인데 직원 알림 신호가 없다(키오스크가 대기/직원 호출 화면으로 갈 신호)", rr)
@@ -1349,7 +1352,7 @@ def step5f():
     sv0 = staff_sv(s0); assert sv0["status"] == "PAUSED_RISK" and sv0["values"] == vals_before, ("위험 정지 턴의 답이 저장됐거나 상태가 다르다", sv0["status"], sv0["values"], vals_before)
     hits = (survey_ready()[1].get("staff_alert_source") or {}).get("hits_by_rule") or {}; assert sum(hits.values()) >= 1, ("/readyz hits_by_rule 에 적중이 없다", hits)
     kiosk(f"/v1/sessions/{s0}/end", {"session_id": s0, "kind": "SESSION_END"})
-    rec("5k", "REAL", f"위험 감지 기본 켜짐(D88 U1·U2): /readyz staff_alert_source active=true, provisional=true, clinically_reviewed=false, 규칙 {sas['rule_count']}개(임시 기본 목록, 임상 검토 전). 위험 문구가 없는 발화는 정상 진행(ACTIVE, 알림 없음). 기본 목록에서 읽은 문구('{phrase}')가 든 발화는 turn_failure_signal.staff_alert={fs.get('staff_alert')}, 세션 PAUSED_RISK, 직원 알림 목록(OPEN)에 나타남, 답은 저장되지 않음, /readyz hits_by_rule 적중 {sum(hits.values())}. 거짓 알림 가능성과 임상 검토 전이라는 한계는 survey-service 문서의 것이다")
+    rec("5k", "REAL", f"위험 감지 켜짐(D88 U1·U2): /readyz staff_alert_source active=true, 규칙 {sas['rule_count']}개(E2E 가 SURVEY_RISK_RULES_FILE 로 넣은 시험 규칙, 계약 SurveyRiskRulesFile). 위험 문구가 없는 발화는 정상 진행(ACTIVE, 알림 없음). 시험 규칙의 문구('{phrase}')가 든 발화는 turn_failure_signal.staff_alert={fs.get('staff_alert')}, 세션 PAUSED_RISK, 직원 알림 목록(OPEN)에 나타남, 답은 저장되지 않음, /readyz hits_by_rule 적중 {sum(hits.values())}. 거짓 알림 가능성과 임상 검토 전이라는 한계는 survey-service 문서의 것이다")
     rec("5x", "BLOCKED", "실제 브라우저에서의 화면 동작, STT(Web Speech API), 웹 푸시 수신은 E2E에서 볼 수 없다(보안 출처 HTTPS·VAPID 키 필요, 푸시는 VAPID 없이 비활성: SSE만 확인). 운영 TLS·직원 콘솔 인증 방식은 미정")
 
 def trace_env(release_id, n):
