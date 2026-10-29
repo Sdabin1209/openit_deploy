@@ -96,7 +96,13 @@ ORDERED = [(n, p[0], p[1] if len(p) > 1 else "") for n, p in load_pipe_file(ORDE
 EXCLUDE = [(n, p[0], p[1] if len(p) > 1 else "") for n, p in load_pipe_file(EXCLUDE_FILE)]   # (줄, 종류:이름, 이유)
 
 
+# 퇴역한 영역(areas.json 의 _retired: 이름과 이유)은 따로 제외 목록을 만들지 않고 정본에서 읽는다(목록이 둘이 되지 않게)
+RETIRED = {r["name"]: r.get("why", "") for r in _AREAS.get("_retired", [])}
+
+
 def excluded(key: str) -> str | None:
+    if key.startswith("area:") and RETIRED.get(key[5:]):
+        return "퇴역 영역: " + RETIRED[key[5:]][:60]
     for _, k, why in EXCLUDE:
         if k == key and why:
             return why
@@ -569,7 +575,7 @@ def rule_removed_names() -> R:
         nonlocal unread
         out = []
         # turn-engine 은 퇴역했다(D109, 계약 3.0): 어느 영역도 turn_engine 을 import 하면 안 된다. 정적 import, __import__, importlib.import_module 의 문자열 상수를 본다
-        for n in ([] if repo == "turn-engine" else ast.walk(tree)):   # 퇴역한 turn-engine 리포 자신은 제외한다
+        for n in ast.walk(tree):
             mods = []
             if isinstance(n, ast.Import): mods = [a.name for a in n.names]
             elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module: mods = [n.module]

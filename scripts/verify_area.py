@@ -21,8 +21,9 @@ sys.path.insert(0, str(HERE))
 import e2e_plan as PLAN
 DEPLOY_ROOT = HERE.parent
 CONFIG = DEPLOY_ROOT / "config" / "verify-areas.yaml"
-AREAS = ["survey-service", "release-gate", "ops-feedback", "question-authoring", "model-runtime",
-         "model-lab", "kiosk-frontend", "admin-console", "synthetic-data", "deploy"]
+import areas as AREAS_FILE_API  # noqa: E402
+# 영역 목록의 정본은 head/shared/areas.json 하나다(areas.py 로 읽는다). 시험이 있는 영역 = python·node·compose 종류(docs·library 는 verify-areas.yaml 에 없다)
+AREAS = AREAS_FILE_API.names(kinds={"python", "node", "compose"})
 # 이미지 이름 -> 소스 리포지토리. 정본은 scripts/lib.sh 의 SERVICES·service_repo 한 곳이다(두 정본을 두지 않는다, U42): 여기서 셸에 물어 만든다.
 def _image_src():
     out = subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source "$1/scripts/lib.sh"; for s in $SERVICES; do echo "$s $(service_repo "$s")"; done', "_", str(DEPLOY_ROOT)],

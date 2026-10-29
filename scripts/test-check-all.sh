@@ -34,7 +34,9 @@ mk deploy; mkschema; echo '{"a":"1"}' > "$W/$BC/examples/Bar.json"; mkdir -p "$W
 unset EXC
 
 echo "== 1 버전표"
-mk survey-service release-gate model-lab ops-feedback question-authoring synthetic-data turn-engine model-runtime kiosk-frontend admin-console; run 1 CHECK_ALL_VERSIONS_CMD=true; expect "버전표 일치(대리 명령 성공)" PASS "검증됨 9/10"
+# 영역 이름은 areas.json(정본)에서 areas.py 로 읽는다: 시험이 목록을 따로 적으면 영역이 바뀔 때 어긋난다
+GITAREAS=$(python3 "$HERE/areas.py" --file "$HERE/../../head/shared/areas.json" --kind python,node); NG=$(wc -w <<<"$GITAREAS"); NV=$(python3 "$HERE/areas.py" --file "$HERE/../../head/shared/areas.json" --kind python,node --train | wc -w)   # 버전 열차에 든 영역만 대조 대상이다(version_train)
+mk $GITAREAS; run 1 CHECK_ALL_VERSIONS_CMD=true; expect "버전표 일치(대리 명령 성공)" PASS "검증됨 $NV/$NG"
 run 1 CHECK_ALL_VERSIONS_CMD=false; expect "버전표 불일치(대리 명령 실패)는 FAIL" FAIL
 printf '#!/usr/bin/env bash\necho "검증하지 못했다: 빌드 기록이 없다"\nexit 3\n' > "$W/rc3.sh"
 run 1 CHECK_ALL_VERSIONS_CMD="$W/rc3.sh"; expect "이미지를 검증하지 못하면(종료 3) SKIP(통과 아님)" SKIP "검증하지 못했다"
@@ -58,8 +60,14 @@ run 3 CHECK_ALL_MR_PY="$W/py-bad"; expect "규칙을 빼면 FAIL" FAIL
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "venv 가 없으면 SKIP(검증 안 함 1)" SKIP "검증 안 함 1"
 run 3 CHECK_ALL_MR_PY="$W/없음"; expect "SKIP 이유에 해결 방법이 붙는다" SKIP "prepare-areas.sh model-runtime"
 
+echo "== 0b 퇴역 영역(areas.json 의 _retired)은 모르는 대상이 아니다"
+mk deploy head; mkdir -p "$W/old-area/.git"; unset EXC; run 0; expect "퇴역하지 않은 모르는 영역은 FAIL" FAIL "모르는 대상: old-area"
+python3 - "$W/head/shared/areas.json" <<'PY'
+import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["_retired"]=[{"name":"old-area","why":"시험용 퇴역"}]; json.dump(d,open(p,"w"))
+PY
+run 0; expect "_retired 에 있으면 제외(이유와 함께 출력)" PASS "퇴역 영역"
 echo "== 4 삭제된 이름의 잔존 (ast 로 읽는다): 지원하지 않는 프롬프트 템플릿, 퇴역한 turn_engine"
-truth(){ mkdir -p "$W/model-runtime/src/model_runtime" "$W/turn-engine/turn_engine" "$W/boundary-contracts/boundary_contracts"
+truth(){ mkdir -p "$W/model-runtime/src/model_runtime" "$W/boundary-contracts/boundary_contracts"
   printf 'def _u7(role, i):\n    return ""\n\n\n_USER = {"prompt-7": _u7}\n' > "$W/model-runtime/src/model_runtime/prompts.py"
   printf 'PIPELINE_SCHEMA_VERSION = "9.9"\n' > "$W/boundary-contracts/boundary_contracts/schemas_api.py"; }
 mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "깨끗하면 PASS" PASS

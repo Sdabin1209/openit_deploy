@@ -1,5 +1,11 @@
 # 변경 이력
 
+## wo-303: 영역 목록은 areas.json만 (turn-engine 퇴역 반영)
+- areas.json에서 turn-engine이 빠지자 `test-check-all.sh`가 영역 이름을 직접 적어 어긋났다. 시험이 `areas.py`로 영역을 읽는다(대조 대상 수도 `version_train`에서 계산). `test-build-images.sh`의 가짜 작업 공간도 같다.
+- `verify_area.AREAS`는 `areas.py`(python·node·compose 종류)에서 읽는다. 하드코딩 목록을 지웠다.
+- check-all 규칙 0: areas.json의 `_retired`에 있는 영역은 모르는 대상이 아니라 제외로 출력한다(제외 목록을 따로 만들지 않는다). 규칙 4의 turn-engine 리포 예외를 지웠다(영역에서 빠져 스캔 대상이 아니다).
+- 남긴 것: 서비스(compose 서비스·이미지) 이름 목록은 영역이 아니라 서비스라 `lib.sh`의 `SERVICES`가 정본이다. 작업 트리가 `deploy/build/` 아래일 때는 `AREAS_FILE`을 지정해야 areas.py가 head를 찾는다.
+
 ## wo-300 후속: deploy 자기 설정을 계약으로 검증
 - `config/ops-feedback-job.yaml`의 `rollback: null`이 계약 OpsFeedbackJobConfig(rollback은 object, 없으면 키를 뺀다)를 어겼다. 2.7.0부터 어떤 시험에도 걸리지 않았다. 키를 빼고 이유를 주석으로 남겼다(기준 값은 사용자 결정 전이라 객체를 채우지 않는다).
 - `scripts/test_config_contracts.py`(e2e.sh 자체 점검): 계약 스키마가 있는 deploy 설정(ops-feedback 잡 설정 2개, E2E 위험 규칙 파일)을 계약 validator로 검증하고, `config/` 바로 아래 yaml·json이 계약 대상(CONTRACT)인지 deploy 자신의 형식(OWN, 이유 필수)인지 분류되지 않았으면 실패한다.
