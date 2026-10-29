@@ -36,7 +36,7 @@ DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.0.0}"          # boundary-contracts: 모�
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.10.0}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
-DEPLOY_SS_TAG="survey-schema-v1.3.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
+DEPLOY_SS_TAG="survey-schema-v2.0.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
 # 영역(리포) 목록은 head/shared/areas.json 이 정본이다. 셸에서는 이 함수 하나로 읽는다(python3 areas.py 를 부른다. 왜: jq 가 없는 호스트가 있고 셸로 JSON 을 파싱하면 깨지기 쉽다).
 # 사용: areas_list [--kind python,node,library,compose,docs] [--train] [--except 이름,이름]  -> 공백으로 이은 이름. 시험용 위치: AREAS_FILE
 areas_list() { python3 "$(dirname "${BASH_SOURCE[0]}")/areas.py" --file "${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}" "$@"; }
