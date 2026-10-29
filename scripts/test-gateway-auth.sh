@@ -5,7 +5,7 @@ source "$(dirname "$0")/lib.sh"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; export SECRETS_DIR=$T
 GW=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 FAILS=0; ok() { local n=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $n"; else echo "  FAIL $n"; FAILS=$((FAILS+1)); fi; }
-val() { docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$T/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$T/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$T/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile; }
+val() { docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$T/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$T/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$T/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile; }
 OUT=$(bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$T" 2>&1); ok "gen-secrets.sh 성공" test -s "$T/gateway-accounts.caddy"
 ok "출력에 암호·해시·토큰 값이 없다" bash -c '! grep -qE "[0-9a-f]{40}|\$2[aby]\$" <<<"$1"' _ "$OUT"
 ok "계정마다 암호·해시 파일(호스트 전용이라 모드 600, adr/0022)" bash -c 'for a in staff-e2e operator-e2e trainer-e2e reviewer-e2e; do for k in password hash; do [ "$(stat -c %a $1/tokens/account-$a-$k)" = 600 ] || exit 1; done; done' _ "$T"
@@ -26,7 +26,7 @@ GATEWAY_ACCOUNTS_CONF="$T/bad-role.conf" bash -c 'source "$1/scripts/lib.sh"; so
 # 교차 사이트 요청 방어(점검 M2)의 실제 동작: 가짜 비밀로 gateway 를 띄우고 헤더 조합별 응답을 본다. 인증이 없으면 401 이므로 "403 + 교차 출처 문구"는 이 규칙만의 응답이다. (Docker·Caddy 필요)
 bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add auth-1 >/dev/null 2>&1   # 인증 계약 시험(아래)이 쓸 기기 한 대. 위에서 0대로 만든 목록에 더한다
 CN=gwauth-csrf-$$; docker rm -f $CN >/dev/null 2>&1
-docker run -d --name $CN -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$T/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$T/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$T/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null 2>&1
+docker run -d --name $CN -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$T/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$T/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$T/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null 2>&1
 CP=""; for i in $(seq 1 30); do CP=$(docker port $CN 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$CP" ] && curl -sk -o /dev/null -m 2 "https://127.0.0.1:$CP/healthz" && break; sleep 0.5; done
 cs() { curl -sk -m 5 -o "$T/cs.out" -w '%{http_code}' -X "$1" "${@:3}" "https://127.0.0.1:$CP$2"; }
 csrf_case() { # csrf_case <설명> <기대 코드> <교차 출처 문구 포함 여부> <메서드> <경로> [curl 인자...]
@@ -134,7 +134,7 @@ chkpass "유효한 기기 토큰 POST /v1/sessions" bearer:"$DEVTOK" POST /v1/se
 # 사람 계정이 없는 운영 기본 구성(gen-secrets.sh 기본): 사람 경로는 모두 401 이고 Basic 을 안내해야 한다(빈 basic_auth 블록 대신 만든 인증 블록)
 E=$T/empty; bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$E" >/dev/null 2>&1
 CE=gwauth-empty-$$; docker rm -f $CE >/dev/null 2>&1
-docker run -d --name $CE -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$E/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$E/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$E/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null 2>&1
+docker run -d --name $CE -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$E/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$E/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$E/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null 2>&1
 CP_SAVE=$CP; CP=""; for i in $(seq 1 30); do CP=$(docker port $CE 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$CP" ] && curl -sk -o /dev/null -m 2 "https://127.0.0.1:$CP/healthz" && break; sleep 0.5; done
 chk401 "계정 0개 구성: GET /v1/staff/alerts" Basic - GET /v1/staff/alerts
 chk401 "계정 0개 구성: POST /v1/activate" Basic - POST /v1/activate
@@ -147,7 +147,7 @@ ORGPW="org-test-password-$$"; ORGH=$(printf '%s\n%s\n' "$ORGPW" "$ORGPW" | docke
 ( umask 077; printf 'kim.staff staff %s\nlee.op operator %s\n' "$ORGH" "$ORGH" > "$O/staff-accounts.conf" )
 SECRETS_DIR="$O" bash "$DEPLOY_ROOT/scripts/apply-accounts.sh" >/dev/null 2>&1
 CO=gwauth-org-$$; docker rm -f $CO >/dev/null 2>&1
-docker run -d --name $CO -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$O/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$O/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$O/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null
+docker run -d --name $CO -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$O/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$O/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$O/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null
 CP_SAVE=$CP; CP=""; for i in $(seq 1 30); do CP=$(docker port $CO 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$CP" ] && curl -sk -o /dev/null -m 2 "https://127.0.0.1:$CP/healthz" && break; sleep 0.5; done
 orgcall() { curl -sk -m 5 -o /dev/null -w '%{http_code}' -u "$1:$2" -X "$3" "https://127.0.0.1:$CP$4"; }
 AN=$((AN+4))

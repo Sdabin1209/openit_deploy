@@ -9,7 +9,7 @@ N=0; F=0
 ok() { local name=$1; shift; N=$((N+1)); if out=$("$@" 2>&1); then echo "  PASS $name"; else echo "  FAIL $name"; printf '%s\n' "$out" | tail -3 | cut -c1-220 | sed 's/^/       /'; F=$((F+1)); fi; }
 GW=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 val() { [ -s "$1/gateway-accounts.caddy" ] || { echo "gateway-accounts.caddy 없음"; return 1; }   # 없는 파일을 마운트하면 Docker 가 root 소유 폴더를 만든다
-  docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$1/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$1/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile; }
+  docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$1/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$1/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile; }
 
 P=$T/prod; F2=$T/fixt
 bash "$HERE/gen-secrets.sh" "$P" >/dev/null 2>&1

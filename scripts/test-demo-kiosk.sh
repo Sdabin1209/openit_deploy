@@ -33,6 +33,6 @@ ok "운영: 모방 백엔드가 없다" bash -c '! grep -q "mimic" "$1"' _ "$T/p
 ok "demo.sh --mimic-flow-file 에 값이 없으면 거부" bash -c '! bash $1/scripts/demo.sh up --mimic-flow-file' _ "$DEPLOY_ROOT"
 ok "demo.sh 안내 출력에 토큰 값을 쓰지 않는다(토큰 파일 내용이 demo.sh 에 없다)" bash -c '! grep -qF "$(python3 -I -c "import json,sys;print(json.load(open(sys.argv[1]))[\"device_token\"])" "$1")" "$2"' _ "$DEMO_KIOSK_CONFIG" "$DEPLOY_ROOT/scripts/demo.sh"
 if command -v docker >/dev/null 2>&1 && GW=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock") && [ -n "$GW" ] && docker image inspect "$GW" >/dev/null 2>&1; then
-  ok "Caddyfile 사본이 caddy validate 통과" docker run --rm -v "$DEMO_CADDYFILE:/etc/caddy/Caddyfile:ro" -v "$SECRETS_DIR/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$SECRETS_DIR/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$SECRETS_DIR/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile
+  ok "Caddyfile 사본이 caddy validate 통과" docker run --rm -v "$DEMO_CADDYFILE:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$SECRETS_DIR/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$SECRETS_DIR/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$SECRETS_DIR/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile
 else echo "  SKIP caddy validate (gateway 이미지가 로컬에 없다)"; fi
 [ $FAILS = 0 ] && echo "OK 데모 구성 자체 시험" || { echo "FAIL ${FAILS}건"; exit 1; }
