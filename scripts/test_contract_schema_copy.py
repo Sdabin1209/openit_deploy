@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""계약 패키지(boundary_contracts, 2.2.0 부터 ImageLabels 등 deploy 경계 스키마 8개를 가진다)와 deploy 의 contract-ready 사본이 같은지,
-그리고 check_image_labels.py 가 설치된 계약 패키지의 스키마를 사본보다 먼저 쓰는지 고정한다. 다르면 계약 쪽이 정본이다(사본을 계약에 맞춘다).
+"""계약 패키지(boundary_contracts)가 deploy 경계 스키마를 가졌고, deploy 리포에 스키마 사본이 없으며, check_image_labels.py 가 계약 패키지의 스키마를 쓰는지 고정한다.
+왜: 공통 규칙 '스키마는 패키지에 들어 있으므로 복사본을 만들지 않는다'. 예전에는 contract-ready/ 사본을 두고 패키지와 같은지 비교했으나(승격 전 임시 정본), 사본은 패키지와 어긋나
+(BuildImageRequest 등 4개) 정본이 둘이 됐다. 사본을 지웠고, 이 시험은 사본이 다시 생기지 않음을 확인한다.
 사용: <deploy .venv>/bin/python scripts/test_contract_schema_copy.py   (계약 패키지가 설치된 파이썬. 패키지에 스키마가 없으면 실패: 통과로 세지 않는다)"""
 import json, pathlib, subprocess, sys, unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
-COPY = HERE.parent / "docs/change-requests/contract-ready/schemas"
+ROOT = HERE.parent
 NAMES = ["BuildImageRequest", "BuildImageResult", "Exposure", "ImageLabels", "JobsDeclaration", "PublishRequest", "PublishResult", "SetupEnvReport"]
 
 
@@ -17,13 +18,17 @@ def pkg_dir():
 class T(unittest.TestCase):
     def test_package_has_all_deploy_schemas(self):
         missing = [n for n in NAMES if not (pkg_dir() / f"{n}.schema.json").is_file()]
-        self.assertEqual(missing, [], "설치된 계약 패키지에 deploy 경계 스키마가 없다(2.2.0 이상이 필요하다)")
+        self.assertEqual(missing, [], "설치된 계약 패키지에 deploy 경계 스키마가 없다")
 
-    def test_copy_equals_package(self):
-        diff = [n for n in NAMES if json.loads((COPY / f"{n}.schema.json").read_text(encoding="utf-8")) != json.loads((pkg_dir() / f"{n}.schema.json").read_text(encoding="utf-8"))]
-        self.assertEqual(diff, [], "contract-ready 사본이 계약 패키지와 다르다(계약이 정본: 사본을 맞춘다)")
+    def test_no_schema_copies_in_repo(self):
+        files = [p for p in ROOT.rglob("*.schema.json") if not any(x in p.parts for x in (".venv", "build", "node_modules", ".git", "state"))]
+        # deploy 자신의 내부 파일 형식 스키마(schemas/, ADR 0034)는 계약이 아니라 deploy 의 것이므로 허용한다
+        bad = [str(p.relative_to(ROOT)) for p in files if p.parent.name != "schemas" or p.parent.parent != ROOT]
+        self.assertEqual(bad, [], f"계약 스키마 사본이 리포에 있다(정본은 계약 패키지): {bad}")
+        for n in NAMES:
+            self.assertFalse((ROOT / "schemas" / f"{n}.schema.json").exists(), f"deploy schemas/ 에 계약 스키마 {n} 사본이 있다")
 
-    def test_checker_prefers_package(self):
+    def test_checker_uses_package(self):
         labels = {"io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.6.0", "io.openit.contracts.survey-schema": "1"}
         p = subprocess.run([sys.executable, "-W", "ignore", str(HERE / "check_image_labels.py")], input=json.dumps(labels), capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

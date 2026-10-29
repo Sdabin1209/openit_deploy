@@ -11,7 +11,7 @@
 
 1. 계약 `ImageLabels`(필수 4개, turn-engine·model-runtime·langgraph는 해당 서비스에만, 값 없음은 `n/a` 하나, revision hex만, io.openit.* 모르는 키 거부)를 정본으로 삼아 `scripts/check_image_labels.py`가 검증한다.
 2. `build-images.sh`(빌드 직후), `publish-image.sh`(종료 코드 3), `publish-images.sh`, `e2e.sh`의 라벨 점검이 같은 검사기를 부른다(`lib.sh`의 `validate_image_labels`). 검사를 못 한 경우(스키마·jsonschema 없음)도 통과가 아니라 거부다.
-3. 스키마 출처: 설치된 계약 패키지에 `ImageLabels.schema.json`이 있으면 그것, 없으면 `docs/change-requests/contract-ready/schemas` 사본(계약 릴리스 전의 임시 정본). 계약 태그에 오르면 사본을 지운다.
+3. 스키마 출처: 설치된 계약 패키지의 `ImageLabels.schema.json`. (갱신: 계약 릴리스 전의 임시 정본이던 `contract-ready/schemas` 사본과 폴백은 지웠다. 패키지가 없으면 검사를 못 한 것으로 종료 2, 통과 아님.) 계약 태그에 오르면 사본을 지운다.
 4. deploy가 Dockerfile ARG로 넘기는 값(ops-feedback, dataset-store, model-serving, question-authoring)은 deploy가 형식을 맞춘다. Dockerfile 상수나 영역 스크립트가 정하는 값(question-authoring의 `none`, release-gate의 v 접두사)은 영역이 고친다(변경 요청 CR-D28). deploy가 `docker build --label`로 덮어쓰지 않는다.
 
 ## 왜 (따른 표준과 근거)

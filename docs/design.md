@@ -61,7 +61,7 @@
 ## 3. 로컬 레지스트리와 CI 제출 (D24)
 
 - `compose.registry.yaml`(registry:2, 별도 프로젝트). 운영은 `127.0.0.1:5000`, 볼륨 `registry-data`.
-- 빌드는 `scripts/build-images.sh`: 영역 리포지토리를 `git archive HEAD`로 `build/ctx/<이름>`에 꺼내 그 사본에서 영역의 빌드 스크립트(wheel 만들기)를 실행하고 `docker build`한다. 라이브러리(boundary-contracts, turn-engine, model-runtime)는 영역 스크립트가 `git -C ../<이름> archive <태그>`로 읽으므로 `build/ctx/<이름>`에 bare 사본을 둔다. 이웃 리포지토리는 수정하지 않는다.
+- 빌드는 `scripts/build-images.sh`: 서비스마다 계약 BuildImageRequest(source_dir=영역 자신의 리포 루트(커밋 안 된 추적 파일 변경이 있으면 멈춘다; 추론 서버만 기준표 태그의 git archive 사본 `build/ctx/src/model-serving`), revision, versions=lib.sh 기준표, dependency_sources=기준표 태그에서 꺼낸 boundary-contracts·model-runtime·문진 스키마 `build/ctx/dep/`, image_tag)를 쓰고 그 영역의 `scripts/build-image.sh <요청>`만 부른다. 결과 BuildImageResult(image, image_id, labels)는 계약 validator로 검증한다. deploy는 영역의 Dockerfile 인자·빌드 산출 파일을 모른다(구조 규칙 1, U42). 이웃 리포지토리는 수정하지 않는다.
 - `publish-images.sh`: push → 레지스트리 digest와 push 출력의 digest가 같은지 확인 → 잠금 갱신. 지금은 CI가 없어 사람이(또는 스케줄러가) 돌린다. 영역 CI가 생기면 같은 일(이미지 push, digest 제출)을 CI가 하고 deploy는 `locks/images.lock` 갱신 절차만 둔다. 제출 방법(PR인지 API인지)은 미정(D24).
 - 환경 제약(확인): Docker Desktop(WSL)은 데몬이 VM 안에 있어, Docker가 배정한 임의 호스트 포트나 `127.0.0.1` 게시 포트에는 데몬이 접근하지 못했다. `0.0.0.0` 게시와 지정 포트는 되었다. 그래서 시험은 레지스트리만 "빈 포트를 골라 `0.0.0.0`에 잠시" 띄운다(`registry.sh`, 끝나면 내림). 리눅스 서버에서는 기본값 `127.0.0.1:5000`이면 된다.
 

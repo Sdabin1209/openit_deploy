@@ -9,8 +9,8 @@ ok() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  P
 no() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  FAIL $name (성공하면 안 된다)"; F=$((F+1)); else echo "  PASS $name"; fi; }
 # 임시 deploy 사본(실제 build/, locks/, state/ 를 건드리지 않는다). model-runtime 은 읽기 전용으로 링크한다
 mkdir -p "$T/deploy/build" && cp -r "$HERE" "$T/deploy/scripts" && cp -r "$ROOT/locks" "$T/deploy/locks" && ln -s "$WS/model-runtime" "$T/model-runtime"
-# 게시 전 라벨 검증(ADR 0035)이 읽는 계약 ImageLabels 스키마 사본도 임시 사본에 둔다(없으면 검사를 못 해 게시가 거부된다)
-mkdir -p "$T/deploy/docs/change-requests/contract-ready" && cp -r "$ROOT/docs/change-requests/contract-ready/schemas" "$T/deploy/docs/change-requests/contract-ready/schemas"
+# 게시 전 라벨 검증(ADR 0035)은 계약 패키지의 ImageLabels 를 쓴다: 임시 사본에는 .venv 가 없으므로 계약 패키지가 설치된 파이썬(주 작업 트리의 .venv)을 준다
+LABELS_PYTHON="$(cd "$(git -C "$ROOT" rev-parse --git-common-dir)/.." && pwd)/.venv/bin/python"; [ -x "$ROOT/.venv/bin/python" ] && LABELS_PYTHON="$ROOT/.venv/bin/python"; export LABELS_PYTHON
 D="$T/deploy"; source "$D/scripts/lib.sh" 2>/dev/null
 CUR=$(git -C "$WS/model-runtime" rev-parse --short "$DEPLOY_MR_TAG^{commit}") || { echo "model-runtime $DEPLOY_MR_TAG 태그가 이 워크스페이스에 없다: 시험할 수 없다"; exit 1; }
 # 가짜 docker: image inspect 는 FAKE_HAVE(공백으로 구분한 이미지 이름)에 있을 때만 성공, tag 는 기록, push 는 digest 를 낸다

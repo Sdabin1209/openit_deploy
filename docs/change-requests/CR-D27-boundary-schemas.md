@@ -3,7 +3,7 @@
 - 상태: 제안 (초안. 영역 코드는 아직 이 스키마를 쓰지 않는다. 헤드가 계약에 올린 뒤의 다음 단계다)
 - 보내는 곳: deploy -> head (영향: 모든 서비스 영역, 계약 패키지)
 - 근거: 점검 보고서 `docs/audit/structure-rules-2026-10-28.md`의 DP-31(E 목록 1~4, 12, 13, 17 등)과 3절 표, 규칙 R6(영역 사이의 스키마는 헤드가 책임진다).
-- 위치: 스키마 `docs/change-requests/schemas/*.schema.json`, 예시 `docs/change-requests/schemas/examples/`, 검증기 `docs/change-requests/schemas/validate.py`. JSON Schema 2020-12.
+- (갱신: 이 초안 스키마 폴더는 계약 승격 뒤 지웠다. 정본은 계약 패키지다.) 위치: 스키마 `docs/change-requests/schemas/*.schema.json`, 예시 `docs/change-requests/schemas/examples/`, 검증기 `docs/change-requests/schemas/validate.py`. JSON Schema 2020-12.
 - 표시: 확인한 것(코드·실제 이미지에서 가져온 값)과 제안(아직 없는 인터페이스)을 구분한다. 제안은 "[제안]"이다.
 
 ## 검증 (재현 명령과 출력)

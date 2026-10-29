@@ -180,7 +180,7 @@ chk "job-metrics 자체 시험 (textfile 지표)" bash "$DEPLOY_ROOT/scripts/tes
 chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
 chk "e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지)" python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 chk "데모 구성 자기 점검 (모방 백엔드·키오스크 /config.json 배선, 운영 구성 불변)" bash "$DEPLOY_ROOT/scripts/test-demo-kiosk.sh"
-chk "계약 패키지 스키마 == deploy contract-ready 사본, 라벨 검사기는 계약 패키지를 먼저 쓴다" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_contract_schema_copy.py"
+chk "계약 패키지에 deploy 경계 스키마가 있다, 스키마 사본이 리포에 없다, 라벨 검사기는 계약 패키지를 쓴다" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_contract_schema_copy.py"
 chk "이미지 라벨 검사기 자체 점검 (계약 ImageLabels: 필수 4개, n/a 하나, revision unknown 거부)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_image_labels.py"
 chk "시험 빌드 라벨 자체 점검 (롤백 시험의 새 버전은 revision 이 아니라 시험 라벨로 다른 digest 를 얻는다)" bash "$DEPLOY_ROOT/scripts/test-build-test-label.sh"
 chk "e2e 계약 열거 값 점검 (직원 알림 kind = RISK_STOP, 낡은 RISK 기대 없음)" python3 "$DEPLOY_ROOT/scripts/test_e2e_contract_values.py"

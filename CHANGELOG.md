@@ -1,7 +1,16 @@
 # 변경 이력
 
+## build-images: 영역 리포 루트에서 진입점을 부른다 (git archive 사본 아님)
+- kiosk-frontend 의 새 진입점(0e94776)이 `Cannot find module 'ajv/dist/runtime/equal'`로 실패했다: 진입점이 영역의 `node_modules`(setup-env 가 준비한 환경)를 쓰는데 git archive 사본에는 환경이 없다. 진입점은 영역이 정하므로(구조 규칙 1) deploy 가 환경을 추측해 사본에 링크하지 않고, 계약 BuildImageRequest 의 `source_dir`(영역 리포 루트) 그대로 영역 리포 루트에서 부른다. 이미지가 HEAD 와 같도록 추적 파일에 커밋 안 된 변경이 있으면 멈춘다(`BUILD_ALLOW_DIRTY=1` 은 개발 중에만). 추론 서버(model-runtime)만 기준표 태그 시점의 소스가 필요해 태그의 git archive 사본을 쓴다.
+- e2e_steps 의 `risk_rules.py` 읽기는 사본 대신 survey-service 리포 경로를 읽는다(영역 내부 파일 읽기라 여전히 정리 대상).
+
+## wo-28 후속: 사본 정리와 verify_area 정본 일원화
+- `test_verify_area.py::test_image_src_matches_build_images_sh`가 `declare -A SRC`를 찾다가 깨졌다. 서비스->리포 대응의 정본은 `lib.sh`(`SERVICES`, `service_repo`) 한 곳이라 `verify_area.IMAGE_SRC`가 셸에 물어 만든다(두 정본 금지). 시험은 `lib.sh`와 같은 값인지, 알려진 대응(model-registry->model-lab 등)이 맞는지, 코드에 따로 적은 표가 없는지 본다.
+- `test_contract_schema_copy.py`가 5c61298부터 실패했다(`contract-ready/schemas` 사본 4개 BuildImageRequest·BuildImageResult·JobsDeclaration·SetupEnvReport가 계약 패키지와 어긋남). 사본은 승격 전 임시 정본이었고 지금 정본은 계약 패키지다. 공통 규칙(스키마는 패키지에 있고 복사본을 만들지 않는다)에 따라 `docs/change-requests/contract-ready/`의 스키마·예시·검증기·MANIFEST와 `docs/change-requests/schemas/`(CR-D27 초안)를 지웠고(README는 승격 기록으로 남김), `check_image_labels.py`의 사본 폴백을 없앴다(패키지가 없으면 종료 2). 시험은 패키지에 deploy 경계 스키마 8개가 있고, 리포에 계약 스키마 사본이 다시 생기지 않았고(deploy 자신의 내부 형식 `schemas/`는 허용), 검사기가 패키지를 쓰는지 본다.
+- 문진 스키마 호스트 wheel(E2E 검증기용)을 survey-service 빌드 산출물(`build/ctx/survey-service/build/wheels`)이 아니라 `dependency_sources.survey_schema`(기준표 태그의 schema/)로 `build-images.sh`가 만들어 `build/hostwheels/survey-schema/`에 둔다(`prepare-host.sh`가 거기서 설치).
+
 ## build-images: 영역 Dockerfile 인자·빌드 산출 파일을 모른다 — 영역 `scripts/build-image.sh`만 부른다 (U42, 구조 규칙 1)
-- 서비스마다 계약 BuildImageRequest JSON(`source_dir`, `revision`, `versions`=lib.sh 기준표, `dependency_sources`=기준표 태그에서 `git archive`로 꺼낸 boundary-contracts·model-runtime·survey-service `schema/`, `variant`, `image_tag`)을 `build/ctx/req-<서비스>.json`에 쓰고 영역 소스 트리(git archive 사본, model-runtime은 기준표 태그) 루트에서 `bash scripts/build-image.sh <요청>`만 부른다. 결과(표준 출력 마지막 줄)는 BuildImageResult로 검증하고 `image`가 요청과 같은지, `image_id`가 로컬 이미지 ID와 같은지 확인한 뒤 `images.env`에 기록한다.
+- 서비스마다 계약 BuildImageRequest JSON(`source_dir`, `revision`, `versions`=lib.sh 기준표, `dependency_sources`=기준표 태그에서 `git archive`로 꺼낸 boundary-contracts·model-runtime·survey-service `schema/`, `variant`, `image_tag`)을 `build/ctx/req-<서비스>.json`에 쓰고 영역 리포 루트(model-runtime만 기준표 태그의 git archive 사본)에서 `bash scripts/build-image.sh <요청>`만 부른다. 결과(표준 출력 마지막 줄)는 BuildImageResult로 검증하고 `image`가 요청과 같은지, `image_id`가 로컬 이미지 ID와 같은지 확인한 뒤 `images.env`에 기록한다.
 - 지운 것: 영역별 Dockerfile 인자(COMMIT, REVISION, BOUNDARY_*, CONTRACTS_VERSION, MODEL_RUNTIME_*, SURVEY_SCHEMA_*, LANGGRAPH …), 영역 산출 파일 읽기(VERSIONS.env, contracts.tag …), wheel 만들기, `--build-context`, `verify_mr_label`(영역 내부 모듈 이름을 알았다), survey-service·release-gate clone.
 - 서비스 -> 리포·variant 대응은 `lib.sh`의 `service_repo`·`service_variant` 한 곳이다(서비스 목록과 같은 자리).
 - 서비스 빌드 전에 deploy venv의 계약을 기준표 태그로 맞춘다(영역 진입점이 요청을 PYTHON의 계약 validator로 검증하므로). **기준표 `DEPLOY_BC_TAG`를 v2.6.0으로 올렸다**: BuildImageRequest가 turn_engine 없이 versions.boundary만 요구하는 판은 2.5.0부터다(v2.4.1의 스키마는 turn_engine을 요구해 진입점 요청이 거부된다). 다른 영역이 아직 2.6.0 아래 핀이면 이미지 라벨이 표와 다르다고 `check-versions`가 알린다.

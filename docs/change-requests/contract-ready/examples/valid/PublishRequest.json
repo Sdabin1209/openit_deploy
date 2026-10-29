@@ -1,5 +1,0 @@
-{
-  "service": "survey-service",
-  "image": "deploy-build/survey-service:85b3552",
-  "registry": "127.0.0.1:5000"
-}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """verify_area.py 자체 시험: Docker·형제 영역 없이 대응표 파싱, 단계 닫힘, 명령 조립, 낡은 이미지 판정을 확인한다."""
-import copy, re, sys, tempfile, unittest
+import copy, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -136,11 +136,16 @@ class T(unittest.TestCase):
         cmds, _ = v.test_command(self.cfg["areas"]["admin-console"], Path("/ws"), "admin-console")
         self.assertIn(("node", "scripts/gen-schemas.mjs", "--check"), cmds)
 
-    def test_image_src_matches_build_images_sh(self):
-        src = (HERE / "build-images.sh").read_text(encoding="utf-8")
-        m = re.search(r"declare -A SRC=\((.*?)\)\n", src)
-        got = dict(re.findall(r"\[([\w-]+)\]=([\w-]+)", m.group(1)))
-        self.assertEqual(got, v.IMAGE_SRC)
+    def test_image_src_comes_from_lib_sh(self):
+        """서비스 -> 리포 대응의 정본은 lib.sh 한 곳이다: verify_area 가 같은 값을 읽고, 알려진 대응이 맞고, 코드에 따로 적은 표가 없다."""
+        out = subprocess.run(["bash", "-c", f'DEPLOY_NO_DOCKER=1; source "{HERE}/lib.sh"; echo "$SERVICES"; service_repo model-registry; service_repo dataset-store; service_repo model-serving; service_repo survey-service'],
+                             capture_output=True, text=True, check=True).stdout.split("\n")
+        self.assertEqual(set(v.IMAGE_SRC), set(out[0].split()))
+        self.assertEqual((v.IMAGE_SRC["model-registry"], v.IMAGE_SRC["dataset-store"], v.IMAGE_SRC["model-serving"], v.IMAGE_SRC["survey-service"]), tuple(out[1:5]))
+        self.assertEqual(v.IMAGE_SRC["model-registry"], "model-lab")
+        src = (HERE / "verify_area.py").read_text(encoding="utf-8")
+        self.assertNotIn('"model-registry": "model-lab"', src, "verify_area.py 에 대응표를 따로 적었다(lib.sh 가 정본)")
+        self.assertNotIn("declare -A SRC", (HERE / "build-images.sh").read_text(encoding="utf-8"))
 
     def test_e2e_sh_accepts_flags_and_env_we_use(self):
         s = (HERE / "e2e.sh").read_text(encoding="utf-8")

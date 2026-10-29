@@ -42,7 +42,7 @@ REAL_BC="$(cd "$(git -C "$HERE" rev-parse --git-common-dir)/../.." && pwd)/bound
 [ -d "$REAL_BC" ] && git -C "$REAL_BC" rev-parse "$BC" >/dev/null 2>&1 || { echo "SKIP: 계약 리포($REAL_BC)에 태그 $BC 가 없다"; exit 0; }
 git -C "$REAL_BC" archive "$BC" | tar -x -C "$T/boundary-contracts"   # 실제 계약 소스(요청·결과 검증기가 여기서 온다)
 ( cd "$T/boundary-contracts" && echo bc-src > SRC_BC && git add -A && $G commit -q -m s && git tag "$BC" ); ( cd "$T/model-runtime" && echo mr-src > SRC_MR && git add -A && $G commit -q -m s && git tag "$MR" )
-( cd "$T/survey-service" && mkdir -p schema && echo '{}' > schema/x.json && git add -A && $G commit -q -m s && git tag "$SSTAG" )
+( cd "$T/survey-service" && mkdir -p schema/survey_schema && echo '{}' > schema/x.json && touch schema/survey_schema/__init__.py && printf '[build-system]\nrequires=["setuptools>=61"]\nbuild-backend="setuptools.build_meta"\n[project]\nname="openit-survey-schema"\nversion="0.0.1"\n[tool.setuptools]\npackages=["survey_schema"]\n' > schema/pyproject.toml && git add -A && $G commit -q -m s && git tag "$SSTAG" )
 # 가짜 docker: info 성공, image inspect --format {{.Id}} 는 항상 a*64 (진입점이 내는 image_id 와 같다), system df 는 아무것도 안 한다
 cat > "$T/docker" <<'FD'
 #!/usr/bin/env bash
@@ -64,7 +64,7 @@ d=json.load(open('$T/req/survey-service.json'))['dependency_sources']
 assert all(v.startswith('/') for v in d.values())
 assert open(d['boundary']+'/SRC_BC').read().strip()=='bc-src' and open(d['model_runtime']+'/SRC_MR').read().strip()=='mr-src' and open(d['survey_schema']+'/x.json').read().strip()=='{}'
 PY"
-ok "요청: model-registry 의 source_dir 는 model-lab 소스다(이웃 리포 경로는 source_dir 로만)" bash -c "grep -q model-lab '$T/req/model-lab.json' && ! grep -q '$T/model-lab' '$T/req/model-lab.json'; [ \"\$(cat \$(python3 -c \"import json;print(json.load(open('$T/req/model-lab.json'))['source_dir'])\")/REPO_MARKER)\" = model-lab ]"
+ok "요청: model-registry 의 source_dir 는 model-lab 리포 루트다" bash -c "[ \"\$(cat \$(python3 -c \"import json;print(json.load(open('$T/req/model-lab.json'))['source_dir'])\")/REPO_MARKER)\" = model-lab ]"
 ok "요청: 기본 이미지는 variant 가 없다" bash -c "! grep -q variant '$T/req/model-runtime.json'"
 ok "진입점 진행 기록(표준 오류)은 파일로 가고 결과 JSON 만 읽는다" bash -c "ls '$D/build/ctx/build-survey-service.err' >/dev/null"
 echo "== GPU variant"
@@ -77,5 +77,8 @@ bad survey-service fail survey-service "영역 진입점이 실패했다"
 bad survey-service nolabels survey-service "BuildImageResult"
 bad ops-feedback otherimage ops-feedback "요청한"
 bad question-authoring badid question-authoring "image_id"
+N=$((N+1)); echo "# dirty" >> "$T/ops-feedback/scripts/build-image.sh"; o=$(cd "$D" && bash scripts/build-images.sh ops-feedback 2>&1); [ $? != 0 ] && grep -q "커밋 안 된 변경" <<<"$o" && echo "  PASS 영역 리포에 커밋 안 된 추적 파일 변경이 있으면 멈춘다" || { echo "  FAIL dirty 감지"; F=$((F+1)); }
+N=$((N+1)); o=$(cd "$D" && BUILD_ALLOW_DIRTY=1 bash scripts/build-images.sh ops-feedback 2>&1); [ $? = 0 ] && echo "  PASS BUILD_ALLOW_DIRTY=1 이면 허용" || { echo "  FAIL BUILD_ALLOW_DIRTY"; F=$((F+1)); }
+( cd "$T/ops-feedback" && git checkout -q scripts/build-image.sh )
 N=$((N+1)); rm -f "$T/synthetic-data/scripts/build-image.sh"; ( cd "$T/synthetic-data" && git add -A && $G commit -q -m rm ); o=$(cd "$D" && bash scripts/build-images.sh dataset-store 2>&1); [ $? != 0 ] && grep -q "진입점이 없다" <<<"$o" && echo "  PASS 영역 진입점이 없으면 이유를 말하고 실패" || { echo "  FAIL 진입점 없음"; F=$((F+1)); }
 echo; [ $F = 0 ] && echo "통과: build-images 자체 시험 ${N}건" || { echo "실패: $F건 ($N건)"; exit 1; }

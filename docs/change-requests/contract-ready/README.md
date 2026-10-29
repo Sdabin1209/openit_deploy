@@ -1,4 +1,6 @@
-# 계약 승격 준비물 (deploy, 2026-10-29, wo6)
+# 계약 승격 준비물 (deploy, 2026-10-29, wo6) — **승격 완료, 사본 삭제 (wo-28)**
+
+> 이 폴더의 스키마 사본·예시·검증기·MANIFEST는 지웠다. 정본은 계약 패키지(boundary-contracts)다(공통 규칙: 스키마는 패키지에 있고 복사본을 만들지 않는다). 아래는 승격 때의 기록이다.
 
 헤드의 `head/docs/audit/boundary-schema-promotion-2026-10-29.md` 표 deploy 행에 따라 CR-D27 초안 8개를 계약 이름으로 정리했다. 코드는 바꾸지 않았다.
 `schemas/`(8개, `$id` = `<이름>.schema.json`, 2020-12), `examples/valid`, `examples/invalid`, `examples/observed`(새 스키마를 어기는 실제 라벨), `MANIFEST.json`, 검증 스크립트 `validate.py`.

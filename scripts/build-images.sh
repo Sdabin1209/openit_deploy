@@ -65,10 +65,14 @@ record() { set -- "$1" "$(apply_test_label "$2")" "$3"   # 시험 ID 가 있으�
 build_one() {
   local svc=$1 repo variant tagref commit src img req out rc
   repo=$(service_repo "$svc"); variant=$(service_variant "$svc")
-  src="$CTX/src/$svc"; rm -rf "$src"; mkdir -p "$src"
-  if [ "$repo" = model-runtime ]; then   # 추론 서버는 기준표 태그 시점의 소스다(이미지 버전 == 기준표)
-    tagref="$MR^{commit}"; git -C "$WORKSPACE/$repo" archive "$MR" | tar -x -C "$src"
-  else tagref=HEAD; git -C "$WORKSPACE/$repo" archive HEAD | tar -x -C "$src"; fi
+  if [ "$repo" = model-runtime ]; then   # 추론 서버는 기준표 태그 시점의 소스다(이미지 버전 == 기준표): 태그의 git archive 사본
+    src="$CTX/src/$svc"; rm -rf "$src"; mkdir -p "$src"; tagref="$MR^{commit}"; git -C "$WORKSPACE/$repo" archive "$MR" | tar -x -C "$src"
+  else
+    # 영역 자신의 리포 루트에서 진입점을 부른다(계약 BuildImageRequest: source_dir = 영역 리포 루트). 영역의 빌드가 자기 시험 환경(node_modules 등 setup-env 가 준비한 것)을 쓸 수 있어야 하므로
+    # git archive 사본(환경이 없다)이 아니다. 대신 이미지가 HEAD 와 같도록 추적 파일에 커밋 안 된 변경이 있으면 멈춘다(BUILD_ALLOW_DIRTY=1 로만 허용).
+    src="$WORKSPACE/$repo"; tagref=HEAD
+    if [ "${BUILD_ALLOW_DIRTY:-0}" != 1 ] && [ -n "$(git -C "$src" status --porcelain --untracked-files=no)" ]; then die "$svc: $repo 에 커밋 안 된 변경이 있다(이미지는 HEAD 커밋 $(git -C "$src" rev-parse --short HEAD)로 표시되므로 먼저 커밋한다. 개발 중에만 BUILD_ALLOW_DIRTY=1)"; fi
+  fi
   commit=$(git -C "$WORKSPACE/$repo" rev-parse --short "$tagref")
   img="deploy-build/$svc:$commit"; req="$CTX/req-$svc.json"
   PYB - "$req" "$src" "$commit" "$BC" "$MR" "$SS_VER" "$DEP" "$variant" "$img" <<'PY'
@@ -103,7 +107,8 @@ print(r["image_id"])' "$img" > "$CTX/id-$svc.txt" || die "$svc: 영역 진입점
 # 서비스를 빌드하기 **전에** deploy venv 의 계약을 기준표 태그로 맞춘다(낡은 계약이면 요청 검증이 어긋난다).
 mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
 d="$DEPLOY_ROOT/build/hostsrc-$BC"; rm -rf "$d"; mkdir -p "$d"; cp -a "$DEP/boundary/." "$d/"
-mkdir -p "$DEPLOY_ROOT/build/hostwheels/$BC"; "$PIP" wheel -q --no-deps -w "$DEPLOY_ROOT/build/hostwheels/$BC" "$d" >/dev/null 2>&1 || die "계약 $BC 의 호스트 wheel 을 만들지 못했다"
+mkdir -p "$DEPLOY_ROOT/build/hostwheels/$BC"; "$PIP" wheel -q --no-deps --no-build-isolation -w "$DEPLOY_ROOT/build/hostwheels/$BC" "$d" >/dev/null 2>&1 || die "계약 $BC 의 호스트 wheel 을 만들지 못했다"
+mkdir -p "$DEPLOY_ROOT/build/hostwheels/survey-schema"; "$PIP" wheel -q --no-deps --no-build-isolation -w "$DEPLOY_ROOT/build/hostwheels/survey-schema" "$DEP/survey_schema/schema" >/dev/null 2>&1 || die "문진 스키마 호스트 wheel 을 만들지 못했다(E2E 검증기용)"
 "$PIP" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$BC"/boundary_contracts-*.whl >/dev/null 2>&1 || die "deploy venv 에 계약 $BC 를 설치하지 못했다"
 
 for svc in $SERVICES; do want "$svc" && build_one "$svc"; done

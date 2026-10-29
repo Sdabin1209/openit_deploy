@@ -1281,7 +1281,7 @@ def step5s():
 def risk_phrase_from_defaults():
     """survey-service 기본(임시) 위험 문구 목록에서 문구 하나를 읽는다(지어내지 않는다). 빌드 사본의 survey_service/risk_rules.py 의 _PROVISIONAL 을 ast 로 읽는다. (문구, 규칙 키 목록)"""
     import ast
-    src = (ROOT / "build/ctx/src/survey-service/survey_service/risk_rules.py").read_text(encoding="utf-8")
+    src = (ROOT.parent / "survey-service/survey_service/risk_rules.py").read_text(encoding="utf-8")
     for node in ast.parse(src).body:
         if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "_PROVISIONAL" for t in node.targets):
             d = ast.literal_eval(node.value); k = "chest-pain" if "chest-pain" in d else next(iter(d)); return d[k][0], list(d)

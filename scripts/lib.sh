@@ -13,7 +13,7 @@ apply_test_label() { # apply_test_label <이미지 이름:태그>  -> 표준 출
   printf 'FROM %s\nLABEL openit.test-build=%s\n' "$1" "$BUILD_TEST_ID" | "$DOCKER" build -q -t "$1-$BUILD_TEST_ID" - >/dev/null || die "시험 라벨을 더하지 못했다: $1"
   echo "$1-$BUILD_TEST_ID"
 }
-# 이미지 라벨이 계약 ImageLabels 스키마를 따르는지 게시 전에 검사한다(헤드 결정 wo8: 스키마 정본은 계약 패키지의 ImageLabels, 릴리스 전에는 docs/change-requests/contract-ready 사본; scripts/check_image_labels.py).
+# 이미지 라벨이 계약 ImageLabels 스키마를 따르는지 게시 전에 검사한다(스키마 정본은 계약 패키지의 ImageLabels: scripts/check_image_labels.py 가 패키지에서 읽는다, 사본 없음).
 # 사용: validate_image_labels <이미지> [표시 이름]  -> 0 통과, 1 어긋남(사유를 표준 출력에), 2 검사를 못 함(jsonschema 없음 등: 통과로 세지 않는다).
 # 왜 파이썬: 스키마(JSON Schema 2020-12) 검증을 셸로 다시 구현하지 않는다. 파이썬은 LABELS_PYTHON, 없으면 deploy .venv, 없으면 python3.
 validate_image_labels() {

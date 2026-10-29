@@ -20,10 +20,14 @@ DEPLOY_ROOT = HERE.parent
 CONFIG = DEPLOY_ROOT / "config" / "verify-areas.yaml"
 AREAS = ["survey-service", "release-gate", "ops-feedback", "question-authoring", "model-runtime",
          "model-lab", "kiosk-frontend", "admin-console", "synthetic-data", "deploy"]
-# 이미지 이름 -> 소스 리포지토리. scripts/build-images.sh 의 SRC 표와 같아야 한다(시험이 대조한다)
-IMAGE_SRC = {"survey-service": "survey-service", "question-authoring": "question-authoring", "ops-feedback": "ops-feedback",
-             "release-gate": "release-gate", "model-registry": "model-lab", "dataset-store": "synthetic-data", "model-serving": "model-runtime",
-             "kiosk-frontend": "kiosk-frontend", "admin-console": "admin-console"}
+# 이미지 이름 -> 소스 리포지토리. 정본은 scripts/lib.sh 의 SERVICES·service_repo 한 곳이다(두 정본을 두지 않는다, U42): 여기서 셸에 물어 만든다.
+def _image_src():
+    out = subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source "$1/scripts/lib.sh"; for s in $SERVICES; do echo "$s $(service_repo "$s")"; done', "_", str(DEPLOY_ROOT)],
+                         capture_output=True, text=True, check=True).stdout
+    return dict(line.split() for line in out.splitlines() if line.strip())
+
+
+IMAGE_SRC = _image_src()
 
 
 class ConfigError(Exception):
