@@ -67,13 +67,13 @@ curl -s http://127.0.0.1:$(docker port deploy-gateway-1 8080/tcp | sed 's/.*://'
 ### 4-1. 설정과 규칙 (백업 없이 운영하지 않는다, D88 U6)
 
 ```
-cp config/backup.env.example config/backup.env    # BACKUP_DIR(서버 밖), BACKUP_RETENTION_DAYS(예시 14), BACKUP_PASSWORD_FILE(restic 저장소 암호 파일) 를 적는다
+cp config/backup.env.example config/backup.env    # BACKUP_REPOSITORY(서버 밖 append-only), BACKUP_REST_CREDENTIAL_FILE, BACKUP_RETENTION_DAYS(예시 14), BACKUP_PASSWORD_FILE(restic 저장소 암호 파일) 를 적는다
 bash scripts/backup-check.sh                       # 읽기 전용 점검. 문제가 있으면 CRIT 와 종료 코드 2
 ```
 
 - 설정이 없거나 불완전하면 `backup.sh`, `pg-backup.sh`, `backup-all.sh`가 "CRIT:" 한 줄과 종료 코드 2로 실패한다. systemd가 실패를 남기고 `job-metrics.sh`가 `openit_job_last_exit_status`로 내보내 `JobFailed` 경보(critical)가 된다. `doctor.sh --up --backup`과 운영 프로젝트(`deploy`)의 `up.sh`는 기동 전에 같은 점검을 하고 FAIL로 막는다. 옛 키(`BACKUP_ENCRYPT_RECIPIENTS` 등)가 남아 있어도 거부한다.
-- 암호화는 restic이 한다(AES-256, 인증된 암호화, 내용 해시로 무결성 검증). **저장소 암호가 서버에 있어야 자동 백업이 돈다**(옛 공개키 방식과 다르다: 서버가 뚫리면 백업도 읽힌다는 점을 감수한다, ADR 0038). 암호 파일은 모드 400/600, `BACKUP_DIR` 밖이어야 한다. **암호를 잃으면 모든 백업을 영영 못 푼다.** 서버 밖 2곳 이상에 따로 보관한다.
-- 보관 14일(설정). 저장소(host)마다 가장 최근 하나는 기간이 지나도 남는다(`restic forget --keep-within --keep-last 1 --prune`).
+- 암호화는 restic이 한다(AES-256, 인증된 암호화, 내용 해시로 무결성 검증). **저장소 암호가 서버에 있어야 자동 백업이 돈다**(옛 공개키 방식과 다르다: 서버가 뚫리면 백업을 읽을 수는 있다. 저장소가 서버 밖 append-only라 지우거나 고칠 수는 없다, ADR 0038·D112). 암호 파일은 모드 400/600, `BACKUP_DIR` 밖이어야 한다. **암호를 잃으면 모든 백업을 영영 못 푼다.** 서버 밖 2곳 이상에 따로 보관한다.
+- 보관 14일(설정). 저장소(host)마다 가장 최근 하나는 기간이 지나도 남는다(`restic forget --keep-within --keep-last 1 --prune`). **서버 밖 append-only 저장소(운영)에서는 서버가 지우지 못하므로 저장소 쪽 `scripts/backup-prune.sh`가 한다(4-7절).**
 
 ### 4-2. 무엇이 어떻게 백업되나
 
@@ -115,6 +115,15 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 - 복구(서버를 새로 세울 때): (1) 암호 파일과 `restic/` 저장소를 놓는다(4-3의 3). (2) `bash scripts/restore-secrets.sh latest secrets --yes`(비어 있지 않은 폴더는 거부, restic이 내용 해시를 검증, 모드는 `lib.sh secret_mode`대로 바로잡고 값은 건드리지 않는다). (3) `bash scripts/check-secret-perms.sh secrets`.
 - 이 복구 시험은 `bash scripts/test-backup-secrets.sh`(secrets/를 통째로 지우고 되살려 `deid-salt`가 같은 값으로 돌아오는지 확인)가 한다. 실제 암호로 푸는 시험은 4-4절의 사람 시험에 secrets 복원도 포함한다.
 - 한계: secrets/가 백업된 시점 이후에 회전한 토큰은 사라진다(회전 뒤 즉시 `backup-secrets.sh`를 한 번 돌린다). 암호 하나로 모든 백업이 풀리므로 암호는 그만큼 중요하다.
+
+### 4-7. 서버 밖 append-only 저장소와 보관 정리 (D112)
+
+- **저장소 쪽(서버 밖 호스트)에서 한 번 준비한다.** `restic/rest-server`를 `--append-only`로 띄운다(예: `rest-server --path /srv/openit-backup --listen :8000 --append-only --htpasswd-file /srv/openit-backup.htpasswd`, 앞에 TLS 종단 또는 `--tls`). htpasswd에 **서버 자격 하나**(백업을 쓰는 계정)만 둔다. 이 호스트의 파일 접근 권한이 곧 **저장소 관리 자격**이다: 서버에는 없다. 저장소 이름은 URL 경로(`/openit`)이고 데이터는 `<path>/openit/`에 쌓인다. 시험·데모는 `compose.backup-target.yaml`이 같은 구성을 컨테이너로 흉내 낸다.
+- **서버 쪽**: `config/backup.env`에 `BACKUP_REPOSITORY=rest:https://호스트:8000/openit`, `BACKUP_REST_CREDENTIAL_FILE`(두 줄 `RESTIC_REST_USERNAME=`, `RESTIC_REST_PASSWORD=`, 모드 400/600), `BACKUP_PASSWORD_FILE`. URL에 계정·암호를 넣으면 거부한다(인자·로그에 남는다).
+- **서버가 할 수 있는 것**: 새 스냅샷 쓰기, 읽기·복원, `restic check`. **할 수 없는 것**: 스냅샷·데이터 파일 삭제, 기존 파일 덮어쓰기(403). 서버가 침해돼도 백업을 읽을 수는 있지만 지우거나 고칠 수는 없다.
+- **보관 정리는 저장소 쪽에서**: 저장소 호스트에서 `bash scripts/backup-prune.sh <저장소 폴더 또는 볼륨> openit <암호 파일> 14 --check`(host마다 최신 하나를 남기고 14일이 지난 것을 지운다, `restic forget --prune`). 주기는 일일 백업과 같은 86400초 정도를 권한다(근거 없음: 시작값). 정리를 안 하면 저장소가 계속 커진다(서버의 백업 잡은 정리하지 않는다).
+- **확인(저장소 쪽)**: rest-server가 `--append-only`로 떠 있는지(프로세스 인자). 서버 자격으로 `restic forget <ID>`를 해 보고 403이 나오는지. 이 리포의 `test-backup.sh`가 같은 확인을 자동으로 한다.
+- 로컬 폴더 모드(`BACKUP_DIR`)는 개발·시험 전용이다. 서버가 지울 수 있어 `backup-check.sh`가 경고한다.
 
 ## 5. 주기 잡
 

@@ -9,12 +9,13 @@
 
 ## 결정
 
-restic 저장소 하나(`$BACKUP_DIR/restic`)에 모든 백업을 둔다. restic은 `locks/images.lock`의 digest 고정 이미지(`RESTIC_IMAGE`, restic 0.18.0)를 `docker run`으로 부른다(호스트에 설치하지 않는다). 저장소 암호는 `BACKUP_PASSWORD_FILE`(`RESTIC_PASSWORD_FILE`)로만 준다.
+restic 저장소 하나에 모든 백업을 둔다. 운영(D112)은 **서버 밖 append-only 저장소**(restic `rest-server --append-only`, `BACKUP_REPOSITORY=rest:https://…`, 서버 자격은 `BACKUP_REST_CREDENTIAL_FILE`)이고, 개발·시험은 로컬 폴더(`BACKUP_DIR/restic`)다. restic은 `locks/images.lock`의 digest 고정 이미지(`RESTIC_IMAGE`, restic 0.18.0)를 `docker run`으로 부른다(호스트에 설치하지 않는다). 저장소 암호는 `BACKUP_PASSWORD_FILE`(`RESTIC_PASSWORD_FILE`)로만 준다.
 
 - 파일 저장소: 볼륨을 읽기 전용으로 붙여 `restic backup /data --host <저장소> --tag set-<시각>`(datasets-data는 `.tmp` 제외).
 - PostgreSQL: `pg_dump -Fc | restic backup --stdin --stdin-filename <db>.dump --host pg-<db>`. 평문 덤프가 디스크에 쓰이지 않는다. 덤프가 중간에 실패하면 이 실행의 스냅샷을 모두 forget한다.
 - secrets/: 같은 저장소에 `--host secrets`.
-- 보관: `restic forget --keep-within <N>d --keep-last 1 --prune`(host별로 최신 하나는 남긴다. 옛 `backup_prune`과 같은 규칙).
+- 보관: `restic forget --keep-within <N>d --keep-last 1 --prune`(host별로 최신 하나는 남긴다. 옛 `backup_prune`과 같은 규칙). 로컬 모드는 백업 스크립트가 하고, **append-only 모드에서는 서버에 지울 권한이 없으므로 저장소 쪽 `scripts/backup-prune.sh`(저장소 파일 접근 + 저장소 암호)가 한다.**
+- 덤프가 중간에 실패하면: append-only에서는 만든 스냅샷을 지울 수 없으므로 **만들지 않는다**. `pg_dump` 종료 코드를 알 때까지 파이프를 열어 두고, 실패면 EOF 전에 restic 컨테이너를 죽인다. 여러 데이터베이스 중 일부만 성공한 실행은 성공한 것의 스냅샷이 남는다(같은 `set-` 태그에 5개가 모두 있는 세트만 완성본).
 - 복구: `restic restore <스냅샷>:/data --verify`(볼륨, root로 실행해 소유자·모드가 백업 때 값 그대로), `restic dump ... | pg_restore`(데이터베이스).
 - 정기 복원 시험: 임시 저장소로 `pg-backup` -> `restic dump` -> 임시 DB 복원 -> 행 지문 대조, 실제 저장소는 `restic check --read-data-subset=5%`.
 - 삭제: `backup_tool.py`, age/gpg 암호화 코드와 키(`BACKUP_ENCRYPT_RECIPIENTS`, `BACKUP_ENCRYPT_TOOL`, `BACKUP_ALLOW_PLAINTEXT`), MANIFEST 해시 파일, `BACKUP_SECRETS_DIR/KEEP`. 옛 키가 설정에 남아 있으면 CRIT로 거부한다.
@@ -43,11 +44,11 @@ restic 저장소 하나(`$BACKUP_DIR/restic`)에 모든 백업을 둔다. restic
 ## 결과
 
 - 얻는 것: 자체 코드 약 140줄과 MANIFEST·tar·파일별 암호화·`.partial` 정리 코드가 사라진다. 중복 제거로 일일 백업 증분이 작아진다(크기는 측정 안 함). 평문 덤프가 디스크에 쓰이지 않는다. 손상 검증이 표준 명령이다.
-- **감수하는 것(0020의 보증이 약해진다)**: 0020은 서버에 공개키만 두어 서버가 뚫려도 백업 내용이 읽히지 않았다. restic은 대칭 암호라 자동 백업을 위해 **암호가 서버에 있어야 하고**, 서버가 뚫리면 같은 서버에서 접근 가능한 저장소는 읽힌다(그리고 쓰기 권한이 있으면 지워질 수 있다). 완화: 암호 파일 모드 400/600과 `BACKUP_DIR` 밖 강제, 저장소를 서버 밖 마운트에 둘 것(D88 U6), restic의 추가 전용(append-only) 백엔드(rest-server) 도입은 사용자 결정 뒤 별도 ADR. 암호를 잃으면 모든 백업을 못 푼다.
+- **감수하는 것(0020의 보증이 일부 약해진다)**: 0020은 서버에 공개키만 두어 서버가 뚫려도 백업 내용이 읽히지 않았다. restic은 대칭 암호라 자동 백업을 위해 **암호가 서버에 있어야 한다. 서버가 침해되면 백업을 읽을 수는 있다.** 그러나 저장소가 서버 밖 append-only라 **지우거나 고칠 수는 없다**(랜섬웨어·파괴 대비, 사용자 결정 D112). 시험으로 확인했다(test-backup.sh): 서버 자격의 `restic forget`은 403, 스냅샷·데이터 파일 DELETE와 기존 파일 덮어쓰기(POST)는 403, 자격 없는 접근은 401. 한계: append-only는 rest-server 설정에 기댄다(서버 쪽 `--append-only`가 꺼져 있으면 보증이 없다: 저장소 쪽에서 확인, runbook 4-7). 락 파일은 지울 수 있다(restic 동작에 필요). 암호를 잃으면 모든 백업을 못 푼다. 로컬 폴더 모드는 서버가 지울 수 있어 개발·시험 전용이다(`backup-check.sh`가 경고).
 - SQLite backup API 경로는 없어졌다. 운영 볼륨에는 SQLite가 없다(D85). 개발·시험용 SQLite는 백업 대상이 아니다.
 - 옛 age 분기(이 PC에서 한 번도 실행 못 했음)와 gpg 분기가 함께 사라져 "age는 미실행" 한계가 없어진다.
 - 옛 백업(0020 형식)은 이 도구로 복원할 수 없다. 전환 시점에 새 백업을 먼저 한 번 받아 두고 옛 백업은 옛 절차(ADR 0020)로 푼다.
 
 ## 되돌리는 조건
 
-서버 침해 시 백업까지 읽히는 위험을 사용자가 받아들이지 않으면 서버에 쓰기 전용 자격만 두는 구조(restic + rest-server append-only, 또는 서버 밖 pull 방식)를 새 ADR로 정한다.
+서버 침해 시 백업을 읽히는 위험까지 받아들이지 않으면(개인정보) 암호가 서버에 없는 구조(서버 밖 pull 방식, 또는 공개키 암호를 restic 앞에 두는 구조)를 새 ADR로 정한다. 그 경우 중복 제거 이점은 줄어든다.

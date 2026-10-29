@@ -14,8 +14,7 @@ SD=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
 SD=$(readlink -f "$SD"); PW=$(readlink -f "$BACKUP_PASSWORD_FILE")
 ex=(); case "$PW" in "$SD"/*) ex=(--exclude "/secrets/${PW#$SD/}");; esac
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR" 2>/dev/null || true
-exec 9>"$BACKUP_DIR/.backup.lock"; flock -n 9 || { echo "CRIT: 다른 백업이 같은 BACKUP_DIR 에서 진행 중이다($BACKUP_DIR/.backup.lock): 겹쳐 돌리지 않는다" >&2; exit 4; }
+exec 9>"$BACKUP_LOCK_FILE"; flock -n 9 || { echo "CRIT: 다른 백업이 같은 저장소로 진행 중이다($BACKUP_LOCK_FILE): 겹쳐 돌리지 않는다" >&2; exit 4; }
 backup_ensure_repo
 # 호스트 사용자로 읽는다(secrets/ 는 호스트 사용자 소유, 폴더 700). root 가 필요 없다
 out=$(backup_restic -v "$SD:/secrets:ro" -- backup /secrets --host secrets --tag "set-$TS" "${ex[@]+"${ex[@]}"}" --json) || die "restic backup 실패: secrets"

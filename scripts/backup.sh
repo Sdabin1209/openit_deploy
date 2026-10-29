@@ -17,8 +17,7 @@ STORES=${*:-gate-data models-data datasets-data registry-data gateway-data}
 for s in $STORES; do [[ "$s" =~ ^[a-z][a-z0-9-]*$ ]] || die "저장소 이름 형식 오류: $s"; done
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 # 겹침 실행 방지(점검 M4): 같은 BACKUP_DIR 에서 두 번째 백업이 동시에 돌면 forget --prune 이 진행 중인 백업과 겹친다. 잠금을 못 잡으면 거부한다(종료 4)
-mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR" 2>/dev/null || true
-exec 9>"$BACKUP_DIR/.backup.lock"; flock -n 9 || { echo "CRIT: 다른 백업이 같은 BACKUP_DIR 에서 진행 중이다($BACKUP_DIR/.backup.lock): 겹쳐 돌리지 않는다" >&2; exit 4; }
+exec 9>"$BACKUP_LOCK_FILE"; flock -n 9 || { echo "CRIT: 다른 백업이 같은 저장소로 진행 중이다($BACKUP_LOCK_FILE): 겹쳐 돌리지 않는다" >&2; exit 4; }
 backup_ensure_repo
 vol_of() { case "$1" in registry-data) echo "${REGISTRY_PROJECT:-deploy-registry}_registry-data";; *) echo "${P}_$1";; esac; }
 for s in $STORES; do

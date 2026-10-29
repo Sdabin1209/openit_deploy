@@ -1911,7 +1911,8 @@ def step5b():
         try: out, _ = bk.communicate(timeout=90)
         except subprocess.TimeoutExpired: bk.kill(); raise AssertionError("백업이 postgres 중지 뒤 90s 안에 끝나지 않았다(무한 대기)")
         assert bk.returncode != 0, f"백업 도중 postgres 가 멈췄는데 백업이 성공(0)으로 보고됐다: {out[-300:]}"
-        assert done_dirs() == [], f"불완전한 스냅샷이 완성본으로 남았다: {done_dirs()}"
+        # 실패한 데이터베이스(잠금에서 멈춘 qa)의 스냅샷은 만들어지지 않아야 한다. 다른 데이터베이스의 스냅샷은 남을 수 있다(append-only 저장소에서는 지울 수 없어 지우지 않는다, ADR 0038)
+        assert "pg-qa" not in done_dirs(), f"불완전한 qa 덤프가 스냅샷으로 남았다: {done_dirs()}"
         rc_fail = bk.returncode
     finally:
         locker.kill()
@@ -1919,8 +1920,8 @@ def step5b():
     _pg_ready_wait(pg)
     wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "postgres 기동 뒤 서비스 /readyz 200", every=1)
     r = sh(["bash", str(ROOT / "scripts/pg-backup.sh"), "qa", "gate"], env=env)
-    ok = done_dirs(); assert ok == ["pg-gate", "pg-qa"], f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
-    rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 남은 스냅샷 0(성공한 데이터베이스의 것도 버림); 복구 뒤 재실행 성공(스냅샷 {len(ok)}개: {ok}).")
+    ok = done_dirs(); assert "pg-qa" in ok and "pg-gate" in ok, f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
+    rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 실패한 qa 의 스냅샷 없음(EOF 전에 restic 을 죽여 만들지 않음; 성공한 다른 데이터베이스의 것은 남는다); 복구 뒤 재실행 성공(스냅샷 {len(ok)}개: {ok}).")
 
 STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN

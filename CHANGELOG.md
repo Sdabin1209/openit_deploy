@@ -1,5 +1,11 @@
 # 변경 이력
 
+## 백업 저장소를 서버 밖 append-only(restic rest-server)로 (D112, ADR 0038 갱신)
+- `BACKUP_REPOSITORY=rest:http(s)://…`(운영) + `BACKUP_REST_CREDENTIAL_FILE`(서버 자격, 값은 env 파일로만 전달) 모드 추가. 서버는 쓰기·읽기만 되고 스냅샷·데이터 삭제와 덮어쓰기는 403. 로컬 `BACKUP_DIR`는 개발·시험 전용(경고).
+- 보관 정리는 저장소 쪽 `scripts/backup-prune.sh`(저장소 파일 접근 + 암호). 서버의 `backup_forget`은 append-only 모드에서 하지 않는다.
+- `pg-backup.sh`: 실패한 덤프는 EOF 전에 restic 컨테이너를 죽여 스냅샷을 만들지 않는다(지울 수 없어서). 일부 성공한 실행은 성공한 것의 스냅샷이 남는다(옛: 모두 버림).
+- `compose.backup-target.yaml`(시험·데모용 rest-server, 이미지 digest 고정 `REST_SERVER_IMAGE`). E2E 단계 9 백업과 5b가 이 저장소를 쓴다.
+
 ## 기준 표 boundary-contracts v2.2.2, 정적 화면 이미지(Caddy)에 맞춘 compose
 - `scripts/lib.sh`: `DEPLOY_BC_TAG` v2.2.2(waitress가 앱 앞에서 내는 413/414/431을 계약 클라이언트가 INVALID_RECORD로 읽는다). 시험 값(v2.2.0 예시, mr=v0.8.1)도 현재 표로 올렸다.
 - `compose.yaml`: kiosk-frontend·admin-console에 `cap_add: NET_BIND_SERVICE`(공식 caddy 바이너리의 파일 권한 때문에 `cap_drop ALL` + no-new-privileges에서 exec가 거부됨, 측정함. gateway와 같은 처리)와 `/healthz` healthcheck(kiosk에는 없었다)를 더했다.

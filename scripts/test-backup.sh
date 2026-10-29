@@ -74,11 +74,11 @@ cp -r "$W/backups/restic" "$W/restic.good"
 f=$(find "$W/backups/restic/data" -type f | head -1); chmod u+w "$f"; printf 'x' >> "$f"   # restic 은 데이터 파일을 0400 으로 쓴다
 rc "실제 저장소의 데이터 파일이 손상되면 복원 시험이 실패(restic check)" 1 env RESTIC_CHECK_FULL=1 bash "$DEPLOY_ROOT/scripts/backup-restore-test.sh" survey
 rm -rf "$W/backups/restic"; cp -r "$W/restic.good" "$W/backups/restic"
-echo "== 덤프가 중간에 실패하면 불완전한 스냅샷이 성공으로 남지 않는다 (옛 점검 M1 의 restic 판)"
-n0=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
+echo "== 덤프가 실패하면 그 데이터베이스의 스냅샷은 만들어지지 않는다 (append-only 저장소에서는 만든 뒤 지울 수 없어서 EOF 전에 restic 을 죽인다)"
+cnt() { bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots $* --json" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))'; }
+n0=$(cnt)
 rc "없는 데이터베이스를 지정하면 pg-backup.sh 가 실패" 1 bash "$DEPLOY_ROOT/scripts/pg-backup.sh" survey nosuchdb
-n1=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
-N=$((N+1)); if [ "$n0" = "$n1" ]; then echo "  PASS 실패한 실행의 스냅샷(부분 결과 포함)이 남지 않았다 ($n0 -> $n1)"; else echo "  FAIL 스냅샷 수가 달라졌다 ($n0 -> $n1)"; FAILS=$((FAILS+1)); fi
+N=$((N+1)); if [ "$(cnt --host pg-nosuchdb)" = 0 ] && [ "$(( $(cnt) - n0 ))" = 1 ]; then echo "  PASS 실패한 데이터베이스(nosuchdb)의 스냅샷은 없고 성공한 survey 만 하나 늘었다"; else echo "  FAIL 스냅샷 수가 기대와 다르다 (nosuchdb $(cnt --host pg-nosuchdb), 증가 $(( $(cnt) - n0 )))"; FAILS=$((FAILS+1)); fi
 echo "== 보관 기간: 오래된 스냅샷만 지우고 저장소(host)마다 가장 최근 하나는 남긴다"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=0\nBACKUP_PASSWORD_FILE=%s\n' "$W/backups" "$W/backup.pass" > "$W/b0.env"
 ok "보관 0일: 저장소마다 최신 하나만 남는다" bash -c "BACKUP_CONFIG='$W/b0.env' bash $DEPLOY_ROOT/scripts/pg-backup.sh survey >/dev/null && BACKUP_CONFIG='$W/b0.env' bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json' | python3 -c 'import json,sys;sys.exit(0 if len(json.load(sys.stdin))==1 else 1)'"
@@ -94,4 +94,53 @@ exec 8>"$W/backups/.backup.lock"; flock -n 8
 rc "백업이 진행 중이면(잠금) 두 번째 backup.sh 는 거부 4" 4 bash "$DEPLOY_ROOT/scripts/backup.sh" models-data
 flock -u 8; exec 8>&-
 ok "잠금을 놓으면 다시 백업된다" bash "$DEPLOY_ROOT/scripts/backup.sh" models-data
+echo "== 서버 밖 append-only 저장소 (restic rest-server --append-only, D112): 서버 자격으로는 쓰기·읽기만 되고 지우기·고치기는 거부된다"
+RSI=$(sed -n 's/^REST_SERVER_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); GWI=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
+RN=bkrest-net-$ID; RV=bkrest-data-$ID; RC=bkrest-target-$ID
+rest_cleanup() { "$DOCKER" rm -f $RC >/dev/null 2>&1; "$DOCKER" network rm $RN >/dev/null 2>&1; "$DOCKER" volume rm -f $RV >/dev/null 2>&1; }
+trap 'rest_cleanup; cleanup' EXIT
+"$DOCKER" network create $RN >/dev/null; "$DOCKER" volume create $RV >/dev/null
+RH=$(printf 'srvpw-%s\nsrvpw-%s\n' $ID $ID | "$DOCKER" run --rm -i "$GWI" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n'); echo "srv:$RH" > "$W/htpasswd"; chmod 644 "$W/htpasswd"
+( umask 077; printf 'RESTIC_REST_USERNAME=srv\nRESTIC_REST_PASSWORD=srvpw-%s\n' $ID > "$W/rest.cred" )
+"$DOCKER" run -d --name $RC --network $RN --read-only --cap-drop ALL --security-opt no-new-privileges:true -v $RV:/data -v "$W/htpasswd:/run/htpasswd:ro" --entrypoint rest-server "$RSI" --path /data --listen :8000 --append-only --htpasswd-file /run/htpasswd >/dev/null
+sleep 2
+rcfg() { printf 'BACKUP_REPOSITORY=rest:http://%s:8000/openit\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s\nBACKUP_RETENTION_DAYS=0\nBACKUP_PASSWORD_FILE=%s\n' "$RC" "$W/rest.cred" "$RN" "$W/backup.pass" > "$W/rest.env"; }
+rcfg; export BACKUP_CONFIG="$W/rest.env"
+printf 'BACKUP_REPOSITORY=rest:http://srv:pw@%s:8000/openit\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$RC" "$W/rest.cred" "$W/backup.pass" > "$W/r1.env"
+rc "URL 에 계정·암호를 넣으면 거부 -> 2" 2 env BACKUP_CONFIG="$W/r1.env" bash "$DEPLOY_ROOT/scripts/backup-check.sh"
+cp "$W/rest.cred" "$W/loose.cred"; chmod 644 "$W/loose.cred"; printf 'BACKUP_REPOSITORY=rest:http://x:8000/o\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$W/loose.cred" "$W/backup.pass" > "$W/r2.env"
+rc "저장소 자격 파일 모드가 644 면 거부 -> 2" 2 env BACKUP_CONFIG="$W/r2.env" bash "$DEPLOY_ROOT/scripts/backup-check.sh"
+printf 'BACKUP_REPOSITORY=http://x:8000/o\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$W/rest.cred" "$W/backup.pass" > "$W/r3.env"
+rc "BACKUP_REPOSITORY 가 rest: 로 시작하지 않으면 거부 -> 2" 2 env BACKUP_CONFIG="$W/r3.env" bash "$DEPLOY_ROOT/scripts/backup-check.sh"
+rc "올바른 rest 설정은 backup-check.sh 통과" 0 bash "$DEPLOY_ROOT/scripts/backup-check.sh"
+ok "pg-backup.sh (rest, survey gate): 저장소가 만들어지고 백업된다" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" survey gate
+ok "backup.sh (rest) models-data" bash "$DEPLOY_ROOT/scripts/backup.sh" models-data
+ok "서버 쪽 로컬 폴더에는 저장소가 없다(서버 밖에만 있다)" bash -c "[ ! -e '$W/backups-rest' ] && [ -n \"\$('$DOCKER' run --rm -v $RV:/d '$UTIL' ls /d/openit)\" ]"
+rcnt() { bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))'; }
+rid() { bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json" | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["id"])'; }
+R0=$(rcnt); SID=$(rid)
+ok "서버 자격으로 restic forget 은 403(Forbidden)으로 거부된다" bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- forget $SID 2>&1 | grep -q '403 Forbidden'"
+N=$((N+1)); if [ "$(rcnt)" = "$R0" ]; then echo "  PASS forget 시도 뒤에도 스냅샷이 그대로다 ($R0개)"; else echo "  FAIL forget 으로 스냅샷이 줄었다"; FAILS=$((FAILS+1)); fi
+pyhttp() { "$DOCKER" run --rm --network $RN -e U="srv:srvpw-$ID" "$UTIL" python -c "
+import base64,os,sys,urllib.request,urllib.error
+m,path=sys.argv[1],sys.argv[2]
+req=urllib.request.Request('http://$RC:8000/openit'+path,data=(b'x' if m=='POST' else None),method=m,headers={'Authorization':'Basic '+base64.b64encode(os.environ['U'].encode()).decode()} if len(sys.argv)<4 else {})
+try: print(urllib.request.urlopen(req).status)
+except urllib.error.HTTPError as e: print(e.code)" "$@"; }
+SNAPFILE=$("$DOCKER" run --rm -v $RV:/d "$UTIL" ls /d/openit/snapshots | head -1)
+N=$((N+1)); c=$(pyhttp DELETE /snapshots/$SNAPFILE); if [ "$c" = 403 ]; then echo "  PASS 서버 자격으로 스냅샷 파일 DELETE -> 403"; else echo "  FAIL DELETE -> $c"; FAILS=$((FAILS+1)); fi
+N=$((N+1)); c=$(pyhttp POST /snapshots/$SNAPFILE); if [ "$c" = 403 ]; then echo "  PASS 서버 자격으로 기존 스냅샷 파일 덮어쓰기(POST) -> 403"; else echo "  FAIL POST -> $c"; FAILS=$((FAILS+1)); fi
+N=$((N+1)); c=$(pyhttp GET /config noauth); if [ "$c" = 401 ]; then echo "  PASS 자격 없이는 읽을 수 없다 -> 401"; else echo "  FAIL 무자격 GET -> $c"; FAILS=$((FAILS+1)); fi
+ok "보관 0일이어도 서버에서는 정리하지 않는다(append-only: 저장소 쪽 몫)" bash -c "bash $DEPLOY_ROOT/scripts/pg-backup.sh survey >/dev/null && [ \"\$(bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json' | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')\" = 2 ]"
+echo "== 복원은 서버 자격으로 된다"
+"$DOCKER" exec "$(C)" psql -U survey -d survey -qc "DELETE FROM items WHERE id % 3 = 0" >/dev/null 2>&1
+ok "pg-restore.sh survey latest (rest)" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey latest --yes
+N=$((N+1)); if [ "$(fp survey)" = "$FP_survey" ]; then echo "  PASS 복원 뒤 행 지문 일치 (rest)"; else echo "  FAIL 행 지문 불일치 (rest)"; FAILS=$((FAILS+1)); fi
+"$DOCKER" run --rm -v "${P}_models-data:/d" "$UTIL" sh -c "rm -f /d/f.txt"
+ok "restore.sh models-data latest (rest)" bash "$DEPLOY_ROOT/scripts/restore.sh" models-data latest --yes
+ok "복원된 파일 내용 (rest)" bash -c "[ \"\$('$DOCKER' run --rm -v ${P}_models-data:/d '$UTIL' cat /d/f.txt)\" = hello-${P}_models-data ]"
+ok "backup-restore-test.sh (rest 저장소 무결성 포함)" bash "$DEPLOY_ROOT/scripts/backup-restore-test.sh" survey
+echo "== 저장소 쪽 관리 자격으로 보관 정리 (서버에는 없는 권한)"
+ok "backup-prune.sh: 볼륨 직접 접근 + 암호로 host마다 최신 1개만 남긴다(보관 0일)" bash "$DEPLOY_ROOT/scripts/backup-prune.sh" $RV openit "$W/backup.pass" 0 --check
+N=$((N+1)); if [ "$(rcnt)" = 3 ]; then echo "  PASS 정리 뒤 스냅샷 3개 (pg-survey, pg-gate, models-data 각 1개)"; else echo "  FAIL 정리 뒤 스냅샷 수 $(rcnt) (기대 3)"; FAILS=$((FAILS+1)); fi
 echo; [ $FAILS = 0 ] && echo "통과: 백업 자체 시험 $N건" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }

@@ -21,3 +21,4 @@ pin BLACKBOX_IMAGE prom/blackbox-exporter:v0.27.0
 pin NODE_EXPORTER_IMAGE prom/node-exporter:v1.9.1
 pin JSON_EXPORTER_IMAGE quay.io/prometheuscommunity/json-exporter:v0.7.0
 pin RESTIC_IMAGE restic/restic:0.18.0                        # 백업 저장소(scripts/backup-lib.sh, ADR 0038)
+pin REST_SERVER_IMAGE restic/rest-server:0.14.0                # 서버 밖 append-only 백업 저장소(운영은 저장소 쪽, 시험·데모는 compose.backup-target.yaml, ADR 0038)

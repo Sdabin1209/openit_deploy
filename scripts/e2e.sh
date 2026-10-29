@@ -12,7 +12,7 @@
 #  - 선행 항목이 FAIL 이면 그에 의존하는 항목은 FAIL 이 아니라 SKIP(선행 실패: 항목명)으로 센다(연쇄 잡음 제거, docs/adr/0030). 종료 코드는 FAIL 만 본다. SKIP 개수는 요약의 'SKIP n' 줄과 E2E_RESULTS.md 출처 칸에 나온다.
 #  - --fail-fast: 첫 FAIL 에서 요약을 내고 중단한다(정본에 기록하지 않는다). --changed-only: 입력 해시가 마지막 PASS 와 달라진 단계(scripts/e2e_plan.py)와 그에 의존하는 단계만 e2e_steps.py 에서 돌린다
 #    (준비·단계 9 구간은 항상 돈다. 정본에 기록하지 않는다. 전체 합격이 아니며 최종 관문은 옵션 없는 전체 1회다).
-# 사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--fail-fast] [--changed-only] [--keep] [--keep-images] [--reuse-build]
+# 사용: scripts/e2e.sh [--fast] [--only <단계,...>] [--fail-fast] [--changed-only] [--keep] [--keep-images] [--reuse-build] [--sections jobs,backup,rollback]
 #  --reuse-build: 이미지가 있고 소스 커밋·의존 태그가 라벨과 같으면 다시 빌드하지 않는다(낡은 것만 빌드). 끝나도 이미지를 지우지 않는다.
 set -o pipefail
 # 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
@@ -27,11 +27,12 @@ fi
 export DEPLOY_SKIP_DOCTOR=1
 source "$(dirname "$0")/lib.sh"
 KEEP=0; REUSE=0; KEEPIMG=0; FAST=0; FAILFAST=0; CHANGED=0
-ONLY=""
+ONLY=""; SECTIONS="jobs,backup,rollback"
 while [ $# -gt 0 ]; do case "$1" in
   --fast) FAST=1;; --fail-fast) FAILFAST=1;; --changed-only) CHANGED=1;; --keep) KEEP=1;; --reuse-build) REUSE=1; KEEPIMG=1;; --keep-images) KEEPIMG=1;;
   --only) [ $# -ge 2 ] || { echo "--only 에는 단계 목록이 필요하다 (예: --only 5p)" >&2; exit 2; }; ONLY=$2; shift;;
   --only=*) ONLY=${1#*=};;
+  --sections) [ $# -ge 2 ] || { echo "--sections 에는 jobs,backup,rollback 중 일부가 필요하다" >&2; exit 2; }; SECTIONS=$2; export DEPLOY_NO_RECORD=1; shift;;   # 단계 9 뒷구간 중 일부만(단계 1~8 은 모두 돈다). 정본에 기록하지 않는다. 전체 합격이 아니다
 esac; shift; done
 # --only: e2e_steps.py 의 단계 일부만 돌린다(개발 중 한 단계 확인용). 스택 기동과 준비는 같이 하고, 스케줄러·백업·롤백 구간은 생략하며 결과를 정본에 기록하지 않는다. 전체 합격이 아니다
 if [ -n "$ONLY" ]; then FAST=1; export DEPLOY_NO_RECORD=1; fi
@@ -41,7 +42,7 @@ W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT=$PROJECT
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml" GATEWAY_PORT= GATEWAY_TLS_PORT= GATEWAY_TLS_PORT=
+export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.fake-model.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT= GATEWAY_TLS_PORT=
 export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
@@ -127,7 +128,11 @@ else chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/s
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
-grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES|RESTIC|PROMETHEUS|ALERTMANAGER|BLACKBOX|NODE_EXPORTER|JSON_EXPORTER)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES|RESTIC|REST_SERVER|PROMETHEUS|ALERTMANAGER|BLACKBOX|NODE_EXPORTER|JSON_EXPORTER)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+# 서버 밖 append-only 백업 저장소를 흉내 내는 컨테이너(compose.backup-target.yaml)의 인증 파일: 서버 자격(백업이 쓰는 것)을 만든다. 시험 폴더 안, 시험이 끝나면 지워진다
+BKPW="e2e-backup-target-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+printf '%s\n%s\n' "$BKPW" "$BKPW" | "$DOCKER" run --rm -i "$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n' | sed 's/^/srv:/' > "$W/backup-target.htpasswd"; echo >> "$W/backup-target.htpasswd"; chmod 644 "$W/backup-target.htpasswd"
+( umask 077; printf 'RESTIC_REST_USERNAME=srv\nRESTIC_REST_PASSWORD=%s\n' "$BKPW" > "$W/backup-target.cred" ); unset BKPW
 chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/registry.sh" up
 chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
 chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
@@ -267,6 +272,8 @@ chk "비밀 노출 점검: 환경 변수·inspect·exec env 에 secrets 값 없�
 chk "check-secrets-hidden 자기 점검(노출 컨테이너는 실패, 파일 비밀은 통과)" bash "$DEPLOY_ROOT/scripts/test-check-secrets-hidden.sh"
 
 if [ "$FAST" = 0 ]; then   # --fast 에서는 아래 세 구간(스케줄러, 백업·복구, 롤백)을 건너뛴다
+has_s9() { case ",$SECTIONS," in *",$1,"*) return 0;; esac; return 1; }
+if has_s9 jobs; then
 sect "단계 9: 주기 잡 (D39, systemd timer)"
 chk "잡 엔트리포인트가 Compose 안에서 이미지·볼륨·네트워크로 실행된다(ops_feedback.job --help)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-ops-feedback python -m ops_feedback.job --help
 chk_dep "단계 4" "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
@@ -280,32 +287,38 @@ chk "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter
 chk_dep "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" "감시 스택이 실제 서비스를 본다 (gateway healthz, release-gate·model-serving readyz 탐침 성공, 판정 루프 지표, 디스크 지표)" bash "$DEPLOY_ROOT/scripts/check-monitoring-live.sh" "$PROJECT"
 chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 없다(서빙 서버 밖, D40)" bash -c "! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
+fi
+if has_s9 backup; then
 sect "단계 9: 백업과 복구 (restic: 시험 폴더 안의 임시 저장소 암호 파일, 저장소는 암호화된다. ADR 0038)"
 chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.env"
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 # 시험용 저장소 암호: 시험 폴더($W, 모드 700) 안에서만 만들고 출력·로그에 내지 않는다. 시험이 끝나면 $W 째로 지워진다
 ( umask 077; head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$W/backup.pass" )
-printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W/backups" "$W/backup.pass" > "$W/backup-test.env"
+printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_REPOSITORY=rest:http://backup-target:8000/openit\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s_backup\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W/backup-target.cred" "$PROJECT" "$W/backup.pass" > "$W/backup-test.env"
 export BACKUP_CONFIG="$W/backup-test.env"
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
-dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx postgres | tr '\n' ' ') >/dev/null 2>&1
+dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx -e postgres -e backup-target | tr '\n' ' ') >/dev/null 2>&1
 STORES="gate-data models-data datasets-data"; PGDBS="survey qa ops_log ops_failure gate"
 for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
 for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-before-pg-$d.json"; done
 chk "백업(파일 저장소 3개, restic 스냅샷)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
 chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
-repo_clean() { [ -f $W/backups/restic/config ] || { echo "restic 저장소가 없다"; return 1; }
-  n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = 8 ] || { echo "저장소(host)별 스냅샷이 8개(파일 3 + 데이터베이스 5)가 아니다: $n"; return 1; }
-  ! grep -rqa 'PGDMP' $W/backups/restic || { echo "저장소에 덤프 평문 표지가 있다"; return 1; }
-  [ -z "$(find $W/backups/restic ! -user $(id -u) | head -1)" ] || { echo "저장소 파일 소유자가 호스트 사용자가 아니다"; return 1; }
-  [ "$(stat -c %a $W/backups)" = 700 ] || { echo "백업 폴더 모드"; return 1; }
-  echo "restic 저장소: 스냅샷 8개(host별 1개), 덤프 평문 표지 없음, 소유자 호스트 사용자, 폴더 700"; return 0; }
+repo_clean() { n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = 8 ] || { echo "저장소(host)별 스냅샷이 8개(파일 3 + 데이터베이스 5)가 아니다: $n"; return 1; }
+  ! "$DOCKER" run --rm -v "${PROJECT}_backup-target-data:/d:ro" "$UTIL_REF" sh -c "grep -rqa PGDMP /d" || { echo "저장소에 덤프 평문 표지가 있다"; return 1; }
+  [ ! -e "$W/backups" ] || { echo "서버 쪽 로컬 폴더에 저장소가 생겼다"; return 1; }
+  echo "서버 밖(append-only) 저장소: 스냅샷 8개(host별 1개), 덤프 평문 표지 없음, 서버 쪽 로컬 저장소 없음"; return 0; }
 NEED+=("백업(파일 저장소 3개, restic 스냅샷)" "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)")   # 백업이 실패하면 아래 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
-chk "백업 산출물은 암호화된 restic 저장소뿐이다(평문 없음)" repo_clean
+chk "백업 산출물은 서버 밖 append-only restic 저장소뿐이다(평문 없음)" repo_clean
+append_only() { local id; id=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json" | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["id"])')
+  out=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- forget $id" 2>&1); grep -q '403 Forbidden' <<<"$out" || { echo "서버 자격의 forget 이 거부되지 않았다: $out"; return 1; }
+  bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json" | grep -q "$id" || { echo "forget 시도 뒤 스냅샷이 사라졌다"; return 1; }
+  echo "서버 자격으로 forget -> 403, 스냅샷 그대로"; }
+chk "서버 자격으로는 백업을 지울 수 없다(append-only)" append_only
+chk "저장소 쪽 관리 자격으로 보관 정리(host마다 최신 1개 이상 유지)" bash "$DEPLOY_ROOT/scripts/backup-prune.sh" "${PROJECT}_backup-target-data" openit "$W/backup.pass" 7
 dc "$PROJECT" down >/dev/null 2>&1
 chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_datasets-data ${PROJECT}_pg-data >/dev/null"
-dc "$PROJECT" up -d --wait --wait-timeout 120 postgres >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다
+dc "$PROJECT" up -d --wait --wait-timeout 120 postgres backup-target >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다. 백업 저장소(볼륨 backup-target-data 는 down 으로 지워지지 않는다)도 다시 올린다
 chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
 NEED+=("볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)")
 for s in $STORES; do chk "복구 $s" bash "$DEPLOY_ROOT/scripts/restore.sh" $s latest --yes; done
@@ -321,6 +334,8 @@ NEED+=("복구 후 서비스 기동")
 chk "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
   "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test
 
+fi
+if has_s9 rollback; then
 sect "단계 9: digest 잠금으로 코드 축 롤백"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" "복구 후 서비스 기동")   # 롤백 구간: 복구 뒤 스택이 떠 있어야 한다. 백업 구간의 나머지 실패는 이 구간과 무관하다
 OLD_REF=$("$DOCKER" inspect "${PROJECT}-survey-service-1" --format '{{.Config.Image}}' | tr -d '\r')
@@ -334,6 +349,7 @@ SP=$(port survey-service)
 survey_ready_after() { for i in $(seq 1 40); do o=$(curl -s -m 5 "http://127.0.0.1:$SP/readyz"); echo "$o" | grep -q '"ready": true' && { echo "$o" | cut -c1-120; return 0; }; sleep 2; done; echo "$o"; return 1; }
 chk_dep "롤백: 잠금을 이전 것으로 되돌리고 적용 -> 이전 digest 이미지로 복귀" "롤백 뒤 survey-service /readyz 200 (복구한 포인터의 릴리스를 HTTP로 다시 적재)" survey_ready_after
 
+fi
 fi
 sect ""
 finish

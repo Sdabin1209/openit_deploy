@@ -55,7 +55,7 @@ done
 echo "== 2) 실제 저장소 무결성 (restic check, 암호 파일로 읽는다)"
 n=0
 ( BACKUP_CONFIG="$CFG"; BACKUP_CHECK_ONLY=1; backup_load_config
-  [ -f "$BACKUP_DIR/restic/config" ] || { echo "FAIL: 실제 restic 저장소가 없다: $BACKUP_DIR/restic" >&2; exit 1; }
+  backup_restic -- cat config >/dev/null 2>&1 || { echo "FAIL: 실제 restic 저장소를 열 수 없다(없거나 닿지 못하거나 암호가 틀림): ${BACKUP_REPOSITORY:-$BACKUP_DIR/restic}" >&2; exit 1; }
   rc=0
   for db in $DBS; do
     cnt=$(backup_restic -- snapshots --host "pg-$db" --json 2>/dev/null | python3 -c 'import json,sys;print(len(json.load(sys.stdin) or []))' 2>/dev/null || echo 0)

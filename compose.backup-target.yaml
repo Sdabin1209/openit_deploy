@@ -1,0 +1,28 @@
+# 시험·데모용 백업 저장소: 서버 밖 append-only 저장소(restic rest-server --append-only, D112)를 compose 안 컨테이너로 흉내 낸다. 운영에서는 서버 밖 호스트가 이 역할을 한다(runbook 4-7).
+# 사용: COMPOSE_EXTRA=compose.backup-target.yaml ... (E2E 단계 9). 이미지는 digest 고정(REST_SERVER_IMAGE). 호스트 포트는 열지 않는다: 백업 컨테이너가 전용 네트워크 backup 으로만 닿는다.
+# 인증: 서버 자격(RESTIC_REST_USERNAME/PASSWORD)은 htpasswd 파일(bcrypt)로 검증한다. 서버는 append-only 라 자격이 있어도 스냅샷·데이터를 지우거나 고칠 수 없다(잠금 파일만 지울 수 있다).
+# 관리(보관 정리)는 이 컨테이너가 아니라 저장소 볼륨(backup-target-data)에 직접 접근하는 scripts/backup-prune.sh 가 한다.
+x-bkhard: &bkhard
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+services:
+  backup-target:
+    <<: *bkhard
+    image: ${REST_SERVER_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65534:65534"
+    mem_limit: ${BACKUP_TARGET_MEM_LIMIT:-256m}      # 측정 안 함(시작값)
+    cpus: ${BACKUP_TARGET_CPUS:-0.5}
+    pids_limit: ${BACKUP_TARGET_PIDS_LIMIT:-128}
+    entrypoint: ["rest-server"]
+    command: ["--path", "/data", "--listen", ":8000", "--append-only", "--htpasswd-file", "/run/htpasswd", "--private-repos=false"]
+    volumes:
+      - backup-target-data:/data
+      - ${BACKUP_TARGET_HTPASSWD:?htpasswd 파일 경로}:/run/htpasswd:ro
+    networks: [backup]
+networks:
+  backup:
+volumes:
+  backup-target-data:

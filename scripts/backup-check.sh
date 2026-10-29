@@ -5,6 +5,11 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1; source "$(dirname "$0")/lib.sh"; source "$(dirname "$0")/backup-lib.sh"
 BACKUP_CHECK_ONLY=1
 backup_load_config   # 문제가 있으면 CRIT 를 내고 종료 코드 2 로 끝낸다
+if [ "$BACKUP_MODE" = rest ]; then
+  echo "OK: 서버 밖 append-only 저장소 ${BACKUP_REPOSITORY} (restic rest-server, 서버는 쓰기만 하고 지우거나 고칠 수 없다: 이 점검은 서버 쪽 설정이 append-only 인지 알 수 없다 -> 저장소 쪽에서 확인한다, runbook 4-7)"
+  echo "OK: 백업 설정 (보관 ${BACKUP_RETENTION_DAYS}일은 저장소 쪽 backup-prune.sh 가 적용, 암호 파일 $BACKUP_PASSWORD_FILE)"; exit 0
+fi
+echo "WARN: BACKUP_DIR(로컬 폴더) 모드다. 서버가 백업을 지우거나 고칠 수 있어 침해 시 백업도 같이 잃는다(D112). 운영은 BACKUP_REPOSITORY(서버 밖 append-only rest-server)를 쓴다"
 [ -d "$BACKUP_DIR" ] || { echo "CRIT: BACKUP_DIR 가 없다: $BACKUP_DIR (마운트·생성 후 다시)" >&2; exit 2; }
 [ -w "$BACKUP_DIR" ] || { echo "CRIT: BACKUP_DIR 에 쓸 수 없다: $BACKUP_DIR" >&2; exit 2; }
 fstype=$(stat -f -c %T "$BACKUP_DIR" 2>/dev/null || echo ?)
