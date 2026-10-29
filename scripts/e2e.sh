@@ -171,6 +171,8 @@ chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰,
 chk "시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검)" bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
 chk "계정 암호가 docker 인자로 보이지 않는다 (표준 입력, 문서 일치)" bash "$DEPLOY_ROOT/scripts/test-hash-password-argv.sh"
 chk "images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다)" bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
+chk "build-images 자체 점검 (가짜 영역 진입점: BuildImageRequest 값, 서비스->리포 대응, 결과 검증 실패는 빌드 실패)" bash "$DEPLOY_ROOT/scripts/test-build-images.sh"
+chk "build-images 정적 점검 (영역 Dockerfile 인자·산출 파일 이름이 코드에 없다)" bash "$DEPLOY_ROOT/scripts/test-build-images-static.sh"
 chk "게시 서비스 목록(lib.sh) == 계약 PublishRequest.service enum" "$VENV/bin/python" -I "$DEPLOY_ROOT/scripts/test_services_enum.py"
 chk "e2e 옵션 처리 자기 점검 (--help 는 실행 없이 0, 모르는 옵션·--only 와 --sections 조합은 2)" bash "$DEPLOY_ROOT/scripts/test-e2e-options.sh"
 chk "감시 스택 정적 시험 (promtool check/test rules, 변이 시험, amtool, blackbox)" bash "$DEPLOY_ROOT/scripts/test-monitoring.sh" --static

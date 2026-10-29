@@ -13,4 +13,10 @@ for pat in 'pyproject\.toml' 'package\.json' 'tomllib' 'mr_version'; do
   [ -z "$hit" ] && echo "ok: build-images.sh 가 $pat 를 읽지 않는다" || { echo "FAIL: 영역 내부 버전 파일/파서 사용 ($pat):"; echo "$hit" | cut -c1-160; rc=1; }
 done
 grep -nE 'APP_VERSION' "$F" | grep -v '^[0-9]*:[[:space:]]*#' | grep -q . && { echo "FAIL: APP_VERSION 을 deploy 가 넘긴다(영역 Dockerfile 의 기본값을 쓴다)"; rc=1; } || echo "ok: APP_VERSION 을 넘기지 않는다(영역이 정한다)"
+# U42(구조 규칙 1): 영역 Dockerfile 인자 이름과 영역 빌드 산출 파일 이름이 build-images.sh 코드에 남아 있지 않다(영역 빌드는 BuildImageRequest + scripts/build-image.sh 뿐).
+for pat in '--build-arg' '--build-context' 'REVISION' 'COMMIT' 'BOUNDARY_TAG' 'BOUNDARY_VERSION' 'BOUNDARY_CONTRACT' 'CONTRACTS_VERSION' 'MODEL_RUNTIME_TAG' 'MODEL_RUNTIME_VERSION' 'SURVEY_SCHEMA_VERSION' 'SCHEMA_CONTRACT_VERSION' 'LANGGRAPH' 'TURN_ENGINE' 'BC_SPEC' 'VERSIONS\.env' 'contracts\.tag' 'survey-schema\.tag' 'build_wheels' 'build_image\.sh' 'VARIANT='; do
+  hit=$(grep -nE -- "$pat" "$F" | grep -v '^[0-9]*:[[:space:]]*#' || true)
+  [ -z "$hit" ] && echo "ok: build-images.sh 에 영역 빌드 이름($pat)이 없다" || { echo "FAIL: 영역 빌드 이름이 남아 있다 ($pat):"; echo "$hit" | head -2 | cut -c1-140; rc=1; }
+done
+grep -q 'scripts/build-image.sh' "$F" && grep -q 'BuildImageRequest' "$F" && echo "ok: 영역 진입점 scripts/build-image.sh 와 BuildImageRequest 를 쓴다" || { echo "FAIL: 영역 진입점 호출이 없다"; rc=1; }
 [ $rc = 0 ] && echo "통과: build-images 정적 시험"; exit $rc

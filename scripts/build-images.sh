@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# 다섯 서비스 이미지를 로컬에서 빌드한다(D22). 이웃 리포지토리는 수정하지 않는다:
-#  - 영역 리포지토리는 `git archive HEAD`로 build/ctx/<이름>/ 에 꺼내 거기서 빌드한다.
-#  - 라이브러리(boundary-contracts, turn-engine, model-runtime)는 영역들의 빌드 스크립트가 `git -C ../<이름> archive <태그>`로
-#    읽으므로 build/ctx/<이름>/ 에 bare 사본을 둔다(태그 시점 소스만 쓰인다). 태그는 각 영역 스크립트의 기본값을 따른다.
-# 이미지 이름: survey-service question-authoring ops-feedback release-gate model-registry(소스는 model-lab 리포지토리) dataset-store(소스는 synthetic-data 리포지토리)
-# 결과: build/images.env (영역 로컬이름 커밋). 레지스트리에 올리고 digest 잠금을 만드는 일은 publish-images.sh.
+# 서비스 이미지를 로컬에서 빌드한다(D22, U42). deploy 는 영역의 빌드 구조(Dockerfile 인자 이름, 빌드 산출 파일, wheel 만들기)를 모른다(구조 규칙 1):
+#  - 서비스마다 계약 BuildImageRequest JSON 파일 하나를 쓰고, 그 영역 소스 트리의 루트에서 `bash scripts/build-image.sh <요청 파일>` 만 부른다.
+#  - 결과는 표준 출력 마지막 줄의 BuildImageResult(계약 validator 로 검증)에서 image·image_id·labels 를 받는다.
+#  - versions 는 lib.sh 기준표(boundary, model_runtime, survey_schema), dependency_sources 는 deploy 가 기준표 태그에서 git archive 로 꺼낸 공유 라이브러리(boundary-contracts, model-runtime)와
+#    survey-service 의 schema/ 디렉터리(절대 경로)다. 영역 소스는 git archive 사본(HEAD, model-runtime 은 기준표 태그)을 source_dir 로만 준다(작업 트리의 미커밋 변경이 섞이지 않는다).
+#  - 서비스 -> 리포·variant 대응은 lib.sh 의 service_repo·service_variant 한 곳이다.
+# 이미지 이름: lib.sh 의 SERVICES. 결과: build/images.env (영역 로컬이름 커밋). 레지스트리에 올리고 digest 잠금을 만드는 일은 publish-images.sh.
 # 사용: build-images.sh [--gpu [--yes-large]] [이름 ...]   (이름이 없으면 기본 8개 전부)
 #  --gpu        model-serving 의 GPU 변형을 별도 이미지 model-serving-gpu 로 빌드한다(약 13GB, 기본 빌드에는 넣지 않는다).
 #               --gpu 만 주면 GPU 이미지만 빌드한다(다른 빌드 결과를 지우지 않는다). 빌드 전에 docker system df 로 사용량과 추가 용량을 안내한다.
@@ -45,163 +46,73 @@ if [ "$ONLY" = "  " ]; then
 fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
-# 경계 계약·model-runtime 태그와 turn-engine 표지(lib.sh 의 기준값). 각 영역 스크립트가 받는 환경 변수 이름이 달라 모두 같은 값으로 넘긴다
-export BC="$DEPLOY_BC_TAG" MR="$DEPLOY_MR_TAG"   # 태그는 lib.sh 한 곳에서 정한다
-# 왜 turn-engine 이 없는가: 모든 영역이 turn-engine 코드 의존을 지웠다(D109). 값은 표지(lib.sh DEPLOY_TE_TAG)로만 남고 빌드에 쓰이지 않는다.
-for lib in boundary-contracts model-runtime; do
-  rm -rf "$CTX/$lib"; git clone -q --bare "$WORKSPACE/$lib" "$CTX/$lib"
-done
-# survey-service 의 build_wheels.sh 는 $REPO_BASE/openit_<이름>.git 에서 태그를 받는다(기본은 GitHub 원격). 로컬 태그 시점 소스를 쓰도록 같은 이름의 사본 폴더를 REPO_BASE 로 준다
-rm -rf "$CTX/repos"; mkdir -p "$CTX/repos"
-for lib in boundary-contracts model-runtime; do git clone -q --bare "$CTX/$lib" "$CTX/repos/openit_$lib.git"; done
-# 왜: 이미지 라벨 io.openit.model-runtime 의 정본은 model-runtime 의 pyproject version 이다(D50). 태그 문자열에서 추측하지 않고 빌드 컨텍스트(태그 시점 소스)의 파일을 파서로 읽는다
-# 값 없음 표기는 `n/a` 하나, 버전은 v 접두사 포함(계약 ImageLabels). 영역 Dockerfile 이 인자 기본값으로 none/unknown 을 달지 않게 deploy 가 넘기는 값은 형식을 맞춘다
-semver_v() { case "$1" in v*) echo "$1";; *) echo "v$1";; esac; }
-ss_major() { sed -n 's/^survey-schema-v\([0-9][0-9]*\)\..*/\1/p' <<<"$1" | grep . || echo "$1"; }   # survey-schema-v1.0.0 -> 1 (맞지 않으면 그대로 넘겨 검사가 잡는다)
-# model-runtime 이미지 라벨 io.openit.model-runtime 의 값은 deploy 기준표의 태그(DEPLOY_MR_TAG)에서 얻는다(영역의 pyproject.toml 을 읽지 않는다, ADR 0041). 이미지가 정말 그 버전인지는
-# 빌드한 이미지가 스스로 내는 model_runtime.RUNTIME_VERSION 으로 확인한다(영역이 내는 산출물을 읽는다. 어긋나면 빌드를 멈춘다).
-mr_label() { semver_v "$DEPLOY_MR_TAG"; }
-verify_mr_label() { # verify_mr_label <이미지>
-  local got; got=$("$DOCKER" run --rm --entrypoint python "$1" -c 'import model_runtime;print(model_runtime.RUNTIME_VERSION)' 2>/dev/null | tr -d '\r') || true
-  [ -n "$got" ] || die "이미지에서 model_runtime.RUNTIME_VERSION 을 읽지 못했다(확인 못 함): $1"
-  [ "$(semver_v "$got")" = "$(mr_label)" ] || die "라벨(기준표 $DEPLOY_MR_TAG)과 이미지의 RUNTIME_VERSION($got)이 다르다: $1. 기준표를 영역 릴리스에 맞추거나 영역이 태그를 바로잡아야 한다"
-}
-declare -A SRC=( [survey-service]=survey-service [question-authoring]=question-authoring [ops-feedback]=ops-feedback [release-gate]=release-gate [model-registry]=model-lab [dataset-store]=synthetic-data [model-serving]=model-runtime [kiosk-frontend]=kiosk-frontend [admin-console]=admin-console )
-# survey-service는 태그(survey-schema-v1.0.0)도 읽혀야 하므로 작업 트리가 있는 사본(clone, HEAD)으로 둔다
-rm -rf "$CTX/survey-service"; git clone -q --no-hardlinks "$WORKSPACE/survey-service" "$CTX/survey-service"; rm -rf "$CTX/survey-service/.git/hooks"
-if want release-gate; then rm -rf "$CTX/release-gate"; git clone -q --no-hardlinks "$WORKSPACE/release-gate" "$CTX/release-gate"; rm -rf "$CTX/release-gate/.git/hooks"; fi
-for n in "${!SRC[@]}"; do
-  want "$n" || continue
-  [ "$n" = survey-service ] && continue
-  [ "$n" = release-gate ] && continue   # 아래에서 clone 한다(build_image.sh 가 커밋을 git 으로 읽는다: git archive 사본에는 .git 이 없어 실패)
-  [ "$n" = model-serving ] && continue
-  rm -rf "$CTX/${SRC[$n]}"; mkdir -p "$CTX/${SRC[$n]}"; git -C "$WORKSPACE/${SRC[$n]}" archive HEAD | tar -x -C "$CTX/${SRC[$n]}"
-done
+BC="$DEPLOY_BC_TAG"; MR="$DEPLOY_MR_TAG"   # 태그는 lib.sh 한 곳에서 정한다(도장 bc=,mr= 에도 쓴다)
+SS_VER="${DEPLOY_SS_TAG#survey-schema-}"     # 문진 스키마 버전 vX.Y.Z (계약 versions.survey_schema)
+# 공유 라이브러리의 기준표 버전 소스(deploy 가 알아도 되는 것: boundary-contracts, model-runtime, 문진 스키마). 영역은 이웃 리포 경로나 빌드 중 네트워크 대신 이 경로를 쓴다
+DEP="$CTX/dep"; rm -rf "$DEP"; mkdir -p "$DEP/boundary" "$DEP/model_runtime" "$DEP/survey_schema"
+git -C "$WORKSPACE/boundary-contracts" archive "$BC" | tar -x -C "$DEP/boundary"
+git -C "$WORKSPACE/model-runtime" archive "$MR" | tar -x -C "$DEP/model_runtime"
+git -C "$WORKSPACE/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$DEP/survey_schema"
 touch "$DEPLOY_ROOT/build/images.env"
-# 네 번째 열(의존 태그 도장)은 e2e.sh --reuse-build 가 이미지를 다시 써도 되는지 판정하는 데 쓴다(verify_area.py). 이미지 라벨은 영역마다 표기가 달라(v 접두, none, n/a) 비교에 쓸 수 없다
-# 빌드 직후 라벨 검사(계약 ImageLabels): 게시 단계(publish-image(s).sh)에서 실패하기 전에 빌드에서 알린다
-record() { local vrc=0 vout; set -- "$1" "$(apply_test_label "$2")" "$3"   # 시험 ID 가 있으면 새 이미지 이름(<이름>-<ID>)을 쓴다. 원래 이미지는 그대로 둔다
-  vout=$(validate_image_labels "$2" "$1" 2>&1) || vrc=$?; [ $vrc = 0 ] || { echo "$vout" >&2; die "이미지 라벨이 계약 ImageLabels 를 어기거나 검사하지 못했다: $1 ($2)"; }
+# 요청·결과 검증은 기준표 태그의 계약 소스(dependency_sources.boundary)로 한다: 호스트 venv 에 설치된 계약 버전이 낡아도 표의 계약으로 본다
+PYB() { "$PY" "$@"; }   # 서비스 빌드 전에 venv 의 계약을 기준표 태그로 맞춘다(아래)
+# 네 번째 열(의존 태그 도장)은 e2e.sh --reuse-build 가 이미지를 다시 써도 되는지 판정하는 데 쓴다(verify_area.py).
+# 라벨 검사는 BuildImageResult 검증(계약, labels 는 ImageLabels) 하나다. 게시 때(publish-image.sh)는 이미지 라벨을 한 번 더 계약으로 본다(다른 시점의 다른 입력이다)
+record() { set -- "$1" "$(apply_test_label "$2")" "$3"   # 시험 ID 가 있으면 새 이미지 이름(<이름>-<ID>)을 쓴다. 원래 이미지는 그대로 둔다
   sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
-# 영역이 빌드 산출물(build/ 아래)로 내는 값 파일을 읽는다. 없거나 비면 빌드를 멈춘다(빈 라벨 값으로 게시 단계에서 늦게 실패하지 않게). 영역 소스 트리의 내부 경로는 읽지 않는다(구조 규칙: 영역은 서로의 구조를 모른다)
-req_file() { local v; v=$(tr -d '[:space:]' < "$1" 2>/dev/null) || true; [ -n "$v" ] || die "영역의 빌드 산출물 값 파일이 없거나 비었다: ${1#$CTX/}"; echo "$v"; }
-commit_of() { git -C "$WORKSPACE/$1" rev-parse --short HEAD; }
 
-if want survey-service; then
-  ( cd "$CTX/survey-service" && BOUNDARY_TAG="$BC" MODEL_RUNTIME_TAG="$MR" REPO_BASE="$CTX/repos" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
-  set -a; source "$CTX/survey-service/build/wheels/VERSIONS.env"; set +a
-  # io.openit.langgraph 라벨: 영역의 build_wheels.sh 가 VERSIONS.env 에 내는 LANGGRAPH_VERSION(잠금 파일 경로를 deploy 가 알지 않는다)
-  LG=${LANGGRAPH_VERSION:-}; [ -n "$LG" ] || { echo "survey-service build/wheels/VERSIONS.env 에 LANGGRAPH_VERSION 이 없다" >&2; exit 1; }
-  c=$(commit_of survey-service); img="deploy-build/survey-service:$c"
-  "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$BOUNDARY_TAG" \
-    --build-arg SCHEMA_CONTRACT_VERSION="$SCHEMA_CONTRACT_VERSION" \
-    --build-arg MODEL_RUNTIME_TAG="$MODEL_RUNTIME_TAG" --build-arg LANGGRAPH_VERSION="$LG" "$CTX/survey-service" >/dev/null
-  record survey-service "$img" "$c"
-fi
-if want question-authoring; then
-  ( cd "$CTX/question-authoring" && CONTRACTS_TAG="$BC" PYTHON="$PY" bash scripts/build_wheels.sh >/dev/null )
-  c=$(commit_of question-authoring); img="deploy-build/question-authoring:$c"
-  "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg BOUNDARY_TAG="$(cat "$CTX/question-authoring/build/contracts.tag")" \
-    --build-arg SURVEY_SCHEMA_TAG="$(ss_major "$(cat "$CTX/question-authoring/build/survey-schema.tag")")" "$CTX/question-authoring" >/dev/null
-  record question-authoring "$img" "$c"
-fi
-if want ops-feedback; then
-  ( cd "$CTX/ops-feedback" && BOUNDARY_TAG="$BC" PIP="$PIP" bash scripts/build_wheels.sh >/dev/null )
-  c=$(commit_of ops-feedback); img="deploy-build/ops-feedback:$c"
-  "$DOCKER" build -q -t "$img" --build-arg COMMIT="$c" --build-arg CONTRACTS_VERSION="$(cat "$CTX/ops-feedback/build/wheels/BOUNDARY_TAG")" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(req_file "$CTX/ops-feedback/build/wheels/SURVEY_SCHEMA_VERSION")" \
-    --build-arg TURN_ENGINE_VERSION=n/a --build-arg MODEL_RUNTIME_VERSION=n/a "$CTX/ops-feedback" >/dev/null
-  record ops-feedback "$img" "$c"
-fi
-if want release-gate; then
-  # 영역의 build_image.sh 를 표준 `docker` 와 일반 경로로 부른다(model-runtime 는 형제 리포의 태그 시점 소스, 사본 기준).
-  # 전제: release-gate 의 build_image.sh 가 docker.exe·wslpath 를 가정하지 않는 버전이다(CR-D21). 그 전 버전은 WSL 에서 UNC 경로를 만들어 실패한다.
-  c=$(commit_of release-gate); img="deploy-build/release-gate:$c"
-  ( cd "$CTX/release-gate" && DOCKER="$DOCKER" BOUNDARY_CONTRACTS_TAG="$BC" MODEL_RUNTIME_TAG="$MR" PYTHON="$PY" bash scripts/build_image.sh "$img" >/dev/null )
-  record release-gate "$img" "$c"
-fi
-if want model-registry; then
-  # Dockerfile은 boundary-contracts를 ssh로 받는다. 태그 시점 소스로 만든 wheel을 빌드 컨텍스트 wheels로 대신 준다(ssh 없이)
-  ML="$CTX/model-lab"; BCTAG=$BC
-  rm -rf "$ML/vendor-wheels" "$ML/bc-src"; mkdir -p "$ML/vendor-wheels" "$ML/bc-src"
-  git -C "$CTX/boundary-contracts" archive "$BCTAG" | tar -x -C "$ML/bc-src"
-  "$PIP" wheel -q --no-deps -w "$ML/vendor-wheels" "$ML/bc-src" >/dev/null 2>&1
-  whl=$(basename "$(ls "$ML"/vendor-wheels/boundary_contracts-*.whl | head -1)")
-  c=$(commit_of model-lab); img="deploy-build/model-registry:$c"
-  "$DOCKER" build -q -t "$img" --build-context "wheels=$ML/vendor-wheels" --build-arg "BC_SPEC=/wheels/$whl" \
-    --build-arg "BC_VERSION=$DEPLOY_BC_TAG" --build-arg "REVISION=$c" "$ML" >/dev/null
-  record model-registry "$img" "$c"
-fi
+# 한 서비스를 빌드한다: build_one <서비스>. 영역 리포 루트에서 진입점만 부른다. 진입점이 요청을 계약 validator 로 검증하므로 PYTHON(deploy venv, 기준표 태그의 계약으로 맞춰 둠)을 준다.
+build_one() {
+  local svc=$1 repo variant tagref commit src img req out rc
+  repo=$(service_repo "$svc"); variant=$(service_variant "$svc")
+  src="$CTX/src/$svc"; rm -rf "$src"; mkdir -p "$src"
+  if [ "$repo" = model-runtime ]; then   # 추론 서버는 기준표 태그 시점의 소스다(이미지 버전 == 기준표)
+    tagref="$MR^{commit}"; git -C "$WORKSPACE/$repo" archive "$MR" | tar -x -C "$src"
+  else tagref=HEAD; git -C "$WORKSPACE/$repo" archive HEAD | tar -x -C "$src"; fi
+  commit=$(git -C "$WORKSPACE/$repo" rev-parse --short "$tagref")
+  img="deploy-build/$svc:$commit"; req="$CTX/req-$svc.json"
+  PYB - "$req" "$src" "$commit" "$BC" "$MR" "$SS_VER" "$DEP" "$variant" "$img" <<'PY'
+import json, sys
+path, src, rev, bc, mr, ss, dep, variant, tag = sys.argv[1:10]
+req = {"source_dir": src, "revision": rev, "versions": {"boundary": bc, "model_runtime": mr, "survey_schema": ss},
+       "dependency_sources": {"boundary": f"{dep}/boundary", "model_runtime": f"{dep}/model_runtime", "survey_schema": f"{dep}/survey_schema/schema"}, "image_tag": tag}
+if variant: req["variant"] = variant
+from boundary_contracts import validator
+errs = list(validator("BuildImageRequest").iter_errors(req))
+if errs: sys.exit("BuildImageRequest 위반: " + errs[0].message[:200])
+json.dump(req, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+PY
+  [ -f "$src/scripts/build-image.sh" ] || die "$svc: 영역 진입점이 없다($repo/scripts/build-image.sh). 영역이 U42 진입점을 아직 내지 않았다"
+  echo "== 빌드 $svc <- $repo @ $commit"
+  rc=0; out=$(cd "$src" && DOCKER="$DOCKER" PYTHON="$PY" bash scripts/build-image.sh "$req" 2>"$CTX/build-$svc.err") || rc=$?
+  [ $rc = 0 ] || { tail -15 "$CTX/build-$svc.err" >&2; die "$svc: 영역 진입점이 실패했다(종료 코드 $rc, 전체 기록 ${CTX#$DEPLOY_ROOT/}/build-$svc.err)"; }
+  # 결과: 표준 출력 마지막 줄이 BuildImageResult. 계약 validator 로 검증(labels 는 ImageLabels)하고 image 가 요청한 것인지 본다
+  printf '%s\n' "$out" | tail -1 | PYB -c '
+import json, sys
+from boundary_contracts import validator
+r = json.loads(sys.stdin.read())
+errs = list(validator("BuildImageResult").iter_errors(r))
+if errs: sys.exit("BuildImageResult 위반: /" + "/".join(map(str, errs[0].absolute_path)) + ": " + errs[0].message[:200])
+if r["image"] != sys.argv[1]: sys.exit("결과의 image(%s)가 요청한 %s 와 다르다" % (r["image"], sys.argv[1]))
+print(r["image_id"])' "$img" > "$CTX/id-$svc.txt" || die "$svc: 영역 진입점의 결과(BuildImageResult)가 계약을 어긴다"
+  [ "$("$DOCKER" image inspect "$img" --format '{{.Id}}' | tr -d '\r')" = "$(cat "$CTX/id-$svc.txt")" ] || die "$svc: 결과의 image_id 가 로컬 이미지의 ID 와 다르다: $img"
+  record "$svc" "$img" "$commit"
+}
 
-if want dataset-store; then
-  # I2 DatasetStore HTTP 서버(계약 v2.1.0, D100, 소유 synthetic-data). 이미지는 boundary-contracts 를 ssh 로 받으므로 model-registry 와 같이 태그 시점 소스로 만든 wheel 을 빌드 컨텍스트 wheels 로 대신 준다.
-  # 계약 태그는 기준 DEPLOY_BC_TAG(lib.sh). 문진 스키마는 이미지에 복사본을 두지 않고 빌드 컨텍스트 survey_schema 로 받는다(synthetic-data ADR 0011): survey-service 의 기준 스키마 태그 시점 schema/.
-  DS="$CTX/synthetic-data"; DSW="$CTX/ds-wheels"; DSB="$CTX/ds-bc-src"; DSS="$CTX/ds-schema"
-  rm -rf "$DS" "$DSW" "$DSB" "$DSS"; mkdir -p "$DS" "$DSW" "$DSB" "$DSS"; git -C "$WORKSPACE/synthetic-data" archive HEAD | tar -x -C "$DS"
-  git -C "$CTX/boundary-contracts" archive "$DEPLOY_BC_TAG" | tar -x -C "$DSB"
-  "$PIP" wheel -q --no-deps -w "$DSW" "$DSB" >/dev/null 2>&1
-  whl=$(basename "$(ls "$DSW"/boundary_contracts-*.whl | head -1)")
-  git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$DSS"
-  c=$(commit_of synthetic-data); img="deploy-build/dataset-store:$c"
-  "$DOCKER" build -q -t "$img" --build-context "wheels=$DSW" --build-context "survey_schema=$DSS/schema" --build-arg "BC_SPEC=/wheels/$whl" \
-    --build-arg "BC_VERSION=$DEPLOY_BC_TAG" --build-arg "REVISION=$c" --build-arg "SURVEY_SCHEMA_VERSION=$(ss_major "$DEPLOY_SS_TAG")" "$DS" >/dev/null
-  record dataset-store "$img" "$c"
-fi
-
-# 호스트에서 쓰는 wheel: E2E 클라이언트·검증기와 synthetic-data 잡용(같은 기준 태그)
+# 호스트에서 쓰는 wheel: E2E 클라이언트·검증기와 synthetic-data 잡용(같은 기준 태그의 boundary-contracts). 영역 진입점이 요청·결과를 계약 validator 로 검증하므로(영역은 PYTHON 의 계약을 쓴다)
+# 서비스를 빌드하기 **전에** deploy venv 의 계약을 기준표 태그로 맞춘다(낡은 계약이면 요청 검증이 어긋난다).
 mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
-for tag in "$BC"; do
-  d="$DEPLOY_ROOT/build/hostsrc-$tag"; rm -rf "$d"; mkdir -p "$d"; git -C "$CTX/boundary-contracts" archive "$tag" | tar -x -C "$d"
-  mkdir -p "$DEPLOY_ROOT/build/hostwheels/$tag"; "$PIP" wheel -q --no-deps -w "$DEPLOY_ROOT/build/hostwheels/$tag" "$d" >/dev/null 2>&1
-done
+d="$DEPLOY_ROOT/build/hostsrc-$BC"; rm -rf "$d"; mkdir -p "$d"; cp -a "$DEP/boundary/." "$d/"
+mkdir -p "$DEPLOY_ROOT/build/hostwheels/$BC"; "$PIP" wheel -q --no-deps -w "$DEPLOY_ROOT/build/hostwheels/$BC" "$d" >/dev/null 2>&1 || die "계약 $BC 의 호스트 wheel 을 만들지 못했다"
+"$PIP" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$BC"/boundary_contracts-*.whl >/dev/null 2>&1 || die "deploy venv 에 계약 $BC 를 설치하지 못했다"
 
-if want model-serving; then
-  # 추론 서버(model-runtime, CPU/fake 변형). 같은 Dockerfile의 변형은 VARIANT 인자(기본 cpu, gpu는 GPU 서버 전용·13GB라 E2E 제외).
-  # boundary-contracts 폴더는 태그 시점 소스를 빌드 컨텍스트 boundary 로 준다(CI는 태그 설치로 바꾼다).
-  MS="$CTX/model-serving"; rm -rf "$MS" "$CTX/bc-folder"; mkdir -p "$MS" "$CTX/bc-folder"
-  git -C "$WORKSPACE/model-runtime" archive "$MR" | tar -x -C "$MS"   # 추론 서버는 model-runtime 태그 시점 소스
-  git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder"
-  # 문진 스키마를 이미지에 내장한다(D72): survey-service 태그 시점의 schema/ 를 빌드 컨텍스트 schema 로 준다 -> /opt/survey-schema.
-  # 추론 서버가 스키마 마운트·일회성 추출 서비스 없이 이미지 하나로 뜬다(다른 호스트에서도 같다).
-  rm -rf "$CTX/ms-schema"; mkdir -p "$CTX/ms-schema"
-  git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema"
-  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$MR^{commit}"); img="deploy-build/model-serving:$c"
-  "$DOCKER" build -q -t "$img" --build-context "boundary=$CTX/bc-folder" --build-context "schema=$CTX/ms-schema/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(mr_label)" "$MS" >/dev/null
-  verify_mr_label "$img"
-  record model-serving "$img" "$c"
-fi
-
-if want kiosk-frontend; then
-  # 키오스크 앱+직원 콘솔 정적 이미지(태그 없음 = main). 빌드 컨텍스트는 git archive 사본
-  KF="$CTX/kiosk-frontend"   # io.openit.app-version 은 영역 Dockerfile 의 ARG 기본값을 쓴다(deploy 가 영역의 패키지 파일을 읽어 넘기지 않는다, ADR 0041)
-  c=$(commit_of kiosk-frontend); img="deploy-build/kiosk-frontend:$c"
-  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACT="$BC" --build-arg SURVEY_SCHEMA="$(ss_major "$DEPLOY_SS_TAG")" "$KF" >/dev/null
-  record kiosk-frontend "$img" "$c"
-fi
-
-if want admin-console; then
-  # 출고 승인 화면 정적 이미지(태그 없음 = 로컬 폴더). /v1 은 프록시하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
-  c=$(commit_of admin-console); img="deploy-build/admin-console:$c"
-  "$DOCKER" build -q -t "$img" --build-arg REVISION="$c" --build-arg BOUNDARY_CONTRACTS="$BC" --build-arg SURVEY_SCHEMA=n/a "$CTX/admin-console" >/dev/null
-  record admin-console "$img" "$c"
-fi
+for svc in $SERVICES; do want "$svc" && build_one "$svc"; done
 
 if want_gpu; then
-  # 추론 서버 GPU 변형(D72/D73): 같은 Dockerfile 의 VARIANT=gpu. 문진 스키마 내장. 프로파일은 이미지 안 /app/profiles/ (model-runtime $DEPLOY_MR_TAG).
-  MSG="$CTX/model-serving-gpu"; rm -rf "$MSG" "$CTX/bc-folder-gpu" "$CTX/ms-schema-gpu"; mkdir -p "$MSG" "$CTX/bc-folder-gpu" "$CTX/ms-schema-gpu"
-  git -C "$WORKSPACE/model-runtime" archive "$DEPLOY_MR_TAG" | tar -x -C "$MSG"
-  git -C "$CTX/boundary-contracts" archive "$BC" | tar -x -C "$CTX/bc-folder-gpu"
-  git -C "$CTX/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$CTX/ms-schema-gpu"
-  c=$(git -C "$WORKSPACE/model-runtime" rev-parse --short "$DEPLOY_MR_TAG^{commit}"); img="deploy-build/model-serving-gpu:$c"
-  echo "== model-serving-gpu 빌드 (VARIANT=gpu, model-runtime $DEPLOY_MR_TAG)"
-  "$DOCKER" build -q -t "$img" --build-arg VARIANT=gpu --label io.openit.variant=gpu \
-    --build-context "boundary=$CTX/bc-folder-gpu" --build-context "schema=$CTX/ms-schema-gpu/schema" --build-arg REVISION="$c" --build-arg BOUNDARY_VERSION="$BC" \
-    --build-arg SURVEY_SCHEMA_VERSION="$(ss_major "$DEPLOY_SS_TAG")" --build-arg MODEL_RUNTIME_VERSION="$(mr_label)" "$MSG" >/dev/null
-  verify_mr_label "$img"
-  record model-serving-gpu "$img" "$c"
+  echo "== model-serving-gpu 빌드 (variant gpu, model-runtime $MR)"
+  build_one model-serving-gpu
   echo "== GPU 이미지 빌드 후 도커 디스크 사용량"; "$DOCKER" system df || true
-  OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$img " || true)
+  OLD=$("$DOCKER" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' "deploy-build/model-serving-gpu" 2>/dev/null | grep -v "^$(grep '^model-serving-gpu ' "$DEPLOY_ROOT/build/images.env" | cut -d' ' -f2) " || true)
   if [ -n "$OLD" ]; then
     echo "!! 이전 GPU 이미지가 태그를 가진 채 남아 있다(커밋이 다르면 태그도 다르다). 디스크 회수는 사용자가 판단해 지운다:"
     printf '%s\n' "$OLD" | sed 's/^/     docker rmi /'

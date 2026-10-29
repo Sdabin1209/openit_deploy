@@ -7,6 +7,8 @@
 
 `build-images.sh`가 이웃 영역의 내부 파일 둘을 직접 읽었다: model-runtime의 `pyproject.toml`(`project.version`, 라벨 `io.openit.model-runtime` 값)과 kiosk-frontend의 `package.json`(`version`, 라벨 `io.openit.app-version` 값). 구조 규칙(영역은 서로의 구조를 모른다, 영역 사이는 스키마와 산출물로만 만난다)에 어긋난다. 앞서 survey-schema 라벨은 같은 이유로 영역이 내는 산출물(`build/wheels/SURVEY_SCHEMA_VERSION`)에서 읽도록 바꿨다(커밋 d8a3301).
 
+> **갱신(U42, 커밋 이 ADR 다음)**: `build-images.sh`는 이제 영역 빌드 구조를 전혀 모른다(계약 BuildImageRequest/Result, 영역 `scripts/build-image.sh`만 부른다). model-runtime 라벨은 요청의 `versions.model_runtime`(기준표)을 영역이 라벨로 쓰고, `verify_mr_label`(이미지 안에서 `model_runtime.RUNTIME_VERSION`을 실행)은 영역 내부 모듈 이름을 아는 일이라 없앴다. 라벨-표 일치는 `check-versions.sh`(ADR 0042)가 본다. 아래 본문은 당시 결정의 기록이다.
+
 ## 결정
 
 - **model-runtime 라벨**: deploy 자신의 기준표 `DEPLOY_MR_TAG`(lib.sh)에서 만든다(`v` 접두사 포함). deploy는 model-serving 이미지를 그 태그의 소스(`git archive $MR`)로 빌드하므로 라벨의 버전은 deploy가 이미 아는 사실이다. 빌드한 이미지가 정말 그 버전인지는 **이미지가 스스로 내는 `model_runtime.RUNTIME_VERSION`**(영역이 내는 공개 산출물)을 실행해 비교하고 다르면 빌드를 멈춘다(`verify_mr_label`).

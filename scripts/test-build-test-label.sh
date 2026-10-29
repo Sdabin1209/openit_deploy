@@ -10,7 +10,7 @@ N=0; F=0; ok() { N=$((N+1)); local n=$1; shift; if "$@" >/dev/null 2>&1; then ec
 no() { N=$((N+1)); local n=$1; shift; if "$@" >/dev/null 2>&1; then echo "  FAIL $n (성공하면 안 된다)"; F=$((F+1)); else echo "  PASS $n"; fi; }
 T=$(mktemp -d); IMG=deploy-labeltest-$$/x:1; trap '"$DOCKER" rmi -f $IMG $IMG-test2 >/dev/null 2>&1; rm -rf "$T"' EXIT
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-printf 'FROM %s\nLABEL io.openit.service="survey-service" io.openit.revision="abc1234" io.openit.contracts.boundary="v2.4.1" io.openit.contracts.survey-schema="1" io.openit.turn-engine="v0.4.3" io.openit.model-runtime="v0.8.1" io.openit.langgraph="1.2.15"\n' "$UTIL" > "$T/Dockerfile"
+printf 'FROM %s\nLABEL io.openit.service="survey-service" io.openit.revision="abc1234" io.openit.contracts.boundary="v2.6.0" io.openit.contracts.survey-schema="1" io.openit.turn-engine="v0.4.3" io.openit.model-runtime="v0.8.1" io.openit.langgraph="1.2.15"\n' "$UTIL" > "$T/Dockerfile"
 "$DOCKER" build -q -t $IMG "$T" >/dev/null || { echo "시험 이미지를 만들지 못했다"; exit 1; }
 id_of() { "$DOCKER" image inspect "$1" --format '{{.Id}}' | tr -d '\r'; }
 lab() { "$DOCKER" image inspect "$1" --format "{{index .Config.Labels \"$2\"}}" | tr -d '\r'; }
@@ -19,7 +19,7 @@ no "접미사 환경 변수를 어떤 스크립트도 쓰지 않는다(revision 
 no "build-images.sh 의 commit_of 와 model-serving 커밋에 접미사가 없다" grep -nE 'SUFFIX' "$HERE/build-images.sh"
 ok "e2e.sh 롤백 시험은 BUILD_TEST_ID 로 새 버전을 만든다" grep -q 'BUILD_TEST_ID=test2 .*build-images.sh" survey-service' "$HERE/e2e.sh"
 echo "== 예전 방식은 거부된다(이 시험이 있는 이유)"
-no "revision 에 -test2 를 붙이면 계약 ImageLabels 가 거부한다" bash -c "echo '{\"io.openit.service\":\"survey-service\",\"io.openit.revision\":\"abc1234-test2\",\"io.openit.contracts.boundary\":\"v2.4.1\",\"io.openit.contracts.survey-schema\":\"1\"}' | $LABELS_PYTHON -W ignore '$HERE/check_image_labels.py'"
+no "revision 에 -test2 를 붙이면 계약 ImageLabels 가 거부한다" bash -c "echo '{\"io.openit.service\":\"survey-service\",\"io.openit.revision\":\"abc1234-test2\",\"io.openit.contracts.boundary\":\"v2.6.0\",\"io.openit.contracts.survey-schema\":\"1\"}' | $LABELS_PYTHON -W ignore '$HERE/check_image_labels.py'"
 echo "== apply_test_label (lib.sh)"
 ok "apply_test_label 함수가 있다" bash -c "source '$HERE/lib.sh'; declare -F apply_test_label"
 ID0=$(id_of $IMG)

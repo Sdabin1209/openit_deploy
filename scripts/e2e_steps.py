@@ -200,7 +200,7 @@ def wait_review_report(get_report, sid, label, timeout=60):
     raise AssertionError(f"시간 초과({timeout}s): 자동 검사 후 승인 요청 보고서 {label}.\n{explain_submission(sid)[1]}")
 
 qa_reader = lambda role="synthetic-data": HttpQuestionReader(URL("qa"), TOK(f"qa-read-{role}"))
-SD = {"venv": ROOT / "build/venv-sd/bin/python", "src": ROOT / "build/ctx/synthetic-data", "schema": ROOT / "build/ctx/survey-service/schema"}
+SD = {"venv": ROOT / "build/venv-sd/bin/python", "src": ROOT / "build/ctx/synthetic-data", "schema": ROOT / "build/ctx/dep/survey_schema/schema"}
 QS, QSU = f"qs-{RID}", f"qs-{RID}-unseen"
 
 def upload(set_id, text, fname):
@@ -1281,7 +1281,7 @@ def step5s():
 def risk_phrase_from_defaults():
     """survey-service 기본(임시) 위험 문구 목록에서 문구 하나를 읽는다(지어내지 않는다). 빌드 사본의 survey_service/risk_rules.py 의 _PROVISIONAL 을 ast 로 읽는다. (문구, 규칙 키 목록)"""
     import ast
-    src = (ROOT / "build/ctx/survey-service/survey_service/risk_rules.py").read_text(encoding="utf-8")
+    src = (ROOT / "build/ctx/src/survey-service/survey_service/risk_rules.py").read_text(encoding="utf-8")
     for node in ast.parse(src).body:
         if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "_PROVISIONAL" for t in node.targets):
             d = ast.literal_eval(node.value); k = "chest-pain" if "chest-pain" in d else next(iter(d)); return d[k][0], list(d)

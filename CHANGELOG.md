@@ -1,5 +1,13 @@
 # 변경 이력
 
+## build-images: 영역 Dockerfile 인자·빌드 산출 파일을 모른다 — 영역 `scripts/build-image.sh`만 부른다 (U42, 구조 규칙 1)
+- 서비스마다 계약 BuildImageRequest JSON(`source_dir`, `revision`, `versions`=lib.sh 기준표, `dependency_sources`=기준표 태그에서 `git archive`로 꺼낸 boundary-contracts·model-runtime·survey-service `schema/`, `variant`, `image_tag`)을 `build/ctx/req-<서비스>.json`에 쓰고 영역 소스 트리(git archive 사본, model-runtime은 기준표 태그) 루트에서 `bash scripts/build-image.sh <요청>`만 부른다. 결과(표준 출력 마지막 줄)는 BuildImageResult로 검증하고 `image`가 요청과 같은지, `image_id`가 로컬 이미지 ID와 같은지 확인한 뒤 `images.env`에 기록한다.
+- 지운 것: 영역별 Dockerfile 인자(COMMIT, REVISION, BOUNDARY_*, CONTRACTS_VERSION, MODEL_RUNTIME_*, SURVEY_SCHEMA_*, LANGGRAPH …), 영역 산출 파일 읽기(VERSIONS.env, contracts.tag …), wheel 만들기, `--build-context`, `verify_mr_label`(영역 내부 모듈 이름을 알았다), survey-service·release-gate clone.
+- 서비스 -> 리포·variant 대응은 `lib.sh`의 `service_repo`·`service_variant` 한 곳이다(서비스 목록과 같은 자리).
+- 서비스 빌드 전에 deploy venv의 계약을 기준표 태그로 맞춘다(영역 진입점이 요청을 PYTHON의 계약 validator로 검증하므로). **기준표 `DEPLOY_BC_TAG`를 v2.6.0으로 올렸다**: BuildImageRequest가 turn_engine 없이 versions.boundary만 요구하는 판은 2.5.0부터다(v2.4.1의 스키마는 turn_engine을 요구해 진입점 요청이 거부된다). 다른 영역이 아직 2.6.0 아래 핀이면 이미지 라벨이 표와 다르다고 `check-versions`가 알린다.
+- 시험: `test-build-images.sh`(가짜 영역 진입점·가짜 docker, 16건: 요청 값, 서비스->리포 대응, GPU variant, 진입점 실패·결과 계약 위반·image 불일치·image_id 불일치·진입점 없음), `test-build-images-static.sh`에 영역 빌드 이름 금지 검사 추가(옛 스크립트로는 22건 실패, 새 스크립트는 통과). 실제 빌드: main에 진입점이 있는 5곳(ops-feedback, model-lab, synthetic-data, kiosk-frontend, admin-console)을 빌드해 `check-versions` 통과. 나머지 4곳(release-gate, model-runtime, question-authoring, survey-service)은 영역 wo-42 합치기를 기다린다.
+- e2e_steps: 이웃 소스 사본의 경로가 `build/ctx/src/<서비스>`로 바뀌었다(`risk_rules.py`를 읽는 한 줄은 영역 내부 파일 읽기라 따로 정리가 필요하다).
+
 ## 계약 소비 정리 (U44·U46, U43 설계안)
 - U44: 이미지 라벨 검사가 두 번이던 것을 계약 ImageLabels 검증 하나로 정리했다. `publish-image.sh`는 필수 키를 손으로 먼저 보고 `:57`에서 계약 검증을 또 했고, `e2e.sh`의 `labels6`/`labels_kiosk`도 키를 따로 봤다. 모두 `validate_image_labels`(`check_image_labels.py`) 하나만 부른다(필수 4개 존재·빈 값·revision 형식·n/a 표기·오타 키는 스키마가 본다).
 - U46: `docs/boundary.md`·`docs/brief.md`의 "계약을 소비하거나 생산하지 않는다"를 사실로 고쳤다(소비 중: ImageLabels(+JobsDeclaration·Exposure), E2E의 validator·clients·metrics·canonical / 아직 쓰지 않음: BuildImage*, SetupEnvReport, Publish*). `PublishRequest.service` enum과 `lib.sh` 서비스 목록은 시험 `scripts/test_services_enum.py`로 같음을 보장한다(계약 enum이 정본, 어긋나면 실패; 점검 자체도 단위 시험).
