@@ -36,3 +36,4 @@ deploy 내부 스키마 자기 점검 (images.env·images.lock·jobs·verify-are
 check-secrets-hidden 자기 점검(노출 컨테이너는 실패, 파일 비밀은 통과) :: bash "$DEPLOY_ROOT/scripts/test-check-secrets-hidden.sh"
 systemd 유닛 정적 시험(잡마다 service+timer, 주기, systemd-analyze verify) :: bash "$DEPLOY_ROOT/scripts/test-systemd-units.sh"
 E2E 실패 진단 수집에 비밀이 섞이지 않는다 (환경 변수 목록 금지, 정리 전에 수집, 수집 실패가 정리를 막지 않는다) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_diag_safety.py"
+세션을 만든 기기 토큰과 같은 세션을 기본 기기 토큰 도우미로 부르지 않는다 (5n-reask 404 재발 방지) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_session_tokens.py"

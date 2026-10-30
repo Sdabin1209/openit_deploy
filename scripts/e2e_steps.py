@@ -1210,10 +1210,10 @@ def step5n():
         except ValueError: b = raw.decode(errors="replace")
         print(f"    호출 {method} {path} -> {code}", flush=True)   # 어느 호출이 어떤 코드를 받았는지 로그에 남긴다(단계 5n 첫 실행의 404 가 어느 호출인지 몰랐다)
         return code, b, {k.lower(): v for k, v in hd.items()}
-    def state_dev(tok):   # state_of 는 시험 기본 기기(e2e) 토큰이라 다른 기기가 만든 세션은 404 다(survey-service _device_denied). 세션을 만든 기기 토큰으로 조회한다
+    def state_dev(tok, session=None):   # state_of 는 시험 기본 기기(e2e) 토큰이라 다른 기기가 만든 세션은 404 다(survey-service _device_denied). 세션을 만든 기기 토큰으로 조회한다
         for _ in range(8):
             time.sleep(0.7)
-            c, r, _h = tcall(tok, "GET", f"/v1/sessions/{sid}/state")
+            c, r, _h = tcall(tok, "GET", f"/v1/sessions/{session or sid}/state")
             if c != 429: return c, r
         return c, r
     # (a) 위험 발화로 정지(단계 5f 의 방식: E2E 가 주입한 시험 규칙의 문구). 이 구성에는 직원 콘솔 구독자가 없어 전달은 DELIVERY_FAILED 로 끝나는 것이 정상이다(survey-service alerts.py 머리말). 구독자가 있으면 DELIVERED 일 수 있고 그래도 아래 호출은 OPEN 알림이 있으므로 성립한다
@@ -1272,7 +1272,7 @@ def step5n():
     for i in range(1, N + 1):   # 한도까지는 정상 진행: 되묻는다(세션은 진행 중, 직원 알림 없음, 문장은 모델 응답)
         c, rr = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{i}"})[:2]
         assert c == 200 and not rr.get("turn_failure_signal") and FAKE in str(rr.get("response_text")), (f"{i}번째 되묻기 턴이 정상 진행이 아니다", c, str(rr)[:200])
-    c, s_ = state_of(sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), (f"한도({N}) 전에 정지했다", c, s_)
+    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), (f"한도({N}) 전에 정지했다", c, s_)
     sv = staff_sv(sid2)
     said = [t for t in sv["turns"] if t["utterance"]]; assert [t["action"] for t in said] == ["REASK"] * N, ("턴 기록의 action", [(t["turn_id"], t["action"]) for t in said])
     c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200 and not [x for x in pg0["items"] if x["session_id"] == sid2], "한도 전에 직원 알림이 생겼다"
@@ -1280,7 +1280,7 @@ def step5n():
     c, rl = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{N + 1}"})[:2]
     assert c == 200 and rl.get("response_text") and FAKE not in str(rl.get("response_text")), (f"{N + 1}번째 턴 응답이 문항 세트 고정 문장이 아니다", c, str(rl)[:200])
     fixed_text = rl["response_text"]
-    c, s_ = state_of(sid2); assert c == 200 and s_["state"] == "PAUSED_RISK", (c, s_)
+    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "PAUSED_RISK", (c, s_)
     assert s_.get("pause_reason") == "REASK_LIMIT", ("/state 의 pause_reason 이 REASK_LIMIT 가 아니다(계약 v2.1.0 H절)", s_); _validate_if_known("SessionState", s_)
     c, pg = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     al = [x for x in pg["items"] if x["session_id"] == sid2]
@@ -1288,7 +1288,7 @@ def step5n():
     assert staff_sv(sid2)["status"] == "PAUSED_RISK"
     # 직원 재개 -> 정상: 정지가 풀리고 pause_reason 이 사라지며, 되묻기 문구가 없는 발화는 다시 모델 응답으로 진행한다(연속 횟수는 다시 센다)
     c, iv, _h = gw_raw("POST", f"/v1/sessions/{sid2}/intervention", {"session_id": sid2, "decision": "RESUME", "turn_id": "nr-iv-1"}, basic=STAFF()); assert c == 200, (c, iv)
-    c, s_ = state_of(sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), ("재개 뒤 상태", c, s_)
+    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), ("재개 뒤 상태", c, s_)
     c, rn = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "nr-after"})[:2]
     assert c == 200 and not rn.get("turn_failure_signal") and FAKE in str(rn.get("response_text")), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
