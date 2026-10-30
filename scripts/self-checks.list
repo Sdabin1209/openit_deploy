@@ -47,3 +47,4 @@ E2E 문항 양식으로 만든 QuestionBank 가 기준 문진 스키마(DEPLOY_S
 실제 작업 공간에 대한 정적 일관성 점검(check-all --strict, E2E 사전 점검과 같은 명령; 영역 시험 실행 포함이라 수 분 걸린다. E2E 사전 점검이 이미 돌았으면 건너뛴다) :: if [ -n "${E2E_PRECHECK_DONE:-}" ]; then echo "E2E 사전 점검(check-all)이 이미 통과했다"; else CHECK_ALL_IMAGES=defer bash "$DEPLOY_ROOT/scripts/check-all.sh" --strict; fi
 시간 상한 사슬 (키오스크 12s > gateway 10.5s > survey 턴 9s > 추출 3s + 응답 5s, 값은 Caddyfile·survey.env·E2E 상수에서 읽는다, ADR 0047) :: python3 "$DEPLOY_ROOT/scripts/test_time_chain.py"
 E2E 시작 점검의 link 핀 대조 단계: lib.sh 뒤에 있고 기본 켜짐, 켠 경로를 실제로 실행(맞으면 통과, 어긋나면 멈춤, 끄면 건너뜀), VENV 없는 환경에서도 돈다 (ADR 0046) :: bash "$DEPLOY_ROOT/scripts/test-link-pins-step.sh"
+E2E 응답 필드 비교 상수가 계약·문진 스키마(3.0.0)의 열거 안에 있다 (SessionState.state, StaffSessionView.status 출처 추적 + 같은 이름 열거 일반 검사, AST) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_enum_constants.py"

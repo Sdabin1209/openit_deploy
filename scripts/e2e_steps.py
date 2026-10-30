@@ -1272,7 +1272,7 @@ def step5n():
     for i in range(1, N + 1):   # 한도까지는 정상 진행: 되묻는다(세션은 진행 중, 직원 알림 없음, 문장은 모델 응답)
         c, rr = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{i}"})[:2]
         assert c == 200 and not rr.get("turn_failure_signal") and FAKE in str(rr.get("response_text")), (f"{i}번째 되묻기 턴이 정상 진행이 아니다", c, str(rr)[:200])
-    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), (f"한도({N}) 전에 정지했다", c, s_)
+    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "ACTIVE" and not s_.get("pause_reason"), (f"한도({N}) 전에 정지했다", c, s_)
     sv = staff_sv(sid2)
     said = [t for t in sv["turns"] if t["utterance"]]; assert [t["action"] for t in said] == ["REASK"] * N, ("턴 기록의 action", [(t["turn_id"], t["action"]) for t in said])
     c, pg0 = gws("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200 and not [x for x in pg0["items"] if x["session_id"] == sid2], "한도 전에 직원 알림이 생겼다"
@@ -1288,7 +1288,7 @@ def step5n():
     assert staff_sv(sid2)["status"] == "PAUSED_RISK"
     # 직원 재개 -> 정상: 정지가 풀리고 pause_reason 이 사라지며, 되묻기 문구가 없는 발화는 다시 모델 응답으로 진행한다(연속 횟수는 다시 센다)
     c, iv, _h = gw_raw("POST", f"/v1/sessions/{sid2}/intervention", {"session_id": sid2, "decision": "RESUME", "turn_id": "nr-iv-1"}, basic=STAFF()); assert c == 200, (c, iv)
-    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "IN_PROGRESS" and not s_.get("pause_reason"), ("재개 뒤 상태", c, s_)
+    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "ACTIVE" and not s_.get("pause_reason"), ("재개 뒤 상태", c, s_)
     c, rn = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "nr-after"})[:2]
     assert c == 200 and not rn.get("turn_failure_signal") and FAKE in str(rn.get("response_text")), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})

@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-410: 5n-reask 상태 비교 값, 열거 상수 정적 시험
+- 결함: `e2e_steps.py` 5n-reask(1275·1291행)가 계약 `SessionState.state`(ACTIVE|PAUSED_RISK|ENDED)를 `StaffSessionView.status` 의 값 "IN_PROGRESS" 와 비교해 '한도 전에 정지했다'로 실패했다(E2E 174 통과 1 실패). 두 곳을 "ACTIVE" 로 고쳤다.
+- 재발 방지 `scripts/test_e2e_enum_constants.py`(self-checks.list): E2E 의 `x["키"] == "상수"`/`in (...)` 비교를 AST 로 모아 (1) `state_dev`/`state_of` 로 받은 응답은 계약 SessionState 열거, `staff_sv` 응답은 문진 스키마(DEPLOY_SS_TAG) StaffSessionView.status 열거 안에 있는지, (2) 일반: 계약·문진 스키마에 같은 이름의 열거 속성이 있으면 상수가 그 합집합에 있는지 본다. 같은 이름 열거가 없는 키는 판단하지 않고 UNCHECKED 로 출력한다(통과로 세지 않음). 허용 목록 3건은 이유와 함께 시험 안에 있다(BoundaryError.details.reason, 지표 레지스트리 status). 옛 값으로 되돌리면 실패하는 것을 확인했다.
+
 ## wo-409: link 핀 대조 켜기, 켠 경로 시험
 - 결함: e2e.sh 의 link 핀 대조가 lib.sh 를 source 하기 전에 `$VENV/bin/python` 을 불러 DEPLOY_CHECK_LINK_PINS=1 로 켜자 "/bin/python: No such file" 로 멈췄다. 기본이 꺼져 있어 한 번도 안 돌아 깨진 줄 몰랐다.
 - 고침: 단계를 `scripts/check-link-pins.sh`(lib.sh 의 DEPLOY_PY 사용)로 빼고 e2e.sh 에서 lib.sh source 뒤에 부른다. 영역이 모두 v0.4.1 이라 기본값을 켬(`DEPLOY_CHECK_LINK_PINS:-1`, 0 으로 끈다). 자체 시험 `scripts/test-link-pins-step.sh`(self-checks.list)가 e2e.sh 의 블록을 그대로 꺼내 켠 경로를 실제로 실행한다(가짜 워크스페이스, VENV 없는 환경). 이전 e2e.sh 는 이 시험의 순서 검사에서 실패한다.
