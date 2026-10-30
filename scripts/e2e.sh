@@ -50,14 +50,15 @@ if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
   [ $CA_RC = 0 ] || { echo "check-all.sh --strict 가 FAIL 또는 SKIP 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
   export E2E_PRECHECK_DONE=1   # 자체 점검 묶음(self-checks.list)의 check-all 항목이 같은 점검을 두 번 돌지 않게 한다
 fi
-# link 핀 대조(U59, ADR 0046): 영역 main 잠금 파일의 openit-link 태그가 lib.sh 의 DEPLOY_LINK_TAG 와 같아야 한다. 준비만 해 두었다: 영역들이 기준 태그로 올린 뒤 헤드가 알리면 기본값을 1 로 바꾼다(그 전에는 항상 실패한다). DEPLOY_CHECK_LINK_PINS=1 로 지금도 켤 수 있다
-if [ "${DEPLOY_CHECK_LINK_PINS:-0}" = 1 ]; then
-  "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/check_link_pins.py" || { echo "link 핀 대조가 실패해 E2E를 시작하지 않는다 (위 영역/파일의 태그를 표와 맞춘다)"; exit 1; }
-fi
 # 사전 점검: 실패하면 바로 멈춘다(건너뛰기 DEPLOY_SKIP_DOCTOR=1). 하위 up.sh 가 다시 점검하지 않게 export 한다
 [ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" || exit 1
 export DEPLOY_SKIP_DOCTOR=1
 source "$(dirname "$0")/lib.sh"
+# link 핀 대조(U59, ADR 0046): 영역 main 잠금 파일의 openit-link 태그가 lib.sh 의 DEPLOY_LINK_TAG 와 같아야 한다. 기본 켜짐(영역이 모두 기준 태그로 올랐다). DEPLOY_CHECK_LINK_PINS=0 으로 끈다.
+# 왜 lib.sh 를 source 한 뒤인가: 이전에는 VENV 가 정해지기 전에 불러 "/bin/python: No such file" 로 멈췄다(켜지 않은 선택 단계가 한 번도 안 돌아 깨진 줄 몰랐다). 단계 자체는 scripts/check-link-pins.sh 로 빼 단독으로 시험한다(scripts/test-link-pins-step.sh).
+if [ "${DEPLOY_CHECK_LINK_PINS:-1}" = 1 ]; then
+  bash "$DEPLOY_ROOT/scripts/check-link-pins.sh" || { echo "link 핀 대조가 실패해 E2E를 시작하지 않는다 (위 영역/파일의 태그를 표와 맞춘다)"; exit 1; }
+fi
 KEEP=0; REUSE=0; KEEPIMG=0; FAST=0; FAILFAST=0; CHANGED=0
 ONLY=""; SECTIONS="jobs,backup,rollback"; SECTIONS_SET=0
 while [ $# -gt 0 ]; do case "$1" in

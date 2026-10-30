@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-409: link 핀 대조 켜기, 켠 경로 시험
+- 결함: e2e.sh 의 link 핀 대조가 lib.sh 를 source 하기 전에 `$VENV/bin/python` 을 불러 DEPLOY_CHECK_LINK_PINS=1 로 켜자 "/bin/python: No such file" 로 멈췄다. 기본이 꺼져 있어 한 번도 안 돌아 깨진 줄 몰랐다.
+- 고침: 단계를 `scripts/check-link-pins.sh`(lib.sh 의 DEPLOY_PY 사용)로 빼고 e2e.sh 에서 lib.sh source 뒤에 부른다. 영역이 모두 v0.4.1 이라 기본값을 켬(`DEPLOY_CHECK_LINK_PINS:-1`, 0 으로 끈다). 자체 시험 `scripts/test-link-pins-step.sh`(self-checks.list)가 e2e.sh 의 블록을 그대로 꺼내 켠 경로를 실제로 실행한다(가짜 워크스페이스, VENV 없는 환경). 이전 e2e.sh 는 이 시험의 순서 검사에서 실패한다.
+
 ## wo-408: 시간 상한 사슬 변경(사용자 결정, ADR 0047)
 - 응답 생성 5.0s(2.0->5.0), survey 턴 총 마감 9.0s(6.0->9.0), gateway 연결 1s + 응답 헤더 9.5s = 10.5s(Caddyfile 환자 경로 두 곳; 8.5->9.5), 키오스크 12s(10->12), 값 추출 3.0s 그대로. `config/survey.env` 에 세 survey 값을 명시했다(계약 SurveyServiceEnv 통과).
 - E2E 상수(`KIOSK_WAIT_S` 12, `SURVEY_TURN_DEADLINE_S` 9)와 단계 5w·5m·5p 문구·기대를 새 사슬에 맞췄다. 사슬 정적 시험 `scripts/test_time_chain.py`(self-checks.list). E2E 는 돌리지 않았다.

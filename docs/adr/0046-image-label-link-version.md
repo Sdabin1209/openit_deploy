@@ -24,7 +24,7 @@ link 버전의 정본은 각 영역 리포 **main 의 잠금 파일**이다: `re
 
 ## 결과
 
-얻는 것: 영역 잠금과 기준표의 어긋남을 이미지를 빌드하기 전에 정적으로 잡는다(2026-10-30 확인: 이 점검이 model-runtime·model-lab·ops-feedback·question-authoring·release-gate 의 v0.4.0 을 기준 v0.4.1 과 다르다고 낸다). 감수하는 것: 영역 잠금 파일 모양에 대한 가정(위 정규식 두 모양과 ARG), 점검은 `check-versions.sh`(이미지 라벨)와 별도 명령이고 check-all·e2e.sh 에는 아직 걸지 않았다(영역이 따라오기 전에는 항상 실패하기 때문). 측정한 것은 없다.
+얻는 것: 영역 잠금과 기준표의 어긋남을 이미지를 빌드하기 전에 정적으로 잡는다(2026-10-30 확인: 이 점검이 model-runtime·model-lab·ops-feedback·question-authoring·release-gate 의 v0.4.0 을 기준 v0.4.1 과 다르다고 낸다). 감수하는 것: 영역 잠금 파일 모양에 대한 가정(위 정규식 두 모양과 ARG), 점검은 `check-versions.sh`(이미지 라벨)와 별도 명령이고 e2e.sh 시작 점검에 기본 켜짐으로 걸었다(`DEPLOY_CHECK_LINK_PINS=0` 으로 끈다; check-all 출력 형식은 record-e2e.sh 가 읽어 건드리지 않았다). 측정한 것은 없다.
 
 ## 되돌리는 조건
 
