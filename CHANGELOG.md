@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-401: link 기준 v0.3.0
+- `DEPLOY_LINK_TAG` v0.2.0 -> v0.3.0(개발 venv 재설치). model-runtime 태그는 헤드가 알리면 올린다.
+
+
 ## wo-400: 영역 구조 개편(D117), 계약 v3.1.1, link v0.2.0
 - 계약 기준 `DEPLOY_BC_TAG` v3.0.2 -> v3.1.1(와이어 형식은 같다). 통신 기반 라이브러리 `DEPLOY_LINK_TAG` v0.1.0 을 기준표에 더했다(ADR 0046: 이미지 라벨 기록은 제안).
 - E2E 5n-reask 가 survey-service 의 되묻기 실효 한도 계산(`effective_reask_cap`)을 흉내 내던 것을 없애고 계약 출력 `SurveyReadyz.reask_limit.effective`(v3.1.0)만 읽는다. 5n 의 deps 에서 단계 1 이 빠진다.

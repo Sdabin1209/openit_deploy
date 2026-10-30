@@ -1,6 +1,6 @@
 # STATUS (2026-10-30, wo-400 영역 구조 개편)
 
-- 한 일: 계약 v3.1.1·link v0.2.0 기준 반영, E2E 5n-reask 가 `SurveyReadyz.reask_limit.effective` 만 읽음, Python 판단을 컴포넌트 19개로 옮김(`docs/components.md`), 스키마·예시·생성 타입, 구조 시험(`tests/test_structure.py`)을 자체 점검에 추가. 결정: ADR 0045(구조), 0046(link 라벨, 제안).
+- 한 일: 계약 v3.1.1·link v0.3.0 기준 반영, E2E 5n-reask 가 `SurveyReadyz.reask_limit.effective` 만 읽음, Python 판단을 컴포넌트 19개로 옮김(`docs/components.md`), 스키마·예시·생성 타입, 구조 시험(`tests/test_structure.py`)을 자체 점검에 추가. 결정: ADR 0045(구조), 0046(link 라벨, 제안).
 - 확인한 것: `scripts/run-self-checks.sh` 40개 전부 통과, `head/scripts/structure-check.py deploy` 통과, 새 clone + 새 venv 에서 `tests/test_structure.py` 통과(types 재생성 일치 포함).
 - 확인하지 못한 것: E2E(지시로 돌리지 않았다), 이미지 빌드·게시 경로에서 새 진입점이 쓰는 `DEPLOY_PY` 선택(빌드를 돌리지 않았다), 셸 스크립트 안의 검사를 스키마로 옮길 수 있는지(훑지 않았다), 깨끗한 두 번째 환경에서의 전체 자체 점검(이웃 영역이 옆에 있어야 한다).
 - 남은 일: 헤드 결정 대기 — 계약에 `io.openit.link` 허용(CR-U400-image-label-link), 어댑터 부착의 model-runtime import 정리(CR-U400-attach-package-model-runtime-import). E2E 는 헤드가 정한 때 한 번.
