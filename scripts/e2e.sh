@@ -167,6 +167,7 @@ chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh
 chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
 chk "버전 표 드리프트 없음 (check-versions: 빌드된 이미지 라벨 == lib.sh 표; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-versions.sh"
 chk "게이트웨이 노출이 영역 이미지의 노출 선언(io.openit.exposure)과 같다 (check-exposure: Caddyfile 대조, ADR 0043; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-exposure.sh"
+chk "e2e_steps.py 가 쓰는 IMAGES 키가 e2e.sh 가 넘기는 IMAGES 에 모두 있다" python3 "$DEPLOY_ROOT/scripts/test_e2e_images_keys.py"
 chk "check-exposure 자체 점검" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_check_exposure.py"
 chk "E2E 시험 위험 규칙 파일이 계약 SurveyRiskRulesFile 을 따르고 E2E 전용 compose 에만 연결된다" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_risk_rules_file.py"
 chk "deploy 설정 파일 중 계약 스키마가 있는 것은 계약 validator 를 통과한다 (config/·test/ 파일 분류 포함)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_config_contracts.py"
@@ -296,7 +297,7 @@ chk "이미지 라벨이 계약 ImageLabels 를 따른다 kiosk-frontend" labels
 langgraph_label() { local v; v=$("$DOCKER" image inspect "$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST" --format '{{index .Config.Labels "io.openit.langgraph"}}' | tr -d '\r'); [ -n "$v" ] && [ "$v" != unknown ] && echo "io.openit.langgraph=$v"; }
 chk "survey-service 이미지의 io.openit.langgraph 라벨이 unknown이 아니다" langgraph_label
 sect "단계 1~8 (실제 서비스의 HTTP로 잇는다)"
-IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\"}"
+IMAGES="{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\",\"dataset-store\":\"$DEPLOY_REGISTRY/openit/dataset-store@$DATASET_STORE_DIGEST\"}"
 PORTS="{\"qa\":$PQA,\"gate\":$PGATE,\"ops\":$POPS,\"survey\":$PSURVEY,\"mr\":$PMR,\"ds\":$PDS,\"gw\":$PGWS,\"ms\":$PMS}"
 STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
 "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
