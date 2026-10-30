@@ -29,7 +29,7 @@ class T(unittest.TestCase):
             self.assertFalse((ROOT / "schemas" / f"{n}.schema.json").exists(), f"deploy schemas/ 에 계약 스키마 {n} 사본이 있다")
 
     def test_checker_uses_package(self):
-        labels = {"io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.6.0", "io.openit.contracts.survey-schema": "1"}
+        labels = {"io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.6.0", "io.openit.contracts.survey-schema": "3"}
         p = subprocess.run([sys.executable, "-W", "ignore", str(HERE / "check_image_labels.py")], input=json.dumps(labels), capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("스키마 출처: 계약 패키지", p.stdout)

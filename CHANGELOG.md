@@ -1,5 +1,10 @@
 # 변경 이력
 
+## wo-406: 최종 고정 U410 — 문진 스키마 survey-schema-v3.0.0
+- `DEPLOY_SS_TAG` survey-schema-v2.0.0 -> survey-schema-v3.0.0. 표본 라벨의 문진 스키마 주 번호를 3 으로 맞췄다(`test_image_labels.py`, `test_contract_schema_copy.py`, `test-images-env.sh`, `test-build-test-label.sh`). 나머지 기준은 이미 U410 과 같다(계약 v3.1.1, link v0.4.1, model-runtime v0.11.4).
+- 새 정적 시험 `scripts/test_e2e_form_survey_schema.py`: E2E 문항 양식(`test/fixtures/question-form-v2.txt`)을 question-authoring 추출기로 읽어 만든 QuestionBank 가 survey-service 태그 `DEPLOY_SS_TAG` 의 QuestionBank 를 통과하는지 본다(3.0.0 의 칸 data_type 필수·option 의 choices/choice_catalog·고정 문장·ID 패턴 포함). 통과했다. 음성 대조: 칸 data_type 을 지우면 위반 52건이 난다. E2E 가 쓰는 다른 문진 스키마 이름(FrontendInput, SessionResult, StaffSessionView, TurnTrace)도 3.0.0 에 있다. 문진 스키마는 고치지 않았다.
+- link 핀 대조(`DEPLOY_CHECK_LINK_PINS`)는 아직 켜지 않았다(헤드 알림 뒤).
+
 ## wo-405: model-runtime v0.11.4, link 핀 대조 걸기 준비
 - `DEPLOY_MR_TAG` v0.11.3 -> v0.11.4. deploy 의 개발 venv 는 model-runtime 을 설치하지 않으므로(E2E 이미지 빌드가 태그 소스를 꺼낸다) 재설치할 것이 없다.
 - `e2e.sh` 시작 점검에 link 핀 대조(`check_link_pins.py`)를 `DEPLOY_CHECK_LINK_PINS=1` 일 때만 돌리게 준비했다(기본 꺼짐: 영역이 v0.4.1 로 오르기 전에는 항상 실패한다). 기본값을 1 로 바꾸는 커밋은 헤드 알림 뒤에 한다. check-all 은 출력 형식을 record-e2e.sh 가 읽으므로 건드리지 않았다.

@@ -19,7 +19,7 @@ no "접미사 환경 변수를 어떤 스크립트도 쓰지 않는다(revision 
 no "build-images.sh 의 commit_of 와 model-serving 커밋에 접미사가 없다" grep -nE 'SUFFIX' "$HERE/build-images.sh"
 ok "e2e.sh 롤백 시험은 BUILD_TEST_ID 로 새 버전을 만든다" grep -q 'BUILD_TEST_ID=test2 .*build-images.sh" survey-service' "$HERE/e2e.sh"
 echo "== 예전 방식은 거부된다(이 시험이 있는 이유)"
-no "revision 에 -test2 를 붙이면 계약 ImageLabels 가 거부한다" bash -c "echo '{\"io.openit.service\":\"survey-service\",\"io.openit.revision\":\"abc1234-test2\",\"io.openit.contracts.boundary\":\"v3.0.0\",\"io.openit.contracts.survey-schema\":\"1\"}' | $LABELS_PYTHON -W ignore '$HERE/check_image_labels.py'"
+no "revision 에 -test2 를 붙이면 계약 ImageLabels 가 거부한다" bash -c "echo '{\"io.openit.service\":\"survey-service\",\"io.openit.revision\":\"abc1234-test2\",\"io.openit.contracts.boundary\":\"v3.0.0\",\"io.openit.contracts.survey-schema\":\"3\"}' | $LABELS_PYTHON -W ignore '$HERE/check_image_labels.py'"
 echo "== apply_test_label (lib.sh)"
 ok "apply_test_label 함수가 있다" bash -c "source '$HERE/lib.sh'; declare -F apply_test_label"
 ID0=$(id_of $IMG)
