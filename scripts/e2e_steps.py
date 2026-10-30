@@ -4,7 +4,7 @@
 
 상태: REAL(실제 서비스·잡) / TEST-SUB(시험 대역으로 대신함) / BLOCKED(지금 구현으로는 이어지지 않음) / FAIL(검증 실패)
 """
-import argparse, collections.abc, hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.request, urllib.error, urllib.parse
+import argparse, traceback, collections.abc, hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.request, urllib.error, urllib.parse
 
 import boundary_contracts as bc
 from boundary_contracts import canonical
@@ -293,6 +293,20 @@ def sd_config(name, seeds, failure=False, version=None):
         cfg["seeds"]["question_set_id"] = QS
     p = WORK / f"sd-{name}.job.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
+# 실패 진단(사용자 지시: 검사가 실패하면 이유를 산출한다): $W/diag/ 에 남기면 e2e.sh 가 정리 전에 state/e2e-diag-<시각>/ 로 복사한다.
+# 비밀 금지: 잡 명령에는 비밀 값이 없다(NAME_FILE 경로와 파일 마운트 경로뿐, D84). 환경 변수 목록(env, Config.Env)은 어디에도 남기지 않는다.
+DIAG = WORK / "diag"
+CUR_STEP = ["-"]   # 지금 도는 단계 이름(아래 단계 루프가 정한다)
+
+def diag_write(name, text):
+    try:
+        DIAG.mkdir(parents=True, exist_ok=True)
+        with open(DIAG / name, "a", encoding="utf-8") as f: f.write(text)
+    except OSError: pass   # 진단을 못 남겨도 시험 결과를 바꾸지 않는다
+
+def tail_lines(text, n=200):
+    return "\n".join((text or "").splitlines()[-n:])
+
 def run_job(job_name, cfg_path, *, network, extra_ro=()):
     """network 는 호출자가 고른다(기본값 없음): 컨테이너 안에서 도는 잡은 compose 네트워크 + 서비스 이름 주소로 이웃에 닿는다."""
     """dataset-store 이미지의 라벨 io.openit.jobs 에서 잡 job_name 을 찾아 docker run 으로 돌린다(명령 조립: sd_jobs.docker_cmd)."""
@@ -301,7 +315,10 @@ def run_job(job_name, cfg_path, *, network, extra_ro=()):
     job = sd_jobs.find_job(labels, job_name, bc.validator)
     cfg = json.loads(pathlib.Path(cfg_path).read_text())
     if job.get("config", {}).get("schema"): validate(job["config"]["schema"], cfg)   # 영역이 선언한 설정 스키마(계약)로 deploy 가 만든 설정을 먼저 검사한다
-    r = subprocess.run(sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro, network=network), capture_output=True, text=True)
+    cmd = sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro, network=network)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:   # 단계 4 처럼 종료 코드를 기대하는 호출(허용치 초과 4 등)도 남긴다: 기대한 실패인지는 읽는 사람이 판단한다
+        diag_write(f"{CUR_STEP[0]}-{job_name}.log", f"## {job_name} 종료 코드 {r.returncode} (단계 {CUR_STEP[0]}, 네트워크 {network})\n## 명령(비밀 값 없음: 파일 경로만)\n{' '.join(cmd)}\n## stderr 끝 200줄\n{tail_lines(r.stderr)}\n## stdout 끝 50줄\n{tail_lines(r.stdout, 50)}\n\n")
     # 종료 코드 2 는 설정 오류다(계약 SyntheticJobError): 우리가 만든 설정이 거부된 것이므로 어떤 단계도 기대하지 않는다. 계약으로 읽어 사유를 보고한다
     assert r.returncode != 2, f"{job_name}: {sd_jobs.describe_failure(r.returncode, r.stderr, bc.validator)}"
     return r
@@ -2050,10 +2067,10 @@ for n, fn in STEPS:
     root = PLAN.skip_root(n, STATUS)
     if root:
         STATUS[n] = "SKIP:" + root; rec(n, "SKIP", f"SKIP(선행 실패: 단계 {root})"); continue
-    t0 = time.time(); k0 = len(RESULTS)
+    t0 = time.time(); k0 = len(RESULTS); CUR_STEP[0] = n
     try: fn()
-    except AssertionError as e: rec(fn.__name__, "FAIL", str(e))
-    except Exception as e: rec(fn.__name__, "FAIL", f"{type(e).__name__}: {e}")
+    except AssertionError as e: rec(fn.__name__, "FAIL", str(e)); diag_write("steps-traceback.log", f"## 단계 {n} ({fn.__name__}) AssertionError\n{traceback.format_exc()}\n")
+    except Exception as e: rec(fn.__name__, "FAIL", f"{type(e).__name__}: {e}"); diag_write("steps-traceback.log", f"## 단계 {n} ({fn.__name__}) {type(e).__name__}\n{traceback.format_exc()}\n")
     failed = any(r[1] == "FAIL" for r in RESULTS[k0:])
     STATUS[n] = "FAIL" if failed else "OK"
     if not failed and any(r[1] in ("REAL", "TEST-SUB") for r in RESULTS[k0:]): LAST[n] = CUR[n]   # BLOCKED 만 있으면 PASS 가 아니다

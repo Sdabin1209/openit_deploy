@@ -114,9 +114,29 @@ else
   bash "$DEPLOY_ROOT/scripts/record-e2e.sh" "$W/check-all.out" "$W/summary.txt" || { echo "record-e2e.sh 실패: 결과를 docs/E2E_RESULTS.md 에 적지 못했다"; REC_RC=1; }
 fi
 }
+# 실패 진단 수집(사용자 지시: 검사가 실패하면 이유를 산출하고 이미지를 지운다): 정리 전에 서비스 컨테이너 로그 끝 300줄, 컨테이너 목록(docker ps -a, compose ps -a 와 같은 정보), 컨테이너 State, 단계의 진단 파일($W/diag)을
+# state/e2e-diag-<날짜시각>/ 로 복사한다(작업 폴더가 지워져도 남는다). 비밀 금지: 환경 변수 목록(env, printenv, Config.Env)과 inspect 전체·compose config 는 쓰지 않는다
+# (State 만 읽는다). 수집이 실패해도 정리를 막지 않는다.
+DIAG_DIR=""
+collect_diag() {
+  DIAG_DIR="$DEPLOY_ROOT/state/e2e-diag-$(date +%Y%m%d-%H%M%S)"
+  ( set +e
+    mkdir -p "$DIAG_DIR/logs" "$DIAG_DIR/state" || exit 0
+    # compose ps -a 와 같은 정보(이름·상태·이미지)를 docker ps 로 읽는다: compose 는 필수 변수(digest)를 해석해야 하는데 정리 중에는 그 환경이 없을 수 있다
+    timeout 30 "$DOCKER" ps -a --filter "label=com.docker.compose.project=$PROJECT" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}' > "$DIAG_DIR/compose-ps.txt" 2>&1
+    for c in $(timeout 30 "$DOCKER" ps -a --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}}' 2>/dev/null | tr -d '\r'); do
+      timeout 60 "$DOCKER" logs --tail 300 "$c" > "$DIAG_DIR/logs/$c.log" 2>&1
+      timeout 30 "$DOCKER" inspect --format '{{json .State}}' "$c" > "$DIAG_DIR/state/$c.json" 2>&1
+    done
+    [ -d "$W/diag" ] && cp -r "$W/diag/." "$DIAG_DIR/" 2>/dev/null
+    for f in steps.log summary.txt check-all.out; do [ -f "$W/$f" ] && cp "$W/$f" "$DIAG_DIR/" 2>/dev/null; done
+    exit 0 ) || true
+  [ -d "$DIAG_DIR" ] || DIAG_DIR=""
+}
 cleanup() {
   local rc=$?
-  [ $KEEP = 1 ] && { echo "--keep: 프로젝트 $PROJECT, 레지스트리 $RPROJ, 작업 폴더 $W 를 남겼다"; return; }
+  if [ "${FAILS:-0}" != 0 ] || [ $rc != 0 ]; then collect_diag; fi
+  [ $KEEP = 1 ] && { [ -z "$DIAG_DIR" ] || echo "진단 폴더: ${DIAG_DIR#$DEPLOY_ROOT/}"; echo "--keep: 프로젝트 $PROJECT, 레지스트리 $RPROJ, 작업 폴더 $W 를 남겼다"; return; }
   echo; echo "== 정리"
   # 감시 스택(compose.monitoring.yaml)의 서비스·네트워크(${PROJECT}_monitoring)는 그 파일을 읽어야 내려간다: 파일 없이 내리면 고아 컨테이너만 지워지고 네트워크가 남아 Docker 주소 풀을 쓴다
   COMPOSE_EXTRA="$COMPOSE_EXTRA $DEPLOY_ROOT/compose.monitoring.yaml" dc "$PROJECT" --profile jobs down -v --remove-orphans >/dev/null 2>&1
@@ -125,6 +145,7 @@ cleanup() {
   if [ $KEEPIMG = 0 ]; then for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -E '^deploy-build/' | grep -v '^deploy-build/model-serving-gpu:'); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done; fi   # 사용자가 따로 빌드한 13GB GPU 이미지(데모용)는 지우지 않는다
   rm -rf "$W" 2>/dev/null || "$DOCKER" run --rm -v "$DEPLOY_ROOT/state:/s" "$UTIL_REF" rm -rf "/s/e2e-$ID"
   echo "정리 완료 (프로젝트 $PROJECT, 레지스트리 $RPROJ, 이미지, 임시 폴더)"
+  [ -z "$DIAG_DIR" ] || echo "진단 폴더: ${DIAG_DIR#$DEPLOY_ROOT/} (컨테이너 로그 끝 300줄, compose ps, 컨테이너 State, 잡 stderr, 단계 traceback; 환경 변수는 담지 않는다)"
   return $rc
 }
 trap cleanup EXIT

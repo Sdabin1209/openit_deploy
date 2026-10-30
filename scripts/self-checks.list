@@ -35,3 +35,4 @@ e2e 규칙 세대 표지(action_rules_version)는 계약 규칙 데이터에서�
 deploy 내부 스키마 자기 점검 (images.env·images.lock·jobs·verify-areas 가 schemas/ 와 맞는다) :: python3 -I "$DEPLOY_ROOT/scripts/test_check_schemas.py"
 check-secrets-hidden 자기 점검(노출 컨테이너는 실패, 파일 비밀은 통과) :: bash "$DEPLOY_ROOT/scripts/test-check-secrets-hidden.sh"
 systemd 유닛 정적 시험(잡마다 service+timer, 주기, systemd-analyze verify) :: bash "$DEPLOY_ROOT/scripts/test-systemd-units.sh"
+E2E 실패 진단 수집에 비밀이 섞이지 않는다 (환경 변수 목록 금지, 정리 전에 수집, 수집 실패가 정리를 막지 않는다) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_diag_safety.py"

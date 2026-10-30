@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-314: E2E 실패 진단
+- 실패해도 바로 정리해 잡 stderr·컨테이너 로그·이미지가 사라져 원인을 볼 수 없었다. 이제 (1) `run_job`이 실패하면 `$W/diag/<단계>-<잡>.log`에 명령(파일 경로만)과 stderr 끝 200줄·stdout 끝 50줄을, 단계 FAIL이면 `$W/diag/steps-traceback.log`에 traceback 전체를 남긴다. (2) `e2e.sh`는 실패가 하나라도 있으면 정리 전에 `state/e2e-diag-<날짜시각>/`로 컨테이너 로그 끝 300줄, 컨테이너 목록(docker ps -a), 컨테이너 State, `$W/diag`, steps.log·summary.txt·check-all.out을 모은다(수집 실패·멈춤이 정리를 막지 않는다: 서브셸·timeout·|| true). 끝 요약에 진단 폴더 경로가 나온다.
+- 비밀: 환경 변수 목록(env, printenv, docker exec, Config.Env, inspect 전체, compose config)은 어디서도 읽지 않는다. `test_e2e_diag_safety.py`(self-checks.list)가 정적으로, 가짜 docker로 실제 실행해 지킨다.
+
 ## wo-313: 5n deps, 자체 점검 묶음
 - `@step('5n')` deps에 '1'을 더했다(a63fb87이 5n에서 STATE["qs"]를 읽게 됐다: `test_e2e_plan.test_declared_deps_equal_state_analysis`), why도 맞췄다.
 - 재발 방지: 자체 점검 목록의 정본을 `scripts/self-checks.list`로 모으고(설명 :: 명령), `scripts/run-self-checks.sh`가 전부 돌린다(커밋 전에 실행). `e2e.sh`는 같은 목록을 `run-self-checks.sh --print`로 읽어 chk로 실행한다(목록을 두 곳에 복사하지 않는다). 빌드·레지스트리·이미지 상태가 필요한 점검(publish, check-compose, check-versions, check-exposure)은 e2e.sh에 직접 남겼고 이유는 run-self-checks.sh 머리글에 있다.
