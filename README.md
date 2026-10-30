@@ -120,6 +120,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0036 주기 잡은 systemd timer가 run-job.sh로 돌린다(0010 대체)](docs/adr/0036-systemd-timers.md)
 - [0042 버전 표 점검은 빌드된 이미지 라벨을 기준표와 비교한다](docs/adr/0042-check-versions-image-labels.md)
 - [0043 게이트웨이 노출은 영역 이미지의 노출 선언과 대조한다](docs/adr/0043-gateway-exposure-check-against-image-labels.md)
+- [0044 백업 보관 기간은 운영 데이터 보존 기간 중 가장 짧은 값 이하로 한다](docs/adr/0044-backup-retention-not-longer-than-data-retention.md)
 - [0041 build-images는 영역의 내부 버전 파일을 읽지 않는다](docs/adr/0041-build-images-no-area-internal-version-files.md)
 - [0040 키오스크 기기 인증은 게이트웨이 클라이언트 인증서 검증(주체 CN = 기기 ID)](docs/adr/0040-gateway-client-cert-device-auth.md)
 - [0039 직원 계정은 조직이 주는 bcrypt 계정 파일을 쓴다(프로젝트는 발급하지 않음)](docs/adr/0039-org-supplied-staff-accounts.md)

@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-315: U30 백업 보관 기간, U46 boundary.md
+- U30: 백업 보관(`BACKUP_RETENTION_DAYS`)이 운영 데이터 보존(survey 90일, ops-feedback 원본 30·사례 180·지표 365, question-authoring 30·30) 중 가장 짧은 값(30일) 이하여야 한다. 예시 값 14일은 제약 안이라 유지했다. `scripts/retention_check.py`가 설정에서 값을 읽어 비교하고 `backup-check.sh`가 어기면 거부한다. 정적 시험 `test_retention_check.py`(self-checks.list). 근거 ADR 0044(값은 측정이 아니라 제약에서 나왔다).
+- U46(deploy 몫): `docs/boundary.md`의 "계약을 생산하지 않고 소비만" 문장과 "아직 쓰지 않음" 표가 낡았다. 실제 소비 목록(빌드·게시 경계, 설정·환경, E2E 검증, 문진 스키마)과 근거(코드에서 센 값)로 고쳤다. PublishRequest.service enum과 `lib.sh` SERVICES의 일치는 `test_services_enum.py`가 강제한다는 한 줄.
+
 ## wo-314: E2E 실패 진단
 - 실패해도 바로 정리해 잡 stderr·컨테이너 로그·이미지가 사라져 원인을 볼 수 없었다. 이제 (1) `run_job`이 실패하면 `$W/diag/<단계>-<잡>.log`에 명령(파일 경로만)과 stderr 끝 200줄·stdout 끝 50줄을, 단계 FAIL이면 `$W/diag/steps-traceback.log`에 traceback 전체를 남긴다. (2) `e2e.sh`는 실패가 하나라도 있으면 정리 전에 `state/e2e-diag-<날짜시각>/`로 컨테이너 로그 끝 300줄, 컨테이너 목록(docker ps -a), 컨테이너 State, `$W/diag`, steps.log·summary.txt·check-all.out을 모은다(수집 실패·멈춤이 정리를 막지 않는다: 서브셸·timeout·|| true). 끝 요약에 진단 폴더 경로가 나온다.
 - 비밀: 환경 변수 목록(env, printenv, docker exec, Config.Env, inspect 전체, compose config)은 어디서도 읽지 않는다. `test_e2e_diag_safety.py`(self-checks.list)가 정적으로, 가짜 docker로 실제 실행해 지킨다.

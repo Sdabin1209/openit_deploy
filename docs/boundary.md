@@ -4,7 +4,7 @@
 
 - 소유 저장소: 없음(브리프). 인프라 정의와 운영 스크립트를 소유한다: `compose.yaml`, `compose.registry.yaml`, `locks/`, `config/`, `scripts/`, 로컬 레지스트리의 내용.
 - 제공: 배포 절차(적용, 롤백), 백업·복구 절차, E2E 실행 스크립트(`scripts/e2e.sh`, 헤드 전달본 E2E.md에 따라 deploy가 소유).
-- 제공하지 않음: SDK, 계약 스키마(계약은 헤드 소유다). deploy는 계약을 **소비하는 쪽**이다(생산하지 않는다). 소비하는 계약은 2절 표의 '사용 중'과 '아직 쓰지 않음'으로 나눠 적었다(코드에서 확인한 것만: `scripts/`에서 계약 이름을 검색한 결과).
+- 제공하지 않음: SDK, 계약 스키마(계약은 헤드 소유다). deploy는 계약을 **소비하는 쪽**이고 계약 스키마를 만들거나 복사해 두지 않는다(스키마 사본은 지웠다: wo-28). 소비하는 계약의 실제 목록은 2절 표다.
 
 ## 2. 소비하는 것
 
@@ -12,9 +12,12 @@
 | --- | --- |
 | 각 영역 이미지 | 영역 리포지토리 HEAD를 `git archive`로 꺼내 deploy가 빌드하고 digest를 잠근다(CI가 생기면 영역 CI가 digest를 제출, D24) |
 | 영역의 환경 변수·포트·볼륨·헬스체크 | 아래 3절. 각 영역 boundary/runbook/Dockerfile이 출처 |
-| boundary-contracts (사용 중) | `scripts/lib.sh`의 `DEPLOY_BC_TAG`가 정한 태그. **ImageLabels**(이미지 라벨 검증: `publish-image.sh`, `build-images.sh`, `check-versions.sh`, E2E 라벨 점검 모두 `scripts/check_image_labels.py` 하나로), 그 안의 **JobsDeclaration**·**Exposure**(라벨 `io.openit.jobs`·`io.openit.exposure` 값), E2E의 `boundary_contracts.validator`·`clients`·`metrics`·`canonical`. 이미지 안의 버전은 영역이 정한다 |
-| boundary-contracts (**아직 쓰지 않음**) | **BuildImageRequest/Result**(영역 `build-image.sh` 호출 면, U42: `build-images.sh`가 아직 영역 스크립트를 직접 부른다), **SetupEnvReport**(영역 `setup-env.sh`가 내는 한 줄, U43: `doctor.sh`·`e2e_steps.py`가 이웃 `.venv`·`node_modules` 경로를 추측한다 -> `docs/change-requests/CR-D30-setup-env-report.md`), **PublishRequest/Result**(게시 면: `publish-image.sh`는 인자로 서비스 이름을 받고 `PublishResult` 모양의 결과를 형식 검증하지 않는다. `PublishRequest.service` enum과 `lib.sh`의 서비스 목록은 시험 `scripts/test_services_enum.py`가 같음을 보장한다) |
-| 문진 스키마 | E2E의 QuestionBank 검증(`openit-survey-schema` wheel, 정수 버전 1) |
+| boundary-contracts 태그 | `scripts/lib.sh`의 `DEPLOY_BC_TAG`(표 한 곳). `build-images.sh`가 그 태그의 소스를 `git archive`로 꺼내 영역 진입점에 `dependency_sources`로 주고 deploy venv에도 설치한다 |
+| 계약 스키마: 빌드·게시 경계 (사용 중) | **BuildImageRequest/BuildImageResult**(`build-images.sh`: 영역 `scripts/build-image.sh`에 요청을 쓰고 결과를 검증), **ImageLabels**(이미지 라벨 검증의 유일한 검사기 `scripts/check_image_labels.py`, 게시·빌드·E2E가 같은 검사기를 부른다), **PublishRequest/PublishResult**(`publish-image.sh`의 마지막 줄 = PublishResult, 서비스 이름 enum은 `lib.sh` `SERVICES`와 `scripts/test_services_enum.py`가 **일치를 강제**한다), **SetupEnvReport**(영역 `setup-env.sh`의 마지막 줄: `prepare-areas.sh`가 검증해 `state/setup-env/`에 모으고 doctor·check-all·verify-area가 읽는다), **JobsDeclaration**·**SyntheticJobError**·**BoundaryError**(`scripts/sd_jobs.py`: 라벨 `io.openit.jobs`로 잡을 돌리고 종료 코드 2·3·75의 stderr를 읽는다), **Exposure**(`check_exposure.py`: 라벨 `io.openit.exposure`와 Caddyfile 대조) |
+| 계약 스키마: 설정·환경 (사용 중) | `test_config_contracts.py`(self-checks.list): **OpsFeedbackJobConfig**(ops-feedback 잡 설정 2개), **SurveyServiceEnv**·**OpsFeedbackServerEnv**(compose 병합 환경), **SurveyRiskRulesFile**(E2E 시험 위험 규칙 `test/risk-rules.e2e.json`), **SyntheticJobConfigRun/Import**(잡 설정, E2E가 라벨의 스키마 이름으로 검증) |
+| 계약 스키마: E2E 검증 (사용 중) | `scripts/e2e_steps.py`가 단계 1~8의 모든 경계 값을 계약 validator로 검사한다(ReleaseManifest, ModelPackageManifest, DatasetManifest, GateSubmission/Decision/Approval, ApprovalRequest, ReviewReport, ActivePointer, Rollback*, ExtractRequest, ActionExtraction(Input), QuestionFieldSpec, StaffAlertPage, SessionState, FailureCase, IngestResult, TraceEnvelope 등), `boundary_contracts.clients`·`metrics`·`canonical` |
+| 근거(코드에서 센 값) | `scripts/`·`test/`·`config/`의 `.py`·`.sh`·`.list`에서 계약 스키마 이름을 따옴표 문자열로 부르는 곳을 세었다(2026-10-30, wo-315 기준): 운영·E2E 코드(시험 파일 제외)에서 **스키마 35종 80곳**(e2e_steps.py가 대부분, build-images.sh·sd_jobs.py·setup_env_report.py·check_exposure.py 등), 시험 파일에서만 부르는 것은 ImageLabels·PublishRequest/Result·SurveyServiceEnv·OpsFeedbackServerEnv·OpsFeedbackJobConfig·SyntheticJobConfigImport. ImageLabels는 `check_image_labels.py`가 스키마 파일을 패키지에서 읽어(이름을 부르지 않고) 검증한다. 같은 세기로 다시 확인하려면 `git grep -nE "[\"']<스키마 이름>[\"']" -- scripts test config` |
+| 문진 스키마 | E2E의 QuestionBank·SessionResult 등 검증(`openit-survey-schema` wheel, 태그는 `lib.sh`의 `DEPLOY_SS_TAG`) |
 
 ## 3. 서비스 9개와 잡 2개(아래 표는 영역 서비스 5개, 그 뒤에 model-serving·게이트웨이·정적 화면 2개): 환경 변수, 포트, 볼륨, 헬스체크
 
