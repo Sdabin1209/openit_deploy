@@ -1,0 +1,1 @@
+{"expected_tag": "v0.4.1", "areas": [{"name": "survey-service", "files": [{"path": "requirements.lock", "text": "openit-link @ git+ssh://git@github.com/Sdabin1209/openit_link.git@v0.4.1\n"}]}]}

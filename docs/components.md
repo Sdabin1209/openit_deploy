@@ -41,6 +41,7 @@
 | job_command | `openit_deploy/components/job_command.py` | JobCommandRequest | JobCommandResult | 선택한 잡을 docker run 명령(argv)으로 조립한다 |
 | job_failure_text | `openit_deploy/components/job_failure_text.py` | JobFailureRequest | JobFailureResult | 잡 종료 코드와 stderr 마지막 줄을 한 줄 설명으로 바꾼다 |
 | job_select | `openit_deploy/components/job_select.py` | JobSelectRequest | JobSelectResult | 이미지 라벨의 잡 선언(io.openit.jobs)에서 이름이 맞는 잡 하나를 고른다 |
+| link_pin_check | `openit_deploy/components/link_pin_check.py` | LinkPinCheckRequest | LinkPinCheckResult | 영역 main 의 잠금 파일에 적힌 openit-link 태그를 DEPLOY_LINK_TAG 와 대조한다 |
 | link_restore_verify | `openit_deploy/components/link_restore_verify.py` | RestoreVerifyRequest | RestoreVerifyResult | 복구한 저장소를 이웃 서비스의 HTTP 로 다시 읽어 검증한다 (보내는 쪽) |
 | link_serving_info | `openit_deploy/components/link_serving_info.py` | ServingInfoRequest | ServingInfoResult | model-serving 의 /v1/info 로 적재된 릴리스 목록을 읽는다 (보내는 쪽) |
 | link_serving_probe | `openit_deploy/components/link_serving_probe.py` | ServingCallRequest | ProbeRecord | model-serving 에 extract·respond 를 한 번 부르고 호출 기록으로 줄인다 (보내는 쪽) |

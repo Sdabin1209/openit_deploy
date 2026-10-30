@@ -1,0 +1,85 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "LinkPinCheckResult.schema.json",
+ "title": "LinkPinCheckResult",
+ "type": "object",
+ "required": [
+  "expected_tag",
+  "areas",
+  "match",
+  "diff",
+  "no_pin",
+  "status"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "expected_tag": {
+   "type": "string",
+   "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+  },
+  "status": {
+   "enum": [
+    "MATCH",
+    "DIFF",
+    "NO_PIN"
+   ],
+   "description": "DIFF 가 하나라도 있으면 DIFF. 모두 핀이 없으면 NO_PIN(검증하지 못함)"
+  },
+  "match": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "diff": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "no_pin": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "areas": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "area",
+     "status",
+     "pins"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "area": {
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "MATCH",
+       "DIFF",
+       "NO_PIN"
+      ]
+     },
+     "pins": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "path",
+        "tag"
+       ],
+       "additionalProperties": false,
+       "properties": {
+        "path": {
+         "type": "string"
+        },
+        "tag": {
+         "type": "string",
+         "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

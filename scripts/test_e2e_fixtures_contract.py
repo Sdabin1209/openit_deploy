@@ -68,6 +68,13 @@ class T(unittest.TestCase):
         import boundary_contracts as bc
         props = bc.load_schema("SurveyReadyz")["properties"]["reask_limit"]["properties"]
         self.assertIn("effective", props, "설치된 계약에 reask_limit.effective 가 없다(v3.1.0 이상 필요)")
+    def test_unloaded_release_404_uses_valid_body(self):
+        """link 는 본문 계약 검증(400)을 처리 함수보다 먼저 한다(401·403 역할 검사와 413 다음, 404 앞). '적재되지 않은 릴리스 404' 단언은 유효한 ExtractRequest 로 보내야 404 를 시험한다(U400 A2)."""
+        import re
+        m = re.search(r'ms_call\("/v1/releases/rel-none-x/extract", (\w+), tok\)', STEPS)
+        self.assertIsNotNone(m); self.assertEqual(m.group(1), "ereq", "404 시험의 본문이 ExtractRequest(ereq)가 아니다: 400 이 먼저 난다")
+        self.assertRegex(STEPS, r"ereq = ereq_of\(ein\)")
+
 
 if __name__ == "__main__":
     unittest.main()

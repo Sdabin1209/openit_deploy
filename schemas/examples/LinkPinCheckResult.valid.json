@@ -1,0 +1,1 @@
+{"expected_tag": "v0.4.1", "areas": [{"area": "survey-service", "status": "MATCH", "pins": [{"path": "requirements.lock", "tag": "v0.4.1"}]}], "match": 1, "diff": 0, "no_pin": 0, "status": "MATCH"}

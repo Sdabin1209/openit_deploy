@@ -234,6 +234,41 @@ class JobSelectResult(TypedDict):
     available: NotRequired[List[str]]
 
 
+class File(TypedDict):
+    path: str
+    text: str
+
+
+class Area1(TypedDict):
+    name: str
+    files: List[File]
+
+
+class LinkPinCheckRequest(TypedDict):
+    expected_tag: str
+    areas: List[Area1]
+
+
+class Pin(TypedDict):
+    path: str
+    tag: str
+
+
+class Area2(TypedDict):
+    area: str
+    status: Literal['MATCH', 'DIFF', 'NO_PIN']
+    pins: List[Pin]
+
+
+class LinkPinCheckResult(TypedDict):
+    expected_tag: str
+    status: Literal['MATCH', 'DIFF', 'NO_PIN']
+    match: int
+    diff: int
+    no_pin: int
+    areas: List[Area2]
+
+
 class ProbeRecord(TypedDict):
     status: Union[
         int,
@@ -328,12 +363,7 @@ class RetentionCheckResult(TypedDict):
     shortest: NotRequired[Shortest]
 
 
-class File(TypedDict):
-    path: str
-    text: str
-
-
-class Area1(TypedDict):
+class Area3(TypedDict):
     name: str
     files: List[File]
 
@@ -344,7 +374,7 @@ class ComposeDoc(TypedDict):
 
 
 class SecretNameCheckRequest(TypedDict):
-    areas: List[Area1]
+    areas: List[Area3]
     compose_docs: List[ComposeDoc]
 
 
