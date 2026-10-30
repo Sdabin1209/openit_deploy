@@ -293,14 +293,14 @@ def sd_config(name, seeds, failure=False, version=None):
         cfg["seeds"]["question_set_id"] = QS
     p = WORK / f"sd-{name}.job.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
-def run_job(job_name, cfg_path, extra_ro=()):
+def run_job(job_name, cfg_path, extra_ro=(), network="host"):
     """dataset-store 이미지의 라벨 io.openit.jobs 에서 잡 job_name 을 찾아 docker run 으로 돌린다(명령 조립: sd_jobs.docker_cmd)."""
     img = IMAGES["dataset-store"]
     labels = json.loads(sh([a.docker, "image", "inspect", img, "--format", "{{json .Config.Labels}}"]).stdout)
     job = sd_jobs.find_job(labels, job_name, bc.validator)
     cfg = json.loads(pathlib.Path(cfg_path).read_text())
     if job.get("config", {}).get("schema"): validate(job["config"]["schema"], cfg)   # 영역이 선언한 설정 스키마(계약)로 deploy 가 만든 설정을 먼저 검사한다
-    r = subprocess.run(sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro), capture_output=True, text=True)
+    r = subprocess.run(sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro, network=network), capture_output=True, text=True)
     # 종료 코드 2 는 설정 오류다(계약 SyntheticJobError): 우리가 만든 설정이 거부된 것이므로 어떤 단계도 기대하지 않는다. 계약으로 읽어 사유를 보고한다
     assert r.returncode != 2, f"{job_name}: {sd_jobs.describe_failure(r.returncode, r.stderr, bc.validator)}"
     return r
@@ -325,9 +325,14 @@ def imp_config(name, max_invalid_rows, store_root):
            "output": {"work_dir": str(WORK / f"sd-import-{name}"), "store": store_root if isinstance(store_root, dict) else {"kind": "file", "root": str(store_root)}}}
     p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
+DS_JOB_NETWORK = lambda: f"{a.project}_datasets"   # dataset-store(I2) 전용 internal 네트워크(compose.yaml networks.datasets). 잡은 서비스 이름 dataset-store 로 닿는다
+DS_JOB_URL = "http://dataset-store:8080"   # 잡 컨테이너가 쓰는 dataset-store 주소(서비스 이름·컨테이너 포트). 호스트에서 부르는 URL("ds") 와 다르다
+
 def run_import(name, max_invalid_rows, store_root):
     p = imp_config(name, max_invalid_rows, store_root)
-    r = run_job("synthetic-import", p, extra_ro=[IMPORT_DIR])
+    # 저장소가 http(dataset-store)면 잡은 컨테이너 안에서 도므로 호스트 주소(127.0.0.1)는 자기 자신이다: compose 의 datasets 네트워크에 붙이고 서비스 이름 주소를 쓴다
+    net = DS_JOB_NETWORK() if isinstance(store_root, dict) and store_root.get("kind") == "http" else "host"
+    r = run_job("synthetic-import", p, extra_ro=[IMPORT_DIR], network=net)
     out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
     return r.returncode, out, json.loads((WORK / f"sd-import-{name}" / "import_report.json").read_text())
 
@@ -1535,7 +1540,7 @@ def step7d():
     body = _ds_tar(m, root); TAR = "application/x-tar"; q = urllib.parse.quote
     # 실제 생산자 잡(synthetic-data import, store.kind=http)이 dataset-store 로 게시한다. 같은 입력이라 단계 2 의 파일 저장소 게시와 버전·content_hash 가 같아야 한다(결정적)
     # (잡은 이미지 안의 계약 패키지로 도므로 호스트 잡 환경의 버전을 따로 확인하지 않는다)
-    hs = {"kind": "http", "base_url": URL("ds"), "timeout": 60}
+    hs = {"kind": "http", "base_url": DS_JOB_URL, "timeout": 60}   # 잡에 넘기는 주소: 서비스 이름(컨테이너 안에서 127.0.0.1 은 자기 자신)
     rc, o, _ = run_import("http", 2, hs)
     assert rc == 0 and o.get("status") in ("PUBLISHED", "ALREADY_PUBLISHED"), f"잡의 HTTP 게시 실패: {rc} {o}"
     assert (o["version"], o["content_hash"]) == (ds["version"], ds["content_hash"]), ("잡이 HTTP 로 게시한 버전·해시가 단계 2 와 다르다", o)
