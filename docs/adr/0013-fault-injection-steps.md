@@ -14,7 +14,7 @@
 | 단계 | 주입 | 만드는 상황 | 보는 경계 |
 |---|---|---|---|
 | 5q | survey-service `docker stop` → `start` | 연결 거부 | gateway 503 `UPSTREAM_UNAVAILABLE`, `/readyz` 비정상·`/healthz` 200, 재시작 뒤 값 보존, 같은 `turn_id` 재전송 |
-| 5w | survey-service `docker pause` → `unpause` | 연결은 되나 무응답 | gateway 응답 헤더 마감 근처 504, 접근 로그 `duration`이 서버 마감 6초 이상·키오스크 10초 미만 |
+| 5w | survey-service `docker pause` → `unpause` | 연결은 되나 무응답 | gateway 응답 헤더 마감 근처 504, 접근 로그 `duration`이 서버 마감 9초 이상(ADR 0047)·키오스크 10초 미만 |
 | 5p | postgres `docker stop` → `start` | DB 중단 | 서비스 `/readyz` 비정상·`/healthz` 200, 부분 저장 없음, 행 지문 동일, 복구 뒤 새 쓰기 |
 | 5m | model-serving `docker pause` | 추론 서버 무응답 | survey 턴 마감 안의 분류된 실패, 값 미저장, 복구 뒤 새 `turn_id` 저장 |
 | 5u | release-gate stop/pause, ops-feedback-ingest pause | 사람 화면 경로 상류 장애 | gateway 연결 2초 + 헤더 상한(10~15초)의 503/504 JSON |

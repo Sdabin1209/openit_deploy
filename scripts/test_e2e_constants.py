@@ -28,7 +28,7 @@ class T(unittest.TestCase):
         dial = secs(re.search(r"dial_timeout\s+([0-9.]+m?s)", blk).group(1)); hdr = secs(re.search(r"response_header_timeout\s+([0-9.]+m?s)", blk).group(1))
         self.assertLess(dial + hdr, const("KIOSK_WAIT_S"))
         self.assertGreater(dial + hdr, const("SURVEY_TURN_DEADLINE_S"))
-        self.assertAlmostEqual(dial + hdr, 9.5, places=3, msg="ADR 0003·docs/E2E.md 의 9.5초(연결 1s + 헤더 8.5s)와 Caddyfile 이 다르다")
+        self.assertAlmostEqual(dial + hdr, 10.5, places=3, msg="ADR 0047 의 10.5초(연결 1s + 헤더 9.5s)와 Caddyfile 이 다르다")
 
     def test_human_proxy_limits_match_constants(self):
         self.assertAlmostEqual(secs(re.search(r"\(proxy_limits\)[^}]*?dial_timeout\s+(\S+)", CADDY, re.S).group(1)), const("GW_DIAL_PROXY_S"))

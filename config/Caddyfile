@@ -19,7 +19,7 @@ import /etc/caddy/devices.caddy
 # 키오스크 기기 인증(2.3.0, D113, ADR 0040): 게이트웨이가 클라이언트 인증서를 검증하고 주체 CN 을 X-Openit-Device 로 서비스에 넘긴다. 신뢰할 CA 한 개는 파일 설정이다(비밀 아님):
 # /etc/caddy/device-tls.caddy 가 (device_client_auth) 를 정의한다. 기본 파일은 비어 있어(검증 꺼짐) 기기 토큰(2.x 호환)만 쓴다. 켜는 법: config/device-tls.mtls.caddy.example, docs/runbook.md 9-2.
 import /etc/caddy/device-tls.caddy
-# 사람이 쓰는 화면(승인·운영·검토)과 정적 화면의 상류 상한(FAULT_POLICY 4·6): 환자 경로(연결 1s + 헤더 8.5s, 키오스크 대기 10s 안)와 달리 키오스크의 10초 한도가 없다.
+# 사람이 쓰는 화면(승인·운영·검토)과 정적 화면의 상류 상한(FAULT_POLICY 4·6): 환자 경로(연결 1s + 헤더 9.5s, 키오스크 대기 12s 안)와 달리 키오스크의 12초 한도가 없다.
 # 대신 화면이 무한정 매달리지 않게 상한을 둔다. 연결 2s(같은 서버의 컨테이너라 거의 즉시, 느리면 장애), 응답 헤더는 인자로 받는다: release-gate 15s(승인 결정·활성화·롤백은 DB 쓰기와 번들 검증을
 # 거칠 수 있어 읽기보다 길게 잡은 시작값, 실측 근거 없음), ops-feedback·정적 화면 10s. 값은 시작값이며 사용자 결정이 아니다. 재시도 없음. 초과하면 아래 handle_errors 가 503/504 UPSTREAM_UNAVAILABLE 을 준다.
 (proxy_limits) {
@@ -309,13 +309,13 @@ http://:8080 {
 				lb_try_duration 0
 				transport http {
 					dial_timeout 1s
-					response_header_timeout 8500ms
+					response_header_timeout 9500ms
 				}
 			}
 		}
 		handle @device_ok {
 			# 마감: 환자 요청이 gateway 에서 쓰는 시간의 상한은 dial_timeout + response_header_timeout 이다(Go 의 두 타이머는 순차: 연결을 맺은 뒤 요청을 다 쓴 시점부터 응답 헤더를 기다린다).
-			# 이 합이 키오스크 대기(10초)보다 짧아야 하고(여기 1s + 8.5s = 9.5s), 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS 기본 6초)보다는 길어야 서버의 실패 응답이 gateway 의 504 보다 먼저 온다(여유 2.5s).
+			# 이 합이 키오스크 대기(12초)보다 짧아야 하고(여기 1s + 9.5s = 10.5s), 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS 9초, config/survey.env)보다는 길어야 서버의 실패 응답이 gateway 의 504 보다 먼저 온다(여유 2.5s).
 			# 연결 거부·이름 해석 실패는 dial 단계에서 끝나 1초대에 502->503 이 된다. 재시도 없음(lb_try_duration 0): 같은 요청을 게이트웨이가 다시 보내지 않는다. 키오스크가 같은 turn_id 로 다시 보낸다.
 			reverse_proxy survey-service:8080 {
 				header_up -X-Openit-Dn
@@ -324,7 +324,7 @@ http://:8080 {
 				lb_try_duration 0
 				transport http {
 					dial_timeout 1s
-					response_header_timeout 8500ms
+					response_header_timeout 9500ms
 				}
 			}
 		}

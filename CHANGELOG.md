@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-408: 시간 상한 사슬 변경(사용자 결정, ADR 0047)
+- 응답 생성 5.0s(2.0->5.0), survey 턴 총 마감 9.0s(6.0->9.0), gateway 연결 1s + 응답 헤더 9.5s = 10.5s(Caddyfile 환자 경로 두 곳; 8.5->9.5), 키오스크 12s(10->12), 값 추출 3.0s 그대로. `config/survey.env` 에 세 survey 값을 명시했다(계약 SurveyServiceEnv 통과).
+- E2E 상수(`KIOSK_WAIT_S` 12, `SURVEY_TURN_DEADLINE_S` 9)와 단계 5w·5m·5p 문구·기대를 새 사슬에 맞췄다. 사슬 정적 시험 `scripts/test_time_chain.py`(self-checks.list). E2E 는 돌리지 않았다.
+
 ## wo-407: check-all 이 이웃 소스 파일을 열지 않는다, check-all 을 자체 점검에
 - 결함: `consistency_check` 의 `truth_templates()` 가 model-runtime 소스(`src/model_runtime/prompts.py`)를, `truth_schema_version()` 이 boundary-contracts 소스를 AST 로 직접 읽었다(구조 규칙 1 위반). model-runtime 개편으로 파일이 옮겨져 E2E 사전 점검 '삭제된 이름의 잔존'이 FAIL 했다.
 - 고침: 템플릿 버전은 설치된 `model_runtime.prompts.SUPPORTED_TEMPLATE_VERSIONS`(v0.11.4: `prompt-4`), 파이프라인 버전은 `boundary_contracts.PIPELINE_SCHEMA_VERSION`(`3.1`)만 읽는다. `_module_assigns`·`_dict_items`(이웃 소스 구문 분석)를 지웠다. 이웃 소스를 직접 여는 다른 곳은 없다(남은 이웃 파일 읽기는 영역 전체를 훑는 규칙 4·5·6·7·11 의 스캔과 계약 예시 읽기 뿐이고 특정 파일의 구조에 기대지 않는다). 공개 이름이 없어 못 바꾼 것: 없음.

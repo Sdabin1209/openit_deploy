@@ -893,8 +893,8 @@ def step5o():
     rec("5o", "REAL", f"일수 칸 규격(0~7, 값 단위 day/week). 추론 서버 직접(ExtractRequest{{input, flow, fields}}): 8일 -> REASK/OUT_OF_RANGE(같은 문항, 저장 안 하는 UNCLEAR, targets Q8_1.days), 7일·0일 -> NEXT(경계 포함). 서비스 경유: {turns}턴으로 Q8_1 도달 뒤 '8일이요' -> 턴 action REASK, Q8_1.days=8 저장 없음 -> '3일이요' -> 3 저장(ANSWERED).")
 
 # ---- 시간 단언의 상수: 설정(config/Caddyfile, 서비스 문서)에서 도출한 값과 측정 환경별 관찰값을 이름으로 둔다. 단언의 의미(상한 안에 들어와야 한다)는 그대로이고, 한 환경의 측정값을 불변식처럼 쓰지 않는다.
-KIOSK_WAIT_S = 10.0          # 키오스크 대기(kiosk-frontend 영역, ADR 0003)
-SURVEY_TURN_DEADLINE_S = 6.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS 기본)
+KIOSK_WAIT_S = 12.0          # 키오스크 대기(kiosk-frontend 영역, 사용자 결정 2026-10-30, ADR 0003)
+SURVEY_TURN_DEADLINE_S = 9.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS, config/survey.env 가 정본이고 scripts/test_time_chain.py 가 같음을 본다)
 GW_DIAL_PROXY_S = 2.0        # 사람용 프록시(proxy_limits) 연결 상한 dial_timeout
 GW_READYZ_CAP_S = 3.0        # gateway /readyz 프록시 = 연결 1s + 응답 헤더 2s (Caddyfile)
 GW_HDR_GATE_S, GW_HDR_OPS_S = 15.0, 10.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, 시작값)
@@ -906,7 +906,7 @@ CLIENT_EXTRA_S = 2.0         # 호스트 클라이언트가 gateway 응답을 �
 CONN_REFUSED_MAX_S = GW_DIAL_PROXY_S + DOCKER_DNS_FAIL_S + 1.5
 assert CONN_REFUSED_MAX_S < GW_HDR_GATE_S / 2, "연결 거부 상한이 응답 헤더 상한에 가까우면 단언이 의미가 없다"
 READYZ_PAUSED_MAX_S = GW_READYZ_CAP_S + CLIENT_EXTRA_S   # gateway /readyz 가 무응답 상류에서 504 를 주기까지(클라이언트가 본 시간)
-TURN_CLIENT_MAX_S = SURVEY_TURN_DEADLINE_S + CLIENT_EXTRA_S   # 클라이언트가 본 환자 턴 상한(서버 마감 + 호스트 전달 지연), 키오스크 대기(10s)와 gateway 상한(9.5s) 아래
+TURN_CLIENT_MAX_S = SURVEY_TURN_DEADLINE_S + CLIENT_EXTRA_S   # 클라이언트가 본 환자 턴 상한(서버 마감 + 호스트 전달 지연), 키오스크 대기(12s) 아래(gateway 상한 10.5s 는 호스트 전달 지연 여유 안)
 
 def gwk(method, path, body=None, timeout=30, auth=True):
     """게이트웨이 경유 호출(키오스크 기기 토큰). (상태, 본문, 소문자 헤더, 걸린 초). 연결 오류는 상태 0."""
@@ -996,7 +996,7 @@ def step5w():
     try:
         t_req = time.time(); c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=30); obs["turn"] = (c, round(el, 2))
         assert c == 504 and b == {"code": "UPSTREAM_UNAVAILABLE"} and h.get("retry-after"), f"무응답 상류: 504 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
-        # 불변식: 키오스크 대기(10s) > gateway 처리 시간 > 서버 턴 총 마감(6s, survey-service SURVEY_TURN_DEADLINE_SECONDS 기본). 설정은 연결 1s + 응답 헤더 8.5s(합 9.5s 상한, config/Caddyfile).
+        # 불변식: 키오스크 대기(12s) > gateway 처리 시간 > 서버 턴 총 마감(9s, SURVEY_TURN_DEADLINE_SECONDS). 설정은 연결 1s + 응답 헤더 9.5s(합 10.5s 상한, config/Caddyfile).
         # gateway 의 상한은 gateway 자신의 접근 로그 duration 으로 잰다(클라이언트가 본 시간에는 호스트 게시 포트 전달 지연이 섞인다: 아래 정책 단언과 docs/E2E.md 측정표)
         gd = gw_log_duration(f"/v1/sessions/{sid}/turns", t_req); assert gd, "gateway 접근 로그에서 이 요청을 찾지 못했다"
         obs["gw_duration"] = round(gd[0], 2); assert gd[1] == 504, ("gateway 로그의 상태", gd)
@@ -1007,7 +1007,7 @@ def step5w():
     finally: sh([a.docker, "unpause", svc])
     t0 = time.time(); wait_gw_ready(60); t_rec = time.time() - t0
     def client_seen(): assert obs["turn"][1] < KIOSK_WAIT_S, f"클라이언트가 본 시간 {obs['turn'][1]}s (gateway 처리 {obs['gw_duration']}s, 차이 {obs['turn'][1]-obs['gw_duration']:.2f}s: 호스트 게시 포트 경유 전달 지연)"
-    policy("5w", "Docker Desktop(WSL2) 호스트 게시 포트 전달 지연(운영 서버의 gateway 직접 접속에서는 해당 없음, 미확인)", "호스트 클라이언트가 본 gateway 504 시간이 키오스크 대기(10s) 미만이다", client_seen)
+    policy("5w", "Docker Desktop(WSL2) 호스트 게시 포트 전달 지연(운영 서버의 gateway 직접 접속에서는 해당 없음, 미확인)", "호스트 클라이언트가 본 gateway 504 시간이 키오스크 대기(12s) 미만이다", client_seen)
     time.sleep(3)   # 멈춘 사이 도착한 요청을 서비스가 풀린 뒤 처리했을 수 있다
     sv = staff_sv(sid); n_after_unpause = utt_count(sv, "네 있어요")
     c, r = public_turn(sid, "w-1", "네 있어요"); assert c == 200, ("복구 뒤 같은 turn_id 재전송이 200이 아니다", c, r)
@@ -1015,7 +1015,7 @@ def step5w():
     print(f"  관찰: 504 를 받은 턴 w-1 이 unpause 뒤 서비스에서 처리된 횟수 {n_after_unpause}, 같은 turn_id 재전송 뒤 기록 {n_final}회")
     policy("5w", "survey-service 의 turn_id 멱등(처리 중·확정 재전송은 새로 처리하지 않음)", "504 로 끝난 턴을 같은 turn_id 로 재전송해도 발화는 한 번만 기록된다", lambda: (_ for _ in ()).throw(AssertionError(f"기록 {n_final}회")) if n_final != 1 else None)
     kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
-    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 클라이언트 {obs['turn'][1]}s / gateway 접근 로그 duration {obs['gw_duration']}s (설정: 연결 1s + 응답 헤더 8.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
+    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 클라이언트 {obs['turn'][1]}s / gateway 접근 로그 duration {obs['gw_duration']}s (설정: 연결 1s + 응답 헤더 9.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
 
 @step('5u', repos=('release-gate', 'survey-service') + _GW, deps=(),
       why='step5u 는 STATE 를 읽지 않는다. 활성 릴리스가 있어야 하는지는 코드를 읽어 확정하지 못했다',
@@ -1100,7 +1100,7 @@ def step5m():
     assert urllib.request.urlopen(URL("ms") + "/readyz", timeout=10).status == 200, "model-serving /readyz 가 200이 아니다"
     jl = json.loads(urllib.request.urlopen(URL("gate") + "/readyz", timeout=10).read()).get("judging_loop")
     assert jl is not None and not jl.get("upstream_auth_failed") and (jl.get("consecutive_failures") or 0) < 3, ("release-gate 판정 루프", jl)
-    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 6s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택에서 직접 읽은 model-serving /readyz OK, release-gate 판정 루프 (연속 실패 {jl.get('consecutive_failures')}회)를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
+    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 9s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택에서 직접 읽은 model-serving /readyz OK, release-gate 판정 루프 (연속 실패 {jl.get('consecutive_failures')}회)를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
 
 AUTHOR = lambda: ("author-e2e", TOK("account-author-e2e-password"))        # 저자 경로 계정(역할 author)
 CLINICAL = lambda: ("clinical-e2e", TOK("account-clinical-e2e-password"))   # 임상 근거 검수자(역할 clinical-reviewer, 저자와 다른 주체)
@@ -1868,7 +1868,7 @@ def step5p():
         turn_note = f" 환자 턴(DB 중지 중): 상태 {c} {el:.1f}s, 응답 {json.dumps(b, ensure_ascii=False)[:110] if isinstance(b, dict) else str(b)[:60]}; 값 저장 없음, 중지 중 발화 기록 {n_logged}건; 복구 뒤 같은 turn_id 재전송은 200 으로 확정(값 1회)."
         def pol_deadline(): assert el <= TURN_CLIENT_MAX_S, f"{el:.1f}s (survey-service 턴 총 마감 {SURVEY_TURN_DEADLINE_S}s + 클라이언트 지연 여유 {CLIENT_EXTRA_S}s)"
         def pol_once(): assert utt_count(sv2, "아니요 없어요") == 1, f"재전송 뒤 같은 발화 기록 {utt_count(sv2, '아니요 없어요')}건(중지 중 {n_logged}건)"
-        policy("5p", "survey-service 의 턴 총 마감 시간(6s)과 DB 접속·문장 상한", "DB 중지 중 환자 턴이 총 마감(6s + 클라이언트 지연 여유) 안에 끝난다", pol_deadline)
+        policy("5p", "survey-service 의 턴 총 마감 시간(9s)과 DB 접속·문장 상한", "DB 중지 중 환자 턴이 총 마감(9s + 클라이언트 지연 여유) 안에 끝난다", pol_deadline)
         policy("5p", "survey-service 의 turn_id 멱등", "실패한 턴을 같은 turn_id 로 재전송하면 발화가 한 번만 기록된다", pol_once)
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
