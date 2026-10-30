@@ -139,3 +139,7 @@
 - `compose.test.yaml`, `test/`, `build/`, `state/`만 시험용이다. 게이트웨이는 이제 공개 API 경로(`/v1/sessions`)를 survey-service로 넘긴다(`config/Caddyfile`, 직원 개입 경로는 막음). `compose.yaml`과 `config/`는 시험 자료를 참조하지 않는다(E2E가 `compose.yaml`·`config/`에 시험용 정책·실행기·시험 워커가 없음을 확인한다).
 - 시험 자료(D53 이후 게이트의 시험용 정책·실행기는 사라졌다): `test/ops-job/test-ops-job.yaml`(시험용 잡 설정), `test/fixtures/e2e-test-adapter/`(시험용 PEFT 형식 어댑터). 시험용 ID에도 `test`를 넣는다(`qs-e2e-test`, `pkg-e2e-test-*`).
 - 출고는 사람 승인이다(D53): 자동 검사 후 `AWAITING_APPROVAL`, 승인자가 `POST /v1/approvals`. 운영·시험 모두 게이트에 정책 파일이 필요 없다(기본 정책). E2E의 승인자는 시험용 release-approver 토큰을 쓰는 스크립트다.
+
+## 12. 코드 구조 (D117)
+
+Python 으로 쓰인 판단은 `openit_deploy/`(components, wiring, types)에 있고 입출력은 `schemas/` 가 정한다. 컴포넌트 분해와 표는 [components.md](components.md), 결정과 감수한 한계는 [ADR 0045](adr/0045-component-structure-and-shell-placement.md). 셸·Compose 는 운영 절차, E2E 는 수용 시험이다.
