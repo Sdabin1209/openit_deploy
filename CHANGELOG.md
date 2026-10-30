@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-402: link 기준 v0.4.0(최종 고정)
+- `DEPLOY_LINK_TAG` v0.3.0 -> v0.4.0(개발 venv 재설치). E2E 에서 405·413 응답 본문 모양을 기대하는 곳을 찾았으나 없다(`e2e_steps.py` 의 405·413 단언은 상태 코드만 보고, 413 은 gateway(Caddy) 응답이다). 그래서 BoundaryError(INVALID_RECORD, details.http_status)로 맞출 대상이 없다.
+
 ## wo-401: link 기준 v0.3.0
 - `DEPLOY_LINK_TAG` v0.2.0 -> v0.3.0(개발 venv 재설치). model-runtime 태그는 헤드가 알리면 올린다.
 
