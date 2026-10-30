@@ -1176,8 +1176,8 @@ def _validate_if_known(name, obj):
     except Exception: return False
     validate(name, obj); return True
 
-@step('5n', repos=('survey-service', 'model-runtime', 'kiosk-frontend', 'boundary-contracts') + _GW, deps=('4',),
-      why="STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 E2E 가 주입한 시험 규칙 파일(test/risk-rules.e2e.json)에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4)
+@step('5n', repos=('survey-service', 'model-runtime', 'kiosk-frontend', 'boundary-contracts') + _GW, deps=('1', '4'),
+      why="STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 의 실효 되묻기 한도는 STATE['qs'](단계 1 이 씀)의 활성 문항 세트 session_settings 로 계산한다. 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 E2E 가 주입한 시험 규칙 파일(test/risk-rules.e2e.json)에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4)
 def step5n():
     title("5n", "직원 호출 재알림·실패 기록·정지 사유 (계약 v2.1.0 PUBLIC_API G·H절, CR-H001·H002, 가짜 모델)")
     if "pointers" not in STATE: rec("5n", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return

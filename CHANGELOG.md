@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-313: 5n deps, 자체 점검 묶음
+- `@step('5n')` deps에 '1'을 더했다(a63fb87이 5n에서 STATE["qs"]를 읽게 됐다: `test_e2e_plan.test_declared_deps_equal_state_analysis`), why도 맞췄다.
+- 재발 방지: 자체 점검 목록의 정본을 `scripts/self-checks.list`로 모으고(설명 :: 명령), `scripts/run-self-checks.sh`가 전부 돌린다(커밋 전에 실행). `e2e.sh`는 같은 목록을 `run-self-checks.sh --print`로 읽어 chk로 실행한다(목록을 두 곳에 복사하지 않는다). 빌드·레지스트리·이미지 상태가 필요한 점검(publish, check-compose, check-versions, check-exposure)은 e2e.sh에 직접 남겼고 이유는 run-self-checks.sh 머리글에 있다.
+
 ## wo-312: E2E 최종 실행 실패 2건
 - F1: 컨테이너에서 도는 잡이 호스트 주소(127.0.0.1:배정 포트)로 이웃을 불렀다. Docker Desktop에서는 `--network host`도 호스트의 게시 포트에 닿지 못한다. 잡 네트워크를 호출자가 반드시 고르게 했다(`sd_jobs.docker_cmd`·`run_job`의 기본값 삭제): synthetic-run은 question-authoring·ops-feedback-ingest가 함께 붙은 `{project}_authoring` + 서비스 이름 주소, http 저장소 import는 `{project}_datasets` + `http://dataset-store:8080`, 파일 저장소 import는 이웃이 없어 `none`.
 - F2: 5n-reask의 N을 /readyz `max_consecutive`(3)만으로 정했는데 survey-service의 실효 한도는 `min(서비스 한도, 문항 세트의 ask_limit·confirm_limit·unrecognized_streak_limit 중 1 이상 값)`이다(ADR-0014·0020). 시험 문항지는 3·2·2라 실효 한도는 2. `e2e_asserts.effective_reask_cap`이 같은 규칙으로 계산한다.

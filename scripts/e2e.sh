@@ -167,37 +167,9 @@ chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh
 chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
 chk "버전 표 드리프트 없음 (check-versions: 빌드된 이미지 라벨 == lib.sh 표; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-versions.sh"
 chk "게이트웨이 노출이 영역 이미지의 노출 선언(io.openit.exposure)과 같다 (check-exposure: Caddyfile 대조, ADR 0043; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-exposure.sh"
-chk "e2e_steps.py 가 쓰는 IMAGES 키가 e2e.sh 가 넘기는 IMAGES 에 모두 있다" python3 "$DEPLOY_ROOT/scripts/test_e2e_images_keys.py"
-chk "잡 컨테이너에 넘기는 dataset-store 주소는 호스트 주소가 아니다 (compose 네트워크 + 서비스 이름)" python3 "$DEPLOY_ROOT/scripts/test_e2e_job_urls.py"
-chk "E2E 입력의 모양: 문항 양식 칸 규격 52칸(MISSING_FIELD_SPEC), 승인 본문(ApprovalRequest), /readyz reask_limit 객체" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_fixtures_contract.py"
-chk "E2E 승인 호출은 계약 ApprovalRequest 로 직접 보낸다 (SDK decide() 호출 없음)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_approval_calls.py"
-chk "check-exposure 자체 점검" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_check_exposure.py"
-chk "E2E 시험 위험 규칙 파일이 계약 SurveyRiskRulesFile 을 따르고 E2E 전용 compose 에만 연결된다" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_risk_rules_file.py"
-chk "deploy 설정 파일 중 계약 스키마가 있는 것은 계약 validator 를 통과한다 (config/·test/ 파일 분류 포함)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_config_contracts.py"
-chk "check-versions 자기 점검" bash "$DEPLOY_ROOT/scripts/test-check-versions.sh"
-chk "게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰, caddy validate)" bash "$DEPLOY_ROOT/scripts/test-gateway-auth.sh"
-chk "시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검)" bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
-chk "계정 암호가 docker 인자로 보이지 않는다 (표준 입력, 문서 일치)" bash "$DEPLOY_ROOT/scripts/test-hash-password-argv.sh"
-chk "images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다)" bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
-chk "build-images 자체 점검 (가짜 영역 진입점: BuildImageRequest 값, 서비스->리포 대응, 결과 검증 실패는 빌드 실패)" bash "$DEPLOY_ROOT/scripts/test-build-images.sh"
-chk "build-images 정적 점검 (영역 Dockerfile 인자·산출 파일 이름이 코드에 없다)" bash "$DEPLOY_ROOT/scripts/test-build-images-static.sh"
-chk "게시 서비스 목록(lib.sh) == 계약 PublishRequest.service enum" "$VENV/bin/python" -I "$DEPLOY_ROOT/scripts/test_services_enum.py"
-chk "e2e 옵션 처리 자기 점검 (--help 는 실행 없이 0, 모르는 옵션·--only 와 --sections 조합은 2)" bash "$DEPLOY_ROOT/scripts/test-e2e-options.sh"
-chk "감시 스택 정적 시험 (promtool check/test rules, 변이 시험, amtool, blackbox)" bash "$DEPLOY_ROOT/scripts/test-monitoring.sh" --static
-chk "job-metrics 자체 시험 (textfile 지표)" bash "$DEPLOY_ROOT/scripts/test-job-metrics.sh"
-chk "e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다)" python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
-chk "e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지)" python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
-chk "데모 구성 자기 점검 (모방 백엔드·키오스크 /config.json 배선, 운영 구성 불변)" bash "$DEPLOY_ROOT/scripts/test-demo-kiosk.sh"
-chk "계약 패키지에 deploy 경계 스키마가 있다, 스키마 사본이 리포에 없다, 라벨 검사기는 계약 패키지를 쓴다" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_contract_schema_copy.py"
-chk "synthetic-data 잡 선언(io.openit.jobs) 명령 조립과 실제 이미지의 import 잡" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_sd_jobs.py"
-chk "이웃 환경·패키지 짐작 문자열이 deploy 스크립트에 없다" bash "$DEPLOY_ROOT/scripts/test-no-guessed-paths.sh"
-chk "prepare-areas: 영역 setup-env 보고를 계약으로 검증해 모은다" bash "$DEPLOY_ROOT/scripts/test-prepare-areas.sh"
-chk "이미지 라벨 검사기 자체 점검 (계약 ImageLabels: 필수 4개, n/a 하나, revision unknown 거부)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_image_labels.py"
-chk "시험 빌드 라벨 자체 점검 (롤백 시험의 새 버전은 revision 이 아니라 시험 라벨로 다른 digest 를 얻는다)" bash "$DEPLOY_ROOT/scripts/test-build-test-label.sh"
-chk "e2e 계약 열거 값 점검 (직원 알림 kind = RISK_STOP, 낡은 RISK 기대 없음)" python3 "$DEPLOY_ROOT/scripts/test_e2e_contract_values.py"
-chk "e2e 인증 실패 기대 점검 (토큰 없음/틀림 = 401 + Bearer, 권한 부족만 403: 계약 CONVENTIONS.md 6절)" python3 "$DEPLOY_ROOT/scripts/test_e2e_auth_expectations.py"
-chk "e2e 규칙 세대 표지(action_rules_version)는 계약 규칙 데이터에서만 온다, turn-engine 잔재 없음" python3 "$DEPLOY_ROOT/scripts/test_e2e_action_rules_version.py"
-chk "deploy 내부 스키마 자기 점검 (images.env·images.lock·jobs·verify-areas 가 schemas/ 와 맞는다)" python3 -I "$DEPLOY_ROOT/scripts/test_check_schemas.py"
+# 자체 점검 묶음: scripts/self-checks.list 가 정본이다(scripts/run-self-checks.sh 도 같은 목록을 돈다).
+export DEPLOY_ROOT VENV
+while IFS=$'\t' read -r _d _c; do chk "$_d" bash -c "$_c"; done < <(bash "$DEPLOY_ROOT/scripts/run-self-checks.sh" --print)
 abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null
@@ -313,7 +285,6 @@ fi
 if [ "$STEPS_RC" = 0 ]; then res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고$([ "${STEP_SKIPS:-0}" != 0 ] && echo "; 단계 안 SKIP ${STEP_SKIPS}")"
 else res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"; fi
 chk "비밀 노출 점검: 환경 변수·inspect·exec env 에 secrets 값 없음 (check-secrets-hidden)" bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" "$PROJECT"
-chk "check-secrets-hidden 자기 점검(노출 컨테이너는 실패, 파일 비밀은 통과)" bash "$DEPLOY_ROOT/scripts/test-check-secrets-hidden.sh"
 
 if [ "$FAST" = 0 ]; then   # --fast 에서는 아래 세 구간(스케줄러, 백업·복구, 롤백)을 건너뛴다
 has_s9() { case ",$SECTIONS," in *",$1,"*) return 0;; esac; return 1; }
@@ -323,7 +294,6 @@ chk "잡 엔트리포인트가 Compose 안에서 이미지·볼륨·네트워크
 chk_dep "단계 4" "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
 chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_JOB_CONFIG=/nonexistent/job.yaml bash $DEPLOY_ROOT/scripts/run-job.sh job-ops-feedback; [ \$? = 2 ]"
 # 주기 실행은 systemd timer 의 몫이다(ADR 0036). 유닛 파일은 정적 시험으로 확인하고(주기·oneshot·스크립트·systemd-analyze verify), 실제 잡 실행은 위 run-job.sh 호출이 Compose 안에서 확인한다
-chk "systemd 유닛 정적 시험(잡마다 service+timer, 주기, systemd-analyze verify)" bash "$DEPLOY_ROOT/scripts/test-systemd-units.sh"
 # 감시 스택(ADR 0037): 같은 프로젝트에 compose.monitoring.yaml 의 서비스를 올려 실제 gateway·release-gate·model-serving 를 탐침하는지 본다.
 # (이전 구간은 check-health.sh 가 gateway /healthz 평문·HTTPS 를 읽었다. HTTPS 탐침은 서버 밖 감시의 몫이라 external-targets.yml 에 둔다.)
 export METRICS_DIR="$W/metrics"; mkdir -p "$METRICS_DIR"; chmod 755 "$METRICS_DIR"; SERVICE_RESULT=success bash "$DEPLOY_ROOT/scripts/job-metrics.sh" e2e-demo 600
