@@ -135,6 +135,39 @@ def with_user(client, user):
     client._opener.addheaders = [h for h in client._opener.addheaders if h[0].lower() != "x-openit-user"] + [("X-Openit-User", user)]
     return client
 
+# 승인(POST /v1/approvals)은 계약 ApprovalRequest 본문을 직접 보낸다: 계약 클라이언트 HttpGateService.decide() 는 approver_id 를 본문에 싣고 report_hash 를 빠뜨릴 수 있어
+# ApprovalRequest(approver_id 금지, report_hash 필수)와 어긋난다(클라이언트 수정은 계약 3.0.3). 행위자는 X-Openit-User 헤더가 유일한 길이다(D88).
+APPROVER = {"ap": ("gate-write-release-approver", "trainer-test"), "op": ("gate-write-operator", "op-test")}
+_REPORT_HASH = {}   # 제출 -> 처음 읽은 보고서 해시(결정 뒤에는 보고서 상태가 달라질 수 있어 같은 제출의 재전송·번복은 처음 값을 쓴다)
+
+def report_hash_of(sid):
+    """GET /v1/submissions/{id}/review-report 응답 머리글 X-Openit-Report-Hash 를 그대로 쓴다(화면은 계산하지 않는다)."""
+    if sid not in _REPORT_HASH:
+        req = urllib.request.Request(URL("gate") + f"/v1/submissions/{sid}/review-report", headers={"Authorization": f"Bearer {TOK('gate-read-release-approver')}"})
+        with urllib.request.urlopen(req, timeout=30) as r: h = {k.lower(): v for k, v in r.headers.items()}
+        assert (h.get("x-openit-report-hash") or "").startswith("sha256:"), ("review-report 에 X-Openit-Report-Hash 가 없다", h)
+        _REPORT_HASH[sid] = h["x-openit-report-hash"]
+    return _REPORT_HASH[sid]
+
+_CODE_OF_STATUS = {400: "INVALID_RECORD", 401: "PERMISSION_DENIED", 403: "PERMISSION_DENIED", 404: "NOT_FOUND", 409: "CONFLICT"}
+
+def decide_approval(who, sid, decision, *, reason=None, report_hash=None):
+    """who: 'ap'(release-approver 쓰기 토큰, 사용자 trainer-test) | 'op'(operator 쓰기 토큰: 권한 시험). 본문은 보내기 전에 계약 ApprovalRequest 로 검사한다.
+    실패하면 응답의 BoundaryError(없으면 상태 코드로 정한 코드)를 bc.BoundaryError 로 올린다: 호출하는 쪽의 기대(PERMISSION_DENIED, CONFLICT)는 SDK 클라이언트 때와 같다."""
+    tokname, user = APPROVER[who]
+    body = {"submission_id": sid, "decision": decision, "approver_role": "release-approver", "report_hash": report_hash or report_hash_of(sid)}
+    if reason is not None: body["reason"] = reason
+    validate("ApprovalRequest", body)
+    req = urllib.request.Request(URL("gate") + "/v1/approvals", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Authorization": f"Bearer {TOK(tokname)}", "X-Openit-User": user, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try: j = json.loads(raw)
+        except Exception: j = {}
+        raise bc.BoundaryError(j.get("code") or _CODE_OF_STATUS.get(e.code, "FAILED_PRECONDITION"), j.get("message") or f"HTTP {e.code}")
+
 RVH = {"X-Openit-User": "reviewer-direct-e2e"}   # 검토 게시는 X-Openit-User(gateway 가 붙이는 인증 사용자)가 없으면 401(계약 6절·HTTP.md I7; 이전에는 403). gateway 를 거치지 않는 직접 호출에 시험용 값을 붙인다
 OPERATOR_ID = "operator-e2e-script"   # 시험용 운영자 ID: 게이트웨이가 계정 ID를 X-Openit-User 로 붙이는 것을 스크립트가 직접 흉내 낸다
 def gate_ops(path, body, user=OPERATOR_ID, token=None):
@@ -511,9 +544,9 @@ def step4():
         assert not any(d["result"] == "PASS" for d in decisions_for(gate_r, sj)), f"승인 전에 PASS 판정이 있다 {k}"
     rd = json.loads(urllib.request.urlopen(URL("gate") + "/readyz", timeout=10).read()); assert rd.get("awaiting_approval", 0) >= 3, rd
     # 권한: 승인은 release-approver만
-    try: gate_op.decide(subs["1"]["submission_id"], "APPROVE", approver_id="op-test", approver_role="release-approver", reason="시험"); raise AssertionError("operator가 승인함")
+    try: decide_approval("op", subs["1"]["submission_id"], "APPROVE", reason="시험"); raise AssertionError("operator가 승인함")
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED", e.code
-    try: gate_ap.decide(subs["1"]["submission_id"], "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="시험", report_hash="sha256:" + "0" * 64); raise AssertionError("낡은 보고서 해시로 승인됨")
+    try: decide_approval("ap", subs["1"]["submission_id"], "APPROVE", reason="시험", report_hash="sha256:" + "0" * 64); raise AssertionError("낡은 보고서 해시로 승인됨")
     except bc.BoundaryError as e: assert e.code == "CONFLICT", e.code
     # 반려(REJECT) -> FAIL 판정
     ru = reject_via_gateway(sub_u["submission_id"]); validate("GateApproval", ru)
@@ -522,10 +555,10 @@ def step4():
     assert du["result"] == "REJECT" and hu and hu[0]["result"] == "FAIL" and "CHECK_FAILED" in du["reject_codes"], dict(du)
     # 승인(APPROVE) 멱등, 다른 결정 충돌
     sid1 = subs["1"]["submission_id"]
-    a1 = dict(gate_ap.decide(sid1, "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="시험: 지표 검토함")); validate("GateApproval", a1)
-    a1b = dict(gate_ap.decide(sid1, "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="시험: 지표 검토함"))
+    a1 = dict(decide_approval("ap", sid1, "APPROVE", reason="시험: 지표 검토함")); validate("GateApproval", a1)
+    a1b = dict(decide_approval("ap", sid1, "APPROVE", reason="시험: 지표 검토함"))
     assert a1b == a1, "같은 결정 재전송이 같은 결과가 아니다"
-    try: gate_ap.decide(sid1, "REJECT", approver_id="trainer-test", approver_role="release-approver", reason="번복"); raise AssertionError("다른 결정이 받아들여짐")
+    try: decide_approval("ap", sid1, "REJECT", reason="번복"); raise AssertionError("다른 결정이 받아들여짐")
     except bc.BoundaryError as e: assert e.code == "CONFLICT", e.code
     d1 = wait(lambda: next((d for d in decisions_for(gate_r, subj["1"]) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
     validate("GateDecision", dict(d1)); assert any(c["kind"] == "HUMAN_APPROVAL" and c["result"] == "PASS" for c in d1["checks"])
@@ -540,7 +573,7 @@ def step4():
     rep2 = report_of(subs["2"]["submission_id"]); validate("ReviewReport", rep2)
     assert rep2["comparisons"], "활성 릴리스와의 비교가 비어 있다"
     sid2 = subs["2"]["submission_id"]
-    a2 = dict(gate_ap.decide(sid2, "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="시험: 둘째 후보 검토함")); validate("GateApproval", a2)
+    a2 = dict(decide_approval("ap", sid2, "APPROVE", reason="시험: 둘째 후보 검토함")); validate("GateApproval", a2)
     d2 = wait(lambda: next((d for d in decisions_for(gate_r, subj["2"]) if d["result"] == "PASS"), None), 30, "둘째 PASS 판정"); validate("GateDecision", dict(d2))
     rid2 = d2.get("release_id"); rel2 = dict(gate_r.get_release(rid2)); validate("ReleaseManifest", rel2); gate_r.load_bundle(rid2, dest=bd)
     STATE["containers_before_swap"] = container_ids(); save()   # 포인터 1 -> 2 활성화 직전(StartedAt, ID 만 읽는다)
@@ -1589,7 +1622,7 @@ def demo4():
         return
     rels = {}
     for k, sub in subs.items():
-        gate_ap.decide(sub["submission_id"], "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="데모: 시험용 승인자(스크립트)가 대신 승인")
+        decide_approval("ap", sub["submission_id"], "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인")
     for k, sj in subj.items():
         d = wait(lambda sj=sj: next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
         rels[k] = d.get("release_id")
@@ -1700,7 +1733,7 @@ def demo_swap():
         bad = [c for c in rep["checks"] if c["result"] not in ("PASS", "SKIPPED")]
         assert not bad, f"자동 검사가 통과하지 못했다(승인하지 않고 멈춤): {bad}"
         print("  자동 검사: " + ", ".join(f"{c['kind']}={c['result']}" for c in rep["checks"]))
-        dec = dict(gate_ap.decide(sid, "APPROVE", approver_id="trainer-test", approver_role="release-approver", reason="데모: 시험용 승인자(스크립트)가 대신 승인(어댑터 교체)")); validate("GateApproval", dec)
+        dec = dict(decide_approval("ap", sid, "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인(어댑터 교체)")); validate("GateApproval", dec)
         existing = wait(lambda: next((d for d in decisions_for(gate_r, subj) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
     rid = existing.get("release_id"); validate("ReleaseManifest", dict(gate_r.get_release(rid)))
     gate_r.load_bundle(rid, dest=WORK / "bundles")
