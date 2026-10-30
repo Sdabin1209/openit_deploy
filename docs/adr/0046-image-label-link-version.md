@@ -1,6 +1,6 @@
 # 0046. 영역 이미지에 들어간 link 버전을 라벨 `io.openit.link` 로 기록한다 (제안)
 
-- 상태: 제안 (계약 변경이 필요해 헤드의 결정을 기다린다)
+- 상태: 보류 (헤드 결정: 계약 고정 중이라 대장에 올리고, 지금은 link 버전 라벨 점검 없이 간다)
 - 날짜: 2026-10-30
 
 ## 맥락
@@ -9,7 +9,7 @@
 
 ## 결정 (제안)
 
-라벨 키 `io.openit.link`(값: 태그 형식 `vMAJOR.MINOR.PATCH`, link 를 쓰지 않는 이미지는 `n/a`)를 영역 이미지에 기록한다. 기준 버전은 `scripts/lib.sh` 의 `DEPLOY_LINK_TAG`(v0.1.0) 한 곳이다. 각 영역의 build-image 가 이 값을 `--build-arg`가 아니라 영역의 의존 잠금에서 읽어 라벨로 단다(영역 내부 일이다: deploy 는 영역의 빌드 구조를 모른다, 구조 규칙 1). 점검은 `check-versions.sh` 가 라벨 `io.openit.link` 를 `DEPLOY_LINK_TAG` 와 대조하는 것으로 한다(구현은 계약이 키를 허용한 뒤).
+라벨 키 `io.openit.link`(값: 태그 형식 `vMAJOR.MINOR.PATCH`, link 를 쓰지 않는 이미지는 `n/a`)를 영역 이미지에 기록한다. 기준 버전은 `scripts/lib.sh` 의 `DEPLOY_LINK_TAG`(v0.2.0) 한 곳이다. 각 영역의 build-image 가 이 값을 `--build-arg`가 아니라 영역의 의존 잠금에서 읽어 라벨로 단다(영역 내부 일이다: deploy 는 영역의 빌드 구조를 모른다, 구조 규칙 1). 점검은 `check-versions.sh` 가 라벨 `io.openit.link` 를 `DEPLOY_LINK_TAG` 와 대조하는 것으로 한다(구현은 계약이 키를 허용한 뒤).
 
 ## 왜
 

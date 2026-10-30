@@ -1,6 +1,6 @@
 # 변경 이력
 
-## wo-400: 영역 구조 개편(D117), 계약 v3.1.1, link v0.1.0
+## wo-400: 영역 구조 개편(D117), 계약 v3.1.1, link v0.2.0
 - 계약 기준 `DEPLOY_BC_TAG` v3.0.2 -> v3.1.1(와이어 형식은 같다). 통신 기반 라이브러리 `DEPLOY_LINK_TAG` v0.1.0 을 기준표에 더했다(ADR 0046: 이미지 라벨 기록은 제안).
 - E2E 5n-reask 가 survey-service 의 되묻기 실효 한도 계산(`effective_reask_cap`)을 흉내 내던 것을 없애고 계약 출력 `SurveyReadyz.reask_limit.effective`(v3.1.0)만 읽는다. 5n 의 deps 에서 단계 1 이 빠진다.
 - Python 판단을 `openit_deploy/components/`(컴포넌트 19개), `wiring/`, `types/`(생성)로 옮기고 `schemas/` 에 입출력 스키마와 예시를 두었다. `scripts/*.py` 는 같은 이름의 얇은 진입점. 결정과 한계: ADR 0045, `docs/components.md`, `schemas/README.md`.
