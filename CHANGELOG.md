@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-302c: 계약 v3.0.2, 컨테이너 환경을 계약 Env 스키마로 검증
+- `DEPLOY_BC_TAG` v3.0.2(SurveyServiceEnv: 추론 연결은 `SURVEY_INFERENCE_URL` 또는 `SURVEY_MODEL_BACKEND` 중 하나). model-runtime v0.11.2는 나온 뒤 올린다.
+- `test_config_contracts.py`에 컨테이너 최종 환경 검증을 더했다: `docker compose config`로 병합한 survey-service 환경을 SurveyServiceEnv로, ops-feedback-ingest 환경(OPS_ 변수)을 OpsFeedbackServerEnv로 검증한다. 조합은 운영(compose.yaml 단독)과 e2e.sh·demo.sh의 `COMPOSE_EXTRA`를 그 파일에서 읽은 것이다(목록을 따로 만들지 않는다). 계약에 Env 스키마가 있는 서비스는 이 둘뿐이다(스키마 이름에 Env가 든 것 확인).
+
 ## wo-307 추가: 영역 시험 실패의 원인을 남긴다
 - check-all 규칙 8(영역별 시험 실행)이 실패하면 "종료 코드 N (통과 M개)"만 남겨 어떤 시험인지 알 수 없었다(E2E에서 question-authoring이 이렇게 실패했다). 이제 러너 출력의 실패 줄(pytest `FAILED`/`ERROR`, node:test `not ok`/`✖`, unittest `FAIL:`/`ERROR:`)을 최대 5줄 메시지에 남기고(없으면 그 사실을 적는다) 전체 출력은 `state/check-all/<영역>.log`에 두어 경로를 알린다(시간 초과 때는 그때까지의 출력). 마지막 실행이 덮어쓴다.
 
