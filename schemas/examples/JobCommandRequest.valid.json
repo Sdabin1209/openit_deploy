@@ -1,0 +1,1 @@
+{"docker": "docker", "image": "img:1", "job": {"argv": ["python", "-m", "x", "import"], "secret_files": ["DATASET_STORE_WRITE_TOKEN_FILE"], "config": {"container_path": "/config/import.json"}}, "config_path": "/w/c.json", "work": "/w", "secrets_dir": "/sec", "uid": 1000, "gid": 1000, "extra_ro": ["/in"], "network": "none"}

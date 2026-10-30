@@ -327,10 +327,10 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 - 같은 어댑터 쌍을 다시 주면 이미 활성이라 교체 없음으로 끝난다. 문항 세트는 가장 최근 것을 그대로 쓴다.
 - 이 PC에서 확인한 것: 가짜 백엔드 데모의 시험용 어댑터 교체와 기반 모델 불일치 거부. 확인하지 못한 것: `--llm`(vLLM) 데모의 교체.
 
-**추론 서버 측정 도구 `scripts/probe-serving.py`**: 떠 있는 model-serving의 `extract`와 `respond`에 입력 묶음을 보내 집계한다(표준 라이브러리만 씀, 서비스를 거치지 않음). `--endpoints extract|respond|extract,respond`(기본 둘 다); respond 입력은 `../boundary-contracts/examples/ResponseRequest*.json`.
+**추론 서버 측정 도구 `scripts/probe-serving.py`**: 떠 있는 model-serving의 `extract`와 `respond`에 입력 묶음을 보내 집계한다(통신은 link 의 계약 클라이언트, 스키마 검증이 있어 deploy .venv 의 파이썬으로 실행한다, 서비스를 거치지 않음). `--endpoints extract|respond|extract,respond`(기본 둘 다); respond 입력은 `../boundary-contracts/examples/ResponseRequest*.json`.
 ```bash
-python3 scripts/probe-serving.py --demo [--repeat N] [--concurrency K] [--inputs FILE]     # 데모 스택(포트는 Docker 배정을 compose port로 찾는다)
-python3 scripts/probe-serving.py --url http://HOST:PORT --token-file FILE [--release-id ID]  # 다른 model-serving(예: 외부 추론 서버)
+.venv/bin/python scripts/probe-serving.py --demo [--repeat N] [--concurrency K] [--inputs FILE]     # 데모 스택(포트는 Docker 배정을 compose port로 찾는다)
+.venv/bin/python scripts/probe-serving.py --url http://HOST:PORT --token-file FILE [--release-id ID]  # 다른 model-serving(예: 외부 추론 서버)
 ```
 - 토큰: `NAME_FILE`처럼 파일에서 읽는다(값 하나가 든 파일). `--demo`의 기본은 `state/demo/secrets/tokens/inference-survey-service`. 토큰 값은 출력하지 않는다.
 - 입력: 없으면 `../boundary-contracts/examples/ActionExtractionInput.json`에 내장 발화 10개를 바꿔 넣는다. 파일은 ActionExtractionInput 하나, 그 배열, 또는 `{"inputs": [...]}`.

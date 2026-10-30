@@ -91,7 +91,7 @@ demo_kiosk_prepare() { # 데모 때만 키오스크가 /config.json 으로 기�
   # 왜 644: 컨테이너 사용자(node)가 읽어야 한다. 600 이면 호스트 사용자와 uid 가 같을 때만 우연히 읽힌다. 폴더가 700 이고 이 비밀 폴더는 데모 전용이다(docs/adr/0022-secret-file-permissions.md 와 같은 규칙)
   chmod 644 "$DEMO_KIOSK_CONFIG"
   # 2) gateway 설정 사본: /config.json 404 블록 하나만 kiosk-frontend 로 넘긴다. 운영 config/Caddyfile 은 그대로다
-  python3 -I "$DEPLOY_ROOT/scripts/demo_caddyfile.py" "$DEPLOY_ROOT/config/Caddyfile" "$DEMO_CADDYFILE" || die "Caddyfile 에서 /config.json 404 블록을 찾지 못했다 (config/Caddyfile 이 바뀌었다: scripts/demo_caddyfile.py 를 맞춘다)"
+  "$DEPLOY_PY" -I "$DEPLOY_ROOT/scripts/demo_caddyfile.py" "$DEPLOY_ROOT/config/Caddyfile" "$DEMO_CADDYFILE" || die "Caddyfile 에서 /config.json 404 블록을 찾지 못했다 (config/Caddyfile 이 바뀌었다: scripts/demo_caddyfile.py 를 맞춘다)"
   chmod 644 "$DEMO_CADDYFILE"   # gateway 컨테이너(uid 10001)가 configs 로 읽는다. 비밀 값은 없다(토큰은 {file./run/secrets/...} 로 읽는다)
 }
 ports_json() {

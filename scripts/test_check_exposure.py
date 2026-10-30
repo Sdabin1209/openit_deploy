@@ -4,8 +4,8 @@
 import copy, json, pathlib, sys, unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-import check_exposure as C
+sys.path.insert(0, str(HERE.parent))
+from openit_deploy.components import exposure_check as C
 
 CADDY = (HERE.parent / "config/Caddyfile").read_text(encoding="utf-8")
 HOSTS = json.loads((HERE.parent / "config/exposure-hosts.json").read_text())

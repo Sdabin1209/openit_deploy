@@ -1,0 +1,1 @@
+{"caddyfile": "example.test {\n}\n", "roles": ["staff", "operator"], "hosts": {"survey-service": "survey-service"}, "known": [], "inspect": {"survey-service": {"labels": {"io.openit.exposure": "{}"}, "exposed_ports": ["8080/tcp"], "user": "10001"}}}

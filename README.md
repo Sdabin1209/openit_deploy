@@ -66,6 +66,11 @@ bash scripts/demo.sh up                # 3) 화면을 눌러 보는 데모(프�
 - 기준 태그: `scripts/lib.sh` 의 표 한 곳(boundary-contracts, model-runtime, 문진 스키마).
 - gpu-dev(12GB)에서 Qwen3-1.7B 적재와 형식 통과 확인, 단 키오스크 14턴은 학습 안 된 모델 탓에 모두 실패(OPEN_GAPS U01, U07. 이 세션은 확인하지 않고 대장을 옮겼다).
 
+**코드 구조(D117, ADR 0045)와 타입 생성**: 판단이 있는 Python 은 `openit_deploy/`(`components/` 컴포넌트, `wiring/` 연결, `types/` 생성 타입)에 있고 `scripts/*.py` 는 얇은 진입점이다. 컴포넌트 표는 `docs/components.md`, 입출력 스키마는 `schemas/`(`schemas/README.md`의 스키마 밖 조건). 셸·Compose 는 운영 절차이고 E2E 시나리오는 수용 시험이다. 진입점은 스키마를 검증하므로 deploy `.venv` 의 파이썬으로 실행한다(`lib.sh` 의 `DEPLOY_PY`).
+- 타입 생성: `python3 -m venv build/venv-types && build/venv-types/bin/pip install -r requirements-types.txt` 한 번 뒤 `bash scripts/gen-types.sh`(`schemas/*.schema.json` -> `openit_deploy/types/deploy_types.py`, 손으로 고치지 않는다). `tests/test_structure.py` 가 재생성 결과와 같은지 본다.
+- 구조 검사: `.venv/bin/python tests/test_structure.py`, 헤드 도구 `python3 ../head/scripts/structure-check.py deploy`.
+- 기준 태그에 통신 기반 라이브러리 link(`DEPLOY_LINK_TAG`)가 더해졌다(`scripts/lib.sh`, 호스트 설치는 `prepare-host.sh venv`). 이미지 라벨로 기록하는 방법은 제안 단계다(ADR 0046).
+
 확인하지 못한 것: 깨끗한 두 번째 환경(일반 Linux 서버)에서의 설치(U06, U12), 24GB GPU, 진짜 어댑터로 한 턴(H1~H4), 실제 브라우저·음성·푸시(U05), 서버 밖 외부 감시(자리만 있음), 백업 주기(설정 없으면 `backup.sh`가 거부, 의도).
 
 ## 5. 이 영역의 열린 항목 (헤드의 OPEN_GAPS.md에서 골랐다. ID 그대로)

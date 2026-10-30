@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "AreaListRequest.schema.json",
+  "title": "AreaListRequest",
+  "type": "object",
+  "required": ["areas_doc"],
+  "additionalProperties": false,
+  "properties": {
+    "areas_doc": {"$ref": "AreasDoc.schema.json"},
+    "kinds": {"type": "array", "items": {"enum": ["python", "node", "library", "compose", "docs"]}, "description": "비면 모든 kind"},
+    "train": {"type": "boolean", "description": "true 면 version_train 인 영역만"},
+    "exclude": {"type": "array", "items": {"type": "string"}}
+  }
+}

@@ -1,0 +1,125 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "RestoreVerifyRequest.schema.json",
+ "title": "RestoreVerifyRequest",
+ "type": "object",
+ "required": [
+  "run_id",
+  "work",
+  "state",
+  "urls",
+  "tokens"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "run_id": {
+   "type": "string",
+   "minLength": 1
+  },
+  "work": {
+   "type": "string",
+   "minLength": 1,
+   "description": "E2E 작업 폴더(어댑터를 내려받을 곳의 부모)"
+  },
+  "state": {
+   "type": "object",
+   "required": [
+    "trace_env",
+    "lora",
+    "releases",
+    "qs"
+   ],
+   "properties": {
+    "trace_env": {
+     "type": "object"
+    },
+    "lora": {
+     "type": "object",
+     "required": [
+      "LORA_A"
+     ],
+     "properties": {
+      "LORA_A": {
+       "type": "object",
+       "required": [
+        "id",
+        "content_hash"
+       ]
+      }
+     }
+    },
+    "releases": {
+     "type": "object"
+    },
+    "qs": {
+     "type": "array",
+     "minItems": 1,
+     "items": {
+      "type": "object",
+      "required": [
+       "version"
+      ]
+     }
+    }
+   },
+   "description": "E2E 단계가 쓴 상태 파일(state.json)에서 이 검증이 읽는 부분"
+  },
+  "urls": {
+   "type": "object",
+   "required": [
+    "qa",
+    "ops",
+    "mr",
+    "gate"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "qa": {
+     "type": "string",
+     "pattern": "^https?://"
+    },
+    "ops": {
+     "type": "string",
+     "pattern": "^https?://"
+    },
+    "mr": {
+     "type": "string",
+     "pattern": "^https?://"
+    },
+    "gate": {
+     "type": "string",
+     "pattern": "^https?://"
+    }
+   }
+  },
+  "tokens": {
+   "type": "object",
+   "required": [
+    "qa",
+    "ops",
+    "mr",
+    "gate"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "qa": {
+     "type": "string",
+     "minLength": 1
+    },
+    "ops": {
+     "type": "string",
+     "minLength": 1
+    },
+    "mr": {
+     "type": "string",
+     "minLength": 1
+    },
+    "gate": {
+     "type": "string",
+     "minLength": 1
+    }
+   },
+   "description": "읽기 전용 토큰(값은 출력하지 않는다, D84)"
+  }
+ }
+}

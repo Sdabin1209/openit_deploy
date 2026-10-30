@@ -24,23 +24,23 @@ class T(unittest.TestCase):
             Draft202012Validator.check_schema(json.loads(f.read_text(encoding="utf-8")))
 
     def test_images_env_rejects(self):
-        self.assertEqual(errs("images-env", GOOD_ROW), [])
-        self.assertEqual(errs("images-env", {k: v for k, v in GOOD_ROW.items() if k != "tags"}), [])   # 4열은 선택
+        self.assertEqual(errs("ImagesEnvRow", GOOD_ROW), [])
+        self.assertEqual(errs("ImagesEnvRow", {k: v for k, v in GOOD_ROW.items() if k != "tags"}), [])   # 4열은 선택
         for bad in ({**GOOD_ROW, "commit": "HEAD"}, {**GOOD_ROW, "tags": "bc=2.1.1"}, {**GOOD_ROW, "extra": ["x"]}, {k: v for k, v in GOOD_ROW.items() if k != "image"}):
-            self.assertTrue(errs("images-env", bad), bad)
+            self.assertTrue(errs("ImagesEnvRow", bad), bad)
         self.assertEqual(cs.parse_images_env("# 주석\n\nsurvey-service img abc1234 bc=v2.6.0,mr=v0.10.0\n")[0][1]["tags"], "bc=v2.6.0,mr=v0.10.0")
 
     def test_lock_rejects_typos_and_bad_values(self):
         base = {"GATEWAY_IMAGE": "docker.io/library/caddy@" + D, "REGISTRY_IMAGE": "docker.io/library/registry@" + D, "UTIL_IMAGE": "docker.io/library/python@" + D, "POSTGRES_IMAGE": "docker.io/library/postgres@" + D}
-        self.assertEqual(errs("images-lock", {**base, "SURVEY_SERVICE_DIGEST": D, "SURVEY_SERVICE_REVISION": "abc1234"}), [])
+        self.assertEqual(errs("ImagesLock", {**base, "SURVEY_SERVICE_DIGEST": D, "SURVEY_SERVICE_REVISION": "abc1234"}), [])
         for bad in ({**base, "SURVEY_SERVICE_DIGST": D}, {**base, "SURVEY_SERVICE_DIGEST": "sha256:short"}, {**base, "SURVEY_SERVICE_REVISION": "main"}, {k: v for k, v in base.items() if k != "GATEWAY_IMAGE"}, {**base, "UTIL_IMAGE": "python:latest"}):
-            self.assertTrue(errs("images-lock", bad), bad)
+            self.assertTrue(errs("ImagesLock", bad), bad)
 
     def test_verify_areas_rejects(self):
         a = {"image": [], "tests": {"kind": "pytest"}, "e2e": "auto"}
-        self.assertEqual(errs("verify-areas", {"default_skip_e2e_paths": [], "areas": {"x": a}}), [])
+        self.assertEqual(errs("VerifyAreas", {"default_skip_e2e_paths": [], "areas": {"x": a}}), [])
         for bad in ({**a, "e2e": "none"}, {**a, "e2e": "maybe"}, {**a, "tests": {"kind": "commands"}}, {**a, "typo": 1}):
-            self.assertTrue(errs("verify-areas", {"default_skip_e2e_paths": [], "areas": {"x": bad}}), bad)
+            self.assertTrue(errs("VerifyAreas", {"default_skip_e2e_paths": [], "areas": {"x": bad}}), bad)
 
     def test_cli_exit_codes_and_no_value_echo(self):
         with tempfile.TemporaryDirectory() as t:
@@ -48,7 +48,7 @@ class T(unittest.TestCase):
             import io, contextlib
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                rc = cs.main(["c", "--files", f"images-lock={p}"])
+                rc = cs.main(["--files", f"images-lock={p}"])
             self.assertEqual(rc, 1); self.assertNotIn("SECRETLIKEVALUE", buf.getvalue())
 
 

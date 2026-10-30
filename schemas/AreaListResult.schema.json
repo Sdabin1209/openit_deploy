@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "AreaListResult.schema.json",
+  "title": "AreaListResult",
+  "type": "object",
+  "required": ["names"],
+  "additionalProperties": false,
+  "properties": {"names": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "areas.json 의 순서(동기화·bump 순서)를 지킨다"}}
+}

@@ -1,0 +1,1 @@
+{"area": "survey-service", "report": {"area": "survey-service", "status": "ok", "exit_code": 0, "environment": {"kind": "python-venv", "path": ".venv", "test_command": ["pytest"]}}}

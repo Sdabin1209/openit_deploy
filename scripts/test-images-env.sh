@@ -8,7 +8,7 @@ N=0; F=0
 ok() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  PASS $name"; else echo "  FAIL $name"; F=$((F+1)); fi; }
 no() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  FAIL $name (성공하면 안 된다)"; F=$((F+1)); else echo "  PASS $name"; fi; }
 # 임시 deploy 사본(실제 build/, locks/, state/ 를 건드리지 않는다). model-runtime 은 읽기 전용으로 링크한다
-mkdir -p "$T/deploy/build" && cp -r "$HERE" "$T/deploy/scripts" && cp -r "$ROOT/locks" "$T/deploy/locks" && ln -s "$WS/model-runtime" "$T/model-runtime"
+mkdir -p "$T/deploy/build" && cp -r "$HERE" "$T/deploy/scripts" && cp -r "$ROOT/openit_deploy" "$ROOT/schemas" "$T/deploy/" && cp -r "$ROOT/locks" "$T/deploy/locks" && ln -s "$WS/model-runtime" "$T/model-runtime"
 # 게시 전 라벨 검증(ADR 0035)은 계약 패키지의 ImageLabels 를 쓴다: 임시 사본에는 .venv 가 없으므로 계약 패키지가 설치된 파이썬(주 작업 트리의 .venv)을 준다
 LABELS_PYTHON="$(cd "$(git -C "$ROOT" rev-parse --git-common-dir)/.." && pwd)/.venv/bin/python"; [ -x "$ROOT/.venv/bin/python" ] && LABELS_PYTHON="$ROOT/.venv/bin/python"; export LABELS_PYTHON
 D="$T/deploy"; source "$D/scripts/lib.sh" 2>/dev/null

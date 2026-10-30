@@ -4,6 +4,6 @@
 # 환경: VERIFY_WORKSPACE (영역 리포지토리들이 있는 폴더, 기본은 deploy 의 상위)
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY=python3
-python3 -c 'import yaml' 2>/dev/null || { [ -x "$HERE/../.venv/bin/python" ] && PY="$HERE/../.venv/bin/python"; }
-exec "$PY" "$HERE/verify_area.py" "$@"
+# 계획 입력·출력을 스키마로 검증하므로(jsonschema, referencing) deploy .venv 의 파이썬을 쓴다(ADR 0045)
+DEPLOY_NO_DOCKER=1; source "$HERE/lib.sh"
+exec "$DEPLOY_PY" "$HERE/verify_area.py" "$@"

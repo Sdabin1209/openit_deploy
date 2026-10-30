@@ -1,0 +1,31 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "JobSelectRequest.schema.json",
+ "title": "JobSelectRequest",
+ "type": "object",
+ "required": [
+  "labels",
+  "job_name"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "labels": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "이미지 Config.Labels"
+  },
+  "job_name": {
+   "type": "string",
+   "minLength": 1
+  },
+  "declaration_errors": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "io.openit.jobs 값을 계약 JobsDeclaration validator 로 검증한 위반(wiring 이 채운다). 비어 있지 않으면 선언이 계약을 어긴 것"
+  }
+ }
+}

@@ -1,0 +1,9 @@
+{"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "RetentionCheckRequest.schema.json", "title": "RetentionCheckRequest", "type": "object",
+ "required": ["backup_days", "sources"], "additionalProperties": false,
+ "$defs": {"textFile": {"type": "object", "required": ["name", "text"], "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1, "description": "출력에 쓰는 파일 이름(경로 아님)"}, "text": {"type": "string"}}}},
+ "properties": {
+   "backup_days": {"type": "integer", "minimum": 0, "description": "BACKUP_RETENTION_DAYS. 읽지 못했으면 요청을 만들지 못한다(wiring 이 종료 코드 2)"},
+   "sources": {"type": "object", "additionalProperties": false, "properties": {
+     "env_files": {"type": "array", "items": {"$ref": "#/$defs/textFile"}, "description": "config/*.env"},
+     "ops_job": {"anyOf": [{"$ref": "#/$defs/textFile"}, {"type": "null"}], "description": "config/ops-feedback-job.yaml"},
+     "compose": {"anyOf": [{"$ref": "#/$defs/textFile"}, {"type": "null"}], "description": "compose.yaml"}}}}}

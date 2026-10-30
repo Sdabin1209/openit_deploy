@@ -1,0 +1,40 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ServingProbeRequest.schema.json",
+ "title": "ServingProbeRequest",
+ "type": "object",
+ "required": [
+  "endpoints"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "endpoints": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": [
+     "name",
+     "records"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "enum": [
+       "extract",
+       "respond"
+      ]
+     },
+     "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "$ref": "ProbeRecord.schema.json"
+      },
+      "description": "호출 순서대로. 첫 항목이 콜드 첫 호출"
+     }
+    }
+   }
+  }
+ }
+}

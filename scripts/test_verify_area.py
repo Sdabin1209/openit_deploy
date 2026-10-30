@@ -4,7 +4,8 @@ import copy, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import verify_area as v
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from openit_deploy.wiring import verify_area as v
 
 HERE = Path(__file__).resolve().parent
 WS = Path("/ws")
@@ -33,9 +34,8 @@ class T(unittest.TestCase):
     def test_every_mapping_has_why(self):
         for a, s in self.cfg["areas"].items():
             e = s["e2e"]
-            if isinstance(e, dict) and not e.get("none"):
-                for k, x in e.items():
-                    self.assertTrue(x["why"].strip(), (a, k))
+            if e == "none":
+                self.assertTrue(s["reason"].strip(), a)
 
     def test_closure_adds_base_and_requires_in_run_order(self):
         steps = v.e2e_steps(self.cfg, "ops-feedback")
@@ -48,7 +48,7 @@ class T(unittest.TestCase):
 
     def test_deploy_is_fast_and_none_is_none(self):
         self.assertEqual(v.e2e_steps(self.cfg, "deploy"), "fast")
-        cfg = copy.deepcopy(self.cfg); cfg["areas"]["model-lab"]["e2e"] = {"none": True, "reason": "내부 로직만"}
+        cfg = copy.deepcopy(self.cfg); cfg["areas"]["model-lab"].update(e2e="none", reason="내부 로직만")
         self.assertIsNone(v.e2e_steps(cfg, "model-lab"))
 
     def _bad(self, mutate, expect):
@@ -61,8 +61,8 @@ class T(unittest.TestCase):
             self.assertIn(expect, str(cm.exception))
 
     def test_config_rejects_missing_reason_unknown_step_missing_why_missing_area(self):
-        self._bad(lambda c: c["areas"]["model-lab"].update(e2e={"none": True}), "reason")
-        self._bad(lambda c: c["areas"]["model-lab"].update(e2e={"3": {"why": "x"}}), "e2e 는 auto")   # 단계 표는 yaml 에 쓰지 않는다(@step 이 유일한 자리)
+        self._bad(lambda c: c["areas"]["model-lab"].update(e2e="none"), "reason")
+        self._bad(lambda c: c["areas"]["model-lab"].update(e2e={"3": {"why": "x"}}), "e2e")   # 단계 표는 yaml 에 쓰지 않는다(@step 이 유일한 자리)
         self._bad(lambda c: c["areas"].pop("deploy"), "deploy")
 
     def test_every_e2e_step_is_mapped_to_some_area(self):
@@ -158,7 +158,7 @@ class T(unittest.TestCase):
         self.assertEqual(set(v.IMAGE_SRC), set(out[0].split()))
         self.assertEqual((v.IMAGE_SRC["model-registry"], v.IMAGE_SRC["dataset-store"], v.IMAGE_SRC["model-serving"], v.IMAGE_SRC["survey-service"]), tuple(out[1:5]))
         self.assertEqual(v.IMAGE_SRC["model-registry"], "model-lab")
-        src = (HERE / "verify_area.py").read_text(encoding="utf-8")
+        src = (HERE.parent / "openit_deploy/wiring/verify_area.py").read_text(encoding="utf-8")
         self.assertNotIn('"model-registry": "model-lab"', src, "verify_area.py 에 대응표를 따로 적었다(lib.sh 가 정본)")
         self.assertNotIn("declare -A SRC", (HERE / "build-images.sh").read_text(encoding="utf-8"))
 

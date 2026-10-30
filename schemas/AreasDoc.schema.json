@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "AreasDoc.schema.json",
+  "title": "AreasDoc",
+  "description": "워크스페이스 영역 목록 파일(head/shared/areas.json)에서 deploy 가 읽는 부분. 파일의 정본은 헤드이고 deploy 는 이름·kind·version_train 만 쓴다(그 밖 필드는 무시한다).",
+  "type": "object",
+  "required": ["areas"],
+  "properties": {
+    "areas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "version_train"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["python", "node", "library", "compose", "docs"], "description": "알 수 없는 kind 는 거부한다(영역을 더할 때 deploy 도 고치게 한다)"},
+          "version_train": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

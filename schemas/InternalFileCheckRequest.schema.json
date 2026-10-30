@@ -1,0 +1,29 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "InternalFileCheckRequest.schema.json",
+ "title": "InternalFileCheckRequest",
+ "type": "object",
+ "required": [
+  "images_env_text",
+  "images_lock_text",
+  "verify_areas"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "images_env_text": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "description": "build/images.env 내용. 빌드 전이라 없으면 null(SKIP)"
+  },
+  "images_lock_text": {
+   "type": "string",
+   "description": "locks/images.lock 내용"
+  },
+  "verify_areas": {
+   "type": "object",
+   "description": "config/verify-areas.yaml 을 읽은 문서(YAML 파싱은 wiring)"
+  }
+ }
+}

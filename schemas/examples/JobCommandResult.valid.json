@@ -1,0 +1,1 @@
+{"argv": ["docker", "run", "--rm", "--network", "none", "--user", "1:1", "-v", "a:a", "-v", "b:c:ro", "img", "python"]}

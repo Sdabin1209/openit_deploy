@@ -1,0 +1,93 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "VerifyPlanRequest.schema.json",
+ "title": "VerifyPlanRequest",
+ "type": "object",
+ "required": [
+  "cfg",
+  "decls",
+  "order",
+  "area",
+  "workspace",
+  "deploy_root",
+  "tests_only"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "cfg": {
+   "$ref": "VerifyAreas.schema.json"
+  },
+  "decls": {
+   "$ref": "StepDecls.schema.json"
+  },
+  "order": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "string"
+   },
+   "uniqueItems": true,
+   "description": "E2E 단계 실행 순서(STEPS)"
+  },
+  "area": {
+   "type": "string",
+   "pattern": "^[a-z][a-z0-9-]*$"
+  },
+  "workspace": {
+   "type": "string",
+   "minLength": 1
+  },
+  "deploy_root": {
+   "type": "string",
+   "minLength": 1
+  },
+  "changed": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "no_e2e_reason": {
+   "anyOf": [
+    {
+     "type": "null"
+    },
+    {
+     "type": "string",
+     "pattern": "\\S"
+    }
+   ],
+   "description": "E2E 를 건너뛰는 이유. 공백만이면 거부한다(근거 없는 건너뛰기 금지)"
+  },
+  "tests_only": {
+   "type": "boolean"
+  },
+  "stale": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "낡은 이미지 이름"
+  },
+  "test_command": {
+   "anyOf": [
+    {
+     "$ref": "#/$defs/argv"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "description": "영역 setup-env 보고의 environment.test_command. 보고가 없거나 실패면 null (pytest·npm 종류에서만 쓴다)"
+  }
+ },
+ "$defs": {
+  "argv": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "string"
+   }
+  }
+ }
+}

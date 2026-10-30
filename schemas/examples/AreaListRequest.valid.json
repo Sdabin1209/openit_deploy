@@ -1,0 +1,1 @@
+{"areas_doc": {"areas": [{"name": "survey-service", "kind": "python", "version_train": true}, {"name": "head", "kind": "docs", "version_train": false}]}, "kinds": ["python"], "train": true, "exclude": []}

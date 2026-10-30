@@ -48,7 +48,7 @@ class RuntimeVersionNotHardcoded(unittest.TestCase):
         self.assertEqual(hits, [], "시험 픽스처가 model_runtime_version 을 박고 있다: " + ", ".join(hits))
 
     def test_llm_attach_uses_runtime_constant(self):
-        src = (HERE / "llm_attach_package.py").read_text(encoding="utf-8")
+        src = (HERE.parent / "openit_deploy/wiring/cli_llm_attach_package.py").read_text(encoding="utf-8")
         self.assertIn('"model_runtime_version": mr.RUNTIME_VERSION', src)
 
 

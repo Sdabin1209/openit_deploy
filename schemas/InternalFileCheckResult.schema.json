@@ -1,0 +1,97 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "InternalFileCheckResult.schema.json",
+ "title": "InternalFileCheckResult",
+ "type": "object",
+ "required": [
+  "checks",
+  "failed"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "checks": {
+   "type": "array",
+   "minItems": 3,
+   "maxItems": 3,
+   "items": {
+    "type": "object",
+    "required": [
+     "label",
+     "status",
+     "failures"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "label": {
+      "enum": [
+       "images.env",
+       "images.lock",
+       "verify-areas.yaml"
+      ]
+     },
+     "status": {
+      "enum": [
+       "OK",
+       "FAIL",
+       "SKIP"
+      ]
+     },
+     "failures": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "where",
+        "validator"
+       ],
+       "additionalProperties": false,
+       "properties": {
+        "where": {
+         "type": "string"
+        },
+        "validator": {
+         "type": "string"
+        },
+        "pattern": {
+         "type": "string"
+        },
+        "line": {
+         "type": "integer",
+         "minimum": 1
+        }
+       }
+      }
+     }
+    },
+    "if": {
+     "properties": {
+      "status": {
+       "const": "FAIL"
+      }
+     },
+     "required": [
+      "status"
+     ]
+    },
+    "then": {
+     "properties": {
+      "failures": {
+       "minItems": 1
+      }
+     }
+    },
+    "else": {
+     "properties": {
+      "failures": {
+       "maxItems": 0
+      }
+     }
+    }
+   }
+  },
+  "failed": {
+   "type": "integer",
+   "minimum": 0
+  }
+ }
+}

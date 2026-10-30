@@ -1,0 +1,1 @@
+{"name": "survey-service", "image": "deploy-build/survey-service:85b3552", "commit": "85b3552", "tags": "bc=v2.6.0,mr=v0.10.0"}

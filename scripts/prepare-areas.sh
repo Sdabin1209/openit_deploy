@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do case "$1" in
   -*) echo "알 수 없는 인자: $1 (사용: prepare-areas.sh [--list] [--ws DIR] [--no-self] [영역...])" >&2; exit 2;;
   *) ONLY+=("$1"); shift;; esac; done
 AF="${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}"
-if ! ALL=$(python3 "$DEPLOY_ROOT/scripts/areas.py" --file "$AF" --kind python,node,library); then
+if ! ALL=$("$DEPLOY_PY" "$DEPLOY_ROOT/scripts/areas.py" --file "$AF" --kind python,node,library); then
   echo "prepare-areas: 영역 목록을 읽지 못했다($AF). 먼저 head 를 clone 하고 head/setup.sh 를 실행한다(docs/SETUP.md 1단계)" >&2; exit 1; fi
 if [ ${#ONLY[@]} -gt 0 ]; then
   TARGETS=(); WANT_SELF=0

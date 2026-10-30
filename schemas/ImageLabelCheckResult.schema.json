@@ -1,0 +1,4 @@
+{"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "ImageLabelCheckResult.schema.json", "title": "ImageLabelCheckResult", "type": "object",
+ "required": ["ok", "errors"], "additionalProperties": false,
+ "properties": {"ok": {"type": "boolean"}, "errors": {"type": "array", "items": {"type": "string", "minLength": 1}}},
+ "if": {"properties": {"ok": {"const": true}}, "required": ["ok"]}, "then": {"properties": {"errors": {"maxItems": 0}}}, "else": {"properties": {"errors": {"minItems": 1}}}}

@@ -5,7 +5,9 @@ import pathlib, subprocess, sys, tempfile, unittest
 H = pathlib.Path(__file__).resolve().parent
 ROOT = H.parent
 sys.path.insert(0, str(H))
-import retention_check as R
+sys.path.insert(0, str(H.parent))
+from openit_deploy.components import retention_check as R
+from openit_deploy.wiring.cli_retention_check import read_sources
 
 
 def run(*args):
@@ -18,7 +20,7 @@ class T(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
 
     def test_reads_every_retention_source(self):
-        v = R.data_retentions(ROOT / "config", ROOT / "compose.yaml")
+        v = R.data_retentions(read_sources(ROOT / "config", ROOT / "compose.yaml"))
         names = " ".join(v)
         for need in ("survey.env:SURVEY_SESSION_RETENTION_DAYS", "ops-feedback-ingest.env:OPS_RAW_RETENTION_DAYS", "question-authoring.env:QA_DRAFT_RETENTION_DAYS", "question-authoring.env:QA_SOURCE_RETENTION_DAYS",
                      "ops-feedback-job.yaml:retention.raw_days", "ops-feedback-job.yaml:retention.cases_days", "ops-feedback-job.yaml:retention.metrics_days"):
@@ -27,7 +29,7 @@ class T(unittest.TestCase):
         self.assertEqual(min(v.values()), 30)
 
     def test_longer_backup_is_rejected(self):
-        lo = min(R.data_retentions(ROOT / "config", ROOT / "compose.yaml").values())
+        lo = min(R.data_retentions(read_sources(ROOT / "config", ROOT / "compose.yaml")).values())
         self.assertEqual(run("--backup-days", str(lo)).returncode, 0)
         p = run("--backup-days", str(lo + 1)); self.assertEqual(p.returncode, 1); self.assertIn("CRIT", p.stderr)
 
@@ -36,7 +38,7 @@ class T(unittest.TestCase):
             t = pathlib.Path(t); (t / "a.env").write_text("X_RETENTION_DAYS=10   # 주석\nOTHER=1\n")
             (t / "ops-feedback-job.yaml").write_text("storage:\n  a: 1\nretention:\n  raw_days: 7\n  cases_days: forever\nother:\n  x_days: 1\n")
             (t / "c.yml").write_text("services:\n  s:\n    environment:\n      Y_RETENTION_DAYS: 5\n")
-            v = R.data_retentions(t, t / "c.yml")
+            v = R.data_retentions(read_sources(t, t / "c.yml"))
             self.assertEqual(v, {"a.env:X_RETENTION_DAYS": 10, "ops-feedback-job.yaml:retention.raw_days": 7, "c.yml:Y_RETENTION_DAYS": 5})
             self.assertEqual(run("--backup-days", "5", "--config-dir", str(t), "--compose", str(t / "c.yml")).returncode, 0)
             self.assertEqual(run("--backup-days", "6", "--config-dir", str(t), "--compose", str(t / "c.yml")).returncode, 1)

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://openit.local/deploy/verify-areas.schema.json",
-  "title": "config/verify-areas.yaml (영역별 시험 범위 대응표)",
-  "description": "사람이 쓰고 scripts/verify_area.py 가 읽는다. e2e 가 auto 면 E2E 단계는 e2e_steps.py 의 @step 에서 계산하고 여기에 적지 않는다. none 은 이유(reason)가 필수다. deploy 내부 스키마(R5, audit DP-15).",
+  "$id": "VerifyAreas.schema.json",
+  "title": "VerifyAreas",
+  "description": "config/verify-areas.yaml (영역별 시험 범위 대응표). 사람이 쓰고 scripts/verify_area.py 가 읽는다. e2e 가 auto 면 E2E 단계는 e2e_steps.py 의 @step 에서 계산하고 여기에 적지 않는다. none 은 이유(reason)가 필수다. deploy 내부 스키마(R5, audit DP-15).",
   "type": "object",
   "properties": {
     "default_skip_e2e_paths": {"type": "array", "items": {"type": "string"}},

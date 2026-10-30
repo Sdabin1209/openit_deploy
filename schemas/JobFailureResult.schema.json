@@ -1,0 +1,16 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "JobFailureResult.schema.json",
+ "title": "JobFailureResult",
+ "type": "object",
+ "required": [
+  "text"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "text": {
+   "type": "string",
+   "pattern": "^잡 종료 코드 "
+  }
+ }
+}

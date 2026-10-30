@@ -1,0 +1,54 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "RestoreVerifyResult.schema.json",
+ "title": "RestoreVerifyResult",
+ "type": "object",
+ "required": [
+  "ok",
+  "checks"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "ok": {
+   "type": "boolean"
+  },
+  "checks": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": [
+     "name",
+     "ok"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "detail": {
+      "type": "string"
+     }
+    },
+    "if": {
+     "properties": {
+      "ok": {
+       "const": false
+      }
+     },
+     "required": [
+      "ok"
+     ]
+    },
+    "then": {
+     "required": [
+      "detail"
+     ]
+    }
+   }
+  }
+ }
+}

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://openit.local/deploy/images-env.schema.json",
-  "title": "build/images.env 한 줄",
-  "description": "build-images.sh(생산자)가 쓰고 publish-images.sh·demo.sh·e2e.sh(소비자)가 읽는 한 줄. 파일은 공백으로 나뉜 4열 텍스트이고 scripts/check_schemas.py 가 줄을 이 객체로 풀어 검증한다. 4열은 선택(옛 기록에는 없다). deploy 내부 스키마(R5, audit DP-15).",
+  "$id": "ImagesEnvRow.schema.json",
+  "title": "ImagesEnvRow",
+  "description": "build/images.env 한 줄. build-images.sh(생산자)가 쓰고 publish-images.sh·demo.sh·e2e.sh(소비자)가 읽는 한 줄. 파일은 공백으로 나뉜 4열 텍스트이고 scripts/check_schemas.py 가 줄을 이 객체로 풀어 검증한다. 4열은 선택(옛 기록에는 없다). deploy 내부 스키마(R5, audit DP-15).",
   "type": "object",
   "properties": {
     "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "서비스 이름(publish-image.sh 의 서비스 이름 목록과 같은 집합 + model-serving-gpu)"},

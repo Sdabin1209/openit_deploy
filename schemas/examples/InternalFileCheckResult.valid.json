@@ -1,0 +1,1 @@
+{"checks": [{"label": "images.env", "status": "SKIP", "failures": []}, {"label": "images.lock", "status": "FAIL", "failures": [{"where": "GATEWAY_IMAGE", "validator": "pattern", "pattern": "^x"}]}, {"label": "verify-areas.yaml", "status": "OK", "failures": []}], "failed": 1}

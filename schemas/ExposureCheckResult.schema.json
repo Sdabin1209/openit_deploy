@@ -1,0 +1,115 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ExposureCheckResult.schema.json",
+ "title": "ExposureCheckResult",
+ "type": "object",
+ "required": [
+  "status",
+  "new_diffs",
+  "stale_known",
+  "unverified",
+  "held_count",
+  "notes",
+  "services"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "status": {
+   "enum": [
+    "MATCH",
+    "DIFF",
+    "UNVERIFIED"
+   ],
+   "description": "UNVERIFIED 는 검증하지 못한 것이 있다(통과가 아니다, 종료 3)"
+  },
+  "new_diffs": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "stale_known": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "unverified": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "held_count": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "notes": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "services": {
+   "type": "integer",
+   "minimum": 0
+  }
+ },
+ "allOf": [
+  {
+   "if": {
+    "properties": {
+     "status": {
+      "const": "MATCH"
+     }
+    },
+    "required": [
+     "status"
+    ]
+   },
+   "then": {
+    "properties": {
+     "new_diffs": {
+      "maxItems": 0
+     },
+     "stale_known": {
+      "maxItems": 0
+     },
+     "unverified": {
+      "maxItems": 0
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "status": {
+      "const": "DIFF"
+     }
+    },
+    "required": [
+     "status"
+    ]
+   },
+   "then": {
+    "anyOf": [
+     {
+      "properties": {
+       "new_diffs": {
+        "minItems": 1
+       }
+      }
+     },
+     {
+      "properties": {
+       "stale_known": {
+        "minItems": 1
+       }
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

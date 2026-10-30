@@ -1,0 +1,71 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ConsistencyCheckRequest.schema.json",
+ "title": "ConsistencyCheckRequest",
+ "type": "object",
+ "required": [
+  "workspace",
+  "deploy_dir",
+  "areas_doc",
+  "strict",
+  "exclude_file",
+  "ordered_file",
+  "log_dir",
+  "images_deferred",
+  "versions_cmd"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "workspace": {
+   "type": "string",
+   "minLength": 1,
+   "description": "워크스페이스 루트(영역 리포들이 있는 폴더). 읽기 전용"
+  },
+  "deploy_dir": {
+   "type": "string",
+   "minLength": 1,
+   "description": "deploy 리포 루트(로그 상대 경로의 기준)"
+  },
+  "areas_doc": {
+   "$ref": "AreasDoc.schema.json"
+  },
+  "strict": {
+   "type": "boolean",
+   "description": "SKIP 이 있어도 종료 코드 1"
+  },
+  "only": {
+   "type": "array",
+   "items": {
+    "type": "string",
+    "pattern": "^[0-9]+$"
+   },
+   "description": "돌릴 규칙 번호. 비면 전부"
+  },
+  "exclude_file": {
+   "type": "string",
+   "minLength": 1
+  },
+  "ordered_file": {
+   "type": "string",
+   "minLength": 1
+  },
+  "log_dir": {
+   "type": "string",
+   "minLength": 1,
+   "description": "영역 시험 전체 출력을 두는 폴더"
+  },
+  "images_deferred": {
+   "type": "boolean",
+   "description": "true 면 규칙 1 이 이미지 라벨 판정을 미룬다(e2e.sh 의 빌드 전 점검)"
+  },
+  "versions_cmd": {
+   "type": "string",
+   "minLength": 1,
+   "description": "규칙 1 이 부르는 버전 점검 명령(.sh 면 bash 로)"
+  },
+  "mr_python": {
+   "type": "string",
+   "description": "규칙 3 의 파이썬(시험용). 비면 model-runtime 의 setup-env 보고에서 얻는다"
+  }
+ }
+}

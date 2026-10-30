@@ -1,0 +1,1 @@
+{"base_model": "", "adapters": [{"role": "LORA_A", "dir": "/a", "has_safetensors": true, "has_config": true, "config": {"base_model_name_or_path": "m", "r": 8}, "tensor_names": ["x.lora_A.weight", "x.lora_B.weight"], "prompt_path": "/p", "prompt_text": "프롬프트"}]}

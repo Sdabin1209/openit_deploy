@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""합격 시나리오(docs/E2E.md) 1~8단계. 영역 사이는 실제 서비스의 HTTP(boundary_contracts.clients)로 잇는다(D49).
+"""합격 시나리오(docs/E2E.md) 1~8단계. 영역 사이는 실제 서비스의 HTTP(openit_link.clients; D49·D118)로 잇는다.
 모든 레코드는 boundary_contracts.validator(또는 문진 스키마)와 해시로 검증한다. 9단계(인프라)는 scripts/e2e.sh.
 
 상태: REAL(실제 서비스·잡) / TEST-SUB(시험 대역으로 대신함) / BLOCKED(지금 구현으로는 이어지지 않음) / FAIL(검증 실패)
@@ -8,8 +8,8 @@ import argparse, traceback, collections.abc, hashlib, json, os, pathlib, subproc
 
 import boundary_contracts as bc
 from boundary_contracts import canonical
-from boundary_contracts.clients import (HttpFailureStore, HttpGateService, HttpModelRegistry, HttpQuestionReader,
-                                         HttpReleaseReader, HttpTraceIngest)
+from openit_link.clients import (HttpFailureStore, HttpGateService, HttpModelRegistry, HttpQuestionReader,   # 이웃 호출은 통신 기반 라이브러리 link 의 클라이언트로만(D118)
+                                 HttpReleaseReader, HttpTraceIngest)
 import survey_schema, jsonschema
 import e2e_asserts as EA
 import sd_jobs

@@ -1,0 +1,89 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "AdapterCheckRequest.schema.json",
+ "title": "AdapterCheckRequest",
+ "type": "object",
+ "required": [
+  "base_model",
+  "adapters"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "base_model": {
+   "type": "string",
+   "minLength": 1,
+   "description": "프로파일의 base_model. 없으면 요청을 만들지 못한다"
+  },
+  "max_lora_rank": {
+   "type": [
+    "integer",
+    "null"
+   ],
+   "minimum": 1,
+   "description": "프로파일 engine.max_lora_rank. 없으면 null(순위 한도 검사 안 함)"
+  },
+  "adapters": {
+   "type": "array",
+   "minItems": 2,
+   "maxItems": 2,
+   "items": {
+    "type": "object",
+    "required": [
+     "role",
+     "dir",
+     "has_safetensors",
+     "has_config",
+     "config",
+     "tensor_names",
+     "prompt_path",
+     "prompt_text"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "role": {
+      "enum": [
+       "LORA_A",
+       "LORA_B"
+      ]
+     },
+     "dir": {
+      "type": "string",
+      "minLength": 1
+     },
+     "has_safetensors": {
+      "type": "boolean"
+     },
+     "has_config": {
+      "type": "boolean"
+     },
+     "config": {
+      "type": [
+       "object",
+       "null"
+      ],
+      "description": "adapter_config.json 을 읽은 것. 읽지 못했거나 객체가 아니면 null"
+     },
+     "tensor_names": {
+      "type": [
+       "array",
+       "null"
+      ],
+      "items": {
+       "type": "string"
+      },
+      "description": "safetensors 머리말의 텐서 이름(__metadata__ 제외). 머리말을 읽지 못했으면 null"
+     },
+     "prompt_path": {
+      "type": "string",
+      "minLength": 1
+     },
+     "prompt_text": {
+      "type": "string",
+      "description": "시스템 프롬프트 파일 내용(UTF-8). 읽지 못하면 요청을 만들지 못한다(wiring 이 거부)"
+     }
+    }
+   },
+   "description": "LORA_A, LORA_B 순서"
+  }
+ }
+}

@@ -13,10 +13,10 @@ bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add e2e >/dev/null 2>&1
 export DEMO_MIMIC_FLOW_FILE=$DEPLOY_ROOT/test/fake-model/question_flow.json DEMO_CADDYFILE=$T/Caddyfile.demo DEMO_KIOSK_CONFIG=$SECRETS_DIR/kiosk-config/e2e.json
 
 ok "기기 산출물(kiosk-add-device.sh add e2e)이 만들어졌다" test -s "$DEMO_KIOSK_CONFIG"
-ok "Caddyfile 사본 생성" python3 -I "$DEPLOY_ROOT/scripts/demo_caddyfile.py" "$DEPLOY_ROOT/config/Caddyfile" "$DEMO_CADDYFILE"
+ok "Caddyfile 사본 생성" "$DEPLOY_PY" -I "$DEPLOY_ROOT/scripts/demo_caddyfile.py" "$DEPLOY_ROOT/config/Caddyfile" "$DEMO_CADDYFILE"
 ok "사본과 운영 Caddyfile 의 차이는 /config.json 블록 하나뿐이다(diff 덩어리 1개)" bash -c '[ "$(diff "$1" "$2" | grep -c "^[0-9]")" = 1 ] && diff "$1" "$2" | grep -q "reverse_proxy kiosk-frontend" && ! grep -A1 "handle /config.json" "$2" | grep -q 404' _ "$DEPLOY_ROOT/config/Caddyfile" "$DEMO_CADDYFILE"
 ok "운영 Caddyfile 은 여전히 /config.json 을 404 로 막는다" bash -c 'grep -A1 "handle /config.json" "$1" | grep -q "404"' _ "$DEPLOY_ROOT/config/Caddyfile"
-ok "블록이 없는 Caddyfile 이면 사본 생성이 실패한다(조용히 틀어지지 않는다)" bash -c 'echo "x" > $1/none; ! python3 -I $2/scripts/demo_caddyfile.py $1/none $1/out' _ "$T" "$DEPLOY_ROOT"
+ok "블록이 없는 Caddyfile 이면 사본 생성이 실패한다(조용히 틀어지지 않는다)" bash -c 'echo "x" > $1/none; ! "$3" -I $2/scripts/demo_caddyfile.py $1/none $1/out' _ "$T" "$DEPLOY_ROOT" "$DEPLOY_PY"
 
 DEMO=$(dc deploy-demotest --profile jobs config 2>&1); echo "$DEMO" > "$T/demo.yaml"
 PROD=$(COMPOSE_EXTRA="" dc deploy-prodtest --profile jobs config 2>&1); echo "$PROD" > "$T/prod.yaml"

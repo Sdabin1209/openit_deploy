@@ -1,0 +1,20 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ServingInfoResult.schema.json",
+ "title": "ServingInfoResult",
+ "type": "object",
+ "required": [
+  "loaded"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "loaded": {
+   "type": "array",
+   "items": {
+    "type": "string",
+    "minLength": 1
+   },
+   "description": "적재된 릴리스 ID(적재된 순서)"
+  }
+ }
+}

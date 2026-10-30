@@ -1,0 +1,87 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "VerifyPlanResult.schema.json",
+ "title": "VerifyPlanResult",
+ "type": "object",
+ "required": [
+  "status",
+  "plan",
+  "notes"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "status": {
+   "enum": [
+    "OK",
+    "NO_SETUP_ENV"
+   ]
+  },
+  "notes": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "plan": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "name",
+     "argv",
+     "cwd",
+     "env"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "type": "string"
+      }
+     },
+     "cwd": {
+      "type": "string"
+     },
+     "env": {
+      "type": "object",
+      "additionalProperties": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  }
+ },
+ "if": {
+  "properties": {
+   "status": {
+    "const": "OK"
+   }
+  },
+  "required": [
+   "status"
+  ]
+ },
+ "then": {
+  "properties": {
+   "plan": {
+    "minItems": 2
+   }
+  }
+ },
+ "else": {
+  "properties": {
+   "plan": {
+    "maxItems": 0
+   },
+   "notes": {
+    "minItems": 1
+   }
+  }
+ }
+}

@@ -9,6 +9,6 @@
 # 사용: scripts/check-all.sh [--strict: SKIP 이 있어도 종료 코드 1]        환경(시험용): CHECK_ALL_WORKSPACE, CHECK_ALL_ONLY=1,2,...
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY=python3
-python3 -c 'import yaml' 2>/dev/null || { [ -x "$HERE/../.venv/bin/python" ] && PY="$HERE/../.venv/bin/python"; }
-exec "$PY" -I "$HERE/check_all.py" "$@"
+# 입력·출력을 스키마로 검증하므로(jsonschema, referencing) deploy .venv 의 파이썬을 쓴다(ADR 0045). lib.sh 의 DEPLOY_PY 가 작업 트리(worktree)에서도 본 리포의 .venv 를 찾는다
+DEPLOY_NO_DOCKER=1; source "$HERE/lib.sh"
+exec "$DEPLOY_PY" -I "$HERE/check_all.py" "$@"

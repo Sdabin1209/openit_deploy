@@ -1,0 +1,32 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "JobFailureRequest.schema.json",
+ "title": "JobFailureRequest",
+ "type": "object",
+ "required": [
+  "returncode",
+  "stderr_tail",
+  "tail_is_json",
+  "tail_errors"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "returncode": {
+   "type": "integer"
+  },
+  "stderr_tail": {
+   "type": "string",
+   "description": "stderr 의 마지막 비어 있지 않은 줄(없으면 빈 문자열)"
+  },
+  "tail_is_json": {
+   "type": "boolean"
+  },
+  "tail_errors": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "maxItems": 1
+  }
+ }
+}

@@ -3,8 +3,26 @@
 import http.server, importlib.util, json, os, pathlib, sys, tempfile, threading, unittest
 
 here = pathlib.Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("probe_serving", here / "probe-serving.py"); P = importlib.util.module_from_spec(spec); spec.loader.exec_module(P)
+sys.path.insert(0, str(here.parent))
+from openit_deploy.components import serving_probe as P   # 집계(순수)
+from openit_deploy.wiring import cli_probe_serving as W   # 연결(입력 읽기·호출·출력)
 
+def classify(status, headers, body):
+    """시험용: HTTP 응답 모양의 입력을 ProbeRecord 로 줄인다(실제 기록은 link_serving_probe 가 계약 클라이언트 결과로 만든다)."""
+    h = {k.lower(): v for k, v in headers.items()}
+    rec = {"status": status, "outcome": h.get("x-openit-outcome") or "-", "attempts": h.get("x-openit-attempts"), "reason": None, "violations": [], "latency_s": 0.0}
+    if status == 200: rec["kind"] = "ok"
+    else:
+        det = (body.get("details") if isinstance(body, dict) else None) or {}
+        rec["reason"] = det.get("reason")
+        if status == 503 and rec["reason"] == "OUTPUT_INVALID": rec["kind"] = "output_invalid"; rec["violations"] = [str(v) for v in det.get("violations") or []]
+        else: rec["kind"] = "other_error"
+    return rec
+
+
+EX = pathlib.Path(__file__).resolve().parents[2] / "boundary-contracts" / "examples"
+INFO = {**json.loads((EX / "RuntimeInfo.loaded.json").read_text(encoding="utf-8")), "loaded": ["rel-x"]}   # 계약 예시(클라이언트가 RuntimeInfo 로 검증한다)
+EXTRACT_OK = json.loads((EX / "ActionExtraction.next.json").read_text(encoding="utf-8"))
 INV = lambda v: {"pipeline_schema_version": "3.0", "code": "UNAVAILABLE", "message": "x", "retryable": True, "details": {"reason": "OUTPUT_INVALID", "attempts": 3, "violations": v}}
 
 
@@ -13,12 +31,12 @@ class T(unittest.TestCase):
         self.assertEqual(P.keyword_of("/values/0/key:pattern"), "pattern"); self.assertEqual(P.keyword_of("json"), "json"); self.assertEqual(P.keyword_of(":required"), "required")
 
     def test_classify_and_summarize(self):
-        recs = [P.classify(200, {"X-Openit-Outcome": "ok"}, {}),
-                P.classify(503, {}, INV(["/values/0/key:pattern", "/next_item:enum"])),
-                P.classify(503, {}, INV(["/values/1/key:pattern"])),
-                P.classify(503, {}, {"code": "UNAVAILABLE", "details": {"reason": "OTHER"}}),
-                P.classify(404, {}, "x"),
-                P.classify(200, {"x-openit-outcome": "ok"}, {})]
+        recs = [classify(200, {"X-Openit-Outcome": "ok"}, {}),
+                classify(503, {}, INV(["/values/0/key:pattern", "/next_item:enum"])),
+                classify(503, {}, INV(["/values/1/key:pattern"])),
+                classify(503, {}, {"code": "UNAVAILABLE", "details": {"reason": "OTHER"}}),
+                classify(404, {}, "x"),
+                classify(200, {"x-openit-outcome": "ok"}, {})]
         for r, t in zip(recs, (1.0, 0.2, 0.4, 0.1, 0.3, 0.2)): r["latency_s"] = t
         s = P.summarize(recs)
         self.assertEqual((s["calls"], s["ok"], s["output_invalid"], s["other_error"]), (6, 2, 2, 2))
@@ -29,14 +47,14 @@ class T(unittest.TestCase):
 
     def test_empty_and_single(self):
         self.assertEqual(P.summarize([])["calls"], 0); P.render(P.summarize([]))
-        r = P.classify(200, {}, {}); r["latency_s"] = 0.5; s = P.summarize([r]); self.assertIsNone(s["latency"]["rest_median_s"]); P.render(s)
+        r = classify(200, {}, {}); r["latency_s"] = 0.5; s = P.summarize([r]); self.assertIsNone(s["latency"]["rest_median_s"]); P.render(s)
 
     def test_inputs(self):
-        self.assertEqual(len(P.build_inputs(None, 2)), 2 * len(P.DEFAULT_UTTERANCES))
+        self.assertEqual(len(W.build_inputs(None, 2)), 2 * len(W.DEFAULT_UTTERANCES))
         with tempfile.TemporaryDirectory() as d:
-            f = pathlib.Path(d) / "i.json"; f.write_text(json.dumps({"inputs": [{"input": {}, "flow": {}, "fields": {}}]})); self.assertEqual(P.build_inputs(str(f), 3), [{"input": {}, "flow": {}, "fields": {}}] * 3)
+            f = pathlib.Path(d) / "i.json"; f.write_text(json.dumps({"inputs": [{"input": {}, "flow": {}, "fields": {}}]})); self.assertEqual(W.build_inputs(str(f), 3), [{"input": {}, "flow": {}, "fields": {}}] * 3)
             f.write_text("[]")
-            with self.assertRaises(SystemExit): P.build_inputs(str(f), 1)
+            with self.assertRaises(SystemExit): W.build_inputs(str(f), 1)
 
     def test_end_to_end_fake_server(self):
         seen = {"auth": set(), "n": 0}
@@ -46,11 +64,11 @@ class T(unittest.TestCase):
                 b = json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type", "application/json")
                 for k, v in (hdr or {}).items(): self.send_header(k, v)
                 self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
-            def do_GET(self): seen["auth"].add(self.headers.get("Authorization")); self._send(200, {"loaded": ["rel-x"]})
+            def do_GET(self): seen["auth"].add(self.headers.get("Authorization")); self._send(200, INFO)
             def do_POST(self):
                 self.rfile.read(int(self.headers["Content-Length"])); seen["auth"].add(self.headers.get("Authorization")); seen["n"] += 1
                 if seen["n"] % 3 == 0: self._send(503, INV(["/values/0/key:pattern"]))
-                else: self._send(200, {"action": "NEXT"}, {"X-Openit-Outcome": "ok"})
+                else: self._send(200, EXTRACT_OK, {"X-Openit-Outcome": "ok"})
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
         with tempfile.TemporaryDirectory() as d:
             tf = pathlib.Path(d) / "tok"; tf.write_text("SECRET-TOKEN-VALUE\n")
@@ -58,7 +76,7 @@ class T(unittest.TestCase):
             for conc in (1, 3):
                 seen["n"] = 0; buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
-                    rc = P.main(["--url", f"http://127.0.0.1:{srv.server_address[1]}", "--token-file", str(tf), "--repeat", "1", "--concurrency", str(conc), "--endpoints", "extract"])
+                    rc = W.main(["--url", f"http://127.0.0.1:{srv.server_address[1]}", "--token-file", str(tf), "--repeat", "1", "--concurrency", str(conc), "--endpoints", "extract"])
                 out = buf.getvalue(); self.assertEqual(rc, 0, out)
                 self.assertNotIn("SECRET-TOKEN-VALUE", out); self.assertIn("호출 10건: 성공 7", out); self.assertIn("OUTPUT_INVALID 3", out); self.assertIn("pattern", out)
         srv.shutdown(); self.assertEqual(seen["auth"], {"Bearer SECRET-TOKEN-VALUE"})
@@ -80,26 +98,26 @@ class T(unittest.TestCase):
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a): pass
             def do_GET(self):
-                b = json.dumps({"loaded": ["rel-x"]}).encode(); self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+                b = json.dumps(INFO).encode(); self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
             def do_POST(self):
                 self.rfile.read(int(self.headers["Content-Length"])); paths.append(self.path)
                 if self.path.endswith("/respond"): b = "응답 문장".encode(); hd = {"Content-Type": "text/plain", "X-Openit-Outcome": "ok", "X-Openit-Attempts": "2" if len(paths) % 4 == 0 else "1"}
-                else: b = json.dumps({"action": "NEXT"}).encode(); hd = {"Content-Type": "application/json", "X-Openit-Outcome": "ok"}
+                else: b = json.dumps(EXTRACT_OK).encode(); hd = {"Content-Type": "application/json", "X-Openit-Outcome": "ok"}
                 self.send_response(200); [self.send_header(k, v) for k, v in hd.items()]; self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
         with tempfile.TemporaryDirectory() as d:
             tf = pathlib.Path(d) / "tok"; tf.write_text("tok\n"); import io, contextlib; buf = io.StringIO()
-            with contextlib.redirect_stdout(buf): rc = P.main(["--url", f"http://127.0.0.1:{srv.server_address[1]}", "--token-file", str(tf), "--repeat", "1"])
+            with contextlib.redirect_stdout(buf): rc = W.main(["--url", f"http://127.0.0.1:{srv.server_address[1]}", "--token-file", str(tf), "--repeat", "1"])
         srv.shutdown(); out = buf.getvalue(); self.assertEqual(rc, 0, out)
         self.assertIn("== 지연 표", out); self.assertTrue(any(p.endswith("/extract") for p in paths) and any(p.endswith("/respond") for p in paths))
         line = [l for l in out.splitlines() if l.strip().startswith("respond") and "%" in l][0]; self.assertIn("100.0%", line)
-        self.assertEqual(P.main(["--url", "http://127.0.0.1:1", "--token-file", str(tf), "--endpoints", "bogus"]) in (2, 3), True)
+        self.assertEqual(W.main(["--url", "http://127.0.0.1:1", "--token-file", str(tf), "--endpoints", "bogus"]) in (2, 3), True)
 
     def test_usage_errors(self):
-        self.assertEqual(P.main([]), 2); self.assertEqual(P.main(["--url", "http://127.0.0.1:1"]), 2)
-        self.assertEqual(P.main(["--url", "http://127.0.0.1:1", "--token-file", "/nonexistent"]), 2)
+        self.assertEqual(W.main([]), 2); self.assertEqual(W.main(["--url", "http://127.0.0.1:1"]), 2)
+        self.assertEqual(W.main(["--url", "http://127.0.0.1:1", "--token-file", "/nonexistent"]), 2)
         with tempfile.TemporaryDirectory() as d:
-            tf = pathlib.Path(d) / "t"; tf.write_text("x"); self.assertEqual(P.main(["--url", "http://127.0.0.1:1", "--token-file", str(tf)]), 3)
+            tf = pathlib.Path(d) / "t"; tf.write_text("x"); self.assertEqual(W.main(["--url", "http://127.0.0.1:1", "--token-file", str(tf)]), 3)
 
 
 if __name__ == "__main__": unittest.main()

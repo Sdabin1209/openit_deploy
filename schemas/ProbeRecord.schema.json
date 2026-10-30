@@ -1,0 +1,124 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ProbeRecord.schema.json",
+ "title": "ProbeRecord",
+ "description": "추론 서버 호출 한 건의 집계용 기록. 발화·모델 원문은 담지 않는다.",
+ "type": "object",
+ "required": [
+  "status",
+  "outcome",
+  "attempts",
+  "reason",
+  "violations",
+  "kind",
+  "latency_s"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "status": {
+   "oneOf": [
+    {
+     "const": 200
+    },
+    {
+     "enum": [
+      "NOT_FOUND",
+      "INVALID_RECORD",
+      "UNSUPPORTED_VERSION",
+      "CONFLICT",
+      "INTEGRITY_ERROR",
+      "FAILED_PRECONDITION",
+      "PERMISSION_DENIED",
+      "UNAVAILABLE"
+     ]
+    }
+   ],
+   "description": "성공 200, 실패는 계약 BoundaryError 코드"
+  },
+  "outcome": {
+   "type": "string",
+   "minLength": 1,
+   "description": "X-Openit-Outcome 값. 없으면 '-'"
+  },
+  "attempts": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[1-9][0-9]*$"
+  },
+  "reason": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "violations": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "kind": {
+   "enum": [
+    "ok",
+    "output_invalid",
+    "other_error"
+   ]
+  },
+  "latency_s": {
+   "type": "number",
+   "minimum": 0
+  }
+ },
+ "allOf": [
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "ok"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "status": {
+      "const": 200
+     }
+    }
+   },
+   "else": {
+    "properties": {
+     "status": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "output_invalid"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "status": {
+      "const": "UNAVAILABLE"
+     },
+     "reason": {
+      "const": "OUTPUT_INVALID"
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ImagesLock.schema.json",
+  "title": "ImagesLock",
+  "description": "locks/images.lock (KEY=value 줄을 객체로 푼 것). publish-image.sh·publish-images.sh·rollback.sh(생산자)가 쓰고 compose(--env-file)와 up.sh 가 읽는다. 키는 서비스마다 <서비스>_DIGEST 와 <서비스>_REVISION 한 쌍, 외부 이미지는 *_IMAGE(digest 고정 참조). 모르는 키는 거부한다: 키 이름이 compose 변수와 lib.sh 의 `env -u` 목록에 흩어져 있어 오타가 조용히 무시되기 때문이다. deploy 내부 스키마(R5, audit DP-15).",
+  "type": "object",
+  "propertyNames": {"pattern": "^[A-Z][A-Z0-9_]*_(DIGEST|REVISION|IMAGE)$"},
+  "patternProperties": {
+    "_DIGEST$": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "_REVISION$": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "_IMAGE$": {"type": "string", "pattern": "^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$"}
+  },
+  "required": ["GATEWAY_IMAGE", "REGISTRY_IMAGE", "UTIL_IMAGE", "POSTGRES_IMAGE"],
+  "additionalProperties": false
+}

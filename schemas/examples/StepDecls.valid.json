@@ -1,0 +1,1 @@
+{"4": {"repos": ["survey-service"], "deps": ["1"], "why": "릴리스 묶음", "also": []}, "1": {"repos": ["synthetic-data"], "deps": [], "why": "문항", "also": [["deploy", "경계"]]}}

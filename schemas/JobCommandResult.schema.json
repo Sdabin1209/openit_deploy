@@ -1,0 +1,19 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "JobCommandResult.schema.json",
+ "title": "JobCommandResult",
+ "type": "object",
+ "required": [
+  "argv"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "argv": {
+   "type": "array",
+   "minItems": 9,
+   "items": {
+    "type": "string"
+   }
+  }
+ }
+}

@@ -1,0 +1,77 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ExposureCheckRequest.schema.json",
+ "title": "ExposureCheckRequest",
+ "type": "object",
+ "required": [
+  "caddyfile",
+  "roles",
+  "hosts",
+  "inspect"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "caddyfile": {
+   "type": "string",
+   "description": "config/Caddyfile 내용"
+  },
+  "roles": {
+   "type": "array",
+   "items": {
+    "type": "string",
+    "minLength": 1
+   },
+   "minItems": 1,
+   "description": "Caddyfile 의 역할 매처 이름 목록"
+  },
+  "hosts": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "config/exposure-hosts.json: 게이트웨이가 프록시하는 상류 호스트 이름 -> 서비스 이름"
+  },
+  "known": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "알려진 어긋남(config/exposure-known-diffs.json 의 키)"
+  },
+  "inspect": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "labels"
+    ],
+    "properties": {
+     "labels": {
+      "type": [
+       "object",
+       "null"
+      ],
+      "additionalProperties": {
+       "type": "string"
+      }
+     },
+     "exposed_ports": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "pattern": "^[0-9]+/(tcp|udp)$"
+      }
+     },
+     "user": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    }
+   },
+   "description": "서비스 -> docker inspect 에서 뽑은 값(check-exposure.sh 가 만든다)"
+  }
+ }
+}

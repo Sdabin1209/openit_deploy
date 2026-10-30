@@ -1,0 +1,1 @@
+{"default_skip_e2e_paths": ["docs/**"], "areas": {"x": {"image": [], "tests": {"kind": "pytest"}, "e2e": "auto"}}}

@@ -1,0 +1,7 @@
+{"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "RetentionCheckResult.schema.json", "title": "RetentionCheckResult", "type": "object",
+ "required": ["status", "backup_days", "values_read"], "additionalProperties": false,
+ "properties": {
+   "status": {"enum": ["OK", "BACKUP_TOO_LONG", "NO_VALUES"], "description": "NO_VALUES 는 검증하지 못한 것이다(통과가 아니다)"},
+   "backup_days": {"type": "integer", "minimum": 0}, "values_read": {"type": "integer", "minimum": 0},
+   "shortest": {"type": "object", "required": ["source", "days"], "additionalProperties": false, "properties": {"source": {"type": "string"}, "days": {"type": "integer", "minimum": 0}}}},
+ "if": {"properties": {"status": {"enum": ["OK", "BACKUP_TOO_LONG"]}}, "required": ["status"]}, "then": {"required": ["shortest"]}}

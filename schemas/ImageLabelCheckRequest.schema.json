@@ -1,0 +1,5 @@
+{"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "ImageLabelCheckRequest.schema.json", "title": "ImageLabelCheckRequest", "type": "object",
+ "required": ["labels"], "additionalProperties": false,
+ "properties": {
+   "name": {"type": "string", "description": "출력에 붙이는 이미지 이름(없으면 빈 문자열)"},
+   "labels": {"type": ["object", "null"], "additionalProperties": {"type": "string"}, "description": "docker inspect 의 .Config.Labels. 라벨이 없으면 null"}}}

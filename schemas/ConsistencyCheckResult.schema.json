@@ -1,0 +1,171 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ConsistencyCheckResult.schema.json",
+ "title": "ConsistencyCheckResult",
+ "type": "object",
+ "required": [
+  "rules",
+  "fail",
+  "skip",
+  "pass",
+  "elapsed_s",
+  "exit_code"
+ ],
+ "additionalProperties": false,
+ "$defs": {
+  "why": {
+   "type": "object",
+   "required": [
+    "target",
+    "why"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "target": {
+     "type": "string"
+    },
+    "why": {
+     "type": "string"
+    }
+   }
+  }
+ },
+ "properties": {
+  "rules": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "status",
+     "verified",
+     "total",
+     "failed",
+     "na",
+     "unverified",
+     "bad",
+     "info"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+     },
+     "name": {
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "PASS",
+       "FAIL",
+       "SKIP"
+      ]
+     },
+     "verified": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "total": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "failed": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "na": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/why"
+      }
+     },
+     "unverified": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/why"
+      }
+     },
+     "bad": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "info": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "allOf": [
+     {
+      "if": {
+       "properties": {
+        "status": {
+         "const": "FAIL"
+        }
+       },
+       "required": [
+        "status"
+       ]
+      },
+      "then": {
+       "properties": {
+        "bad": {
+         "minItems": 1
+        }
+       }
+      }
+     },
+     {
+      "if": {
+       "properties": {
+        "status": {
+         "const": "SKIP"
+        }
+       },
+       "required": [
+        "status"
+       ]
+      },
+      "then": {
+       "properties": {
+        "unverified": {
+         "minItems": 1
+        },
+        "bad": {
+         "maxItems": 0
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  "fail": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "skip": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "pass": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "elapsed_s": {
+   "type": "number",
+   "minimum": 0
+  },
+  "exit_code": {
+   "enum": [
+    0,
+    1
+   ]
+  }
+ }
+}

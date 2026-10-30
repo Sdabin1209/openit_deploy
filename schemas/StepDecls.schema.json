@@ -1,0 +1,63 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "StepDecls.schema.json",
+ "title": "StepDecls",
+ "description": "E2E 단계 선언(scripts/e2e_steps.py 의 @step)을 ast 로 읽은 것: 단계 이름 -> 선언.",
+ "type": "object",
+ "minProperties": 1,
+ "propertyNames": {
+  "pattern": "^[0-9A-Za-z_-]+$"
+ },
+ "additionalProperties": {
+  "type": "object",
+  "required": [
+   "repos",
+   "deps",
+   "why",
+   "also"
+  ],
+  "additionalProperties": false,
+  "properties": {
+   "repos": {
+    "type": "array",
+    "items": {
+     "type": "string",
+     "minLength": 1
+    },
+    "description": "결과가 의존하는 소스 리포('deploy:경로,...' 는 deploy 안의 그 경로만)"
+   },
+   "deps": {
+    "type": "array",
+    "items": {
+     "type": "string",
+     "pattern": "^[0-9A-Za-z_-]+$"
+    },
+    "description": "STATE 로 읽는 앞 단계"
+   },
+   "why": {
+    "type": "string",
+    "minLength": 1
+   },
+   "also": {
+    "type": "array",
+    "items": {
+     "type": "array",
+     "minItems": 2,
+     "maxItems": 2,
+     "prefixItems": [
+      {
+       "type": "string",
+       "minLength": 1
+      },
+      {
+       "type": "string",
+       "pattern": "\\S",
+       "description": "이유가 비면 안 된다"
+      }
+     ]
+    },
+    "description": "repos 에 없어도 이 단계가 호출 경계를 보는 영역과 이유"
+   }
+  }
+ }
+}

@@ -1,0 +1,1 @@
+{"rules": [{"id": "0", "name": "대상 열거(모르는 대상)", "status": "PASS", "verified": 3, "total": 3, "failed": 0, "na": [], "unverified": [], "bad": [], "info": []}], "fail": 0, "skip": 0, "pass": 1, "elapsed_s": 0.4, "exit_code": 0}

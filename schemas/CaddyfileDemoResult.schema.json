@@ -1,0 +1,5 @@
+{"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "CaddyfileDemoResult.schema.json", "title": "CaddyfileDemoResult", "type": "object",
+ "required": ["status", "found"], "additionalProperties": false,
+ "properties": {"status": {"enum": ["OK", "BLOCK_NOT_UNIQUE"]}, "found": {"type": "integer", "minimum": 0, "description": "`/config.json` 404 블록을 찾은 수"},
+                "demo_caddyfile": {"type": "string"}},
+ "if": {"properties": {"status": {"const": "OK"}}, "required": ["status"]}, "then": {"required": ["demo_caddyfile"], "properties": {"found": {"const": 1}}}}

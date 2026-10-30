@@ -1,5 +1,13 @@
 # 변경 이력
 
+## wo-400: 영역 구조 개편(D117), 계약 v3.1.1, link v0.1.0
+- 계약 기준 `DEPLOY_BC_TAG` v3.0.2 -> v3.1.1(와이어 형식은 같다). 통신 기반 라이브러리 `DEPLOY_LINK_TAG` v0.1.0 을 기준표에 더했다(ADR 0046: 이미지 라벨 기록은 제안).
+- E2E 5n-reask 가 survey-service 의 되묻기 실효 한도 계산(`effective_reask_cap`)을 흉내 내던 것을 없애고 계약 출력 `SurveyReadyz.reask_limit.effective`(v3.1.0)만 읽는다. 5n 의 deps 에서 단계 1 이 빠진다.
+- Python 판단을 `openit_deploy/components/`(컴포넌트 19개), `wiring/`, `types/`(생성)로 옮기고 `schemas/` 에 입출력 스키마와 예시를 두었다. `scripts/*.py` 는 같은 이름의 얇은 진입점. 결정과 한계: ADR 0045, `docs/components.md`, `schemas/README.md`.
+- 스키마 파일 이름을 타입 이름으로 바꿨다(`images-env` -> `ImagesEnvRow`, `images-lock` -> `ImagesLock`, `verify-areas` -> `VerifyAreas`). `verify-areas.yaml` 의 `e2e: none` 형식을 스키마와 코드가 같게 맞췄다(코드는 `{none: true, reason}` 객체를 기대했고 스키마는 `none` + `reason` 이었다. 실제 파일에는 `none` 이 없다).
+- 진입점이 스키마를 검증해 jsonschema·referencing 이 필요하므로 시스템 `python3` 호출을 `DEPLOY_PY` 로 바꿨다(areas, retention, demo_caddyfile, check-all.sh, verify-area.sh). 추론 서버 측정 도구는 HTTP 상태 대신 계약 클라이언트의 오류 코드를 집계한다.
+- 자체 점검에 구조 시험·verify-area·probe-serving·비밀 이름 대조를 더했다. `test-check-all.sh` 의 영역 수를 areas.json 의 link 에 맞췄다.
+
 ## wo-315: U30 백업 보관 기간, U46 boundary.md
 - U30: 백업 보관(`BACKUP_RETENTION_DAYS`)이 운영 데이터 보존(survey 90일, ops-feedback 원본 30·사례 180·지표 365, question-authoring 30·30) 중 가장 짧은 값(30일) 이하여야 한다. 예시 값 14일은 제약 안이라 유지했다. `scripts/retention_check.py`가 설정에서 값을 읽어 비교하고 `backup-check.sh`가 어기면 거부한다. 정적 시험 `test_retention_check.py`(self-checks.list). 근거 ADR 0044(값은 측정이 아니라 제약에서 나왔다).
 - U46(deploy 몫): `docs/boundary.md`의 "계약을 생산하지 않고 소비만" 문장과 "아직 쓰지 않음" 표가 낡았다. 실제 소비 목록(빌드·게시 경계, 설정·환경, E2E 검증, 문진 스키마)과 근거(코드에서 센 값)로 고쳤다. PublishRequest.service enum과 `lib.sh` SERVICES의 일치는 `test_services_enum.py`가 강제한다는 한 줄.

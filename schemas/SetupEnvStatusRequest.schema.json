@@ -1,0 +1,29 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "SetupEnvStatusRequest.schema.json",
+ "title": "SetupEnvStatusRequest",
+ "type": "object",
+ "required": [
+  "area",
+  "report",
+  "env_path_exists"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "area": {
+   "type": "string",
+   "pattern": "^[a-z][a-z0-9-]*$"
+  },
+  "report": {
+   "type": [
+    "object",
+    "null"
+   ],
+   "description": "저장된 SetupEnvReport(계약 타입). 없으면 null. 저장 전에 계약으로 검증됐으므로 environment 필드를 믿는다(R7)"
+  },
+  "env_path_exists": {
+   "type": "boolean",
+   "description": "<워크스페이스>/<영역>/<environment.path> 가 있는지(wiring 이 본다)"
+  }
+ }
+}

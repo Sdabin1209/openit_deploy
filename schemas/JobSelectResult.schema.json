@@ -1,0 +1,85 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "JobSelectResult.schema.json",
+ "title": "JobSelectResult",
+ "type": "object",
+ "required": [
+  "status"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "status": {
+   "enum": [
+    "OK",
+    "NO_JOBS_LABEL",
+    "INVALID_DECLARATION",
+    "NO_SUCH_JOB"
+   ]
+  },
+  "job": {
+   "type": "object"
+  },
+  "message": {
+   "type": "string"
+  },
+  "available": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  }
+ },
+ "allOf": [
+  {
+   "if": {
+    "properties": {
+     "status": {
+      "const": "OK"
+     }
+    },
+    "required": [
+     "status"
+    ]
+   },
+   "then": {
+    "required": [
+     "job"
+    ]
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "status": {
+      "const": "NO_SUCH_JOB"
+     }
+    },
+    "required": [
+     "status"
+    ]
+   },
+   "then": {
+    "required": [
+     "available"
+    ]
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "status": {
+      "const": "INVALID_DECLARATION"
+     }
+    },
+    "required": [
+     "status"
+    ]
+   },
+   "then": {
+    "required": [
+     "message"
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,32 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "SetupEnvRecordRequest.schema.json",
+ "title": "SetupEnvRecordRequest",
+ "type": "object",
+ "required": [
+  "area",
+  "stdout_lines",
+  "contract_errors"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "area": {
+   "type": "string",
+   "pattern": "^[a-z][a-z0-9-]*$"
+  },
+  "stdout_lines": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "setup-env.sh 의 표준 출력 줄"
+  },
+  "contract_errors": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "마지막 줄을 계약 SetupEnvReport validator 로 검증한 위반(wiring). JSON 이 아니면 비어 있고 컴포넌트가 읽기 실패로 판정"
+  }
+ }
+}

@@ -38,8 +38,8 @@ echo "진행 기록(표준 오류)" >&2
 echo '{"image":"'$IMG'","image_id":"'$ID'","labels":{"io.openit.service":"'${SVC_LABEL:-$SVC}'","io.openit.revision":"'$REV'","io.openit.contracts.boundary":"'$(python3 -c "import json;print(json.load(open('$REQ'))['versions']['boundary'])")'","io.openit.contracts.survey-schema":"n/a"}}'
 EN
 AREAS_JSON="${AREAS_FILE:-$HERE/../../head/shared/areas.json}"   # 영역 목록의 정본(areas.py 로 읽는다)
-for r in $(python3 "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node,library); do mkrepo "$r"; done
-for r in $(python3 "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node); do ( cd "$T/$r" && cp "$T/entry.sh" scripts/build-image.sh && git add -A && $G commit -q -m entry ); done
+for r in $("$DEPLOY_PY" "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node,library); do mkrepo "$r"; done
+for r in $("$DEPLOY_PY" "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node); do ( cd "$T/$r" && cp "$T/entry.sh" scripts/build-image.sh && git add -A && $G commit -q -m entry ); done
 REAL_BC="$(cd "$(git -C "$HERE" rev-parse --git-common-dir)/../.." && pwd)/boundary-contracts"
 [ -d "$REAL_BC" ] && git -C "$REAL_BC" rev-parse "$BC" >/dev/null 2>&1 || { echo "SKIP: 계약 리포($REAL_BC)에 태그 $BC 가 없다"; exit 0; }
 git -C "$REAL_BC" archive "$BC" | tar -x -C "$T/boundary-contracts"   # 실제 계약 소스(요청·결과 검증기가 여기서 온다)

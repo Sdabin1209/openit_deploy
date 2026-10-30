@@ -1,0 +1,64 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ServingCallRequest.schema.json",
+ "title": "ServingCallRequest",
+ "type": "object",
+ "required": [
+  "url",
+  "token",
+  "release_id",
+  "endpoint",
+  "body",
+  "timeout"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "url": {
+   "type": "string",
+   "pattern": "^https?://"
+  },
+  "token": {
+   "type": "string",
+   "minLength": 1
+  },
+  "release_id": {
+   "type": "string",
+   "minLength": 1
+  },
+  "endpoint": {
+   "enum": [
+    "extract",
+    "respond"
+   ]
+  },
+  "timeout": {
+   "type": "number",
+   "exclusiveMinimum": 0
+  },
+  "body": {
+   "type": "object",
+   "description": "extract 는 계약 ExtractRequest{input, flow, fields}, respond 는 계약 ResponseRequest (계약 클라이언트가 보내기 전에 검증한다)"
+  }
+ },
+ "if": {
+  "properties": {
+   "endpoint": {
+    "const": "extract"
+   }
+  },
+  "required": [
+   "endpoint"
+  ]
+ },
+ "then": {
+  "properties": {
+   "body": {
+    "required": [
+     "input",
+     "flow",
+     "fields"
+    ]
+   }
+  }
+ }
+}

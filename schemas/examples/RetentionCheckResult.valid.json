@@ -1,0 +1,1 @@
+{"status": "OK", "backup_days": 30, "values_read": 2, "shortest": {"source": "a.env:X_RETENTION_DAYS", "days": 30}}

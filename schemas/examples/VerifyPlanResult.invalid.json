@@ -1,0 +1,1 @@
+{"status": "OK", "plan": [{"name": "a", "argv": ["bash", "x"], "cwd": "/ws", "env": {}}], "notes": []}

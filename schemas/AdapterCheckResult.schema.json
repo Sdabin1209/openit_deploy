@@ -1,0 +1,46 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "AdapterCheckResult.schema.json",
+ "title": "AdapterCheckResult",
+ "type": "object",
+ "required": [
+  "ok"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "ok": {
+   "type": "boolean"
+  },
+  "rejection": {
+   "type": "string",
+   "minLength": 1
+  },
+  "tensor_counts": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "integer",
+    "minimum": 1
+   }
+  }
+ },
+ "if": {
+  "properties": {
+   "ok": {
+    "const": true
+   }
+  },
+  "required": [
+   "ok"
+  ]
+ },
+ "then": {
+  "required": [
+   "tensor_counts"
+  ]
+ },
+ "else": {
+  "required": [
+   "rejection"
+  ]
+ }
+}

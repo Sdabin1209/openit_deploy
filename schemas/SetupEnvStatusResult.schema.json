@@ -1,0 +1,58 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "SetupEnvStatusResult.schema.json",
+ "title": "SetupEnvStatusResult",
+ "type": "object",
+ "required": [
+  "status",
+  "reason"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "status": {
+   "enum": [
+    "READY",
+    "NO_REPORT",
+    "SETUP_FAILED",
+    "PATH_MISSING"
+   ]
+  },
+  "reason": {
+   "type": "string"
+  },
+  "python": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "description": "READY 이고 kind 가 python-venv 일 때 <path>/bin/python (영역 리포 기준 상대 경로)"
+  }
+ },
+ "if": {
+  "properties": {
+   "status": {
+    "const": "READY"
+   }
+  },
+  "required": [
+   "status"
+  ]
+ },
+ "then": {
+  "properties": {
+   "reason": {
+    "const": ""
+   }
+  },
+  "required": [
+   "python"
+  ]
+ },
+ "else": {
+  "properties": {
+   "reason": {
+    "minLength": 1
+   }
+  }
+ }
+}

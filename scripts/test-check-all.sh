@@ -3,6 +3,7 @@
 # 사용: scripts/test-check-all.sh        (형제 영역이나 실제 워크스페이스를 건드리지 않는다)
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY_NO_DOCKER=1; source "$HERE/lib.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 # pytest 가 있는 파이썬(규칙 8 시험용, 읽기 전용 호출). 없으면 그 시험만 건너뛴다
@@ -35,7 +36,7 @@ unset EXC
 
 echo "== 1 버전표"
 # 영역 이름은 areas.json(정본)에서 areas.py 로 읽는다: 시험이 목록을 따로 적으면 영역이 바뀔 때 어긋난다
-GITAREAS=$(python3 "$HERE/areas.py" --file "$HERE/../../head/shared/areas.json" --kind python,node); NG=$(wc -w <<<"$GITAREAS"); NV=$(python3 "$HERE/areas.py" --file "$HERE/../../head/shared/areas.json" --kind python,node --train | wc -w)   # 버전 열차에 든 영역만 대조 대상이다(version_train)
+GITAREAS=$("$DEPLOY_PY" "$HERE/areas.py" --file "$HERE/../../head/shared/areas.json" --kind python,node,library); NG=$(wc -w <<<"$GITAREAS"); NV=$("$DEPLOY_PY" "$HERE/areas.py" --file "$HERE/../../head/shared/areas.json" --kind python,node,library --train | wc -w)   # 버전 열차에 든 영역만 대조 대상이다(version_train)
 mk $GITAREAS; run 1 CHECK_ALL_VERSIONS_CMD=true; expect "버전표 일치(대리 명령 성공)" PASS "검증됨 $NV/$NG"
 run 1 CHECK_ALL_VERSIONS_CMD=false; expect "버전표 불일치(대리 명령 실패)는 FAIL" FAIL
 printf '#!/usr/bin/env bash\necho "검증하지 못했다: 빌드 기록이 없다"\nexit 3\n' > "$W/rc3.sh"
