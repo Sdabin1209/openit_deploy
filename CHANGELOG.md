@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-312: E2E 최종 실행 실패 2건
+- F1: 컨테이너에서 도는 잡이 호스트 주소(127.0.0.1:배정 포트)로 이웃을 불렀다. Docker Desktop에서는 `--network host`도 호스트의 게시 포트에 닿지 못한다. 잡 네트워크를 호출자가 반드시 고르게 했다(`sd_jobs.docker_cmd`·`run_job`의 기본값 삭제): synthetic-run은 question-authoring·ops-feedback-ingest가 함께 붙은 `{project}_authoring` + 서비스 이름 주소, http 저장소 import는 `{project}_datasets` + `http://dataset-store:8080`, 파일 저장소 import는 이웃이 없어 `none`.
+- F2: 5n-reask의 N을 /readyz `max_consecutive`(3)만으로 정했는데 survey-service의 실효 한도는 `min(서비스 한도, 문항 세트의 ask_limit·confirm_limit·unrecognized_streak_limit 중 1 이상 값)`이다(ADR-0014·0020). 시험 문항지는 3·2·2라 실효 한도는 2. `e2e_asserts.effective_reask_cap`이 같은 규칙으로 계산한다.
+
 ## wo-311: E2E 단계 5~8의 정적 감사 결함 3건
 - D1: 문항 양식 fixture의 칸 규격. survey-service는 3.0.0부터 칸 규격(data_type, option이면 선택지)이 없는 칸이 하나라도 있으면 릴리스를 MISSING_FIELD_SPEC으로 거부하는데 양식은 52칸 중 1칸만 자료형을 가졌다. 52칸 모두 학습 데이터셋 question_fields(SQL.md 5.2·5.3)의 자료형·단위·범위·선택지로 채웠다(`test/fixtures/question-fields-ref.json`은 그 값의 시험 대조용 사본).
 - D2: `reject_via_gateway` 본문에서 `pipeline_schema_version`·`approver_id`를 뺐다(계약 ApprovalRequest 금지). 위조 X-Openit-User를 gateway가 덮어쓰는지만 보고, 본문에 approver_id를 실으면 400인 것은 한 줄 시험으로 따로 둔다.

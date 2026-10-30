@@ -282,18 +282,19 @@ def step1():
 def sd_config(name, seeds, failure=False, version=None):
     cfg = {"dataset_id": f"ds-{RID}", "seed": 20261015, "created_at": "2026-10-15T00:00:00Z",
            "action_rules_version": ACTION_RULES_VERSION, "survey_schema_dir": SD_UNUSED_DIR,
-           "adapters": {"question_reader": {"factory": "synthetic_data.adapters:http_question_reader", "kwargs": {"base_url": URL("qa"), "token_env": "QUESTION_READER_TOKEN"}}},   # 계약 factory (SyntheticJobConfigRun adapters.factory: 계약이 정한 설정 값)
+           "adapters": {"question_reader": {"factory": "synthetic_data.adapters:http_question_reader", "kwargs": {"base_url": SD_QA_JOB_URL, "token_env": "QUESTION_READER_TOKEN"}}},   # 계약 factory (SyntheticJobConfigRun adapters.factory: 계약이 정한 설정 값)
            "question_sets": [{"id": QS, "version": STATE["qs"][-1]["version"], "usage": "TRAIN_POOL"}, {"id": QSU, "usage": "HELD_OUT_EVAL"}],
            "reviewed_only": True, "seeds": {"enabled": seeds},
            "split": {"ratios": {"TRAIN": 0.8, "VALIDATION": 0.1, "EVAL": 0.1}},
            "review": {"per_kind": 2}, "regeneration": {"mode": "full"},
            "output": {"work_dir": str(WORK / f"sd-work-{name}"), "store": {"kind": "file", "root": str(WORK / "datasets")}}}
     if failure:
-        cfg["adapters"]["failure_store"] = {"factory": "synthetic_data.adapters:http_failure_store", "kwargs": {"base_url": URL("ops"), "token_env": "FAILURE_STORE_TOKEN"}}   # 계약 factory
+        cfg["adapters"]["failure_store"] = {"factory": "synthetic_data.adapters:http_failure_store", "kwargs": {"base_url": SD_OPS_JOB_URL, "token_env": "FAILURE_STORE_TOKEN"}}   # 계약 factory
         cfg["seeds"]["question_set_id"] = QS
     p = WORK / f"sd-{name}.job.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
-def run_job(job_name, cfg_path, extra_ro=(), network="host"):
+def run_job(job_name, cfg_path, *, network, extra_ro=()):
+    """network 는 호출자가 고른다(기본값 없음): 컨테이너 안에서 도는 잡은 compose 네트워크 + 서비스 이름 주소로 이웃에 닿는다."""
     """dataset-store 이미지의 라벨 io.openit.jobs 에서 잡 job_name 을 찾아 docker run 으로 돌린다(명령 조립: sd_jobs.docker_cmd)."""
     img = IMAGES["dataset-store"]
     labels = json.loads(sh([a.docker, "image", "inspect", img, "--format", "{{json .Config.Labels}}"]).stdout)
@@ -307,7 +308,7 @@ def run_job(job_name, cfg_path, extra_ro=(), network="host"):
 
 def run_sd(name, seeds, failure=False):
     p = sd_config(name, seeds, failure)
-    r = run_job("synthetic-run", p)
+    r = run_job("synthetic-run", p, network=SD_RUN_NETWORK())
     assert r.returncode == 0, f"synthetic-data {sd_jobs.describe_failure(r.returncode, r.stderr, bc.validator)}"
     return json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -325,14 +326,18 @@ def imp_config(name, max_invalid_rows, store_root):
            "output": {"work_dir": str(WORK / f"sd-import-{name}"), "store": store_root if isinstance(store_root, dict) else {"kind": "file", "root": str(store_root)}}}
     p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
+# synthetic-run 잡이 부르는 이웃(문항 읽기 question-authoring, 실패 사례 ops-feedback-ingest)은 compose 의 authoring 네트워크에 함께 붙어 있다(compose.yaml 이 정본, test_e2e_job_urls 가 대조).
+SD_RUN_NETWORK = lambda: f"{a.project}_authoring"
+SD_QA_JOB_URL = "http://question-authoring:8080"    # 서비스 이름·컨테이너 포트
+SD_OPS_JOB_URL = "http://ops-feedback-ingest:8080"
 DS_JOB_NETWORK = lambda: f"{a.project}_datasets"   # dataset-store(I2) 전용 internal 네트워크(compose.yaml networks.datasets). 잡은 서비스 이름 dataset-store 로 닿는다
 DS_JOB_URL = "http://dataset-store:8080"   # 잡 컨테이너가 쓰는 dataset-store 주소(서비스 이름·컨테이너 포트). 호스트에서 부르는 URL("ds") 와 다르다
 
 def run_import(name, max_invalid_rows, store_root):
     p = imp_config(name, max_invalid_rows, store_root)
     # 저장소가 http(dataset-store)면 잡은 컨테이너 안에서 도므로 호스트 주소(127.0.0.1)는 자기 자신이다: compose 의 datasets 네트워크에 붙이고 서비스 이름 주소를 쓴다
-    net = DS_JOB_NETWORK() if isinstance(store_root, dict) and store_root.get("kind") == "http" else "host"
-    r = run_job("synthetic-import", p, extra_ro=[IMPORT_DIR], network=net)
+    net = DS_JOB_NETWORK() if isinstance(store_root, dict) and store_root.get("kind") == "http" else "none"   # 파일 저장소 게시는 닿을 이웃이 없다
+    r = run_job("synthetic-import", p, network=net, extra_ro=[IMPORT_DIR])
     out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
     return r.returncode, out, json.loads((WORK / f"sd-import-{name}" / "import_report.json").read_text())
 
@@ -1241,7 +1246,8 @@ def step5n():
     # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT, survey-service ADR-0020·0022): 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json 의
     # '되묻기시험' -> REASK)으로 같은 세션에서 REASK 를 연속으로 유도한다. 한도(N)는 /readyz 의 reask_limit 에서 읽는다(지어내지 않는다)
     rz = survey_ready()[1]; rl = rz.get("reask_limit")   # /readyz 의 reask_limit 은 {"active": bool, "max_consecutive": int} 객체다
-    N = rl.get("max_consecutive") if isinstance(rl, dict) and rl.get("active") is True else None
+    # 실효 한도 = min(서비스 한도, 활성 문항 세트가 정한 ask_limit·confirm_limit·unrecognized_streak_limit 중 1 이상인 값) (survey-service ADR-0014·0020, EA.effective_reask_cap)
+    N = EA.effective_reask_cap(rl, dict(qa_reader().get_question_bank(STATE["qs"][-1]))["session_settings"])
     if not isinstance(N, int) or N < 1:
         rec("5n-reask", "BLOCKED", f"되묻기 한도가 꺼져 있거나 읽지 못했다(/readyz reask_limit={rl!r}). SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
     sid2 = f"sess-{RID}-n-reask"; utt = "되묻기시험 글쎄요"; FAKE = "(가짜 응답)"
@@ -1269,7 +1275,7 @@ def step5n():
     c, rn = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "nr-after"})[:2]
     assert c == 200 and not rn.get("turn_failure_signal") and FAKE in str(rn.get("response_text")), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
-    rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, /readyz reask_limit.max_consecutive={N}): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
+    rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, 실효 한도 {N} = min(/readyz max_consecutive, 문항 세트 ask/confirm/unrecognized 한도)): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
 
 @step('5r', repos=('survey-service', 'kiosk-frontend') + _GW, deps=('4',),
       why="STATE['pointers'] 를 읽는다. " + _P4)

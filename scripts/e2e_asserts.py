@@ -51,3 +51,16 @@ def check_release_loaded(status, release_id):
     """model-serving GET /v1/releases/{id} 응답이 새 릴리스의 LOADED 인지."""
     assert status.get("release_id") == release_id and status.get("state") == "LOADED" and not status.get("error"), f"새 릴리스가 LOADED 가 아니다: {status}"
     return True
+
+
+# survey-service 가 되묻기·확인 연속 정지에 쓰는 실효 한도(graph.py _reask_cap, survey-service ADR-0014·0020): /readyz 의 reask_limit({"active", "max_consecutive"})와
+# 활성 문항 세트 session_settings 의 ask_limit·confirm_limit·unrecognized_streak_limit 중 1 이상 정수인 값들의 **최솟값**이다(문항 세트가 정한 값이 있으면 그것이 서비스 한도를 낮춘다).
+# 서비스 한도가 꺼져 있으면(active false) 문항 세트 값만으로 정해진다. 둘 다 없으면 0(한도 없음).
+REASK_AUTHORED_KEYS = ("ask_limit", "confirm_limit", "unrecognized_streak_limit")
+
+
+def effective_reask_cap(reask_limit, session_settings) -> int:
+    cap = reask_limit.get("max_consecutive", 0) if isinstance(reask_limit, dict) and reask_limit.get("active") is True else 0
+    authored = [session_settings.get(k) for k in REASK_AUTHORED_KEYS]
+    authored = [a for a in authored if isinstance(a, int) and not isinstance(a, bool) and a >= 1]
+    return min(authored + ([cap] if cap > 0 else [])) if authored else cap

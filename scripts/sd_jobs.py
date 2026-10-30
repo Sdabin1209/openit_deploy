@@ -22,9 +22,9 @@ def find_job(labels: dict, name: str, validator) -> dict:
     return job
 
 
-def docker_cmd(docker, image, job, cfg_path, work, secrets_dir, uid, gid, extra_ro=(), network="host") -> list:
+def docker_cmd(docker, image, job, cfg_path, work, secrets_dir, uid, gid, extra_ro=(), *, network) -> list:
     """설정 파일은 config.container_path 에 읽기 전용으로, 비밀은 NAME_FILE 환경 변수 + 읽기 전용 마운트로 넘긴다.
-    work 는 같은 경로로 마운트(설정의 작업·저장소 폴더가 호스트와 같은 경로), --user 는 만든 파일을 호스트 사용자 소유로 두려는 것, --network host 는 이웃이 호스트에 게시된 포트로 닿는 E2E 용."""
+    work 는 같은 경로로 마운트(설정의 작업·저장소 폴더가 호스트와 같은 경로), --user 는 만든 파일을 호스트 사용자 소유로 두려는 것, network 는 호출자가 반드시 고른다(기본값 없음): 이웃을 부르는 잡은 그 서비스들이 붙은 compose 네트워크 + 서비스 이름 주소, 이웃이 없는 잡은 "none". 컨테이너 안의 127.0.0.1 은 자기 자신이고 Docker Desktop 에서는 호스트 네트워크 모드도 호스트의 게시 포트에 닿지 못한다."""
     cmd = [docker, "run", "--rm", "--network", network, "--user", f"{uid}:{gid}", "-v", f"{work}:{work}", "-v", f"{cfg_path}:{job['config']['container_path']}:ro"]
     for d in extra_ro:
         cmd += ["-v", f"{d}:{d}:ro"]

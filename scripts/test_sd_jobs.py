@@ -35,9 +35,13 @@ class T(unittest.TestCase):
         bad = {"io.openit.jobs": json.dumps({"jobs": [{"name": "Bad Name", "argv": ["x"], "idempotent": True}]})}
         with self.assertRaises(AssertionError): sd_jobs.find_job(bad, "Bad Name", validator)
 
+    def test_network_is_required(self):
+        with self.assertRaises(TypeError): sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1)   # 기본값 없음: 호출자가 네트워크를 고른다
+        self.assertIn("--network none", " ".join(sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="none")))
+
     def test_command(self):
         job = DECL["jobs"][0]
-        c = sd_jobs.docker_cmd("docker", "img:1", job, "/w/c.json", "/w", "/sec", 1000, 1000, extra_ro=["/in"])
+        c = sd_jobs.docker_cmd("docker", "img:1", job, "/w/c.json", "/w", "/sec", 1000, 1000, extra_ro=["/in"], network="none")
         s = " ".join(c)
         self.assertIn("-v /w/c.json:/config/import.json:ro", s)
         self.assertIn("/sec/tokens/dataset-store-write-synthetic-data:/run/secrets/dataset_store_write_token_file:ro", s)
@@ -45,7 +49,7 @@ class T(unittest.TestCase):
         self.assertIn("-v /in:/in:ro", s)
         self.assertEqual(c[c.index("img:1"):], ["img:1"] + job["argv"])
         job2 = dict(job, secret_files=["UNKNOWN_FILE"])
-        with self.assertRaises(AssertionError): sd_jobs.docker_cmd("docker", "i", job2, "/c", "/w", "/s", 1, 1)
+        with self.assertRaises(AssertionError): sd_jobs.docker_cmd("docker", "i", job2, "/c", "/w", "/s", 1, 1, network="none")
 
     def test_describe_failure(self):
         d = lambda rc, err: sd_jobs.describe_failure(rc, err, validator)
@@ -65,7 +69,7 @@ class T(unittest.TestCase):
             os.chmod(w, 0o755); sec = pathlib.Path(w) / "sec"; (sec / "tokens").mkdir(parents=True)
             (sec / "tokens/dataset-store-write-synthetic-data").write_text("x" * 32)
             cp = pathlib.Path(w) / "bad.json"; cp.write_text(json.dumps({"dataset_id": "ds-bad"}))   # 필수 키가 없는 설정(계약 위반)
-            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid()), capture_output=True, text=True)
+            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), network="none"), capture_output=True, text=True)
             self.assertEqual(r.returncode, 2, r.stderr[-300:])
             msg = sd_jobs.describe_failure(r.returncode, r.stderr, validator)
             self.assertIn("설정 오류 CONFIG", msg, msg)
@@ -86,7 +90,7 @@ class T(unittest.TestCase):
                    "output": {"work_dir": f"{w}/work", "store": {"kind": "file", "root": f"{w}/store"}}}
             self.assertEqual(list(validator("SyntheticJobConfigImport").iter_errors(cfg)), [])
             cp = pathlib.Path(w) / "import.json"; cp.write_text(json.dumps(cfg))
-            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), extra_ro=[str(inp)]), capture_output=True, text=True)
+            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), extra_ro=[str(inp)], network="none"), capture_output=True, text=True)
             out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
             self.assertEqual(r.returncode, 0, (r.stderr + r.stdout)[-600:])
             self.assertIn(out.get("status"), ("PUBLISHED", "ALREADY_PUBLISHED"), out)
