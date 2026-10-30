@@ -1193,8 +1193,8 @@ def _validate_if_known(name, obj):
     except Exception: return False
     validate(name, obj); return True
 
-@step('5n', repos=('survey-service', 'model-runtime', 'kiosk-frontend', 'boundary-contracts') + _GW, deps=('1', '4'),
-      why="STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 의 실효 되묻기 한도는 STATE['qs'](단계 1 이 씀)의 활성 문항 세트 session_settings 로 계산한다. 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 E2E 가 주입한 시험 규칙 파일(test/risk-rules.e2e.json)에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4)
+@step('5n', repos=('survey-service', 'model-runtime', 'kiosk-frontend', 'boundary-contracts') + _GW, deps=('4',),
+      why="STATE['pointers'] 를 읽는다(e2e_steps.py step5n 앞부분). 5n-reask 의 실효 되묻기 한도는 survey-service 가 /readyz reask_limit.effective(계약 v3.1.0)로 알려 주는 값만 읽는다(문항 세트 session_settings 로 계산하지 않는다: 구조 규칙 4). 5n-reask 는 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json)으로 REASK 를 연속 유도한다. 위험 문구는 E2E 가 주입한 시험 규칙 파일(test/risk-rules.e2e.json)에서 읽고, 기기 e2e-a·e2e-b 토큰을 쓴다(5d 와 같은 gen-secrets.sh 구성). " + _P4)
 def step5n():
     title("5n", "직원 호출 재알림·실패 기록·정지 사유 (계약 v2.1.0 PUBLIC_API G·H절, CR-H001·H002, 가짜 모델)")
     if "pointers" not in STATE: rec("5n", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
@@ -1262,11 +1262,11 @@ def step5n():
     rec("5n", "REAL", f"위험 발화 정지(첫 전달 {first_status}) -> /state pause_reason=RISK -> staff-call/retry(필드·같은 turn_id 멱등·간격 안 새 turn_id 429+Retry-After) -> 다른 기기·위조·무토큰·직원 토큰 거부 -> staff-call/report(StaffAlert manual_notice_*, 멱등, 다른 outcome 409, 직원 알림 목록에 보임, 세션은 PAUSED_RISK 유지) -> 개입 뒤 재알림 409 NO_OPEN_ALERT")
     # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT, survey-service ADR-0020·0022): 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json 의
     # '되묻기시험' -> REASK)으로 같은 세션에서 REASK 를 연속으로 유도한다. 한도(N)는 /readyz 의 reask_limit 에서 읽는다(지어내지 않는다)
-    rz = survey_ready()[1]; rl = rz.get("reask_limit")   # /readyz 의 reask_limit 은 {"active": bool, "max_consecutive": int} 객체다
-    # 실효 한도 = min(서비스 한도, 활성 문항 세트가 정한 ask_limit·confirm_limit·unrecognized_streak_limit 중 1 이상인 값) (survey-service ADR-0014·0020, EA.effective_reask_cap)
-    N = EA.effective_reask_cap(rl, dict(qa_reader().get_question_bank(STATE["qs"][-1]))["session_settings"])
+    rz = survey_ready()[1]; rl = rz.get("reask_limit")   # /readyz 의 reask_limit 은 {"active", "max_consecutive", "effective"(정수 또는 null)} 객체다(계약 v3.1.0)
+    # 실효 한도는 survey-service 가 낸 계약 출력(SurveyReadyz.reask_limit.effective, 계약 v3.1.0)만 읽는다: 서비스의 계산 규칙(문항 세트 session_settings 와 서비스 한도의 최솟값)을 E2E 가 흉내 내지 않는다(구조 규칙 4)
+    N = (rl or {}).get("effective")
     if not isinstance(N, int) or N < 1:
-        rec("5n-reask", "BLOCKED", f"되묻기 한도가 꺼져 있거나 읽지 못했다(/readyz reask_limit={rl!r}). SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
+        rec("5n-reask", "BLOCKED", f"되묻기 실효 한도(reask_limit.effective)가 없거나 null 이다(/readyz reask_limit={rl!r}): 활성 릴리스가 없거나 한도가 꺼져 있다. SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
     sid2 = f"sess-{RID}-n-reask"; utt = "되묻기시험 글쎄요"; FAKE = "(가짜 응답)"
     c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid2, "kind": "SESSION_START"})[:2]; assert c == 200, ("되묻기 세션 시작", c, st)
     for i in range(1, N + 1):   # 한도까지는 정상 진행: 되묻는다(세션은 진행 중, 직원 알림 없음, 문장은 모델 응답)

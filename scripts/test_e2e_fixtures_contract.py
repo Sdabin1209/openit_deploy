@@ -56,27 +56,18 @@ class T(unittest.TestCase):
             self.assertEqual(sorted(keys - allowed), [], f"행 {ln}: ApprovalRequest 에 없는 키(approver_id·pipeline_schema_version 은 금지)")
             if not spread: self.assertEqual(sorted(required - keys), [], f"행 {ln}: ApprovalRequest 필수 키가 없다")
 
-    def test_reask_limit_is_read_as_object(self):
-        asserts = (H / "e2e_asserts.py").read_text(encoding="utf-8")
-        self.assertIn('reask_limit.get("max_consecutive"', asserts)
-        self.assertIn('reask_limit.get("active") is True', asserts)
+    def test_reask_limit_is_read_from_contract_output(self):
+        """5n-reask 의 한도는 계약 SurveyReadyz.reask_limit.effective(v3.1.0)만 읽는다: 서비스의 계산 규칙(session_settings 와 서비스 한도의 최솟값)을 E2E 가 흉내 내지 않는다(구조 규칙 4)."""
+        self.assertIn('N = (rl or {}).get("effective")', STEPS)
         self.assertNotRegex(STEPS, r'N = rz\.get\("reask_limit"\)')
-        self.assertIn("EA.effective_reask_cap(", STEPS)
+        for pat in ("effective_reask_cap", "REASK_AUTHORED_KEYS", "get_question_bank(STATE[\"qs\"][-1]))[\"session_settings\"]"):
+            self.assertNotIn(pat, STEPS, f"E2E 가 survey-service 의 되묻기 한도 계산 규칙({pat})을 안다")
+            self.assertNotIn(pat, (H / "e2e_asserts.py").read_text(encoding="utf-8"))
 
-    def test_effective_reask_cap_from_fixed_form_is_2(self):
-        """고정 문항지(question-form-v2.txt)의 세션 설정은 질문 횟수 3, 확인 2, 인식 실패 연속 2다: /readyz max_consecutive 가 3 이어도 실효 한도는 2(survey-service ADR-0014·0020)."""
-        import sys; sys.path.insert(0, str(H))
-        import e2e_asserts as EA
-        names = {"질문 횟수 한도": "ask_limit", "확인 한도": "confirm_limit", "인식 실패 연속 한도": "unrecognized_streak_limit"}
-        settings = {names[k]: int(v) for k, _, v in (l.partition(": ") for l in FORM.splitlines()) if k in names}
-        self.assertEqual(settings, {"ask_limit": 3, "confirm_limit": 2, "unrecognized_streak_limit": 2})
-        self.assertEqual(EA.effective_reask_cap({"active": True, "max_consecutive": 3}, settings), 2)
-        # 같은 규칙의 다른 경우: 서비스 한도가 더 작으면 그것, 꺼져 있으면 문항 세트 값, 둘 다 없으면 0, 0·불리언은 무시
-        self.assertEqual(EA.effective_reask_cap({"active": True, "max_consecutive": 1}, settings), 1)
-        self.assertEqual(EA.effective_reask_cap({"active": False, "max_consecutive": 0}, settings), 2)
-        self.assertEqual(EA.effective_reask_cap({"active": True, "max_consecutive": 3}, {}), 3)
-        self.assertEqual(EA.effective_reask_cap({"active": False, "max_consecutive": 0}, {"ask_limit": 0, "confirm_limit": True}), 0)
-
+    def test_effective_is_in_installed_contract(self):
+        import boundary_contracts as bc
+        props = bc.load_schema("SurveyReadyz")["properties"]["reask_limit"]["properties"]
+        self.assertIn("effective", props, "설치된 계약에 reask_limit.effective 가 없다(v3.1.0 이상 필요)")
 
 if __name__ == "__main__":
     unittest.main()

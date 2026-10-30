@@ -3,6 +3,8 @@
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(cd "$DEPLOY_ROOT/.." && pwd)"
 VENV="$DEPLOY_ROOT/.venv"
+# 컴포넌트를 부르는 진입점(scripts/*.py)은 입력·출력을 스키마로 검증하므로 jsonschema 가 있는 deploy .venv 의 파이썬이 필요하다(ADR 0045). 작업 트리(git worktree)에서는 본 리포의 .venv 를 쓴다. 없으면 python3 (jsonschema 가 없으면 진입점이 이유를 내고 실패한다: 검증을 건너뛰지 않는다)
+DEPLOY_PY="$VENV/bin/python"; [ -x "$DEPLOY_PY" ] || DEPLOY_PY="$(cd "$(git -C "$DEPLOY_ROOT" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)/.venv/bin/python"; [ -x "$DEPLOY_PY" ] || DEPLOY_PY=python3
 die() { echo "오류: $*" >&2; exit 1; }
 # 시험 전용: 롤백 시험처럼 '같은 소스인데 다른 digest 의 새 버전'이 필요할 때 이미지에 시험 라벨 하나(openit.test-build=<ID>)를 더한다. BUILD_TEST_ID 가 없으면 아무것도 하지 않는다.
 # 왜 revision 에 접미사를 붙이지 않는가: io.openit.revision 은 소스 커밋(hex)이어야 한다(영역 Dockerfile 의 형식 검사와 계약 ImageLabels 의 ^[0-9a-f]{7,40}$). revision 에 접미사(-test2)를 붙이던 예전 방식은 이 규칙과 충돌했다.
@@ -32,14 +34,14 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.0.2}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.1.1}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.2}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 DEPLOY_SS_TAG="survey-schema-v2.0.0"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
 # 영역(리포) 목록은 head/shared/areas.json 이 정본이다. 셸에서는 이 함수 하나로 읽는다(python3 areas.py 를 부른다. 왜: jq 가 없는 호스트가 있고 셸로 JSON 을 파싱하면 깨지기 쉽다).
 # 사용: areas_list [--kind python,node,library,compose,docs] [--train] [--except 이름,이름]  -> 공백으로 이은 이름. 시험용 위치: AREAS_FILE
-areas_list() { python3 "$(dirname "${BASH_SOURCE[0]}")/areas.py" --file "${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}" "$@"; }
+areas_list() { "$DEPLOY_PY" -W ignore "$(dirname "${BASH_SOURCE[0]}")/areas.py" --file "${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}" "$@"; }
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름(영역 목록이 아니다: model-registry 는 model-lab 영역의 이미지)
 SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console"
 # 선택 이미지: 기본 빌드·게시 흐름에 들어가지 않는다(약 13GB). build-images.sh --gpu 로 만든다 (compose.llm.yaml)

@@ -4,7 +4,7 @@
 
 e2e_steps.py 가 쓰는 IMAGES 키가 e2e.sh 가 넘기는 IMAGES 에 모두 있다 :: python3 "$DEPLOY_ROOT/scripts/test_e2e_images_keys.py"
 잡 컨테이너에 넘기는 dataset-store 주소는 호스트 주소가 아니다 (compose 네트워크 + 서비스 이름) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_job_urls.py"
-E2E 입력의 모양: 문항 양식 칸 규격 52칸(MISSING_FIELD_SPEC), 승인 본문(ApprovalRequest), /readyz reask_limit 객체 :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_fixtures_contract.py"
+E2E 입력의 모양: 문항 양식 칸 규격 52칸(MISSING_FIELD_SPEC), 승인 본문(ApprovalRequest), /readyz reask_limit.effective (계약 v3.1.0) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_fixtures_contract.py"
 E2E 승인 호출은 계약 ApprovalRequest 로 직접 보낸다 (SDK decide() 호출 없음) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_approval_calls.py"
 check-exposure 자체 점검 :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_check_exposure.py"
 E2E 시험 위험 규칙 파일이 계약 SurveyRiskRulesFile 을 따르고 E2E 전용 compose 에만 연결된다 :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_risk_rules_file.py"
