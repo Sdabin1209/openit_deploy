@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-405: model-runtime v0.11.4, link 핀 대조 걸기 준비
+- `DEPLOY_MR_TAG` v0.11.3 -> v0.11.4. deploy 의 개발 venv 는 model-runtime 을 설치하지 않으므로(E2E 이미지 빌드가 태그 소스를 꺼낸다) 재설치할 것이 없다.
+- `e2e.sh` 시작 점검에 link 핀 대조(`check_link_pins.py`)를 `DEPLOY_CHECK_LINK_PINS=1` 일 때만 돌리게 준비했다(기본 꺼짐: 영역이 v0.4.1 로 오르기 전에는 항상 실패한다). 기본값을 1 로 바꾸는 커밋은 헤드 알림 뒤에 한다. check-all 은 출력 형식을 record-e2e.sh 가 읽으므로 건드리지 않았다.
+
 ## wo-404: E2E 404 시험 본문, link 핀 대조(U59)
 - A2: 단계 5 의 '적재되지 않은 릴리스 404' 가 틀린 본문(ActionExtractionInput)을 보내 link 의 본문 검증(400)이 먼저 났다. 유효한 `ereq_of(ein)` 으로 바꿨다(정적 시험 `test_unloaded_release_404_uses_valid_body`). 같은 종류(본문이 틀려 400 이 먼저 나는데 404·403·409 를 기대) 전수 확인: link 순서는 라우트 404/405 -> 413 -> 인증 401/403(역할) -> 사람 행위자 401 -> JSON·스키마 400 -> 처리 함수이다. E2E 의 401·403 단언은 대부분 역할 검사나 gateway(Caddy) 응답이라 본문과 무관하다. 처리 함수가 내는 404·403·409(다른 기기의 세션 접근, 개입 409, NO_OPEN_ALERT 409, 존재하지 않는 사례 검토 404)는 본문을 계약 모양으로 보내고 있음을 확인했다. 다른 어긋남은 없었다. 저작 API(`/v1/reviews`, 영역 내부)는 계약 스키마 대상이 아니라 확인하지 못했다.
 - U59: 영역 이미지의 link 버전 정본은 영역 잠금 파일이다. `scripts/check_link_pins.py`(컴포넌트 `link_pin_check`)가 영역 main 의 잠금 파일을 `DEPLOY_LINK_TAG` 와 대조한다. ADR 0046 을 라벨 제안에서 이 결정으로 바꿨다. DEPLOY_MR_TAG 는 바꾸지 않았다(헤드가 v0.11.4 를 알리면).

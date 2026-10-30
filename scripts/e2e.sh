@@ -49,6 +49,10 @@ if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
   CA_TXT=$(CHECK_ALL_IMAGES=defer bash "$(dirname "$0")/check-all.sh" --strict 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
   [ $CA_RC = 0 ] || { echo "check-all.sh --strict 가 FAIL 또는 SKIP 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
 fi
+# link 핀 대조(U59, ADR 0046): 영역 main 잠금 파일의 openit-link 태그가 lib.sh 의 DEPLOY_LINK_TAG 와 같아야 한다. 준비만 해 두었다: 영역들이 기준 태그로 올린 뒤 헤드가 알리면 기본값을 1 로 바꾼다(그 전에는 항상 실패한다). DEPLOY_CHECK_LINK_PINS=1 로 지금도 켤 수 있다
+if [ "${DEPLOY_CHECK_LINK_PINS:-0}" = 1 ]; then
+  "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/check_link_pins.py" || { echo "link 핀 대조가 실패해 E2E를 시작하지 않는다 (위 영역/파일의 태그를 표와 맞춘다)"; exit 1; }
+fi
 # 사전 점검: 실패하면 바로 멈춘다(건너뛰기 DEPLOY_SKIP_DOCTOR=1). 하위 up.sh 가 다시 점검하지 않게 export 한다
 [ "${DEPLOY_SKIP_DOCTOR:-0}" = 1 ] || bash "$(dirname "$0")/doctor.sh" || exit 1
 export DEPLOY_SKIP_DOCTOR=1
