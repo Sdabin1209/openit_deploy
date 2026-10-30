@@ -1,5 +1,11 @@
 # 변경 이력
 
+## wo-407: check-all 이 이웃 소스 파일을 열지 않는다, check-all 을 자체 점검에
+- 결함: `consistency_check` 의 `truth_templates()` 가 model-runtime 소스(`src/model_runtime/prompts.py`)를, `truth_schema_version()` 이 boundary-contracts 소스를 AST 로 직접 읽었다(구조 규칙 1 위반). model-runtime 개편으로 파일이 옮겨져 E2E 사전 점검 '삭제된 이름의 잔존'이 FAIL 했다.
+- 고침: 템플릿 버전은 설치된 `model_runtime.prompts.SUPPORTED_TEMPLATE_VERSIONS`(v0.11.4: `prompt-4`), 파이프라인 버전은 `boundary_contracts.PIPELINE_SCHEMA_VERSION`(`3.1`)만 읽는다. `_module_assigns`·`_dict_items`(이웃 소스 구문 분석)를 지웠다. 이웃 소스를 직접 여는 다른 곳은 없다(남은 이웃 파일 읽기는 영역 전체를 훑는 규칙 4·5·6·7·11 의 스캔과 계약 예시 읽기 뿐이고 특정 파일의 구조에 기대지 않는다). 공개 이름이 없어 못 바꾼 것: 없음.
+- `prepare-host.sh venv` 가 model-runtime 을 `DEPLOY_MR_TAG` 로 `--no-deps` 설치한다(`MODEL_RUNTIME_SOURCE` 로 위치 지정).
+- 자체 점검에 실제 작업 공간에 대한 `check-all --strict`(E2E 사전 점검과 같은 명령)를 넣었다. 영역 시험 실행 포함이라 약 6분(2026-10-30 측정 342초). E2E 사전 점검이 이미 돌았으면(`E2E_PRECHECK_DONE`) 건너뛴다.
+
 ## wo-406: 최종 고정 U410 — 문진 스키마 survey-schema-v3.0.0
 - `DEPLOY_SS_TAG` survey-schema-v2.0.0 -> survey-schema-v3.0.0. 표본 라벨의 문진 스키마 주 번호를 3 으로 맞췄다(`test_image_labels.py`, `test_contract_schema_copy.py`, `test-images-env.sh`, `test-build-test-label.sh`). 나머지 기준은 이미 U410 과 같다(계약 v3.1.1, link v0.4.1, model-runtime v0.11.4).
 - 새 정적 시험 `scripts/test_e2e_form_survey_schema.py`: E2E 문항 양식(`test/fixtures/question-form-v2.txt`)을 question-authoring 추출기로 읽어 만든 QuestionBank 가 survey-service 태그 `DEPLOY_SS_TAG` 의 QuestionBank 를 통과하는지 본다(3.0.0 의 칸 data_type 필수·option 의 choices/choice_catalog·고정 문장·ID 패턴 포함). 통과했다. 음성 대조: 칸 data_type 을 지우면 위반 52건이 난다. E2E 가 쓰는 다른 문진 스키마 이름(FrontendInput, SessionResult, StaffSessionView, TurnTrace)도 3.0.0 에 있다. 문진 스키마는 고치지 않았다.

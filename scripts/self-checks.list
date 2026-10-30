@@ -44,3 +44,4 @@ verify-area 계획 자기 점검 (대응표, 단계 닫힘, 명령 조립, 낡�
 비밀 이름 대조 자기 점검 (compose 대 영역 코드) :: bash "$DEPLOY_ROOT/scripts/test-secret-names.sh"
 link 핀 대조 자기 점검 (영역 잠금 파일의 openit-link 태그 읽기 모양, MATCH/DIFF/NO_PIN, 가짜 워크스페이스 종료 코드, ADR 0046) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_link_pin_check.py"
 E2E 문항 양식으로 만든 QuestionBank 가 기준 문진 스키마(DEPLOY_SS_TAG, 3.0.0)를 통과한다 (question-authoring 추출기 + survey-service 태그의 스키마) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_form_survey_schema.py"
+실제 작업 공간에 대한 정적 일관성 점검(check-all --strict, E2E 사전 점검과 같은 명령; 영역 시험 실행 포함이라 수 분 걸린다. E2E 사전 점검이 이미 돌았으면 건너뛴다) :: if [ -n "${E2E_PRECHECK_DONE:-}" ]; then echo "E2E 사전 점검(check-all)이 이미 통과했다"; else CHECK_ALL_IMAGES=defer bash "$DEPLOY_ROOT/scripts/check-all.sh" --strict; fi

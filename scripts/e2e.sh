@@ -48,6 +48,7 @@ if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
   bash -n "$0" || { echo "e2e.sh 문법 오류: E2E를 시작하지 않는다"; exit 1; }   # 긴 셸은 줄 휴리스틱이 아니라 문법 검사와 준비 단계의 실제 실행에 맡긴다(ADR 0033)
   CA_TXT=$(CHECK_ALL_IMAGES=defer bash "$(dirname "$0")/check-all.sh" --strict 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
   [ $CA_RC = 0 ] || { echo "check-all.sh --strict 가 FAIL 또는 SKIP 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
+  export E2E_PRECHECK_DONE=1   # 자체 점검 묶음(self-checks.list)의 check-all 항목이 같은 점검을 두 번 돌지 않게 한다
 fi
 # link 핀 대조(U59, ADR 0046): 영역 main 잠금 파일의 openit-link 태그가 lib.sh 의 DEPLOY_LINK_TAG 와 같아야 한다. 준비만 해 두었다: 영역들이 기준 태그로 올린 뒤 헤드가 알리면 기본값을 1 로 바꾼다(그 전에는 항상 실패한다). DEPLOY_CHECK_LINK_PINS=1 로 지금도 켤 수 있다
 if [ "${DEPLOY_CHECK_LINK_PINS:-0}" = 1 ]; then

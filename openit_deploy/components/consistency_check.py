@@ -496,69 +496,28 @@ def areas_missing(r: R) -> R:
 
 # ---------- 정본에서 읽는 값 ----------
 # 낡은 용어를 이 파일에 적어 막지 않는다(용어는 계속 바뀐다). '지금 있는 것'을 정본에서 읽고, 정본에 없는 것을 쓰면 실패한다.
-def _module_assigns(rel: str, name: str):
-    """정본 파이썬 파일의 최상위 name 에 대한 (연산, 값 노드) 목록을 코드 실행 없이(ast) 모은다. 파일을 못 읽으면 (None, None).
-    연산: '=' (Assign·AnnAssign), '+=' (AugAssign Add), '|=' (AugAssign BitOr)."""
-    try:
-        tree = ast.parse((WS / rel).read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
-        return None, None
-    out = []
-    for n in tree.body:
-        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets):
-            out.append(("=", n.value))
-        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == name and n.value is not None:
-            out.append(("=", n.value))
-        elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == name:
-            out.append(("+=" if isinstance(n.op, ast.Add) else "|=" if isinstance(n.op, ast.BitOr) else "?", n.value))
-    return out, tree
-
-
-def _dict_items(v):
-    """{...} 리터럴 또는 dict(k=...) 호출의 (키, 값 노드) 목록. 읽을 수 없는 모양이면 None."""
-    if isinstance(v, ast.Dict):
-        if any(k is None or not isinstance(k, ast.Constant) for k in v.keys):
-            return None
-        return [(k.value, val) for k, val in zip(v.keys, v.values)]
-    if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "dict" and not v.args and all(k.arg for k in v.keywords):
-        return [(k.arg, k.value) for k in v.keywords]
-    return None
-
-
 def truth_templates():
     """지원하는 프롬프트 템플릿 버전: model-runtime 이 정한다. (집합, 문제 문자열). 못 읽으면 (None, 이유) -- 이유는 FAIL 이다.
-    정본이 거짓일 수 있으므로 키마다 값이 같은 파일에 정의된 함수인지 교차 검증한다."""
-    rel = "model-runtime/src/model_runtime/prompts.py"
-    ops, tree = _module_assigns(rel, "_USER")
-    if not ops:
-        return None, f"{rel}:1: _USER 를 읽지 못했다"
-    funcs = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    keys = set()
-    for op, v in ops:
-        if op not in ("=", "|="):
-            return None, f"{rel}:1: _USER 의 {op} 대입을 해석하지 못했다"
-        items = _dict_items(v)
-        if items is None:
-            return None, f"{rel}:1: _USER 의 값이 읽을 수 있는 dict 리터럴이 아니다"
-        for k, val in items:
-            # 값은 함수 이름 하나이거나, 역할별 함수의 dict 리터럴이다(model-runtime 0.7.7: LORA_A/LORA_B 컴포넌트 분리). 어느 쪽이든 함수가 이 파일에 정의돼 있어야 한다.
-            ok = isinstance(val, ast.Name) and val.id in funcs
-            if not ok:
-                sub = _dict_items(val)
-                ok = bool(sub) and all(isinstance(v2, ast.Name) and v2.id in funcs for _, v2 in sub)
-            if not ok:
-                return None, f"{rel}:1: _USER[{k!r}] 에 대응하는 템플릿 함수가 이 파일에 없다(정본이 거짓이다)"
-            keys.add(k)
+    이웃의 소스 파일을 열어 구문 분석하지 않는다(구조 규칙 1): deploy .venv 에 DEPLOY_MR_TAG 로 설치된 model-runtime 의 공개 이름 model_runtime.prompts.SUPPORTED_TEMPLATE_VERSIONS 만 읽는다."""
+    try:
+        from model_runtime.prompts import SUPPORTED_TEMPLATE_VERSIONS
+    except ImportError as e:
+        return None, f"model_runtime.prompts.SUPPORTED_TEMPLATE_VERSIONS 를 가져오지 못했다({type(e).__name__}): deploy .venv 에 model-runtime 을 설치한다(bash scripts/prepare-host.sh venv)"
+    keys = set(SUPPORTED_TEMPLATE_VERSIONS)
+    if not keys or not all(isinstance(k, str) for k in keys):
+        return None, "SUPPORTED_TEMPLATE_VERSIONS 가 문자열 집합이 아니다"
     return keys, ""
 
 
 def truth_schema_version():
-    """계약의 파이프라인 스키마 버전. (값, 문제 문자열)."""
-    rel = "boundary-contracts/boundary_contracts/schemas_api.py"
-    ops, _ = _module_assigns(rel, "PIPELINE_SCHEMA_VERSION")
-    if not ops or len(ops) != 1 or ops[0][0] != "=" or not (isinstance(ops[0][1], ast.Constant) and isinstance(ops[0][1].value, str)):
-        return None, f"{rel}:1: PIPELINE_SCHEMA_VERSION 을 문자열 상수 하나로 읽지 못했다"
-    return ops[0][1].value, ""
+    """계약의 파이프라인 스키마 버전. (값, 문제 문자열). 설치된 계약 패키지의 공개 이름 boundary_contracts.PIPELINE_SCHEMA_VERSION 만 읽는다(계약 소스 파일을 열지 않는다)."""
+    try:
+        from boundary_contracts import PIPELINE_SCHEMA_VERSION
+    except ImportError as e:
+        return None, f"boundary_contracts.PIPELINE_SCHEMA_VERSION 을 가져오지 못했다({type(e).__name__})"
+    if not isinstance(PIPELINE_SCHEMA_VERSION, str):
+        return None, "PIPELINE_SCHEMA_VERSION 이 문자열이 아니다"
+    return PIPELINE_SCHEMA_VERSION, ""
 
 
 PROMPT_NAME = re.compile(r"prompt-\d+")
