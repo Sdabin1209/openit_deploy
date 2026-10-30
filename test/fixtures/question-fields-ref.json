@@ -1,0 +1,226 @@
+{
+ "_comment": "학습 데이터셋 SQL.md 5.2(question_fields 52칸)·5.3(field_options)의 값. E2E 문항 양식 fixture(question-form-v2.txt)의 칸 규격 정본 사본(시험 대조용). 갱신은 데이터셋이 바뀔 때만.",
+ "fields": {
+  "Q1.D01.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D01.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D02.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D02.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D03.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D03.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D04.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D04.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D05.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D05.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D06.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D06.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D07.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D07.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D08.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D08.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D09.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D09.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D10.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D10.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q1.D11.diagnosed": {
+   "data_type": "boolean"
+  },
+  "Q1.D11.on_medication": {
+   "data_type": "boolean"
+  },
+  "Q2.D01.family_history": {
+   "data_type": "boolean"
+  },
+  "Q2.D02.family_history": {
+   "data_type": "boolean"
+  },
+  "Q2.D03.family_history": {
+   "data_type": "boolean"
+  },
+  "Q2.D04.family_history": {
+   "data_type": "boolean"
+  },
+  "Q2.D05.family_history": {
+   "data_type": "boolean"
+  },
+  "Q3.answer": {
+   "data_type": "option",
+   "options": [
+    "no",
+    "unknown",
+    "yes"
+   ]
+  },
+  "Q4.answer": {
+   "data_type": "boolean"
+  },
+  "Q4_1.daily_count": {
+   "data_type": "number",
+   "unit": "개비",
+   "minimum": 0
+  },
+  "Q4_1.status": {
+   "data_type": "option",
+   "options": [
+    "current",
+    "former"
+   ]
+  },
+  "Q4_1.total_years": {
+   "data_type": "integer",
+   "unit": "년",
+   "minimum": 0
+  },
+  "Q4_1.years_since_quit": {
+   "data_type": "number",
+   "unit": "년",
+   "minimum": 0
+  },
+  "Q5.answer": {
+   "data_type": "boolean"
+  },
+  "Q5_1.daily_count": {
+   "data_type": "number",
+   "unit": "개비",
+   "minimum": 0
+  },
+  "Q5_1.status": {
+   "data_type": "option",
+   "options": [
+    "current",
+    "former"
+   ]
+  },
+  "Q5_1.total_years": {
+   "data_type": "integer",
+   "unit": "년",
+   "minimum": 0
+  },
+  "Q5_1.years_since_quit": {
+   "data_type": "number",
+   "unit": "년",
+   "minimum": 0
+  },
+  "Q6.answer": {
+   "data_type": "boolean"
+  },
+  "Q6_1.use_pattern": {
+   "data_type": "option",
+   "options": [
+    "daily",
+    "days_10_29",
+    "days_1_2",
+    "days_3_9",
+    "no"
+   ]
+  },
+  "Q7.does_not_drink": {
+   "data_type": "boolean"
+  },
+  "Q7.frequency": {
+   "data_type": "number",
+   "exclusive_minimum": 0
+  },
+  "Q7.unit": {
+   "data_type": "option",
+   "options": [
+    "month",
+    "week",
+    "year"
+   ]
+  },
+  "Q7_1.amount": {
+   "data_type": "number",
+   "minimum": 0
+  },
+  "Q7_1.unit": {
+   "data_type": "option",
+   "options": [
+    "bottle",
+    "can",
+    "cc",
+    "glass"
+   ]
+  },
+  "Q7_2.amount": {
+   "data_type": "number",
+   "minimum": 0
+  },
+  "Q7_2.unit": {
+   "data_type": "option",
+   "options": [
+    "bottle",
+    "can",
+    "cc",
+    "glass"
+   ]
+  },
+  "Q8_1.days": {
+   "data_type": "integer",
+   "unit": "day/week",
+   "maximum": 7,
+   "minimum": 0
+  },
+  "Q8_2.duration_minutes": {
+   "data_type": "integer",
+   "unit": "minute",
+   "minimum": 0
+  },
+  "Q9_1.days": {
+   "data_type": "integer",
+   "unit": "day/week",
+   "maximum": 7,
+   "minimum": 0
+  },
+  "Q9_2.duration_minutes": {
+   "data_type": "integer",
+   "unit": "minute",
+   "minimum": 0
+  },
+  "Q10.days": {
+   "data_type": "integer",
+   "unit": "day/week",
+   "maximum": 7,
+   "minimum": 0
+  }
+ }
+}

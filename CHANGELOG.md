@@ -1,5 +1,11 @@
 # 변경 이력
 
+## wo-311: E2E 단계 5~8의 정적 감사 결함 3건
+- D1: 문항 양식 fixture의 칸 규격. survey-service는 3.0.0부터 칸 규격(data_type, option이면 선택지)이 없는 칸이 하나라도 있으면 릴리스를 MISSING_FIELD_SPEC으로 거부하는데 양식은 52칸 중 1칸만 자료형을 가졌다. 52칸 모두 학습 데이터셋 question_fields(SQL.md 5.2·5.3)의 자료형·단위·범위·선택지로 채웠다(`test/fixtures/question-fields-ref.json`은 그 값의 시험 대조용 사본).
+- D2: `reject_via_gateway` 본문에서 `pipeline_schema_version`·`approver_id`를 뺐다(계약 ApprovalRequest 금지). 위조 X-Openit-User를 gateway가 덮어쓰는지만 보고, 본문에 approver_id를 실으면 400인 것은 한 줄 시험으로 따로 둔다.
+- D3: `/readyz`의 `reask_limit`는 `{"active", "max_consecutive"}` 객체다. 정수로 읽던 것을 고쳤다.
+- `scripts/test_e2e_fixtures_contract.py`(e2e.sh 자체 점검)가 세 가지를 정적으로 지킨다.
+
 ## wo-302c: 계약 v3.0.2, 컨테이너 환경을 계약 Env 스키마로 검증
 - `DEPLOY_BC_TAG` v3.0.2(SurveyServiceEnv: 추론 연결은 `SURVEY_INFERENCE_URL` 또는 `SURVEY_MODEL_BACKEND` 중 하나). model-runtime v0.11.2는 나온 뒤 올린다.
 - `test_config_contracts.py`에 컨테이너 최종 환경 검증을 더했다: `docker compose config`로 병합한 survey-service 환경을 SurveyServiceEnv로, ops-feedback-ingest 환경(OPS_ 변수)을 OpsFeedbackServerEnv로 검증한다. 조합은 운영(compose.yaml 단독)과 e2e.sh·demo.sh의 `COMPOSE_EXTRA`를 그 파일에서 읽은 것이다(목록을 따로 만들지 않는다). 계약에 Env 스키마가 있는 서비스는 이 둘뿐이다(스키마 이름에 Env가 든 것 확인).

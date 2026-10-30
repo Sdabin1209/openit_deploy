@@ -169,6 +169,7 @@ chk "버전 표 드리프트 없음 (check-versions: 빌드된 이미지 라벨 
 chk "게이트웨이 노출이 영역 이미지의 노출 선언(io.openit.exposure)과 같다 (check-exposure: Caddyfile 대조, ADR 0043; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-exposure.sh"
 chk "e2e_steps.py 가 쓰는 IMAGES 키가 e2e.sh 가 넘기는 IMAGES 에 모두 있다" python3 "$DEPLOY_ROOT/scripts/test_e2e_images_keys.py"
 chk "잡 컨테이너에 넘기는 dataset-store 주소는 호스트 주소가 아니다 (compose 네트워크 + 서비스 이름)" python3 "$DEPLOY_ROOT/scripts/test_e2e_job_urls.py"
+chk "E2E 입력의 모양: 문항 양식 칸 규격 52칸(MISSING_FIELD_SPEC), 승인 본문(ApprovalRequest), /readyz reask_limit 객체" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_fixtures_contract.py"
 chk "E2E 승인 호출은 계약 ApprovalRequest 로 직접 보낸다 (SDK decide() 호출 없음)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_approval_calls.py"
 chk "check-exposure 자체 점검" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_check_exposure.py"
 chk "E2E 시험 위험 규칙 파일이 계약 SurveyRiskRulesFile 을 따르고 E2E 전용 compose 에만 연결된다" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_risk_rules_file.py"

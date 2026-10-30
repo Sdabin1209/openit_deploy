@@ -495,16 +495,16 @@ def reject_via_gateway(sid):
     h = {k.lower(): v for k, v in hd.items()}
     rh = h.get("x-openit-report-hash"); assert rh and rh.startswith("sha256:"), f"X-Openit-Report-Hash 헤더가 게이트웨이를 통과하지 않았다: {hd}"
     assert "no-store" in h.get("cache-control", ""), f"Cache-Control: no-store 가 유지되지 않았다: {h.get('cache-control')}"
-    # 클라이언트가 보낸 X-Openit-User 와 본문 approver_id 는 무시되고 인증된 계정이 기록된다
-    body = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "submission_id": sid, "decision": "REJECT", "approver_id": "body-claimed-id",
-            "approver_role": "release-approver", "reason": "시험: 게이트웨이 경유 반려", "report_hash": rh}
-    # release-gate CR-0008: 본문의 approver_id 가 인증된 사용자(X-Openit-User)와 다르면 400 이다(본문 값을 조용히 무시하지 않는다). 위조 헤더는 gateway 가 인증 계정으로 덮어쓴다
-    c, bad_, _ = gw_raw("POST", "/v1/approvals", body, basic=ADMIN(), headers={"X-Openit-User": "spoofed-user"}); assert c == 400, ("본문 approver_id 가 인증 사용자와 달라도 받아들여졌다", c, bad_)
-    body = {**body, "approver_id": ADMIN()[0]}
+    # 계약 ApprovalRequest: 본문에 approver_id·pipeline_schema_version 이 없다(additionalProperties false). 행위자는 X-Openit-User 가 유일한 길이다(D88).
+    # 클라이언트가 보낸(위조) X-Openit-User 는 gateway 가 인증 계정으로 덮어쓰고, 기록되는 승인자는 인증 계정이다.
+    body = {"submission_id": sid, "decision": "REJECT", "approver_role": "release-approver", "reason": "시험: 게이트웨이 경유 반려", "report_hash": rh}
+    validate("ApprovalRequest", body)
+    # 스키마 위반 한 줄: 본문에 approver_id 를 실으면 계약 위반이라 400 이다(본문 값을 받아들이지도 조용히 무시하지도 않는다)
+    c, bad_, _ = gw_raw("POST", "/v1/approvals", {**body, "approver_id": "body-claimed-id"}, basic=ADMIN(), headers={"X-Openit-User": "spoofed-user"}); assert c == 400, ("본문에 approver_id 를 실은 요청이 400이 아니다", c, bad_)
     c, ap_, _ = gw_raw("POST", "/v1/approvals", body, basic=ADMIN(), headers={"X-Openit-User": "spoofed-user"})
     assert c == 201, (c, ap_)
     ap_ = ap_.get("approval", ap_) if isinstance(ap_, dict) else ap_   # 응답은 {"approval": GateApproval, ...} 로 한 겹 싸여 있을 수 있다
-    assert ap_["approver_id"] == ADMIN()[0], f"승인자 ID가 인증된 계정이 아니다: {ap_['approver_id']}"
+    assert ap_["approver_id"] == ADMIN()[0], f"승인자 ID가 인증된 계정이 아니다(위조 머리글이 덮어써지지 않았다): {ap_['approver_id']}"
     # 열지 않을 경로
     for m, pth in (("POST", "/v1/activate"), ("POST", "/v1/rollback"), ("POST", "/v1/submissions"), ("GET", "/v1/releases"), ("GET", "/v1/decisions")):
         cc = gw_raw(m, pth, {} if m == "POST" else None, basic=ADMIN())[0]; assert cc in (404, 403), f"{m} {pth} 가 게이트웨이에서 열려 있다 {cc}"
@@ -1240,9 +1240,10 @@ def step5n():
     rec("5n", "REAL", f"위험 발화 정지(첫 전달 {first_status}) -> /state pause_reason=RISK -> staff-call/retry(필드·같은 turn_id 멱등·간격 안 새 turn_id 429+Retry-After) -> 다른 기기·위조·무토큰·직원 토큰 거부 -> staff-call/report(StaffAlert manual_notice_*, 멱등, 다른 outcome 409, 직원 알림 목록에 보임, 세션은 PAUSED_RISK 유지) -> 개입 뒤 재알림 409 NO_OPEN_ALERT")
     # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT, survey-service ADR-0020·0022): 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json 의
     # '되묻기시험' -> REASK)으로 같은 세션에서 REASK 를 연속으로 유도한다. 한도(N)는 /readyz 의 reask_limit 에서 읽는다(지어내지 않는다)
-    rz = survey_ready()[1]; N = rz.get("reask_limit")
+    rz = survey_ready()[1]; rl = rz.get("reask_limit")   # /readyz 의 reask_limit 은 {"active": bool, "max_consecutive": int} 객체다
+    N = rl.get("max_consecutive") if isinstance(rl, dict) and rl.get("active") is True else None
     if not isinstance(N, int) or N < 1:
-        rec("5n-reask", "BLOCKED", f"되묻기 한도가 꺼져 있거나 읽지 못했다(/readyz reask_limit={N!r}). SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
+        rec("5n-reask", "BLOCKED", f"되묻기 한도가 꺼져 있거나 읽지 못했다(/readyz reask_limit={rl!r}). SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
     sid2 = f"sess-{RID}-n-reask"; utt = "되묻기시험 글쎄요"; FAKE = "(가짜 응답)"
     c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid2, "kind": "SESSION_START"})[:2]; assert c == 200, ("되묻기 세션 시작", c, st)
     for i in range(1, N + 1):   # 한도까지는 정상 진행: 되묻는다(세션은 진행 중, 직원 알림 없음, 문장은 모델 응답)
@@ -1268,7 +1269,7 @@ def step5n():
     c, rn = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "nr-after"})[:2]
     assert c == 200 and not rn.get("turn_failure_signal") and FAKE in str(rn.get("response_text")), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
-    rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, /readyz reask_limit={N}): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
+    rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, /readyz reask_limit.max_consecutive={N}): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
 
 @step('5r', repos=('survey-service', 'kiosk-frontend') + _GW, deps=('4',),
       why="STATE['pointers'] 를 읽는다. " + _P4)
