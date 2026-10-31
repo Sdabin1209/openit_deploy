@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-424 (U427 이어서): model-runtime v0.11.7
+- 사용자 결정: `DEPLOY_MR_TAG` v0.11.4 -> v0.11.7(태그 116e251). 개발 venv 의 model-runtime 도 v0.11.7 로 다시 설치(check-all 이 공개 이름 `SUPPORTED_TEMPLATE_VERSIONS` 를 읽는다). `exposure-known-diffs.json` 의 U424 예외는 임시이고 최종 상태에 남기지 않는다: 영역 선언이 합쳐진 뒤 헤드가 알리면 지운다.
+
 ## wo-424 (U426 이어서): PublishResult·Import 설정 생산자 검증
 - `publish-image.sh` 의 마지막 줄(PublishResult)을 내보내기 전에 계약으로 검증한다(`DEPLOY_PY` 의 boundary_contracts). 어기면 표준 출력을 비우고 사유(위치만, 값 없음)를 표준 오류에 쓰며 성공(0)이었다면 종료 70, 실패 코드는 그대로. 시험 `scripts/test-publish-result-contract.sh`.
 - synthetic 설정을 만드는 운영 코드는 없다(config/·스케줄러에 없음). 만드는 곳은 E2E 의 `sd_config`(Run)·`imp_config`(Import)이고 둘 다 정적 시험으로 계약을 통과함을 본다(`test_e2e_sd_config.py`).
