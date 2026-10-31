@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-424 (마지막): 기준표 갱신
+- `DEPLOY_BC_TAG` v3.1.2, `DEPLOY_LINK_TAG` v0.4.3, `DEPLOY_MR_TAG` v0.11.8(태그 6d53635). 개발 venv 의 세 패키지를 같은 태그로 재설치. `docs/components.md`·`docs/STATUS.md` 의 표기 갱신. 시험의 v0.4.1 문자열은 `test_link_pin_check.py` 의 자체 표본(가짜 워크스페이스, 기준표와 무관)이라 두었다.
+
 ## wo-424 (생산자 검증 8건, 예외 삭제)
 - 기동 전 설정·환경 계약 관문: `up.sh` 가 `compose up` 앞에서 `check_config_contracts.py`(컴포넌트 `config_contract_check`)를 불러, 컨테이너에 주입할 환경(survey-service=SurveyServiceEnv, ops-feedback-ingest=OpsFeedbackServerEnv, question-authoring=QuestionAuthoringDeployInterface#Environment)과 배치 파일(config/ops-feedback-job.yaml=OpsFeedbackJobConfig, test/fake-model/question_flow.json=RuntimeFlowFile)을 계약으로 검증한다. 어기면 기동하지 않는다(값은 출력하지 않는다). 시험 `scripts/test_config_contract_gate.py`(실제 합쳐진 운영 환경 통과, 위반 시 종료 1, 없는 스키마는 실패).
 - E2E `sd_config`·`imp_config` 가 설정을 쓰기 전에 `SyntheticJobConfigRun`·`SyntheticJobConfigImport` 로 검증한다(동작 코드).
