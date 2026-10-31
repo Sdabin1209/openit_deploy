@@ -155,11 +155,11 @@ llm_config_check() { # llm_config_check sentinel|real : 병합된 compose 설정
     tmp=$(mktemp -d); expect="deploy-build/model-serving-gpu:config-check"
     cp "$DEPLOY_ROOT/locks/images.lock" "$tmp/images.lock"; echo "DEPLOY_REGISTRY=127.0.0.1:5000" > "$tmp/registry.env"; mkdir -p "$tmp/secrets"
     for f in $(grep -oh 'SECRETS_DIR:-./secrets}/[A-Za-z./-]*' "$DEPLOY_ROOT/compose.yaml" | sed 's|.*secrets}/||' | sort -u); do mkdir -p "$tmp/secrets/$(dirname "$f")"; : > "$tmp/secrets/$f"; done
-    out=$( DEPLOY_LOCK="$tmp/images.lock" DEPLOY_REGISTRY_ENV="$tmp/registry.env" SECRETS_DIR="$tmp/secrets" MODEL_SERVING_GPU_IMAGE="$expect" dc "$P" --profile jobs config 2>&1 ); rc=$?
+    rc=0; out=$( DEPLOY_LOCK="$tmp/images.lock" DEPLOY_REGISTRY_ENV="$tmp/registry.env" SECRETS_DIR="$tmp/secrets" MODEL_SERVING_GPU_IMAGE="$expect" dc "$P" --profile jobs config 2>&1 ) || rc=$?
     rm -rf "$tmp"
   else
     expect=$MODEL_SERVING_GPU_IMAGE
-    out=$(dc "$P" --profile jobs config 2>&1); rc=$?
+    rc=0; out=$(dc "$P" --profile jobs config 2>&1) || rc=$?
   fi
   if [ $rc != 0 ]; then echo "compose 설정 병합 실패 ($mode):" >&2; printf '%s\n' "$out" | tail -6 | cut -c1-300 >&2; return 1; fi
   img=$(printf '%s\n' "$out" | awk '/^  model-serving:/{f=1;next} f&&/^  [^ ]/{f=0} f&&/^    image:/{print $2; exit}')

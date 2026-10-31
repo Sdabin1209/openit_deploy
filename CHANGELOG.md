@@ -1,5 +1,10 @@
 # 변경 이력
 
+## wo-434: publish push 실패 사유가 사라지던 결함
+- 결함: `publish-images.sh` 의 `out=$(timeout … docker push …); prc=$?` 는 `set -e` 아래에서 push 가 0이 아니면 대입문에서 셸이 죽어 'push 실패' 사유와 docker 출력이 버려졌다(E2E 5g: 출력 없이 종료 코드만). `prc=0; out=$(…) || prc=$?` 로 고쳤다. 같은 패턴을 scripts/*.sh 에서 모두 찾아 바꿨다(publish-image.sh, doctor.sh, prepare-areas.sh, demo.sh, e2e.sh, run-self-checks.sh; set -e 인 것은 publish 두 개뿐이고 나머지는 같은 모양으로 맞춘 것). 레지스트리 HEAD 확인(`reg=$(curl … | …)`)도 set -e/pipefail 에서 같은 문제라 `|| reg=""` 를 붙였다.
+- 시험: `test-images-env.sh`(가짜 docker 가 push 를 거부 -> 종료 코드 비0, docker 출력과 'push 실패' 사유, 잠금 불변, 패턴 정적 점검), `test-publish.sh`(실제 docker, push 만 거부하는 래퍼 -> 종료 4, 사유 출력, PublishResult). 실제 시간 판정 없음.
+- E2E 5g 실패 메시지에 종료 코드와 표준 출력·표준 오류 끝을 모두 넣었다.
+
 ## wo-432: model-runtime v0.11.9
 - `DEPLOY_MR_TAG` v0.11.8 -> v0.11.9(영역 Dockerfile 고정이 계약 v3.1.2·link v0.4.3). 개발 venv 의 model-runtime 재설치.
 

@@ -46,7 +46,7 @@ unset _only _sec _args _i a_ _v _x
 CA_TXT=""
 if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
   bash -n "$0" || { echo "e2e.sh 문법 오류: E2E를 시작하지 않는다"; exit 1; }   # 긴 셸은 줄 휴리스틱이 아니라 문법 검사와 준비 단계의 실제 실행에 맡긴다(ADR 0033)
-  CA_TXT=$(CHECK_ALL_IMAGES=defer bash "$(dirname "$0")/check-all.sh" --strict 2>&1); CA_RC=$?; printf '%s\n' "$CA_TXT"
+  CA_RC=0; CA_TXT=$(CHECK_ALL_IMAGES=defer bash "$(dirname "$0")/check-all.sh" --strict 2>&1) || CA_RC=$?; printf '%s\n' "$CA_TXT"
   [ $CA_RC = 0 ] || { echo "check-all.sh --strict 가 FAIL 또는 SKIP 이라 E2E를 시작하지 않는다 (위 FAIL 의 영역/파일:줄을 먼저 고친다)"; exit 1; }
   export E2E_PRECHECK_DONE=1   # 자체 점검 묶음(self-checks.list)의 check-all 항목이 같은 점검을 두 번 돌지 않게 한다
 fi

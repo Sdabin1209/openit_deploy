@@ -49,6 +49,16 @@ check "거부 사유가 키 이름으로 출력된다" bash -c "$P dataset-store
 check "라벨 때문에 거부된 호출은 잠금을 바꾸지 않는다(그 서비스 줄 없음)" bash -c "! grep -qE 'OPS_FEEDBACK|RELEASE_GATE|DATASET_STORE' $DEPLOY_LOCK"
 expect_rc 3 "라벨 검사를 못 하면(스키마 폴더 없음) 통과가 아니라 거부" env IMAGE_LABELS_SCHEMA_DIR=/nonexistent-labels-dir $P survey-service deploy-pubtest/a:1
 expect_rc 4 "없는 이미지 거부" $P survey-service deploy-pubtest/nope:1
+# push 실패(레지스트리가 push 를 거부): docker 출력과 'push 실패' 사유가 남고 종료 코드 4, 마지막 줄은 계약 PublishResult. docker 래퍼가 push 만 거부한다(실제 docker 로 나머지를 한다)
+cat > "$W/docker-pushfail" <<EOF2
+#!/usr/bin/env bash
+if [ "\$1" = push ]; then echo "denied: requested access to the resource is denied" >&2; exit 1; fi
+exec "$DOCKER" "\$@"
+EOF2
+chmod +x "$W/docker-pushfail"
+expect_rc 4 "push 를 레지스트리가 거부하면 4(사유 출력)" env DOCKER="$W/docker-pushfail" $P survey-service deploy-pubtest/a:1
+check "push 거부 때 docker 출력과 'push 실패' 사유가 남는다" bash -c "grep -q 'denied: requested access' '$W/out.txt' && grep -q 'push 실패' '$W/out.txt'"
+check "push 거부 호출은 잠금을 바꾸지 않는다" bash -c "! grep -q 'SURVEY_SERVICE' $DEPLOY_LOCK"
 check "거부된 호출은 잠금을 바꾸지 않는다(서비스 줄 없음)" bash -c "! grep -q 'SURVEY_SERVICE' $DEPLOY_LOCK"
 expect_rc 0 "게시(첫 번째)" $P survey-service deploy-pubtest/a:1
 D1=$(pubres digest); check "첫 게시는 status PUBLISHED, service·revision 이 맞다" bash -c "[ \"$(pubres status)\" = PUBLISHED ] && [ \"$(pubres service)\" = survey-service ] && [ \"$(pubres revision)\" = aaa1111 ]"

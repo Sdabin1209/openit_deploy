@@ -16,7 +16,7 @@ if [ "${1:-}" = --print ]; then entries; exit 0; fi
 export DEPLOY_ROOT VENV
 FAILS=0; N=0; FAILED=()
 while IFS=$'\t' read -r d c; do
-  N=$((N+1)); out=$(bash -c "$c" 2>&1); rc=$?
+  rc=0; N=$((N+1)); out=$(bash -c "$c" 2>&1) || rc=$?
   if [ $rc = 0 ]; then echo "  [PASS] $d"; else echo "  [FAIL] $d (종료 $rc)"; printf '%s\n' "$out" | tail -8 | sed 's/^/         /'; FAILS=$((FAILS+1)); FAILED+=("$d"); fi
 done < <(entries)
 echo; if [ $FAILS = 0 ]; then echo "run-self-checks: 전부 통과 ($N개)"; else echo "run-self-checks: 실패 $FAILS개 / $N개"; printf '  - %s\n' "${FAILED[@]}"; exit 1; fi

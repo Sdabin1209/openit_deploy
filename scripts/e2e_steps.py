@@ -1988,12 +1988,12 @@ def step5g():
     reg = _registry_container(); lock = pathlib.Path(os.environ["DEPLOY_LOCK"])
     def lock_hash(): return hashlib.sha256(lock.read_bytes()).hexdigest()
     pub = lambda t: subprocess.run(["timeout", str(t), "bash", str(ROOT / "scripts/publish-images.sh"), "kiosk-frontend"], capture_output=True, text=True)
-    r0 = pub(120); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다: {(r0.stderr or r0.stdout)[-300:]}"
+    r0 = pub(120); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다(종료 코드 {r0.returncode}): 표준 출력 끝 {r0.stdout[-300:]!r} / 표준 오류 끝 {r0.stderr[-300:]!r}"
     h0 = lock_hash(); notes = []
     def live_ok(): return all(http("GET", k, "/healthz")[0] == 200 for k in ("qa", "gate", "ops"))
     sh([a.docker, "stop", reg])
     try:
-        r = pub(60); assert r.returncode not in (0, 124), f"F1: 레지스트리 중지 중 게시가 {'성공' if r.returncode == 0 else '60s 안에 끝나지 않았다'}: {(r.stderr or r.stdout)[-200:]}"
+        r = pub(60); assert r.returncode not in (0, 124), f"F1: 레지스트리 중지 중 게시가 {'성공' if r.returncode == 0 else '60s 안에 끝나지 않았다'}(종료 코드 {r.returncode}): 표준 출력 끝 {r.stdout[-200:]!r} / 표준 오류 끝 {r.stderr[-200:]!r}"
         assert lock_hash() == h0, "F1: 실패한 게시가 잠금 파일을 바꿨다"
         assert live_ok(), "F1: 레지스트리 중지가 실행 중 서비스에 영향을 줬다"
         notes.append(f"F1 중지: 게시 종료 코드 {r.returncode}(실패), 잠금 불변, 실행 중 서비스 /healthz 200")
@@ -2004,7 +2004,7 @@ def step5g():
     sh([a.docker, "pause", reg])
     try:
         r = pub(25)   # 무응답: publish-images.sh 는 자체 상한이 없다 -> 바깥 timeout(25s)으로 끊는다. 성공해서는 안 된다
-        assert r.returncode != 0, "F4: 레지스트리 무응답 중 게시가 성공했다"
+        assert r.returncode != 0, f"F4: 레지스트리 무응답 중 게시가 성공했다(종료 코드 {r.returncode}): {r.stdout[-200:]!r}"
         assert lock_hash() == h1, "F4: 무응답 중 끊긴 게시가 잠금 파일을 바꿨다"
         assert live_ok(), "F4: 레지스트리 pause 가 실행 중 서비스에 영향을 줬다"
         notes.append(f"F4 pause: 게시 종료 코드 {r.returncode}({'스스로 실패' if r.returncode != 124 else '자체 상한 없음, 바깥 25s timeout 이 끊음'}), 잠금 불변")

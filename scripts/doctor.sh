@@ -48,7 +48,7 @@ if ! command -v "$D" >/dev/null 2>&1; then
   D=""
 else
   ok "docker 실행 파일 ($D)"
-  ERR=$("$D" info 2>&1 >/dev/null); RC=$?
+  RC=0; ERR=$("$D" info 2>&1 >/dev/null) || RC=$?
   if [ $RC = 0 ]; then
     ok "데몬 접속 (DOCKER_HOST=${DOCKER_HOST:-<기본 소켓>})"
   else
@@ -148,21 +148,21 @@ fi
 SDIR="${SECRETS_DIR:-$DEPLOY_ROOT/secrets}"
 if [ $UP_ONLY = 1 ] && [ -d "$SDIR" ]; then
   echo "== 비밀 파일 권한"
-  PO=$(bash "$(dirname "$0")/check-secret-perms.sh" "$SDIR" 2>&1); PRC=$?
+  PRC=0; PO=$(bash "$(dirname "$0")/check-secret-perms.sh" "$SDIR" 2>&1) || PRC=$?
   if [ $PRC = 0 ]; then ok "$(echo "$PO" | tail -1)"; else
     while IFS= read -r l; do case "$l" in FAIL*) fail "${l#FAIL }" "bash scripts/gen-secrets.sh 를 다시 실행하면 모드를 바로잡는다 (docs/adr/0022-secret-file-permissions.md)";; esac; done <<<"$PO"; fi
 fi
 # --- 운영 구성에 시험 자격이 없는가(head 결정표 2절): 시험 기기 토큰·*-e2e 계정이 든 비밀로 운영 gateway 를 띄우지 않는다
 if [ $PROD = 1 ] && [ -d "$SDIR" ]; then
   echo "== 시험 자격 분리"
-  TO=$(bash "$(dirname "$0")/check-test-fixtures.sh" "$SDIR" 2>&1); TRC=$?
+  TRC=0; TO=$(bash "$(dirname "$0")/check-test-fixtures.sh" "$SDIR" 2>&1) || TRC=$?
   if [ $TRC = 0 ]; then ok "$(echo "$TO" | tail -1)"; else
     while IFS= read -r l; do case "$l" in FAIL*) fail "${l#FAIL }" "운영 비밀 폴더를 gen-secrets.sh(--test-fixtures 없이)로 새로 만들거나, 시험 기기는 kiosk-add-device.sh remove <ID>, 시험 계정은 config 에서 빼고 gen-secrets.sh 를 다시 실행한다";; esac; done <<<"$TO"; fi
 fi
 # --- 백업 필수(D88 U6): 설정이 없으면 backup 잡이 CRIT 로 실패한다. 기동 전에 막는다. 규칙의 정본은 scripts/backup-lib.sh
 if [ $CHECK_BACKUP = 1 ]; then
   echo "== 백업 설정"
-  BOUT=$(bash "$(dirname "$0")/backup-check.sh" 2>&1); BRC=$?
+  BRC=0; BOUT=$(bash "$(dirname "$0")/backup-check.sh" 2>&1) || BRC=$?
   if [ $BRC = 0 ]; then
     while IFS= read -r l; do case "$l" in WARN:*) warn "${l#WARN: }" "BACKUP_DIR 를 다른 디스크나 원격 마운트로 바꾼다 (config/backup.env.example)";; OK:*) ok "${l#OK: }";; esac; done <<<"$BOUT"
   else fail "$(echo "$BOUT" | sed -n 's/^CRIT: //p' | head -1)" "config/backup.env.example 을 config/backup.env 로 복사해 채운다. restic 저장소 암호 파일 만드는 법과 서버 밖 보관: docs/SETUP.md 백업 절"; fi
@@ -174,7 +174,7 @@ if [ $LLM = 1 ]; then
   PROFILE="${DEMO_LLM_PROFILE:-/app/profiles/gpu-12g.json}"
   if [ -z "$D" ]; then fail "docker 데몬을 쓸 수 없어 GPU 점검을 건너뛴다" "위의 docker 항목을 먼저 해결"
   else
-    GPU_OUT=$("$D" run --rm --gpus all "$CUDA_IMG" nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>&1); GRC=$?
+    GRC=0; GPU_OUT=$("$D" run --rm --gpus all "$CUDA_IMG" nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>&1) || GRC=$?
     if [ $GRC = 0 ] && [ -n "$GPU_OUT" ]; then
       ok "GPU 컨테이너 접근: $(echo "$GPU_OUT" | head -1 | tr -d '\r') MiB$( [ "$(echo "$GPU_OUT" | wc -l)" -gt 1 ] && echo " 외 $(( $(echo "$GPU_OUT" | wc -l) - 1 ))장")"
       MAXMIB=$(echo "$GPU_OUT" | tr -d '\r' | awk -F', *' '{gsub(/[^0-9]/,"",$NF); if($NF+0>m)m=$NF+0} END{print m+0}')

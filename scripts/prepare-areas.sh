@@ -36,7 +36,7 @@ else read -r -a TARGETS <<< "$ALL"; fi
 setup_one() {
   local a=$1 out rc py=${SETUP_PY:-$DEPLOY_ROOT/.venv/bin/python}   # deploy 자신의 .venv 는 위에서 먼저 준비한다(계약 패키지가 거기 있다)
   [ -x "$py" ] || py=python3
-  out=$(cd "$WORKSPACE/$a" && bash scripts/setup-env.sh); rc=$?
+  rc=0; out=$(cd "$WORKSPACE/$a" && bash scripts/setup-env.sh) || rc=$?
   printf '%s\n' "$out" | sed '$d'
   printf '%s\n' "$out" | "$py" "$DEPLOY_ROOT/scripts/setup_env_report.py" record "$a" || { [ $rc = 0 ] && rc=70; }
   return $rc

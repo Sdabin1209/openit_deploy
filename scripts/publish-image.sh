@@ -86,7 +86,7 @@ CT=${PUBLISH_CONNECT_TIMEOUT:-3}; PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; HEAD_T=${
 REF="$REG/openit/$SVC:build-$TAGREV"
 "$DOCKER" tag "$IMG" "$REF"
 curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "http://$REG/v2/" 2>/dev/null || { echo "거부: 레지스트리가 응답하지 않는다(${PROBE_T}초): $REG" >&2; exit 4; }
-out=$(timeout "$PUSH_T" "$DOCKER" push "$REF" 2>&1); prc=$?
+prc=0; out=$(timeout "$PUSH_T" "$DOCKER" push "$REF" 2>&1) || prc=$?
 [ $prc != 124 ] || { echo "$out" | tail -3 >&2; echo "거부: push 시간 초과(${PUSH_T}초, timeout 종료 코드 124): $REF (PUBLISH_PUSH_TIMEOUT 로 바꿀 수 있다)" >&2; exit 4; }
 [ $prc = 0 ] || { echo "$out" | tail -3 >&2; echo "거부: push 실패(종료 코드 $prc): $REF" >&2; exit 4; }
 DIGEST=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
@@ -96,7 +96,7 @@ reg=$(curl -fsSI --connect-timeout "$CT" --max-time "$HEAD_T" -H 'Accept: applic
 [ "$reg" = "$DIGEST" ] || { echo "거부: 레지스트리 digest('$reg')와 push 출력('$DIGEST')이 다르다" >&2; exit 4; }
 
 # 잠금 기록(직렬화, 임시 파일 -> 바꿔 넣기). 같은 digest면 아무것도 바꾸지 않는다
-VAR=$(echo "$SVC" | tr 'a-z-' 'A-Z_')
+VAR=$(echo "$SVC" | tr 'a-z-' 'A-Z_') || reg=""   # 레지스트리 HEAD 가 실패해도(set -e, pipefail) 아래의 거부 사유 출력과 종료 코드 4 가 돌게 한다
 exec 9>"$LOCK.lock"; flock 9
 CUR=$(sed -n "s/^${VAR}_DIGEST=//p" "$LOCK")
 if [ "$CUR" = "$DIGEST" ] && [ "$(sed -n "s/^${VAR}_REVISION=//p" "$LOCK")" = "$REV" ]; then

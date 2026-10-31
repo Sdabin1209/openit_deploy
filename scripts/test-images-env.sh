@@ -24,7 +24,8 @@ case "$1" in
         else echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v3.0.0","io.openit.contracts.survey-schema":"3","io.openit.model-runtime":"n/a"}'; fi;; esac
       exit 0;; esac; echo "Error: No such image: $3" >&2; exit 1; };;
   tag) case " $FAKE_HAVE " in *" $2 "*) exit 0;; esac; echo "Error response from daemon: No such image: $2" >&2; exit 1;;
-  push) echo "latest: digest: sha256:$(printf 'a%.0s' $(seq 64)) size: 1"; exit 0;;
+  push) [ "${FAKE_PUSH_FAIL:-0}" = 1 ] && { echo "denied: requested access to the resource is denied" >&2; exit 1; }
+    echo "latest: digest: sha256:$(printf 'a%.0s' $(seq 64)) size: 1"; exit 0;;
 esac
 exit 0
 SH
@@ -64,7 +65,14 @@ reg; ( pub model-serving-gpu 2>&1 || true ) | grep -q "build-images.sh --gpu" &&
 mkenv "$CUR"; reg; export FAKE_HAVE="$HAVE_BASE deploy-build/model-serving-gpu:$CUR"; ok "유효한 GPU 기록은 이름을 줄 때 올라간다" pub model-serving-gpu
 mkenv ""; reg; export FAKE_HAVE="$HAVE_BASE"; : > "$T/log"; pub model-serving >/dev/null 2>&1; ok "이름을 준 영역만 올린다(model-serving)" bash -c "grep -q 'model-serving:build-abc1234' '$T/log' && ! grep -q 'survey-service:build' '$T/log'"
 mkenv ""; rm "$D/build/images.env"; mkenv ""; no "이미지가 로컬에 없으면 'No such image' 대신 안내하고 거부" bash -c "FAKE_HAVE='' ; export FAKE_HAVE; cd '$D' && PATH='$T:\$PATH' DOCKER='$T/docker' DEPLOY_REGISTRY_ENV='$T/reg.env' DEPLOY_LOCK='$T/lock' bash scripts/publish-images.sh"
+# push 실패(레지스트리가 push 를 거부): set -e 아래서 `out=$(...); prc=$?` 는 대입문에서 셸이 죽어 실패 사유가 사라졌다(E2E 5g 에서 출력 없이 종료 코드만 남았다). 지금은 docker 출력과 'push 실패' 사유가 남고 종료 코드는 0 이 아니다
+mkenv ""; reg; export FAKE_HAVE="$HAVE_BASE"; : > "$T/log"
+PFBEFORE=$(sha256sum "$T/lock" | cut -c1-64)
+( export FAKE_PUSH_FAIL=1; pub survey-service >"$T/pf.out" 2>&1 ); PFRC=$?
+N=$((N+1)); if [ $PFRC != 0 ] && grep -q "denied: requested access" "$T/pf.out" && grep -q "push 실패(종료 코드" "$T/pf.out"; then echo "  PASS push 실패: 종료 코드 $PFRC, docker 출력과 'push 실패' 사유가 남는다"; else echo "  FAIL push 실패: 종료 코드 $PFRC, 출력: $(tail -3 "$T/pf.out" | tr '\n' ' ' | cut -c1-200)"; F=$((F+1)); fi
+ok "push 실패는 잠금을 바꾸지 않는다" test "$(sha256sum "$T/lock" | cut -c1-64)" = "$PFBEFORE"
 echo "== 연결(정적 확인)"
+no "set -e 로 도는 게시 스크립트에 \`x=$(…); y=$?\` 패턴이 없다(대입문에서 셸이 죽어 실패 사유가 사라진다)" grep -nE '^\s*[A-Za-z_]+=\$\(.*\)\s*;\s*[A-Za-z_]+=\$\?' "$HERE/publish-images.sh" "$HERE/publish-image.sh"
 ok "build-images.sh 는 GPU 기록을 gpu_record_valid 로 걸러 유지한다" grep -q 'GPU_KEEP=$(gpu_record_valid' "$HERE/build-images.sh"
 ok "e2e.sh 정리는 model-serving-gpu 이미지를 지우지 않는다" grep -q "grep -v '^deploy-build/model-serving-gpu:'" "$HERE/e2e.sh"
 ok "e2e.sh have_images 는 GPU 기록을 보지 않는다" grep -q "grep -vc '^model-serving-gpu '" "$HERE/e2e.sh"
