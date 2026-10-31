@@ -119,6 +119,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0001 오케스트레이션은 단일 서버의 Docker Compose](docs/adr/0001-compose.md)
 - [0002 gateway는 Caddy](docs/adr/0002-caddy-gateway.md)
 - [0003 시간 불변식 체인(값은 0047이 대체)](docs/adr/0003-time-invariants.md)
+- [0048 gateway 상류 프록시 상한이 사슬 규칙을 지킨다](docs/adr/0048-gateway-proxy-limits-follow-the-chain.md)
 - [0047 시간 상한 사슬 값: 키오스크 12s > gateway 10.5s > survey 턴 9s > 추출 3s + 응답 5s](docs/adr/0047-time-chain-values.md)
 - [0004 E2E는 가짜 모델로 하고 전체 모드와 --only/--fast를 둔다](docs/adr/0004-e2e-fake-model.md)
 - [0005 TLS는 gateway에서 HTTPS 필수, 기본은 Caddy 내부 CA(`tls internal`)](docs/adr/0005-tls-internal-ca.md)

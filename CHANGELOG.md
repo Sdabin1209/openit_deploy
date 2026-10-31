@@ -1,5 +1,12 @@
 # 변경 이력
 
+## wo-424: 생산자 검증(R7, U424), 재시작 정책 시험
+- `kiosk-add-device.sh` 가 기기 설정(secrets/kiosk-config/<ID>.json)을 쓰기 전에 계약 `DeviceConfig` 로 검증한다. 어기면(예: 공백이 든 토큰) 파일을 만들지 않고 실패하며 토큰 값은 출력하지 않는다. 와이어 형식은 그대로. 시험 `scripts/test-kiosk-device-config.sh`.
+- E2E `sd_config` 가 만드는 synthetic-data 실행 설정이 계약 `SyntheticJobConfigRun` 을 통과하는지 정적 시험(`scripts/test_e2e_sd_config.py`, 일반·시드 없음·failure_store 포함 3가지: 모두 통과, 코드 고침 없음).
+- 결함: 계약 시간표(CONVENTIONS, D119)의 model-runtime 요청 상한은 extract 3.0초·respond 5.0초인데 model-runtime v0.11.4 서버 기본값은 respond 2.0초이고 deploy 가 넘기지 않아 배포에서 respond 가 2초에 잘렸다. `config/model-serving.env`(compose.yaml 의 model-serving)와 `compose.inference.yaml`(GPU/외부 추론 서버)에 `MODEL_RUNTIME_EXTRACT_DEADLINE_S=3.0`, `MODEL_RUNTIME_RESPOND_DEADLINE_S=5.0` 을 명시했다. `scripts/test_time_chain.py` 가 두 파일의 값이 계약 표와 같고 survey.env 호출별 상한과 같으며 survey 턴 9초 > 추출+응답임을 본다. 서버가 실제로 이 이름을 읽는지는 model-runtime 소스를 읽지 않아 확인하지 않았다(헤드가 알려 준 이름).
+- Caddyfile `@staffapi`(직원 API) 연결 2s + 헤더 10s = 12s 가 직원 화면 대기 12s 와 같아 사슬이 깨졌다: 연결 1s + 헤더 9.5s = 10.5s 로(ADR 0048). 관리 화면 대기 15s 에 비해 긴 release-gate·저작 경로(2s + 15s)도 `proxy_limits` 연결 1s + 헤더 13s(합 14s)로. E2E 상수 `GW_DIAL_PROXY_S` 1, `GW_HDR_GATE_S` 13, 새 `STAFF_SCREEN_WAIT_S`·`ADMIN_CONSOLE_WAIT_S`. 시험 `test_time_chain.py` 의 `ProxyChain` 이 모든 reverse_proxy 블록을 본다(옛 값으로 되돌리면 실패 확인).
+- U17 '서비스 컨테이너 재시작': `scripts/test_compose_restart_policy.py` — compose.yaml 의 상시 서비스 11개가 모두 `restart: unless-stopped`, job-* 5개는 restart 없음·profiles 로 기본 기동에서 빠짐. 재시작 동작은 Docker 의 몫이라 시험하지 않는다.
+
 ## wo-410: 5n-reask 상태 비교 값, 열거 상수 정적 시험
 - 결함: `e2e_steps.py` 5n-reask(1275·1291행)가 계약 `SessionState.state`(ACTIVE|PAUSED_RISK|ENDED)를 `StaffSessionView.status` 의 값 "IN_PROGRESS" 와 비교해 '한도 전에 정지했다'로 실패했다(E2E 174 통과 1 실패). 두 곳을 "ACTIVE" 로 고쳤다.
 - 재발 방지 `scripts/test_e2e_enum_constants.py`(self-checks.list): E2E 의 `x["키"] == "상수"`/`in (...)` 비교를 AST 로 모아 (1) `state_dev`/`state_of` 로 받은 응답은 계약 SessionState 열거, `staff_sv` 응답은 문진 스키마(DEPLOY_SS_TAG) StaffSessionView.status 열거 안에 있는지, (2) 일반: 계약·문진 스키마에 같은 이름의 열거 속성이 있으면 상수가 그 합집합에 있는지 본다. 같은 이름 열거가 없는 키는 판단하지 않고 UNCHECKED 로 출력한다(통과로 세지 않음). 허용 목록 3건은 이유와 함께 시험 안에 있다(BoundaryError.details.reason, 지표 레지스트리 status). 옛 값으로 되돌리면 실패하는 것을 확인했다.

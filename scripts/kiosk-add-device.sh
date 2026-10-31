@@ -18,9 +18,20 @@ case "$CMD" in
   list|sync|from-list) ;;
   *) die "사용: kiosk-add-device.sh add|rotate|remove <기기 ID> | from-list [파일] | list | sync [--apply]";;
 esac
-kiosk_config() { # kiosk_config <ID>: 기기 산출물(600)
+kiosk_config() { # kiosk_config <ID>: 기기 산출물(600). R7: 쓰기 전에 계약 DeviceConfig 로 검증한다(어기면 파일을 만들지 않고 실패: 기존 산출물도 그대로 둔다)
   mkdir -p "$D/kiosk-config"; chmod 700 "$D/kiosk-config"
-  ( umask 077; python3 -I -c 'import json,sys;print(json.dumps({"device_token": open(sys.argv[1]).read().strip(), "allow_remote_stt": False}))' "$D/tokens/kiosk-device-$1" > "$D/kiosk-config/$1.json" ); chmod 600 "$D/kiosk-config/$1.json"
+  ( umask 077; "$DEPLOY_PY" -W ignore -I - "$D/tokens/kiosk-device-$1" "$D/kiosk-config/$1.json" <<'PY'
+import json, os, sys, tempfile
+from boundary_contracts import validator
+cfg = {"device_token": open(sys.argv[1]).read().strip(), "allow_remote_stt": False}
+errs = [f"/{'/'.join(map(str, e.path))}: {e.validator} 위반" for e in validator("DeviceConfig").iter_errors(cfg)]   # 값(토큰)은 출력하지 않는다
+if errs:
+    sys.exit("기기 설정이 계약 DeviceConfig 를 어긴다: " + "; ".join(errs))
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(sys.argv[2]), prefix=".cfg-"); os.close(fd)
+with open(tmp, "w") as f: f.write(json.dumps(cfg) + "\n")
+os.replace(tmp, sys.argv[2])
+PY
+  ) || die "기기 $1 의 설정을 쓰지 못했다(위 사유)"; chmod 600 "$D/kiosk-config/$1.json"
 }
 case "$CMD" in
   from-list) LIST=${2:-}; case "$LIST" in ""|--*) LIST=$DEPLOY_ROOT/config/kiosk-devices.conf;; esac;   # from-list --apply 처럼 옵션이 두 번째 인자로 오면 기본 목록(점검 L4)

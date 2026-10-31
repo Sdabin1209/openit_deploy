@@ -10,7 +10,7 @@ from openit_deploy.components import exposure_check as C
 CADDY = (HERE.parent / "config/Caddyfile").read_text(encoding="utf-8")
 HOSTS = json.loads((HERE.parent / "config/exposure-hosts.json").read_text())
 ROLES = "staff operator release-approver reviewer author clinical-reviewer".split()
-TO = {"dial": 2000, "response_header": 15000}
+TO = {"dial": 1000, "response_header": 13000}   # config/Caddyfile 의 release-gate 사람용 경로(ADR 0048)
 GATE = {"service": "release-gate", "routes": [
     {"paths": ["/v1/submissions", "/v1/submissions/*"], "methods": ["GET"], "auth": {"kind": "account", "roles": ["release-approver"]}, "timeouts_ms": TO, "upstream_token": "gate-read-release-approver", "user_header": "set"},
     {"paths": ["/v1/approvals"], "methods": ["POST"], "auth": {"kind": "account", "roles": ["release-approver"]}, "timeouts_ms": TO, "upstream_token": "gate-write-release-approver", "user_header": "set"},
@@ -60,7 +60,7 @@ class T(unittest.TestCase):
 
     def test_caddy_change_is_caught(self):
         self.assertTrue(any("상류 토큰" in d for d in run(caddy=CADDY.replace("gate-write-operator", "gate-write-other"))))
-        self.assertTrue(any("시간 제한" in d for d in run(caddy=CADDY.replace("(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\tdial_timeout 2s", "(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\tdial_timeout 3s"))))
+        self.assertTrue(any("시간 제한" in d for d in run(caddy=CADDY.replace("(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\tdial_timeout 1s", "(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\tdial_timeout 3s"))))
 
     def test_oci_user_and_port(self):
         self.assertTrue(any("root" in d for d in run(oci={"exposed_ports": ["8080/tcp"], "user": ""})))

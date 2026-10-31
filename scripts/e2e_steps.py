@@ -893,11 +893,13 @@ def step5o():
     rec("5o", "REAL", f"일수 칸 규격(0~7, 값 단위 day/week). 추론 서버 직접(ExtractRequest{{input, flow, fields}}): 8일 -> REASK/OUT_OF_RANGE(같은 문항, 저장 안 하는 UNCLEAR, targets Q8_1.days), 7일·0일 -> NEXT(경계 포함). 서비스 경유: {turns}턴으로 Q8_1 도달 뒤 '8일이요' -> 턴 action REASK, Q8_1.days=8 저장 없음 -> '3일이요' -> 3 저장(ANSWERED).")
 
 # ---- 시간 단언의 상수: 설정(config/Caddyfile, 서비스 문서)에서 도출한 값과 측정 환경별 관찰값을 이름으로 둔다. 단언의 의미(상한 안에 들어와야 한다)는 그대로이고, 한 환경의 측정값을 불변식처럼 쓰지 않는다.
+ADMIN_CONSOLE_WAIT_S = 15.0  # 관리 화면(admin-console 영역)의 대기: 승인·운영·검토·저작 경로의 gateway 상한(연결 + 헤더)이 이보다 짧아야 한다(ADR 0048)
+STAFF_SCREEN_WAIT_S = 12.0   # 직원 화면(kiosk-frontend REQUEST_TIMEOUT_MS)의 대기: 직원 API 경로(@staffapi)의 gateway 상한이 이보다 짧고 서버 턴 마감보다 길어야 한다
 KIOSK_WAIT_S = 12.0          # 키오스크 대기(kiosk-frontend 영역, 사용자 결정 2026-10-30, ADR 0003)
 SURVEY_TURN_DEADLINE_S = 9.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS, config/survey.env 가 정본이고 scripts/test_time_chain.py 가 같음을 본다)
-GW_DIAL_PROXY_S = 2.0        # 사람용 프록시(proxy_limits) 연결 상한 dial_timeout
+GW_DIAL_PROXY_S = 1.0        # 사람용 프록시(proxy_limits) 연결 상한 dial_timeout
 GW_READYZ_CAP_S = 3.0        # gateway /readyz 프록시 = 연결 1s + 응답 헤더 2s (Caddyfile)
-GW_HDR_GATE_S, GW_HDR_OPS_S = 15.0, 10.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, 시작값)
+GW_HDR_GATE_S, GW_HDR_OPS_S = 13.0, 10.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, 시작값)
 DOCKER_DNS_FAIL_S = 3.0      # 멈춘 컨테이너 이름을 Docker 내부 DNS가 해석하지 못하는 지연. 근거: 설정 없는 Caddy가 이름 해석 실패 502를 3.0s 뒤에 냈다(docs/E2E.md 관찰, 한 환경에서 측정)
 BASIC_AUTH_S = 2.0           # gateway 기본 인증(bcrypt) 확인 시간의 여유. 관찰: 이 PC 약 0.9s(검토 목록 pause 가 설정 10s 에 10.87s). 근거 기록 없음 이상의 일반화는 하지 않는다
 CLIENT_EXTRA_S = 2.0         # 호스트 클라이언트가 gateway 응답을 더 늦게 받는 정도. 관찰: gpu-dev(Docker Desktop 4.50) +0.5~1.9s, 이 PC 0 (docs/E2E.md 5w 계측)
