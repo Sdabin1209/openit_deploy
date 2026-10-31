@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-424 (U426 이어서): PublishResult·Import 설정 생산자 검증
+- `publish-image.sh` 의 마지막 줄(PublishResult)을 내보내기 전에 계약으로 검증한다(`DEPLOY_PY` 의 boundary_contracts). 어기면 표준 출력을 비우고 사유(위치만, 값 없음)를 표준 오류에 쓰며 성공(0)이었다면 종료 70, 실패 코드는 그대로. 시험 `scripts/test-publish-result-contract.sh`.
+- synthetic 설정을 만드는 운영 코드는 없다(config/·스케줄러에 없음). 만드는 곳은 E2E 의 `sd_config`(Run)·`imp_config`(Import)이고 둘 다 정적 시험으로 계약을 통과함을 본다(`test_e2e_sd_config.py`).
+
 ## wo-424: 생산자 검증(R7, U424), 재시작 정책 시험
 - `kiosk-add-device.sh` 가 기기 설정(secrets/kiosk-config/<ID>.json)을 쓰기 전에 계약 `DeviceConfig` 로 검증한다. 어기면(예: 공백이 든 토큰) 파일을 만들지 않고 실패하며 토큰 값은 출력하지 않는다. 와이어 형식은 그대로. 시험 `scripts/test-kiosk-device-config.sh`.
 - E2E `sd_config` 가 만드는 synthetic-data 실행 설정이 계약 `SyntheticJobConfigRun` 을 통과하는지 정적 시험(`scripts/test_e2e_sd_config.py`, 일반·시드 없음·failure_store 포함 3가지: 모두 통과, 코드 고침 없음).

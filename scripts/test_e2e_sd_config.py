@@ -25,7 +25,23 @@ def sd_config_fn(work):
     return ns["sd_config"]
 
 
+def imp_config_fn(work):
+    tree = ast.parse(SRC)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "imp_config")
+    ns = {"json": json, "RID": "e2e-test", "ACTION_RULES_VERSION": load_rules()["rules_version"], "SD_UNUSED_DIR": const("SD_UNUSED_DIR"), "QS": "qs-e2e-test",
+          "STATE": {"qs": [{"version": "1", "content_hash": "sha256:" + "a" * 64}]}, "WORK": pathlib.Path(work), "IMPORT_DIR": pathlib.Path(work) / "in", "pathlib": pathlib}
+    exec(compile(ast.Module([fn], []), "e2e_steps.py", "exec"), ns)
+    return ns["imp_config"]
+
+
 class SdConfig(unittest.TestCase):
+    def test_import_config_passes_contract(self):   # 운영 스케줄러에는 synthetic 설정을 만드는 코드가 없다(config/ 에 없음): 설정을 만드는 곳은 E2E 의 sd_config(Run)와 imp_config(Import) 둘이다
+        with tempfile.TemporaryDirectory() as w:
+            for store in (pathlib.Path(w) / "s", {"kind": "file", "root": w + "/s2"}):
+                cfg = json.loads(imp_config_fn(w)("t", 2, store).read_text(encoding="utf-8"))
+                errs = [f"/{'/'.join(map(str, e.path))}: {e.message[:120]}" for e in validator("SyntheticJobConfigImport").iter_errors(cfg)]
+                self.assertEqual(errs, [], "imp_config 가 만든 설정이 SyntheticJobConfigImport 를 어긴다")
+
     def check(self, **kw):
         with tempfile.TemporaryDirectory() as w:
             p = sd_config_fn(w)("t", **kw) if "seeds" in kw else sd_config_fn(w)("t", True, **kw)

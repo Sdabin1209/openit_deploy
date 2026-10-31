@@ -16,12 +16,21 @@ source "$(dirname "$0")/lib.sh"
 # 마지막 줄 PublishResult(계약): 어떤 종료 경로든 같은 자리에서 낸다(종료 코드 enum 0~5 밖이면 계약에 없는 코드라 내지 않는다)
 PUB_STATUS=""; PUB_DIGEST=""; PUB_REV=""; PUB_JSON=1
 emit_result() {
-  local rc=$? svc=""
+  local rc=$? svc="" out
   [ "$PUB_JSON" = 1 ] || return $rc
   case $rc in 0|1|2|3|4|5) ;; *) return $rc;; esac
   [[ "${SVC:-}" =~ ^[a-z][a-z0-9-]*$ ]] && svc=$SVC
-  if [ $rc = 0 ]; then printf '{"exit_code":0,"status":"%s","service":"%s","digest":"%s","revision":"%s"}\n' "$PUB_STATUS" "$svc" "$PUB_DIGEST" "$PUB_REV"
-  else printf '{"exit_code":%s%s%s}\n' "$rc" "${svc:+,\"service\":\"$svc\"}" "$( [[ "${REV:-}" =~ ^[0-9a-f]{7,40}$ ]] && printf ',"revision":"%s"' "$REV")"; fi
+  if [ $rc = 0 ]; then out=$(printf '{"exit_code":0,"status":"%s","service":"%s","digest":"%s","revision":"%s"}' "$PUB_STATUS" "$svc" "$PUB_DIGEST" "$PUB_REV")
+  else out=$(printf '{"exit_code":%s%s%s}' "$rc" "${svc:+,\"service\":\"$svc\"}" "$( [[ "${REV:-}" =~ ^[0-9a-f]{7,40}$ ]] && printf ',"revision":"%s"' "$REV")"); fi
+  # R7: 만드는 쪽이 내보내기 전에 계약 PublishResult 로 검증한다. 어기면 줄을 내지 않고(표준 출력 비움) 표준 오류에 사유(값 없이 위치만)를 쓰고, 성공(0)이었다면 0이 아닌 코드(70)로 끝낸다 — 영역 CI 가 틀린 결과를 제출하지 않게 한다
+  if ! err=$("$DEPLOY_PY" -W ignore -I -c 'import json,sys
+from boundary_contracts import validator
+e = ["%s: %s 위반" % (list(x.path), x.validator) for x in validator("PublishResult").iter_errors(json.loads(sys.argv[1]))]
+sys.exit("; ".join(e) if e else 0)' "$out" 2>&1); then
+    echo "publish-image.sh: 결과가 계약 PublishResult 를 어긴다(내보내지 않는다): $err" >&2
+    [ $rc = 0 ] && exit 70; return $rc
+  fi
+  printf '%s\n' "$out"
   return $rc
 }
 trap emit_result EXIT
