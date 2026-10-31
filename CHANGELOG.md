@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-432: model-runtime v0.11.9
+- `DEPLOY_MR_TAG` v0.11.8 -> v0.11.9(영역 Dockerfile 고정이 계약 v3.1.2·link v0.4.3). 개발 venv 의 model-runtime 재설치.
+
 ## wo-424 (마지막): 기준표 갱신
 - `DEPLOY_BC_TAG` v3.1.2, `DEPLOY_LINK_TAG` v0.4.3, `DEPLOY_MR_TAG` v0.11.8(태그 6d53635). 개발 venv 의 세 패키지를 같은 태그로 재설치. `docs/components.md`·`docs/STATUS.md` 의 표기 갱신. 시험의 v0.4.1 문자열은 `test_link_pin_check.py` 의 자체 표본(가짜 워크스페이스, 기준표와 무관)이라 두었다.
 
