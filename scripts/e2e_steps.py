@@ -291,6 +291,7 @@ def sd_config(name, seeds, failure=False, version=None):
     if failure:
         cfg["adapters"]["failure_store"] = {"factory": "synthetic_data.adapters:http_failure_store", "kwargs": {"base_url": SD_OPS_JOB_URL, "token_env": "FAILURE_STORE_TOKEN"}}   # 계약 factory
         cfg["seeds"]["question_set_id"] = QS
+    validate("SyntheticJobConfigRun", cfg)   # R7: 설정을 쓰기 전에 계약으로 검증한다(어기면 잡이 아니라 여기서 멈춘다)
     p = WORK / f"sd-{name}.job.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
 # 실패 진단(사용자 지시: 검사가 실패하면 이유를 산출한다): $W/diag/ 에 남기면 e2e.sh 가 정리 전에 state/e2e-diag-<시각>/ 로 복사한다.
@@ -341,6 +342,7 @@ def imp_config(name, max_invalid_rows, store_root):
            "source_label": "deploy-e2e-test-data", "action_rules_version": ACTION_RULES_VERSION, "created_at": "2026-10-27T00:00:00Z",
            "tolerance": {"max_invalid_rows": max_invalid_rows, "max_invalid_rate": 1.0},
            "output": {"work_dir": str(WORK / f"sd-import-{name}"), "store": store_root if isinstance(store_root, dict) else {"kind": "file", "root": str(store_root)}}}
+    validate("SyntheticJobConfigImport", cfg)   # R7: 설정을 쓰기 전에 계약으로 검증한다
     p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
 # synthetic-run 잡이 부르는 이웃(문항 읽기 question-authoring, 실패 사례 ops-feedback-ingest)은 compose 의 authoring 네트워크에 함께 붙어 있다(compose.yaml 이 정본, test_e2e_job_urls 가 대조).

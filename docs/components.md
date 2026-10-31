@@ -34,6 +34,7 @@
 | adapter_check | `openit_deploy/components/adapter_check.py` | AdapterCheckRequest | AdapterCheckResult | 가져온 LoRA 어댑터 한 쌍이 프로파일의 기반 모델·순위 한도에 얹을 수 있는지 판정한다 |
 | area_list | `openit_deploy/components/area_list.py` | AreaListRequest | AreaListResult | 영역 목록에서 조건(kind, 버전 열차, 제외)에 맞는 영역 이름을 고른다 |
 | caddyfile_demo | `openit_deploy/components/caddyfile_demo.py` | CaddyfileDemoRequest | CaddyfileDemoResult | 운영 Caddyfile 에서 /config.json 404 블록 하나만 푼 데모용 사본을 만든다 |
+| config_contract_check | `openit_deploy/components/config_contract_check.py` | ConfigContractCheckRequest | ConfigContractCheckResult | 컨테이너에 주입·배치하는 설정·환경이 기동 전에 계약 스키마를 따르는지 판정한다 |
 | consistency_check | `openit_deploy/components/consistency_check.py` | ConsistencyCheckRequest | ConsistencyCheckResult | 영역을 가로지르는 정적 일관성 규칙(버전표, 예시 키 순서, 삭제된 이름 등)을 점검한다 |
 | exposure_check | `openit_deploy/components/exposure_check.py` | ExposureCheckRequest | ExposureCheckResult | Caddyfile 의 노출이 이미지 노출 선언(라벨 io.openit.exposure)과 같은지 대조한다 |
 | image_label_check | `openit_deploy/components/image_label_check.py` | ImageLabelCheckRequest | ImageLabelCheckResult | 이미지 라벨이 계약 ImageLabels(와 jobs·exposure 안쪽 JSON)를 따르는지 판정한다 |

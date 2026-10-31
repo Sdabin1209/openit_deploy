@@ -1,5 +1,11 @@
 # 변경 이력
 
+## wo-424 (생산자 검증 8건, 예외 삭제)
+- 기동 전 설정·환경 계약 관문: `up.sh` 가 `compose up` 앞에서 `check_config_contracts.py`(컴포넌트 `config_contract_check`)를 불러, 컨테이너에 주입할 환경(survey-service=SurveyServiceEnv, ops-feedback-ingest=OpsFeedbackServerEnv, question-authoring=QuestionAuthoringDeployInterface#Environment)과 배치 파일(config/ops-feedback-job.yaml=OpsFeedbackJobConfig, test/fake-model/question_flow.json=RuntimeFlowFile)을 계약으로 검증한다. 어기면 기동하지 않는다(값은 출력하지 않는다). 시험 `scripts/test_config_contract_gate.py`(실제 합쳐진 운영 환경 통과, 위반 시 종료 1, 없는 스키마는 실패).
+- E2E `sd_config`·`imp_config` 가 설정을 쓰기 전에 `SyntheticJobConfigRun`·`SyntheticJobConfigImport` 로 검증한다(동작 코드).
+- 생산자 대조 8건 정리: DeviceConfig(kiosk-add-device.sh), SurveyServiceEnv·OpsFeedbackServerEnv·QuestionAuthoringDeployInterface·RuntimeFlowFile(up.sh 관문), SyntheticJobConfigImport(e2e_steps.py imp_config). GateJobConfig·GatePolicy 는 deploy 가 만드는 파일이 없다(release-gate 잡은 환경 변수로 설정되고 정책 파일은 O11 확정 전이라 두지 않는다): 만드는 코드가 생기면 관문에 더한다.
+- `config/exposure-known-diffs.json` 의 U424 예외 43건을 지웠다(영역 노출 선언 wo-427 이 새 값이다: 영역 wo-427 브랜치의 라벨로 check-exposure 를 돌려 시간 제한 어긋남 0건 확인). 변경 요청 문서 CR-U424-exposure-timeouts.md 도 지웠다.
+
 ## wo-424 (U427 이어서): model-runtime v0.11.7
 - 사용자 결정: `DEPLOY_MR_TAG` v0.11.4 -> v0.11.7(태그 116e251). 개발 venv 의 model-runtime 도 v0.11.7 로 다시 설치(check-all 이 공개 이름 `SUPPORTED_TEMPLATE_VERSIONS` 를 읽는다). `exposure-known-diffs.json` 의 U424 예외는 임시이고 최종 상태에 남기지 않는다: 영역 선언이 합쳐진 뒤 헤드가 알리면 지운다.
 

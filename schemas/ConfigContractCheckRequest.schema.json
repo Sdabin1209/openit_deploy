@@ -1,0 +1,40 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ConfigContractCheckRequest.schema.json",
+ "title": "ConfigContractCheckRequest",
+ "type": "object",
+ "required": [
+  "documents"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "documents": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": [
+     "label",
+     "schema",
+     "document"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "label": {
+      "type": "string",
+      "minLength": 1,
+      "description": "사람이 읽는 이름(파일 경로 또는 compose 서비스 이름)"
+     },
+     "schema": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]*(#[A-Za-z0-9]+)?$",
+      "description": "계약 스키마 이름(boundary_contracts). 파일 안의 정의 하나는 이름#정의 로 쓴다"
+     },
+     "document": {
+      "description": "검증할 문서(설정 파일 내용 또는 컨테이너에 주입할 환경). 값은 결과에 싣지 않는다"
+     }
+    }
+   }
+  }
+ }
+}

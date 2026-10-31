@@ -52,3 +52,4 @@ compose 재시작 정책 (상시 서비스 11개 restart: unless-stopped, job-* 
 E2E 의 synthetic-data 실행 설정(sd_config)이 계약 SyntheticJobConfigRun 을 통과한다 (R7: 만드는 쪽 검증) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_sd_config.py"
 기기 설정(kiosk-add-device.sh)이 쓰기 전에 계약 DeviceConfig 로 검증된다 (R7; 어기면 파일 없음·토큰 값 비출력) :: bash "$DEPLOY_ROOT/scripts/test-kiosk-device-config.sh"
 publish-image.sh 의 PublishResult 가 내보내기 전에 계약으로 검증된다 (R7; 위반이면 표준 출력 비움·성공이면 종료 70) :: bash "$DEPLOY_ROOT/scripts/test-publish-result-contract.sh"
+기동 전 설정·환경 계약 검증 관문 (R7: 실제 합쳐진 compose 환경이 통과, 계약 위반은 종료 1·값 비출력, 없는 스키마는 실패, up.sh 가 compose up 앞에서 부른다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_config_contract_gate.py"

@@ -1,0 +1,1 @@
+{"checked": 2, "ok": false, "violations": [{"label": "survey-service", "schema": "SurveyServiceEnv", "where": "SURVEY_X", "message": "additionalProperties 위반"}]}

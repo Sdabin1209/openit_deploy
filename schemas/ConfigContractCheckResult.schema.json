@@ -1,0 +1,72 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ConfigContractCheckResult.schema.json",
+ "title": "ConfigContractCheckResult",
+ "type": "object",
+ "required": [
+  "checked",
+  "violations",
+  "ok"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "checked": {
+   "type": "integer",
+   "minimum": 1
+  },
+  "ok": {
+   "type": "boolean"
+  },
+  "violations": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "label",
+     "schema",
+     "where",
+     "message"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "label": {
+      "type": "string"
+     },
+     "schema": {
+      "type": "string"
+     },
+     "where": {
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ },
+ "if": {
+  "properties": {
+   "ok": {
+    "const": true
+   }
+  },
+  "required": [
+   "ok"
+  ]
+ },
+ "then": {
+  "properties": {
+   "violations": {
+    "maxItems": 0
+   }
+  }
+ },
+ "else": {
+  "properties": {
+   "violations": {
+    "minItems": 1
+   }
+  }
+ }
+}

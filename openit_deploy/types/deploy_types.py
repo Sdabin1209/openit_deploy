@@ -59,6 +59,29 @@ class CaddyfileDemoResult(TypedDict):
     demo_caddyfile: NotRequired[str]
 
 
+class Document(TypedDict):
+    label: str
+    schema_: str
+    document: Any
+
+
+class ConfigContractCheckRequest(TypedDict):
+    documents: List[Document]
+
+
+class Violation(TypedDict):
+    label: str
+    schema_: str
+    where: str
+    message: str
+
+
+class ConfigContractCheckResult(TypedDict):
+    checked: int
+    ok: bool
+    violations: List[Violation]
+
+
 class ConsistencyCheckRequest(TypedDict):
     workspace: str
     deploy_dir: str

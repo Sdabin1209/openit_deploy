@@ -15,10 +15,14 @@ def const(name):   # e2e_steps.py 의 최상위 문자열 상수 한 개를 값�
     return ast.literal_eval(m.group(1)) if m else None
 
 
+def _validate(name, obj):   # e2e_steps.py 의 validate 와 같은 일: 계약 validator 로 검증하고 어기면 AssertionError
+    errs = list(validator(name).iter_errors(obj)); assert not errs, f"{name} 스키마 위반: {errs[0].message}"
+
+
 def sd_config_fn(work):
     tree = ast.parse(SRC)
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "sd_config")
-    ns = {"json": json, "RID": "e2e-test", "ACTION_RULES_VERSION": load_rules()["rules_version"], "SD_UNUSED_DIR": const("SD_UNUSED_DIR"),
+    ns = {"json": json, "validate": _validate, "RID": "e2e-test", "ACTION_RULES_VERSION": load_rules()["rules_version"], "SD_UNUSED_DIR": const("SD_UNUSED_DIR"),
           "SD_QA_JOB_URL": const("SD_QA_JOB_URL"), "SD_OPS_JOB_URL": const("SD_OPS_JOB_URL"), "QS": "qs-e2e-test", "QSU": "qs-e2e-test-unseen",
           "STATE": {"qs": [{"version": "1"}, {"version": "2"}]}, "WORK": pathlib.Path(work), "pathlib": pathlib}
     exec(compile(ast.Module([fn], []), "e2e_steps.py", "exec"), ns)
@@ -28,7 +32,7 @@ def sd_config_fn(work):
 def imp_config_fn(work):
     tree = ast.parse(SRC)
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "imp_config")
-    ns = {"json": json, "RID": "e2e-test", "ACTION_RULES_VERSION": load_rules()["rules_version"], "SD_UNUSED_DIR": const("SD_UNUSED_DIR"), "QS": "qs-e2e-test",
+    ns = {"json": json, "validate": _validate, "RID": "e2e-test", "ACTION_RULES_VERSION": load_rules()["rules_version"], "SD_UNUSED_DIR": const("SD_UNUSED_DIR"), "QS": "qs-e2e-test",
           "STATE": {"qs": [{"version": "1", "content_hash": "sha256:" + "a" * 64}]}, "WORK": pathlib.Path(work), "IMPORT_DIR": pathlib.Path(work) / "in", "pathlib": pathlib}
     exec(compile(ast.Module([fn], []), "e2e_steps.py", "exec"), ns)
     return ns["imp_config"]
