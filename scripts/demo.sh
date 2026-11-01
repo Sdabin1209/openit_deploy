@@ -9,7 +9,7 @@
 #   scripts/demo.sh swap-adapters [--adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE]   떠 있는 데모에서 새 모델 패키지를 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화해 model-serving 만 새 번들을 적재시킨다(다른 서비스는 재시작하지 않는다, D72/U08). 인자 없음 = 가짜 백엔드 데모의 시험용 어댑터, 인자 = --llm 데모의 진짜 어댑터(같은 사전 검사)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
 #   scripts/demo.sh status | reset [--stop-before-approval] | down [--purge-cache]   (모델 캐시 볼륨은 down 해도 남는다. --purge-cache 로 명시적으로 지운다)
-# 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 시험 구성(compose.test.yaml)을 쓴다.
+# 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 설정값 overlay(test/compose.sandbox.yaml)만 더한다. 시험용 문(내부 서비스 호스트 포트)은 없다: 데모의 단계 코드도 게이트웨이(HTTPS)로만 들어간다(docs/adr/0049).
 # 표준 `docker`만 쓴다. 컨테이너의 호스트 포트는 Docker가 배정한다(고정 포트 없음). 임시 레지스트리도 빈 포트를 고른다.
 # 환경 변수: DEMO_PROJECT(기본 deploy-demo, 반드시 deploy-demo 로 시작), DEMO_BIND(gateway 호스트 바인드, 기본 127.0.0.1; 다른 PC에서 보려면 0.0.0.0 -- HTTP·기본 인증이라 시험 때만),
 #           DEMO_REGISTRY_BIND(레지스트리 바인드, 기본 127.0.0.1; 데몬이 닿지 못하면 사용자가 0.0.0.0 으로 바꾼다 -- 끝나면 down).
@@ -65,9 +65,9 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   export DEMO_MIMIC_FLOW_FILE="$MIMIC_FLOW"
   # 키오스크 기기 설정(데모 전용): 기기 산출물과 /config.json 을 내는 gateway 설정 사본의 경로. 파일은 up 이 만든다(demo_kiosk_prepare)
   export DEMO_KIOSK_DEVICE=e2e DEMO_CADDYFILE="$W/Caddyfile.demo" DEMO_KIOSK_CONFIG="$W/secrets/kiosk-config/e2e.json"
-  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/test/compose.demo-mimic.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
+  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.demo-mimic.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
-  # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 compose.test.yaml 의 fake 백엔드를 덮는다. 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
+  # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 vllm 백엔드를 정한다(모방 백엔드 overlay 는 붙이지 않는다). 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
 
   if [ $LLM = 1 ] && [ "$CMD" = up ]; then printf '%s\n' "${LLM_PROFILE_NAME:-gpu-12g}" > "$W/llm"; fi
   if [ $LLM = 0 ] && [ -f "$W/llm" ]; then LLM=1; LLM_PROFILE_NAME=$(sed -n 1p "$W/llm"); fi
@@ -76,7 +76,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     export DEMO_LLM_PROFILE="/app/profiles/$LLM_PROFILE_NAME.json"
     set_llm_image
     # 이미지는 파일로 고른다(compose.llm.local.yaml = 로컬 태그). 중첩 기본값 한 파일로는 안쪽 필수 변수가 먼저 평가되어 실패한다
-    COMPOSE_EXTRA="$DEPLOY_ROOT/compose.test.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
+    COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
   fi
   # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
   if [ -n "$EXT" ]; then external_inference_setup "$EXT"; printf '%s\n%s\n' "$EXT" "$INFERENCE_TOKEN_FILE" > "$W/external-inference"
@@ -96,8 +96,8 @@ demo_kiosk_prepare() { # 데모 때만 키오스크가 /config.json 으로 기�
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
-  local ms; if [ -n "$EXT" ]; then ms=0; else ms=$(pp model-serving); fi
-  echo "{\"qa\":$(pp question-authoring),\"gate\":$(pp release-gate),\"ops\":$(pp ops-feedback-ingest),\"survey\":$(pp survey-service),\"mr\":$(pp model-registry),\"gw\":$(port_of $P-gateway-1 8443),\"ms\":$ms}"
+  # 샌드박스(docs/adr/0049): 호스트 포트가 있는 제품 서비스는 gateway 뿐이다. 추론 서버(ms)는 제품 밖일 때만 호스트에서 닿고(--ms-url), 이 구성의 model-serving 은 호스트 포트가 없어 0 이다
+  echo "{\"gw\":$(port_of $P-gateway-1 8443),\"ms\":0}"
 }
 run_steps() { # run_steps <--only 목록> [추가 인자]
   local only=$1; shift
@@ -244,7 +244,7 @@ case "$CMD" in
       echo "== 기동 직전 병합 검증 (실제 잠금·레지스트리·로컬 GPU 이미지 태그)"
       llm_config_check real || die "병합 검증 실패: 이미지는 다시 빌드·게시하지 않았다. 원인을 고친 뒤 scripts/demo.sh down 후 다시 (GPU 이미지는 로컬에 남아 재빌드하지 않는다)"
     fi
-    echo "== 데모 프로젝트 $P 기동 (compose.yaml + compose.test.yaml, 호스트 포트는 Docker 배정)"
+    echo "== 데모 프로젝트 $P 기동 (compose.yaml + 설정값 overlay, 호스트 포트는 게이트웨이만 Docker 배정)"
     bash "$DEPLOY_ROOT/scripts/up.sh" "$P" || die "기동 실패. 원인: docker compose -p $P logs"
     echo "== 시험용 릴리스 만들기(E2E 단계 코드 재사용): 문항 세트 등록 -> 데이터셋 -> 시험용 어댑터·평가 보고서 -> 후보 수집·자동 검사 $( [ $STOP = 1 ] && echo '(승인 전에 멈춤)' || echo '-> 시험용 승인자 승인 -> 활성화 -> 실패 사례')"
     if [ $STOP = 1 ]; then run_steps "1,2,3,demo4" --demo-stop || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"
