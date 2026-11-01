@@ -1307,7 +1307,7 @@ def gw_bytes(method, path, data, ctype, basic=None, headers=None):
 def _c2_qa_read(method, *args, **kw):
     """이웃 읽기 면(I1)은 게이트웨이에 열지 않는다. 읽는 주체(synthetic-data·release-gate)가 제품 네트워크 안에 있으므로 question-authoring 컨테이너 안에서 그 이미지의 boundary_contracts 클라이언트(HttpQuestionReader)로 읽는다.
     토큰은 서비스가 이미 가진 읽기 토큰 표(/run/secrets/qa-read-tokens)에서 release-gate 몫을 컨테이너 안에서 꺼낸다(호스트로 나오지 않는다)."""
-    code = ("import json\nfrom boundary_contracts.clients import HttpQuestionReader\n"
+    code = ("import json\nfrom openit_link.clients import HttpQuestionReader\n"
             "tok=None\nfor ln in open('/run/secrets/qa-read-tokens'):\n n,_,v=ln.strip().partition('=')\n if n=='release-gate': tok=v.split(',')[0]\n"
             "assert tok, 'qa-read-tokens 에 release-gate 항목이 없다'\n"
             "P=json.loads(" + repr(json.dumps({"m": method, "a": list(args), "k": kw})) + ")\n"
