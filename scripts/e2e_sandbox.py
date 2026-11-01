@@ -35,6 +35,8 @@ def init(**kw) -> None:
     root = kw.get("root") or pathlib.Path(__file__).resolve().parents[1]
     _C.clear()
     _C.update({"docker": "docker", "inference_project": "", "gw_ca": "", "run": subprocess.run, **kw})
+    if not _C["inference_project"]:
+        _C["inference_project"] = f"{_C['project']}-inf"   # 왜 기본값: e2e.sh 가 추론 서버를 <P>-inf 로 띄운다. 단계 코드가 이름을 따로 알 필요가 없다
     _C["root"] = pathlib.Path(root)
     _C["secrets"] = pathlib.Path(_C["secrets"])
     if _C["gw_ca"]:

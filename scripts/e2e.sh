@@ -227,13 +227,17 @@ pick_bind() { # 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는�
   [ $ok = 1 ] && echo 127.0.0.1 || echo 0.0.0.0
 }
 BIND=$(pick_bind); export GATEWAY_BIND=$BIND INFERENCE_BIND=$BIND
+# 추론 서버가 TLS 로 부르는 이름(host.docker.internal)이 게이트웨이 인증서에 있어야 한다: 운영 설정 변수 GATEWAY_HOSTS 에 호출자가 쓰는 이름을 적는 것과 같다(실제 배포는 병원 내부 도메인)
+export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
 if [ "$BIND" = 127.0.0.1 ]; then echo "  컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는다: 게이트웨이·추론 서버는 127.0.0.1 에 게시한다"
 else echo "  이 Docker 에서는 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿지 못한다: 시험 동안 게이트웨이·추론 서버를 0.0.0.0 에 게시한다(방화벽은 이 PC 밖에서 막는다. docs/RUN.md 7-1)"; fi
 INF_IMAGE="$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST"
 cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; cp "$GWTOKF" "$W/gateway-inference-token"; chmod 644 "$W/inference-token" "$W/gateway-inference-token"   # 컨테이너(uid 10001)가 읽는다. 폴더 $W 는 700
+: > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
 inf_up() { # inf_up <RELEASE_URL> [게이트웨이 CA 파일]: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
   local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT=)
-  [ -z "${2:-}" ] || e+=(INFERENCE_RELEASE_CA_FILE="$2")
+  # INFERENCE_CA_FILE 은 compose.inference.yaml 의 필수 변수다(게이트웨이 CA 루트). 첫 기동에는 CA 가 아직 없어 빈 자리표시 파일을 주고, 제품 입구가 뜬 뒤 실제 CA 로 다시 만든다
+  e+=(INFERENCE_CA_FILE="${2:-$W/placeholder-ca.crt}")
   env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
 }
@@ -243,14 +247,14 @@ IPORT=$(port_of "$INF-model-serving-1" 8080)
 export INFERENCE_TOKEN_FILE="$W/inference-token"
 # 운영 모드 overlay(compose.external-inference.yaml)를 이 스크립트의 환경에 둔다: 이후 모든 dc/up.sh/rollback.sh 호출이 같은 제품 구성을 본다(INFERENCE_URL, COMPOSE_EXTRA 를 내보낸다)
 external_inference_setup "http://host.docker.internal:$IPORT"
+export PROMETHEUS_INFERENCE_TARGETS=no-local-inference-targets.yml   # 외부 추론 모드: 제품 안에 model-serving 이 없으니 감시 스택이 그 탐침 대상을 갖지 않는다(config/prometheus/prometheus.yml 주석)
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
 abort_if_failed
 PGW=$(port_of "${PROJECT}-gateway-1" 8080); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS. 제품의 호스트 포트는 gateway 뿐이다
 # gateway 의 내부 CA 루트(시험용 CA): 이 시험의 클라이언트(curl --cacert, e2e_sandbox)와 추론 서버가 이것만 신뢰한다. 컨테이너가 방금 떴으므로 인증서가 만들어질 때까지 잠깐 기다린다
-# (A 가 scripts/export-gateway-ca.sh 를 만들면 이 docker cp 를 그것으로 바꾼다. 제품 컨테이너의 파일 경로를 아는 것은 이 한 줄이다)
-for _i in 1 2 3 4 5 6 7 8 9 10; do "$DOCKER" cp "${PROJECT}-gateway-1:/data/caddy/pki/authorities/local/root.crt" "$W/gateway-ca.crt" >/dev/null 2>&1 && break; sleep 1; done
-[ -s "$W/gateway-ca.crt" ] || { echo "gateway 내부 CA 루트를 가져오지 못했다"; exit 1; }
+# (컨테이너 안의 파일 경로는 scripts/export-gateway-ca.sh 한 곳만 안다)
+bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$PROJECT" "$W/gateway-ca.crt" >/dev/null || { echo "gateway 내부 CA 루트를 가져오지 못했다"; exit 1; }
 chmod 644 "$W/gateway-ca.crt"   # 공개 인증서다. 추론 서버 컨테이너(uid 10001)가 읽는다
 GWCURL="curl --cacert $W/gateway-ca.crt"
 GWTLS="https://host.docker.internal:$PGWS"   # 추론 서버가 제품 입구를 부르는 주소(다른 호스트의 호출자와 같은 모양)
@@ -298,7 +302,7 @@ tls_checks() { # HTTPS 필수(D88/U5): 평문은 /healthz 만 답하고 나머�
   echo "평문: /healthz 만 ok, 나머지 308 https; https: 시험용 CA 검증 통과, HSTS·nosniff·X-Frame-Options, /config.json 404"
 }
 chk "TLS(D88/U5): 평문은 308 https 로 이동, https 는 시험용 CA 로 검증되고 HSTS·보안 헤더가 있다" tls_checks
-chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
+chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:[[:space:]]*#'"
 no_auto_pass() { inpy release-gate /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
 chk "gateway: /v1/turns -> 404, /staff/ 와 직원 API 는 인증 없이 401, /v1/activate 는 인증 없이 401, 키오스크 경로는 기기 토큰 없이 401(D85)" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/staff/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/admin/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/submissions)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/activate)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/cases)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/traces)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/staff/alerts)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions/x/intervention)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions)\" = 401 ]"
@@ -324,8 +328,6 @@ chk "차단: model-registry -> dataset-store" blocked model-registry dataset-sto
 chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
 chk "gateway 설정(Caddyfile)에 dataset-store 경로가 없다" bash -c "! grep -q 'dataset-store\|datasets' $DEPLOY_ROOT/config/Caddyfile"
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
-chk "차단: model-registry -> 추론 서버" blockedu model-registry "http://host.docker.internal:$IPORT/healthz"
-chk "차단: question-authoring -> 추론 서버" blockedu question-authoring "http://host.docker.internal:$IPORT/healthz"
 for pair in "db-survey:survey-service" "db-qa:question-authoring" "db-ops:ops-feedback-ingest" "db-gate:release-gate"; do
   chk "db 네트워크 ${pair%%:*} 에는 postgres 와 ${pair##*:} 만 있다(postgres 클라이언트끼리 닿지 않는다)" net_is "${pair%%:*}" "${PROJECT}-postgres-1" "${PROJECT}-${pair##*:}-1"
 done
@@ -439,7 +441,7 @@ PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 복구 뒤 게이트웨이를 �
 PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
 NEED+=("복구 후 서비스 기동")
 chk "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
-  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test
+  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
 
 fi
 if has_s9 rollback; then

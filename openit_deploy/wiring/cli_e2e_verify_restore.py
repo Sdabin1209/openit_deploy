@@ -10,14 +10,20 @@ from openit_deploy.wiring.call import call
 
 def main(argv) -> int:
     ap = argparse.ArgumentParser(); ap.add_argument("--secrets"); ap.add_argument("--ports"); ap.add_argument("--work"); ap.add_argument("--run-id")
+    ap.add_argument("--project", required=True); ap.add_argument("--docker", default="docker"); ap.add_argument("--root")
     a = ap.parse_args(argv)
-    P, W = json.loads(a.ports), pathlib.Path(a.work)
+    W = pathlib.Path(a.work)
     T = lambda n: (pathlib.Path(a.secrets) / "tokens" / n).read_text().strip()
-    u = lambda k: f"http://127.0.0.1:{P[k]}"
+    # 샌드박스(docs/adr/0049): 호스트 포트를 쓰지 않는다. 읽기는 각 서비스 컨테이너 안에서(그 서비스 자신의 주소 127.0.0.1:8080), 운반은 e2e_sandbox.exec_py
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts"))
+    import e2e_sandbox as S
+    S.init(project=a.project, secrets=a.secrets, docker=a.docker, **({"root": a.root} if a.root else {}))
+    SVC = {"qa": "question-authoring", "ops": "ops-feedback-ingest", "mr": "model-registry", "gate": "release-gate"}
+    u = lambda k: "http://127.0.0.1:8080"
     req = {"run_id": a.run_id, "work": str(W), "state": json.loads((W / "state.json").read_text()),
            "urls": {"qa": u("qa"), "ops": u("ops"), "mr": u("mr"), "gate": u("gate")},
            "tokens": {"qa": T("qa-read-synthetic-data"), "ops": T("ops-ingest-survey-service"), "mr": T("model-registry-read-release-gate"), "gate": T("gate-read-survey-service")}}
-    r = call(link_restore_verify, "RestoreVerifyRequest", "RestoreVerifyResult", req)
+    r = call(link_restore_verify, "RestoreVerifyRequest", "RestoreVerifyResult", req, runner=lambda key, code: S.exec_py(SVC[key], code, timeout=120))
     for c in r["checks"]:
         print(f"  {'OK  ' if c['ok'] else 'FAIL'} {c['name']}" + (f": {c['detail']}" if not c["ok"] else ""))
     if not r["ok"]:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 떠 있는 감시 스택(compose.monitoring.yaml)이 실제 서비스를 보고 있는지 Prometheus API 로 확인한다(ADR 0037). 읽기 전용.
-# 사용: check-monitoring-live.sh <compose 프로젝트>     통과 조건: gateway /healthz, release-gate /readyz, model-serving /readyz 탐침이 성공(1),
+# 사용: check-monitoring-live.sh <compose 프로젝트>     통과 조건: gateway /healthz, release-gate /readyz, (model-serving 컨테이너가 있으면) model-serving /readyz 탐침이 성공(1),
 #   release-gate 판정 루프 지표가 읽히고(연속 실패 3 미만), node_exporter 디스크 지표가 있으며, Alertmanager 가 살아 있다. 최대 180초 기다린다(첫 스크랩 1분 주기).
 set -uo pipefail
 DEPLOY_NO_DOCKER=1; source "$(dirname "$0")/lib.sh"; detect_docker
@@ -12,7 +12,9 @@ want(){ local expr=$1 pred=$2 i v; for i in $(seq 1 60); do v=$(q "$expr"); [ -n
 rc=0
 want 'probe_success{instance="http://gateway:8080/healthz"}' 'v==1' || rc=1
 want 'probe_success{instance="http://release-gate:8080/readyz"}' 'v==1' || rc=1
-want 'probe_success{instance="http://model-serving:8080/readyz"}' 'v==1' || rc=1
+# 외부 추론 모드(D72)에서는 제품 안에 model-serving 이 없다: 이 구성의 감시 대상 http://model-serving:8080 은 존재하지 않으므로 기대하지 않는다(추론 서버 감시는 그 서버 쪽 몫).
+if [ -n "$("$DOCKER" ps -q --filter "name=^${P}-model-serving-1$")" ]; then want 'probe_success{instance="http://model-serving:8080/readyz"}' 'v==1' || rc=1
+else echo "  건너뜀 model-serving 탐침: 이 프로젝트에는 model-serving 컨테이너가 없다(외부 추론 모드). 추론 서버는 제품 밖의 다른 호스트 역할이다"; fi
 want 'openit_gate_judging_consecutive_failures' 'v<3' || rc=1
 want 'max(node_filesystem_size_bytes)' 'v>0' || rc=1
 [ "$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$AP/-/healthy")" = 200 ] && echo "  ok   Alertmanager healthy" || { echo "  FAIL Alertmanager"; rc=1; }
