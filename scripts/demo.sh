@@ -65,7 +65,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   export DEMO_MIMIC_FLOW_FILE="$MIMIC_FLOW"
   # 키오스크 기기 설정(데모 전용): 기기 산출물과 /config.json 을 내는 gateway 설정 사본의 경로. 파일은 up 이 만든다(demo_kiosk_prepare)
   export DEMO_KIOSK_DEVICE=e2e DEMO_CADDYFILE="$W/Caddyfile.demo" DEMO_KIOSK_CONFIG="$W/secrets/kiosk-config/e2e.json"
-  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.demo-mimic.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
+  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml $DEPLOY_ROOT/demo/compose.demo-kiosk.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
   # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 vllm 백엔드를 정한다(모방 백엔드 overlay 는 붙이지 않는다). 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
 
@@ -76,7 +76,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     export DEMO_LLM_PROFILE="/app/profiles/$LLM_PROFILE_NAME.json"
     set_llm_image
     # 이미지는 파일로 고른다(compose.llm.local.yaml = 로컬 태그). 중첩 기본값 한 파일로는 안쪽 필수 변수가 먼저 평가되어 실패한다
-    COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml $DEPLOY_ROOT/test/compose.demo-kiosk.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
+    COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml $DEPLOY_ROOT/demo/compose.demo-kiosk.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
   fi
   # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
   if [ -n "$EXT" ]; then external_inference_setup "$EXT"; printf '%s\n%s\n' "$EXT" "$INFERENCE_TOKEN_FILE" > "$W/external-inference"

@@ -10,7 +10,7 @@ if TYPE_CHECKING:   # 입출력 타입은 schemas/ 에서 생성한다(types/dep
 
 
 OLD = '\thandle /config.json {\n\t\trespond "not found" 404\n\t}\n'
-NEW = ('\thandle /config.json {   # 데모 전용: 기기 설정을 kiosk-frontend 가 CONFIG_FILE 로 낸다(test/compose.demo-kiosk.yaml)\n'
+NEW = ('\thandle /config.json {   # 데모 전용: 기기 설정을 kiosk-frontend 가 CONFIG_FILE 로 낸다(demo/compose.demo-kiosk.yaml)\n'
        '\t\treverse_proxy kiosk-frontend:8080 {\n\t\t\theader_up -X-Openit-User\n\t\t\theader_up -Authorization\n\t\t}\n\t}\n')
 
 
