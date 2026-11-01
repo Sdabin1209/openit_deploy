@@ -43,7 +43,7 @@ d = pathlib.Path(tempfile.mkdtemp()) / "restored-adapter"
 res = {{"content_hash": m["content_hash"], "adapter_ok": canonical.directory_hash(c.open_adapter({pid!r}, "1", dest=d)) == m["adapter_hash"]}}"""
 _GATE = """c = HttpReleaseReader(URL, TOK)
 p = c.get_active_pointer()
-res = {{"release_id": p["release_id"] if p else None}}"""
+res = {"release_id": p["release_id"] if p else None}"""   # 이 조각은 format 하지 않으므로 중괄호를 겹치지 않는다(4차 E2E: 겹친 중괄호가 set 리터럴이 되어 TypeError)
 
 
 def run(request: "RestoreVerifyRequest", runner: Callable[[str, str], str]) -> "RestoreVerifyResult":

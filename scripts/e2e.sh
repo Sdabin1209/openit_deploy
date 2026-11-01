@@ -221,12 +221,15 @@ fi
 pick_bind() { # 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는지 한 번 본다(Docker Desktop 은 닿고 리눅스 엔진은 보통 못 닿는다). 닿으면 127.0.0.1, 아니면 0.0.0.0
   local p srv ok=1; mkdir -p "$W/probe"; p=$(free_port)
   python3 -m http.server "$p" --bind 127.0.0.1 --directory "$W/probe" >/dev/null 2>&1 & srv=$!
-  for _j in 1 2 3 4 5 6 7 8 9 10; do curl -s -m 1 -o /dev/null "http://127.0.0.1:$p/" && break; sleep 0.3; done
-  "$DOCKER" run --rm --add-host host.docker.internal:host-gateway "$UTIL_REF" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=5)" "http://host.docker.internal:$p/" >/dev/null 2>&1 || ok=0
+  for _j in $(seq 1 30); do curl -s -m 1 -o /dev/null "http://127.0.0.1:$p/" && break; sleep 0.3; done   # 부하가 높으면 탐침 서버가 늦게 뜬다(4차 실행에서 오판)
+  ok=0; for _j in 1 2 3; do "$DOCKER" run --rm --add-host host.docker.internal:host-gateway "$UTIL_REF" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=8)" "http://host.docker.internal:$p/" >/dev/null 2>&1 && { ok=1; break; }; sleep 1; done
   kill "$srv" 2>/dev/null; wait "$srv" 2>/dev/null
   [ $ok = 1 ] && echo 127.0.0.1 || echo 0.0.0.0
 }
 BIND=$(pick_bind); export GATEWAY_BIND=$BIND INFERENCE_BIND=$BIND
+# 호스트 포트는 Docker 배정이 아니라 시작 때 고른 빈 포트로 **고정**한다(고정 포트 번호를 리포에 적지 않으므로 동시 실행 충돌 없음). 왜: 다른 호스트 역할의 추론 서버는
+# RELEASE_URL 에 게이트웨이 포트를, 제품은 INFERENCE_URL 에 추론 서버 포트를 들고 있다. 배정 포트는 컨테이너를 restart 하면 바뀌어(5d 의 kiosk-add-device.sh --apply 가 gateway 를 restart) 그 주소가 죽는다(2026-11-01 4차 실행).
+export GATEWAY_PORT=$(free_port) GATEWAY_TLS_PORT=$(free_port); INFERENCE_FIXED_PORT=$(free_port)
 # 추론 서버가 TLS 로 부르는 이름(host.docker.internal)이 게이트웨이 인증서에 있어야 한다: 운영 설정 변수 GATEWAY_HOSTS 에 호출자가 쓰는 이름을 적는 것과 같다(실제 배포는 병원 내부 도메인)
 export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
 if [ "$BIND" = 127.0.0.1 ]; then echo "  컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는다: 게이트웨이·추론 서버는 127.0.0.1 에 게시한다"
@@ -235,7 +238,7 @@ INF_IMAGE="$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST"
 cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; cp "$GWTOKF" "$W/gateway-inference-token"; chmod 644 "$W/inference-token" "$W/gateway-inference-token"   # 컨테이너(uid 10001)가 읽는다. 폴더 $W 는 700
 : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
 inf_up() { # inf_up <RELEASE_URL> [게이트웨이 CA 파일]: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
-  local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT=)
+  local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT="$INFERENCE_FIXED_PORT")
   # INFERENCE_CA_FILE 은 compose.inference.yaml 의 필수 변수다(게이트웨이 CA 루트). 첫 기동에는 CA 가 아직 없어 빈 자리표시 파일을 주고, 제품 입구가 뜬 뒤 실제 CA 로 다시 만든다
   e+=(INFERENCE_CA_FILE="${2:-$W/placeholder-ca.crt}")
   env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
@@ -307,7 +310,7 @@ no_auto_pass() { inpy release-gate /readyz | python3 -c "import sys,json;d=json.
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
 chk "gateway: /v1/turns -> 404, /staff/ 와 직원 API 는 인증 없이 401, /v1/activate 는 인증 없이 401, 키오스크 경로는 기기 토큰 없이 401(D85)" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/staff/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/admin/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/submissions)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/activate)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/cases)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/traces)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/staff/alerts)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions/x/intervention)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions)\" = 401 ]"
 reach() { "$DOCKER" exec "$(cn "$1")" python -c "import urllib.request;urllib.request.urlopen('http://$2:8080/healthz',timeout=3)" >/dev/null 2>&1; }
-reachu() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=3)" "$2" >/dev/null 2>&1; }   # reachu <출발 서비스> <URL>
+reachu() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=10)" "$2" >/dev/null 2>&1; }   # 10초: 호스트를 거치는 경로(host.docker.internal)는 Docker Desktop 프록시라 부하 때 3초를 넘겼다(4차 실행)   # reachu <출발 서비스> <URL>
 blockedu() { ! reachu "$@"; }
 blocked() { ! reach "$@"; }
 net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원이 정확히 그 컨테이너들이다

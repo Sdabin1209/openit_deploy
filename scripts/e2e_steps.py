@@ -178,15 +178,8 @@ def wait_review_report(get_report, sid, label, timeout=60):
 SD_UNUSED_DIR = "image-env-takes-precedence"
 QS, QSU = f"qs-{RID}", f"qs-{RID}-unseen"
 
-def upload(set_id, text, fname):
-    raw = text.encode(); t = TOK("qa-author-e2e")
-    c, d = http("POST", "qa", f"/v1/materials?question_set_id={set_id}&filename={fname}", t, raw=raw, ctype="text/plain")
-    assert c in (200, 201), f"자료 등록 {c} {d}"
-    c, pv = http("GET", "qa", f"/v1/drafts/{d['draft_id']}/preview", t); assert c == 200 and pv["ready_to_confirm"], pv
-    c, ref = http("POST", "qa", f"/v1/drafts/{d['draft_id']}/confirm", t, body={"preview_hash": pv["preview_hash"]}); assert c == 200, ref
-    # 4-eyes(question-authoring D88/U9): 저자의 확인은 clinical_basis_approved=false 이고, 임상 근거 승인은 clinical-reviewer 역할의 다른 주체가 덧붙여야 reviewed_only 에 나타난다
-    c, rv = http("POST", "qa", "/v1/reviews", TOK("qa-reviewer-e2e"), body={"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB: 스크립트가 검수자 역할을 대신한다)"}); assert c in (200, 201), ("임상 근거 승인 실패", c, rv)
-    return ref, raw
+def upload(set_id, text, fname):   # 샌드박스(D123): 저자 경로는 게이트웨이 저자·임상검수 계정으로. 구현은 단계 1 의 도우미 하나(_c1_upload)뿐이다(호출 시점에 풀린다)
+    return _c1_upload(set_id, text, fname)
 
 @step('1', repos=('question-authoring', 'survey-service', 'boundary-contracts') + _GW, deps=(),
       why="step1 은 STATE 를 읽지 않고 게이트웨이(저자·임상 검수자 계정)로 문항 자료를 올리고 I1 읽기는 release-gate 컨테이너 안에서 한다(STATE['qs'],['qsu'] 를 씀). 실행 중 스택의 question-authoring 은 필요하다")
