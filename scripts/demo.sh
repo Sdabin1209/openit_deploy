@@ -315,7 +315,9 @@ case "$CMD" in
     echo "== 데모 프로젝트 $P 제거 (컨테이너·네트워크·볼륨)"
     dc "$P" --profile jobs down -v --remove-orphans 2>&1 | tail -3
     bash "$DEPLOY_ROOT/scripts/registry.sh" down -v 2>&1 | tail -1
-    for i in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^127\.0\.0\.1:[0-9]+/openit/'); do "$DOCKER" rmi -f "$i" >/dev/null 2>&1; done
+    # 데모 레지스트리(registry.env 의 DEPLOY_REGISTRY)로 태그된 이미지만 지운다. 왜: 모든 127.0.0.1:*/openit/* 를 지우면 같은 데몬의 E2E 이미지가 사라진다(2026-11-02 최종 E2E 가 demo.sh down 에 깨졌다)
+    _reg=$(sed -n 's/^DEPLOY_REGISTRY=//p' "$W/registry.env" 2>/dev/null | tr -d '\r')
+    [ -n "$_reg" ] && for i in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -F "$_reg/openit/"); do "$DOCKER" rmi -f "$i" >/dev/null 2>&1; done
     [ -n "$W" ] && [ "$W" = "$DEPLOY_ROOT/state/demo" ] && rm -rf "$W"
     echo "정리 완료 ($P 로 시작하는 자원과 state/demo). 상시 구성과 로컬 deploy-build 이미지(GPU 이미지 포함)는 그대로다."
     if [ $PURGE_CACHE = 1 ]; then hf_cache_purge $PURGE_YES; else hf_cache_report; fi ;;

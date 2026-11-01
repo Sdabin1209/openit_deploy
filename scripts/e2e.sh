@@ -152,7 +152,9 @@ cleanup() {
   for n in $("$DOCKER" network ls -q --filter "label=com.docker.compose.project=$INF" 2>/dev/null | tr -d '\r'); do "$DOCKER" network rm "$n" >/dev/null 2>&1; done
   for v in $("$DOCKER" volume ls -q --filter "label=com.docker.compose.project=$INF" 2>/dev/null | tr -d '\r'); do "$DOCKER" volume rm "$v" >/dev/null 2>&1; done
   bash "$DEPLOY_ROOT/scripts/registry.sh" down -v >/dev/null 2>&1
-  for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -E '^127\.0\.0\.1:[0-9]+/openit/'); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done
+  # 이 실행의 레지스트리 주소(registry.env 의 DEPLOY_REGISTRY)로 태그된 이미지만 지운다. 왜: 모든 127.0.0.1:*/openit/* 를 지우면 같은 데몬에서 도는 다른 E2E·데모의 이미지가 사라진다(2026-11-02 최종 E2E 단계 7 'No such image')
+  _reg=$(sed -n 's/^DEPLOY_REGISTRY=//p' "$W/registry.env" 2>/dev/null | tr -d '\r')
+  [ -n "$_reg" ] && for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -F "$_reg/openit/"); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done
   if [ $KEEPIMG = 0 ]; then for img in $("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -E '^deploy-build/' | grep -v '^deploy-build/model-serving-gpu:'); do "$DOCKER" rmi -f "$img" >/dev/null 2>&1; done; fi   # 사용자가 따로 빌드한 13GB GPU 이미지(데모용)는 지우지 않는다
   rm -rf "$W" 2>/dev/null || "$DOCKER" run --rm -v "$DEPLOY_ROOT/state:/s" "$UTIL_REF" rm -rf "/s/e2e-$ID"
   echo "정리 완료 (프로젝트 $PROJECT, 레지스트리 $RPROJ, 이미지, 임시 폴더)"
