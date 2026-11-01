@@ -311,7 +311,24 @@ http://:8080 {
 	# 토큰이 없거나 틀리면 401. 클라이언트가 보낸 X-Openit-User 는 지운다. /v1/staff 는 위에서만 staff 토큰을 받는다.
 	# 위험 신호 입력(risk-source)과 결과 조회(result-reader)는 감지기·병원 시스템용 내부 면이다: 게이트웨이에 열지 않는다(D85). 키오스크 경로의 와일드카드가 삼키지 않게 먼저 닫는다.
 	# 저자 경로: 문항 자료 등록(POST /v1/materials), 초안 조회·편집·확인(/v1/drafts*), 임상 근거 승인(POST /v1/reviews). 읽기 면(I1: /v1/question-sets*)은 열지 않는다(이웃 서비스용).
+	# 개선 신호 읽기(GET /v1/signals, D88/U9 환류): 저자가 운영 환류를 읽는 유일한 사람 입구다. 2026-11-01 E2E 샌드박스 전환(D123)에서 이 입구가 없어 저자가 신호를 볼 수 없음이 드러나 열었다(U68). 읽기만 연다(쓰기 없음).
+	@qasignals {
+		method GET
+		path /v1/signals
+	}
 	@qaauthor path /v1/materials /v1/drafts /v1/drafts/* /v1/reviews
+	handle @qasignals {
+		import authenticate
+		handle @role_author {
+			import qa_proxy
+		}
+		handle @role_clinical-reviewer {
+			import qa_proxy
+		}
+		handle {
+			respond "forbidden: author 또는 clinical-reviewer 역할이 아니다" 403
+		}
+	}
 	handle @qaauthor {
 		import authenticate
 		handle @role_author {
