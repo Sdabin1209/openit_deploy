@@ -19,9 +19,9 @@ try:
     URL, TOK = {url!r}, {tok!r}
 """
 _POST = """
-    out = {{"ok": True, **res}}
+    out = {"ok": True, **res}
 except Exception as e:
-    out = {{"ok": False, "error": type(e).__name__ + ": " + str(e)[:120]}}
+    out = {"ok": False, "error": type(e).__name__ + ": " + str(e)[:120]}
 print(json.dumps(out))
 """
 
