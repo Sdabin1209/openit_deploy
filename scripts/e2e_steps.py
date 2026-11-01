@@ -351,7 +351,7 @@ def call(method, url, token=None, body=None, headers=None, raw=None, ctype="appl
     return st, pb, {k.lower(): v for k, v in hd.items()}
 def out(x): print("\n@@C1@@" + json.dumps(x, default=lambda o: dict(o)))
 '''
-_C1_RD = 'from boundary_contracts.clients import HttpReleaseReader, HttpGateService\nrd = HttpReleaseReader("http://release-gate:8080", tok("gate-read-survey-service"))\n'   # I4 읽기: survey-service 가 쓰는 읽기 토큰과 주소
+_C1_RD = 'from openit_link.clients import HttpReleaseReader, HttpGateService\nrd = HttpReleaseReader("http://release-gate:8080", tok("gate-read-survey-service"))\n'   # I4 읽기: survey-service 가 쓰는 읽기 토큰과 주소
 
 def _c1_lit(obj): return f"json.loads({json.dumps(obj)!r})"   # 코드에 값을 싣는 법: JSON 문자열을 파이썬 리터럴로(비밀 값은 싣지 않는다)
 
@@ -408,7 +408,7 @@ def _c1_upload(set_id, text, fname):
 
 def _c1_i1_read(qs, qsu):
     """I1 읽기(문항 세트 버전·본문·검수·변경 분류). 읽는 주체는 release-gate(읽기 토큰 qa-read-release-gate): 그 컨테이너 안에서 한다."""
-    return _c1_run("release-gate", f"A = {_c1_lit({'qs': qs, 'qsu': qsu})}\nfrom boundary_contracts.clients import HttpQuestionReader\n"
+    return _c1_run("release-gate", f"A = {_c1_lit({'qs': qs, 'qsu': qsu})}\nfrom openit_link.clients import HttpQuestionReader\n"
         "rd = HttpQuestionReader('http://question-authoring:8080', tok('qa-read-release-gate'))\n"
         "vers = [dict(v) for v in rd.list_versions(A['qs'])[0]]\nlatest = dict(rd.latest(A['qs'], reviewed_only=True))\nlatest_u = dict(rd.latest(A['qsu'], reviewed_only=True))\n"
         "banks, revs, chg = {}, {}, {}\nfor v in vers + [latest_u]:\n    k = v['id'] + '@' + v['version']\n    banks[k] = rd.get_question_bank(v); revs[k] = [dict(r) for r in rd.get_reviews(v)]; c = rd.get_change(v); chg[k] = dict(c) if c is not None else None\n"
@@ -642,14 +642,14 @@ def make_packages():
 def publish_packages(pk):
     """make_packages() 의 패키지 2건을 model-registry 에 HTTP 로 게시(멱등 확인)하고 읽기 토큰으로 다시 읽어 해시를 검증한다. 단계 3 과 demo.sh swap-adapters 가 같이 쓴다. {역할: 참조} 를 돌려준다.
     게시 주체(model-lab)의 쓰기 토큰은 model-registry 가 아는 쓰기 토큰 목록의 model-lab 항목이다: 쓰기는 model-registry 컨테이너 안에서, 읽기 검증은 release-gate 컨테이너 안(읽기 토큰 release-gate)에서 한다."""
-    refs = _c1_run("model-registry", f"A = {_c1_lit(_c1_pack(pk))}\nimport base64, pathlib, shutil, tempfile\nfrom boundary_contracts.clients import HttpModelRegistry\n"
+    refs = _c1_run("model-registry", f"A = {_c1_lit(_c1_pack(pk))}\nimport base64, pathlib, shutil, tempfile\nfrom openit_link.clients import HttpModelRegistry\n"
         "reg = HttpModelRegistry('http://127.0.0.1:8080', tok('model-registry-write-tokens', 'model-lab'))\nroot = pathlib.Path(tempfile.mkdtemp()); refs = {}\ntry:\n"
         "    for it in A:\n        d = root / it['role']\n        for rel, b in it['files'].items():\n            p = d / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(base64.b64decode(b))\n"
         "        mf = it['manifest']; rb = it['report'].encode()\n        got = reg.publish(mf, d, rb); again = reg.publish(mf, d, rb)\n        assert dict(again) == dict(got), 'publish is not idempotent'\n"
         "        refs[it['role']] = {'id': mf['package_id'], 'version': mf['version'], 'content_hash': mf['content_hash']}\nfinally: shutil.rmtree(root, ignore_errors=True)\nout(refs)\n", timeout=180)
     want = {role: {"id": mf["package_id"], "version": mf["version"], "content_hash": mf["content_hash"]} for role, (mf, adir, rep) in pk.items()}
     assert refs == want, ("게시 결과 참조가 매니페스트와 다르다", refs, want)
-    got = _c1_run("release-gate", f"A = {_c1_lit([dict(role=r, **want[r]) for r in want])}\nimport pathlib, shutil, tempfile\nfrom boundary_contracts import canonical\nfrom boundary_contracts.clients import HttpModelRegistry\n"
+    got = _c1_run("release-gate", f"A = {_c1_lit([dict(role=r, **want[r]) for r in want])}\nimport pathlib, shutil, tempfile\nfrom boundary_contracts import canonical\nfrom openit_link.clients import HttpModelRegistry\n"
         "rr = HttpModelRegistry('http://model-registry:8080', tok('model-registry-read-release-gate'))\nroot = pathlib.Path(tempfile.mkdtemp()); res = {}\ntry:\n"
         "    for it in A:\n        g = dict(rr.get_manifest(it['id'], it['version'])); rep = rr.get_eval_report(g['eval_report_ref'])\n"
         "        p = rr.open_adapter(it['id'], it['version'], dest=root / it['role'])   # 해시 검증 포함\n"
@@ -663,7 +663,7 @@ def publish_packages(pk):
 def _c1_registry_publish_code_with_read_token(pk):
     """읽기 토큰(release-gate)으로 게시하면 거부되는가: 거부 코드(없으면 None)."""
     it = _c1_pack({"LORA_A": pk["LORA_A"]})[0]
-    return _c1_run("release-gate", f"A = {_c1_lit(it)}\nimport base64, pathlib, shutil, tempfile\nfrom boundary_contracts import BoundaryError\nfrom boundary_contracts.clients import HttpModelRegistry\n"
+    return _c1_run("release-gate", f"A = {_c1_lit(it)}\nimport base64, pathlib, shutil, tempfile\nfrom boundary_contracts import BoundaryError\nfrom openit_link.clients import HttpModelRegistry\n"
         "rr = HttpModelRegistry('http://model-registry:8080', tok('model-registry-read-release-gate'))\nroot = pathlib.Path(tempfile.mkdtemp())\ntry:\n"
         "    for rel, b in A['files'].items():\n        p = root / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(base64.b64decode(b))\n"
         "    try: rr.publish(A['manifest'], root, A['report'].encode()); code = None\n    except BoundaryError as e: code = e.code\nfinally: shutil.rmtree(root, ignore_errors=True)\nout(code)\n", timeout=120)
@@ -740,7 +740,7 @@ def step4():
     subj_u = {"question_set": STATE["qsu"], "lora_a": A, "lora_b": B}
     # 접수: 운영에서는 수집기 잡이 한다(위 job). 같은 조합 접수가 멱등인지는 게이트 컨테이너 안에서 접수 면(operator 쓰기 토큰)을 두 번 불러 본다 -- 게이트웨이는 POST /v1/submissions 를 열지 않는다(수집기 전용)
     allsubj = {**subj, "u": subj_u}
-    got = _c1_run("release-gate", f"A = {_c1_lit(allsubj)}\nfrom boundary_contracts.clients import HttpGateService\n"
+    got = _c1_run("release-gate", f"A = {_c1_lit(allsubj)}\nfrom openit_link.clients import HttpGateService\n"
         "gs = HttpGateService('http://127.0.0.1:8080', tok('gate-write-tokens', 'operator'), user='op-test')\nres = {}\n"
         "for k, sj in A.items():\n    s1 = dict(gs.submit_candidate(sj, requested_by_role='operator')); s2 = dict(gs.submit_candidate(sj, requested_by_role='operator'))\n"
         "    res[k] = [s1, s2]\nout(res)\n")
