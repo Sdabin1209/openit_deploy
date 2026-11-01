@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""제품 compose 에 시험용 문이 없다는 정적 점검(E2E 샌드박스 원칙, docs/adr/0049-e2e-sandbox.md). 실행 없이 파일만 읽는다.
+"""제품 compose 에 시험용 문이 없다는 정적 점검(E2E 샌드박스 원칙, docs/adr/0050-e2e-sandbox.md). 실행 없이 파일만 읽는다.
   (가) 호스트 포트(ports:)는 gateway 와 compose.inference.yaml 의 model-serving 만 낼 수 있다(다른 서비스는 내부 네트워크 안에서만 닿는다).
   (나) MODEL_RUNTIME_ALLOW_FAKE 는 compose.yaml 과 운영 overlay(compose.external-inference.yaml)에 없다(가짜 백엔드는 시험 구성에서만 켠다).
   (다) compose.test.yaml 이 없다(제품 위에 시험용 문을 덮어쓰는 파일이 없어야 한다).
