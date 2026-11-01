@@ -1494,22 +1494,151 @@ def trace_env(release_id, n):
          "session_id": f"s-{RID}", "turn_id": f"t-{RID}-{n}", "sent_at": "2026-10-15T00:00:00Z", "trace": t}
     validate("TraceEnvelope", e); validate_survey("TurnTrace", t); return e
 
-@step('6', repos=('ops-feedback', 'survey-service', 'boundary-contracts'), deps=('1', '4'),
+# ---- 단계 6 이후의 제품 접근 도우미 (wo-444). 드라이버가 제품에 닿는 길은 e2e_sandbox(SB)의 셋뿐이다:
+#   (a) 게이트웨이(사람 계정·기기·기계 토큰), (b) 제품 네트워크 안(compose exec/run), (c) 별도 호스트의 추론 서버. 내부 서비스의 호스트 포트는 없다.
+import e2e_sandbox as SB
+_C3_ACCT = {"approver": "trainer-e2e", "operator": "operator-e2e", "reviewer": "reviewer-e2e", "author": "author-e2e", "clinical": "clinical-e2e", "staff": "staff-e2e"}   # config/gateway-accounts.test.conf 의 시험 계정(역할 이름 -> 계정 ID)
+_C3_SVC = {"qa": "question-authoring", "gate": "release-gate", "ops": "ops-feedback-ingest", "survey": "survey-service"}   # 단계가 쓰는 짧은 이름 -> compose 서비스
+
+def _c3_tok(name):   # 시험 비밀 폴더의 토큰 파일(값은 출력하지 않는다, D84)
+    return (pathlib.Path(a.secrets) / "tokens" / name).read_text().strip()
+
+def _c3_gw(method, path, role=None, body=None, headers=None, timeout=30):
+    """게이트웨이 경유 한 요청(사람 역할 계정 = Basic 인증). (상태, JSON 또는 문자열 본문, 소문자 헤더). role=None 이면 인증 없이."""
+    st, h, raw = SB.gw_request(method, path, account=_C3_ACCT[role] if role else None, json=body, headers=headers, timeout=timeout)
+    try: j = json.loads(raw) if raw else None
+    except ValueError: j = raw.decode(errors="replace")
+    return st, j, h
+
+def _c3_gwc(cls, role):   # 계약 클라이언트를 게이트웨이 주소·사람 계정으로(스키마 검증은 클라이언트가 한다)
+    return SB.gw_client(cls, account=_C3_ACCT[role])
+
+_C3_PRE = '''import json, os, sys, time, urllib.request, urllib.error
+V = json.loads(%s)
+def _tokfile(env): return open(os.environ[env]).read().strip()
+def _list(env):   # 서버가 받는 목록 값 "역할=토큰,..." (compose 가 마운트한 파일, 값은 출력하지 않는다)
+    return dict(i.partition("=")[::2] for i in open(os.environ[env]).read().strip().split(","))
+def call(method, url, token=None, body=None, headers=None, raw=None, ctype="application/json", timeout=30, rawout=False):
+    data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+    req = urllib.request.Request(url, data=data, method=method)
+    if token: req.add_header("Authorization", "Bearer " + token)
+    if data is not None: req.add_header("Content-Type", ctype)
+    for k, v in (headers or {}).items(): req.add_header(k, v)
+    try:
+        r = urllib.request.urlopen(req, timeout=timeout); st, b, h = r.status, r.read(), r.headers
+    except urllib.error.HTTPError as e:
+        st, b, h = e.code, e.read(), e.headers
+    if not rawout:
+        try: b = json.loads(b or b"null")
+        except ValueError: b = b.decode(errors="replace")
+    return st, b, h.get("WWW-Authenticate")
+R = None
+'''
+def _c3_code(snippet, v):   # 컨테이너 안에서 돌릴 코드: 도우미 머리말 + 변수 V + 조각. 조각은 R 에 결과(JSON 직렬화 가능)를 둔다
+    return (_C3_PRE % repr(json.dumps(v, ensure_ascii=False))) + snippet + "\nprint(json.dumps(R, ensure_ascii=False))\n"
+
+def _c3_py(service, snippet, timeout=60, **v):
+    """제품 컨테이너 안에서 파이썬 조각을 돌리고 R 을 돌려준다(그 서비스가 가진 토큰 파일·네트워크로 이웃을 부른다: 운영에서 그 일을 하는 주체가 컨테이너 안에 있을 때)."""
+    out = SB.exec_py(service, _c3_code(snippet, v), timeout=timeout)
+    return json.loads(out.strip().splitlines()[-1])
+
+def _c3_job(job, args=(), timeout=300, **v):
+    """제품의 잡 컨테이너를 한 번 실행한다. args 가 있으면 명령을 덮어쓴다. (종료 코드, 표준 출력, 표준 오류). 시간 초과는 종료 코드 124."""
+    try: r = SB.run_job(job, list(args), timeout=timeout)
+    except subprocess.TimeoutExpired: return 124, "", f"{job} 시간 초과({timeout}s)"
+    return r.returncode, r.stdout or "", r.stderr or ""
+
+def _c3_job_py(job, snippet, timeout=120, **v):   # 잡 이미지(그 영역의 토큰·네트워크)에서 파이썬 조각을 돌린다. compose run 은 stdin 을 쓰지 않으므로 -c 로 넘긴다(코드에 비밀 없음)
+    rc, out, err = _c3_job(job, ["python", "-c", _c3_code(snippet, v)], timeout)
+    assert rc == 0, f"{job} 안의 조각이 실패({rc}): {(err or out)[-400:]}"
+    return json.loads(out.strip().splitlines()[-1])
+
+def _c3_ready(k):
+    """서비스 k(짧은 이름) 컨테이너 안에서 본 /readyz 상태 코드. 실행에 실패하면 0."""
+    try: return SB.readyz(_C3_SVC[k])[0]
+    except Exception: return 0
+
+def _c3_probe(k, path):
+    """컨테이너 안에서 GET 127.0.0.1:8080<path>: (상태 코드, 본문, 걸린 초). 걸린 초는 컨테이너 안에서 잰다(docker exec 시작 시간이 섞이지 않게)."""
+    r = _c3_py(_C3_SVC[k], '''
+t = time.time()
+try:
+    r = urllib.request.urlopen("http://127.0.0.1:8080" + V["path"], timeout=10); st, b = r.status, r.read()
+except urllib.error.HTTPError as e: st, b = e.code, e.read()
+except Exception as e: st, b = 0, type(e).__name__.encode()
+try: b = json.loads(b)
+except ValueError: b = b.decode(errors="replace")
+R = [st, b, time.time() - t]''', path=path)
+    return r[0], r[1], r[2]
+
+def _c3_healthz(k): return _c3_probe(k, "/healthz")[0]
+
+def _c3_survey_ready(): return SB.readyz("survey-service")   # (상태, 본문)
+
+def _c3_gate_read(path):
+    """release-gate 의 읽기 면(I4)을 survey-service 컨테이너 안에서 읽는다(survey-service 가 쓰는 읽기 토큰 그대로: 운영에서 릴리스를 읽는 주체). (상태, JSON)."""
+    r = _c3_py("survey-service", '''
+st, b, _ = call("GET", "http://release-gate:8080" + V["path"], _tokfile("SURVEY_RELEASE_READER_TOKEN_FILE"))
+R = [st, b]''', path=path)
+    return r[0], r[1]
+
+def _c3_decisions_for(subj):
+    q = urllib.parse.urlencode({f"{k}_{f}": subj[k2][f] for k, k2 in (("question_set", "question_set"), ("lora_a", "lora_a"), ("lora_b", "lora_b")) for f in ("id", "version")} | {"limit": "100"})
+    c, b = _c3_gate_read("/v1/decisions?" + q); assert c == 200, ("판정 조회", c, str(b)[:200])
+    return b["items"]
+
+def _c3_approver_hash(sid):   # 승인 화면이 하는 대로: review-report 응답 머리글 X-Openit-Report-Hash 를 그대로 쓴다
+    c, b, h = _c3_gw("GET", f"/v1/submissions/{sid}/review-report", "approver")
+    assert c == 200 and (h.get("x-openit-report-hash") or "").startswith("sha256:"), ("review-report 에 X-Openit-Report-Hash 가 없다", c, h)
+    return h["x-openit-report-hash"]
+
+_C3_CODE_OF_STATUS = {400: "INVALID_RECORD", 401: "PERMISSION_DENIED", 403: "PERMISSION_DENIED", 404: "NOT_FOUND", 409: "CONFLICT"}
+def _c3_approve(role, sid, decision, *, reason=None, report_hash=None):
+    """승인 결정(POST /v1/approvals)을 사람 계정으로 게이트웨이에 보낸다. 행위자는 게이트웨이가 붙인 계정 ID 다. 실패하면 BoundaryError(code)."""
+    body = {"submission_id": sid, "decision": decision, "approver_role": "release-approver", "report_hash": report_hash or _c3_approver_hash(sid)}
+    if reason is not None: body["reason"] = reason
+    validate("ApprovalRequest", body)
+    c, j, _ = _c3_gw("POST", "/v1/approvals", role, body)
+    if c in (200, 201): return j.get("approval", j) if isinstance(j, dict) else j
+    raise bc.BoundaryError((j.get("code") if isinstance(j, dict) else None) or _C3_CODE_OF_STATUS.get(c, "FAILED_PRECONDITION"), (j.get("message") if isinstance(j, dict) else str(j)[:120]) or f"HTTP {c}")
+
+def _c3_activate(release_id):   # 운영자가 릴리스 운영 화면에서 하는 일: operator 계정으로 POST /v1/activate
+    c, j, _ = _c3_gw("POST", "/v1/activate", "operator", {"requested_by_role": "operator", "release_id": release_id})
+    assert c == 200, f"activate {release_id} 실패 {c}: {str(j)[:200]}"
+    return j
+
+def _c3_pointer():   # 운영자가 보는 활성 포인터(없으면 None)
+    c, j, _ = _c3_gw("GET", "/v1/active-pointer", "operator")
+    assert c in (200, 404), ("활성 포인터 조회", c, str(j)[:120])
+    return (j.get("item") if isinstance(j, dict) else None) if c == 200 else None   # 응답은 {"item": ActivePointer 또는 null}
+
+def _c3_pg_wait(pg):
+    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+
+@step('6', repos=('ops-feedback', 'survey-service', 'boundary-contracts') + _GW, deps=('1', '4'),
       why="step6 은 STATE['qs'](step1)·['releases'](step4)를 읽는다")
 def step6():
     title(6, "Trace를 수집·비식별해 실패 사례를 만든다 (ops-feedback, I6->I7)")
     rel = (STATE.get("releases") or {}).get(STATE["qs"][-1]["version"], f"rel-{RID}-none")
-    ing = HttpTraceIngest(URL("ops"), TOK("ops-ingest-survey-service"))
-    env = trace_env(rel, 1); STATE["trace_env"] = env; save(); r1 = ing.send(env); r2 = ing.send(env)
-    assert (r1["status"], r2["status"]) == ("ACCEPTED", "DUPLICATE"), (r1, r2)
+    env = trace_env(rel, 1); STATE["trace_env"] = env; save()
+    # Trace 를 ops-feedback 으로 보내는 운영 주체는 survey-service(outbox)다: 그 컨테이너 안에서, 그 서비스의 수집 토큰으로 이웃 서비스 이름 주소를 부른다
+    o = _c3_py("survey-service", '''
+u = "http://ops-feedback-ingest:8080/v1/traces"; t = _tokfile("SURVEY_TRACE_INGEST_TOKEN_FILE")
+r1 = call("POST", u, t, V["env"]); r2 = call("POST", u, t, V["env"])
+n = call("POST", u, None, V["env"]); bad = call("POST", u, t, {**V["env"], "trace": {"x": 1}})
+R = {"r1": r1[:2], "r2": r2[:2], "noauth": [n[0], n[2]], "bad": bad[:2]}''', env=env)
+    (c1, r1), (c2, r2) = o["r1"], o["r2"]
+    assert c1 == 200 and c2 == 200 and (r1["status"], r2["status"]) == ("ACCEPTED", "DUPLICATE"), (o["r1"], o["r2"])
     validate("IngestResult", dict(r1)); validate("IngestResult", dict(r2))
-    assert_401_bearer("토큰 없는 Trace 수집", "POST", "ops", "/v1/traces", None, env)
-    c, e4 = http("POST", "ops", "/v1/traces", TOK("ops-ingest-survey-service"), {**env, "trace": {"x": 1}}); assert c == 400; validate("BoundaryError", e4)
-    rec("6a", "TEST-SUB", f"실패 신호가 든 봉투는 e2e가 만든 시험 자료(공개 API의 정상 턴으로는 실패 사례가 생기지 않음; 정상 턴의 Trace 전송은 단계 5에서 REAL로 확인; release_id는 단계 4의 실제 릴리스). 수집 REAL: HttpTraceIngest ACCEPTED→DUPLICATE, 토큰 없음 403, 스키마 위반 400")
-    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], capture_output=True, text=True)
-    assert r.returncode == 0, f"ops 잡 종료 {r.returncode}: {(r.stderr + r.stdout)[-600:]}"
-    summ = json.loads(r.stdout.strip().splitlines()[-1])
-    fs = HttpFailureStore(URL("ops"), TOK("ops-read-synthetic-data"))
+    cn, wn = o["noauth"]   # 계약 CONVENTIONS.md 6절: 토큰이 없으면 401 + WWW-Authenticate: Bearer
+    assert cn == 401 and (wn or "").split(" ")[0].rstrip(",") == "Bearer", ("토큰 없는 Trace 수집: 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절)", cn, wn)
+    c, e4 = o["bad"]; assert c == 400; validate("BoundaryError", e4)
+    rec("6a", "TEST-SUB", f"실패 신호가 든 봉투는 e2e가 만든 시험 자료(공개 API의 정상 턴으로는 실패 사례가 생기지 않음; 정상 턴의 Trace 전송은 단계 5에서 REAL로 확인; release_id는 단계 4의 실제 릴리스). 수집 REAL(survey-service 컨테이너 안에서 survey-service 의 수집 토큰으로): ACCEPTED→DUPLICATE, 토큰 없음 401, 스키마 위반 400")
+    rc, out, err = _c3_job("job-ops-feedback")
+    assert rc == 0, f"ops 잡 종료 {rc}: {(err + out)[-600:]}"
+    summ = json.loads(out.strip().splitlines()[-1])
+    # 실패 사례는 검토자가 게이트웨이(검토 화면의 경로)로 읽는다: ops-feedback 읽기 토큰은 게이트웨이가 붙인다
+    fs = _c3_gwc(HttpFailureStore, "reviewer")
     cases = fs.list_cases(source_release_id=rel)[0]
     assert cases, f"FailureCase가 생기지 않았다: {summ}"
     for c in cases:
@@ -1517,10 +1646,10 @@ def step6():
         ref = c.get("deidentified_trace_ref") or c.get("trace_ref")
     tr = fs.get_trace(cases[0]["deidentified_trace_ref"]); blob = json.dumps(tr, ensure_ascii=False)
     assert f"s-{RID}" not in blob and f"t-{RID}-1" not in blob, "비식별 trace에 원본 세션/턴 ID가 남았다"
-    r2 = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], capture_output=True, text=True)
-    s2 = json.loads(r2.stdout.strip().splitlines()[-1]); assert s2.get("cases_published", 0) == 0, f"잡이 멱등이 아니다: {s2}"
+    rc2, out2, err2 = _c3_job("job-ops-feedback")
+    s2 = json.loads(out2.strip().splitlines()[-1]); assert s2.get("cases_published", 0) == 0, f"잡이 멱등이 아니다: {s2}"
     STATE["cases"] = [dict(c) for c in cases]; save()
-    rec("6b", "REAL", f"비식별 잡 run-once(컨테이너, 시험용 잡 설정 test/ops-job): FailureCase {len(cases)}건 게시, 스키마 통과, 비식별 trace에 원본 세션·턴 ID 없음(I7 HTTP 읽기), 재실행은 새 사례 0건(멱등). 요약 {json.dumps(summ)[:160]}")
+    rec("6b", "REAL", f"비식별 잡 run-once(컨테이너, 시험용 잡 설정 test/ops-job): FailureCase {len(cases)}건 게시, 스키마 통과, 비식별 trace에 원본 세션·턴 ID 없음(검토자 계정으로 게이트웨이 경유 읽기), 재실행은 새 사례 0건(멱등). 요약 {json.dumps(summ)[:160]}")
 
 GOOD_EXPECTED = {"action": "NEXT", "next_item": "Q1.D02", "values": [{"key": "Q1.D01.diagnosed", "value": False, "precision": "exact", "status": "ANSWERED", "save": True}]}   # 검토자가 쓴 정답(시험 자료, ActionExtraction)
 def bad_ok():
@@ -1531,52 +1660,64 @@ def bad_ok():
 def step7():
     title(7, "실패 사례가 데이터 생성·학습·저작으로 돌아간다 (I7 HTTP)")
     if not STATE.get("cases"): rec(7, "BLOCKED", "FailureCase가 없다(단계 6)"); return
-    fs = HttpFailureStore(URL("ops"), TOK("ops-read-synthetic-data"))
+    defects = []   # 경계 결함: 단계를 끝까지 돌린 뒤 한꺼번에 실패시킨다(뒤 확인을 가리지 않는다)
+    fs = _c3_gwc(HttpFailureStore, "reviewer")   # 검토자 계정으로 게이트웨이 경유(읽기 토큰은 게이트웨이가 붙인다)
     mine = {c["case_id"] for c in STATE["cases"]}
     cid = STATE["cases"][0]["case_id"]
-    # 개선 신호(저작으로의 환류): question-authoring이 I7을 HTTP로 읽어 문항별 사례 수를 낸다. 저자 토큰으로 읽는다
-    c, sig = http("GET", "qa", f"/v1/signals?question_set_id={QS}", TOK("qa-author-e2e")); assert c == 200, (c, sig)
+    # 개선 신호(저작으로의 환류): question-authoring이 I7을 읽어 문항별 사례 수를 낸다. 저자가 읽는 것이므로 먼저 저자 계정으로 게이트웨이를 시도한다
+    cg, sg, _ = _c3_gw("GET", f"/v1/signals?question_set_id={QS}", "author")
+    if cg != 200: defects.append(f"저자 계정이 개선 신호(GET /v1/signals)를 읽을 입구가 게이트웨이에 없다(상태 {cg}). 저작으로의 환류를 받는 사람은 저자인데 Caddyfile 의 저자 경로(@qaauthor)에 /v1/signals 가 없다")
+    # 서비스 동작 자체(저자 토큰은 200, 읽기 토큰은 403, 원문 없음)는 question-authoring 컨테이너 안에서 그 서비스의 토큰 목록으로 확인한다
+    sg_in = _c3_py("question-authoring", '''
+au = next(t.split(":")[0] for t in _tokfile("QA_AUTHOR_TOKENS_FILE").split(",") if t.split(":")[1] == V["author"])
+rd = _list("QA_READ_TOKENS_FILE")["synthetic-data"]; B = "http://127.0.0.1:8080/v1/signals"
+R = {"sig": call("GET", B + "?question_set_id=" + V["qs"], au)[:2], "read": call("GET", B, rd)[0]}''', qs=QS, author=_C3_ACCT["author"])
+    c, sig = sg_in["sig"]; assert c == 200, (c, sig)
     blob = json.dumps(sig, ensure_ascii=False)
     assert QS in blob and any(k in blob for k in ("case_count", "cases", "count")), f"신호에 문항 세트/사례 수가 없다: {blob[:300]}"
-    assert http("GET", "qa", "/v1/signals", TOK("qa-read-synthetic-data"))[0] == 403, "읽기 토큰으로 신호가 열림"
+    assert sg_in["read"] == 403, "읽기 토큰으로 신호가 열림"
     assert f'"s-{RID}"' not in blob and "삼십육" not in blob, "신호에 발화/ID 원문이 있다"
-    rec("7s", "REAL", f"question-authoring GET /v1/signals(저자 토큰, 읽기 토큰은 403)가 ops-feedback I7을 HTTP로 읽어 문항 세트 {QS}의 사례 수를 낸다(저작으로의 환류). 응답 {blob[:200]}")
-    rv_tok = TOK("ops-review-reviewer")
+    rec("7s", "REAL", f"question-authoring GET /v1/signals(저자 토큰, 읽기 토큰은 403; question-authoring 컨테이너 안에서 확인)가 ops-feedback I7을 HTTP로 읽어 문항 세트 {QS}의 사례 수를 낸다(저작으로의 환류). 응답 {blob[:200]}")
     bad = {"review_status": "CONFIRMED", "expected": {"items": [{"bad": 1}]}, "expected_kind": "LORA_A"}
-    c, e = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, bad, headers=RVH); assert c == 400, (c, e); validate("BoundaryError", e)
-    c, e2 = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, {"review_status": "CONFIRMED", "expected": GOOD_EXPECTED}, headers=RVH); assert c == 400, (c, e2)
-    assert http("POST", "ops", f"/v1/cases/{cid}/review", TOK("ops-read-synthetic-data"), bad, headers=RVH)[0] == 403, "읽기 토큰으로 검토 게시됨"
-    assert http("POST", "ops", f"/v1/cases/nonexistent-case/review", rv_tok, {"review_status": "DISMISSED"}, headers=RVH)[0] == 404
+    # 검토 게시의 입력 검증은 검토자 계정으로 게이트웨이를 통해(검토 화면의 경로) 본다. X-Openit-User 는 게이트웨이가 계정 ID 로 붙인다
+    c, e = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", bad)[:2]; assert c == 400, (c, e); validate("BoundaryError", e)
+    c, e2 = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", {"review_status": "CONFIRMED", "expected": GOOD_EXPECTED})[:2]; assert c == 400, (c, e2)
+    # 읽기 토큰으로는 검토를 게시할 수 없다: 게이트웨이는 늘 검토 토큰을 붙이므로 ops-feedback 컨테이너 안에서 그 서비스의 읽기 토큰으로 확인한다
+    c403 = _c3_py("ops-feedback-ingest", '''
+R = call("POST", "http://127.0.0.1:8080/v1/cases/" + V["cid"] + "/review", _list("OPS_READ_TOKENS_FILE")["synthetic-data"], V["bad"], {"X-Openit-User": "reader-e2e"})[0]''', cid=cid, bad=bad)
+    assert c403 == 403, "읽기 토큰으로 검토 게시됨"
+    assert _c3_gw("POST", "/v1/cases/nonexistent-case/review", "reviewer", {"review_status": "DISMISSED"})[0] == 404
     pi = dict(__import__("copy").deepcopy(STATE["extract_input"])); pi["user_utterance"] = "뇌졸중은 진단받은 적 없어요"   # 개인정보를 뺀 문장으로 검토자가 쓴 입력(시험 자료, ActionExtractionInput)
     badri = {**bad_ok(), "reviewed_input": {"user_utterance": 1}}
-    c, eri = http("POST", "ops", f"/v1/cases/{cid}/review", rv_tok, badri, headers=RVH); assert c == 400, ("잘못된 reviewed_input이 받아들여짐", c, eri)
+    c, eri = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", badri)[:2]; assert c == 400, ("잘못된 reviewed_input이 받아들여짐", c, eri)
     good = {"review_status": "CONFIRMED", "expected_kind": "LORA_A", "reviewed_input": pi, "expected": GOOD_EXPECTED}
     # ---- 게이트웨이 경유 검토(admin-console 검토 화면의 경로): 사람 계정(reviewer-e2e) 인증 뒤, ops-feedback 읽기/reviewer 쓰기 토큰은 게이트웨이가 붙인다
-    assert gw_raw("GET", "/v1/cases")[0] == 401, "인증 없이 /v1/cases 가 열려 있다"
-    assert gw_raw("POST", f"/v1/cases/{cid}/review", good)[0] == 401
-    assert gw_raw("GET", "/v1/cases", basic=ADMIN())[0] == 403, "승인자 계정이 검토 경로를 부를 수 있다"
-    assert gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=ADMIN())[0] == 403, "승인자 계정이 검토를 게시할 수 있다"
-    assert gw_raw("GET", "/v1/submissions", basic=REVIEWER())[0] == 403, "검토자 계정이 승인 경로를 부를 수 있다"
-    assert gw_raw("POST", "/v1/approvals", {}, basic=REVIEWER())[0] == 403
-    assert gw_raw("POST", "/v1/traces", {}, basic=REVIEWER())[0] == 404, "서비스 내부 면(POST /v1/traces)이 게이트웨이에 열려 있다"
-    c, lst, hd = gw_raw("GET", "/v1/cases?review_status=PENDING", basic=REVIEWER()); assert c == 200, (c, lst)
-    assert "no-store" in {k.lower(): v for k, v in hd.items()}.get("cache-control", ""), "Cache-Control: no-store 가 유지되지 않았다"
+    assert _c3_gw("GET", "/v1/cases")[0] == 401, "인증 없이 /v1/cases 가 열려 있다"
+    assert _c3_gw("POST", f"/v1/cases/{cid}/review", None, good)[0] == 401
+    assert _c3_gw("GET", "/v1/cases", "approver")[0] == 403, "승인자 계정이 검토 경로를 부를 수 있다"
+    assert _c3_gw("POST", f"/v1/cases/{cid}/review", "approver", good)[0] == 403, "승인자 계정이 검토를 게시할 수 있다"
+    assert _c3_gw("GET", "/v1/submissions", "reviewer")[0] == 403, "검토자 계정이 승인 경로를 부를 수 있다"
+    assert _c3_gw("POST", "/v1/approvals", "reviewer", {})[0] == 403
+    assert _c3_gw("POST", "/v1/traces", "reviewer", {})[0] == 404, "서비스 내부 면(POST /v1/traces)이 게이트웨이에 열려 있다"
+    c, lst, hd = _c3_gw("GET", "/v1/cases?review_status=PENDING", "reviewer"); assert c == 200, (c, lst)
+    assert "no-store" in hd.get("cache-control", ""), "Cache-Control: no-store 가 유지되지 않았다"
     mine_pending = [x for x in lst["items"] if x["case_id"] == cid]; assert mine_pending and mine_pending[0]["review_status"] == "PENDING", lst
-    c, one, _ = gw_raw("GET", f"/v1/cases/{cid}", basic=REVIEWER()); assert c == 200 and one["case_id"] == cid, (c, one); validate("FailureCase", one)
-    c, trc, _ = gw_raw("GET", "/v1/deidentified-traces/" + one["deidentified_trace_ref"], basic=REVIEWER()); assert c == 200 and trc, (c, trc)
+    c, one, _ = _c3_gw("GET", f"/v1/cases/{cid}", "reviewer"); assert c == 200 and one["case_id"] == cid, (c, one); validate("FailureCase", one)
+    c, trc, _ = _c3_gw("GET", "/v1/deidentified-traces/" + one["deidentified_trace_ref"], "reviewer"); assert c == 200 and trc, (c, trc)
     assert "삼십육" not in json.dumps(trc, ensure_ascii=False) and f's-{RID}' not in json.dumps(trc), "비식별 trace에 원문이 있다"
-    c, r1, _ = gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=REVIEWER(), headers={"X-Openit-User": "spoofed-user"}); assert c == 201, (c, r1); validate("FailureCase", r1)
-    c, r2, _ = gw_raw("POST", f"/v1/cases/{cid}/review", good, basic=REVIEWER(), headers={"X-Openit-User": "spoofed-user"}); assert c == 200 and r2 == r1, (c, "같은 검토 재전송이 같은 결과가 아니다")
+    c, r1, _ = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", good, {"X-Openit-User": "spoofed-user"}); assert c == 201, (c, r1); validate("FailureCase", r1)
+    c, r2, _ = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", good, {"X-Openit-User": "spoofed-user"}); assert c == 200 and r2 == r1, (c, "같은 검토 재전송이 같은 결과가 아니다")
     rec("7g", "REAL", "검토 화면 경로를 게이트웨이 경유로 한 번: 인증 없이 401, 승인자 계정으로 검토 경로 403·검토자 계정으로 승인 경로 403, POST /v1/traces 404, 검토자 계정으로 PENDING 목록 -> 사례 조회(FailureCase 스키마) -> 비식별 trace 조회(no-store 유지, 원문 없음) -> reviewed_input 포함 CONFIRMED 201(재전송 200, 위조 X-Openit-User 무시 요청)")
+    reviewer_id = _C3_ACCT["reviewer"]
     rb = (r1.get("ext") or {}).get("ops-feedback", {}).get("reviewed_by")
-    assert rb == REVIEWER()[0], f"검토 응답의 reviewed_by 가 인증 계정이 아니다(위조 X-Openit-User={'spoofed-user'}): {rb!r}"
-    via_i7 = fs.get_case(cid)   # I7 HTTP 읽기(다른 경로)에서도 같은 기록이어야 한다
-    assert (via_i7.get("ext") or {}).get("ops-feedback", {}).get("reviewed_by") == REVIEWER()[0], dict(via_i7).get("ext")
-    rec("7h", "REAL", f"검토자 기록: 게이트웨이 경유 검토 응답과 I7 조회 결과의 ext[ops-feedback].reviewed_by 가 인증 계정 {REVIEWER()[0]}이고, 요청에 실은 위조 X-Openit-User(spoofed-user)는 기록되지 않았다(게이트웨이가 덮어씀). 승인 쪽도 같은 위조 시험이 REAL이다(4g: approver_id가 인증 계정 {ADMIN()[0]}). 화면 렌더링은 BLOCKED")
+    assert rb == reviewer_id, f"검토 응답의 reviewed_by 가 인증 계정이 아니다(위조 X-Openit-User={'spoofed-user'}): {rb!r}"
+    via_i7 = fs.get_case(cid)   # 계약 클라이언트로 다시 읽어도(스키마 검증 포함) 같은 기록이어야 한다
+    assert (via_i7.get("ext") or {}).get("ops-feedback", {}).get("reviewed_by") == reviewer_id, dict(via_i7).get("ext")
+    rec("7h", "REAL", f"검토자 기록: 게이트웨이 경유 검토 응답과 I7 조회 결과의 ext[ops-feedback].reviewed_by 가 인증 계정 {reviewer_id}이고, 요청에 실은 위조 X-Openit-User(spoofed-user)는 기록되지 않았다(게이트웨이가 덮어씀). 승인 쪽도 같은 위조 시험이 REAL이다(4g: approver_id가 인증 계정 {_C3_ACCT['approver']}). 화면 렌더링은 BLOCKED")
 
     confirmed = [x for x in fs.list_cases(review_status="CONFIRMED")[0] if x["case_id"] in mine]; assert confirmed
     assert confirmed[0].get("reviewed_input") == pi, "reviewed_input이 I7 읽기에 그대로 보이지 않는다"
-    rec("7a", "REAL", f"검토 확인을 HTTP로(직접 호출 검증 + 게이트웨이 경유 확인은 7g): POST /v1/cases/{{id}}/review 잘못된 expected는 400({e.get('message','')[:80]}), expected_kind 없음 400, 읽기 토큰 403, 없는 사례 404, 올바른 확인(reviewed_input 포함)은 201(새 version, FailureCase 스키마 통과, I7 읽기에서 reviewed_input 그대로), 잘못된 reviewed_input 400, 재전송 200 같은 결과. 검토 UI는 아직 없다")
+    rec("7a", "REAL", f"검토 확인을 HTTP로(게이트웨이 경유, 검토자 계정): POST /v1/cases/{{id}}/review 잘못된 expected는 400({e.get('message','')[:80]}), expected_kind 없음 400, 읽기 토큰 403(ops-feedback 컨테이너 안), 없는 사례 404, 올바른 확인(reviewed_input 포함)은 201(새 version, FailureCase 스키마 통과, I7 읽기에서 reviewed_input 그대로), 잘못된 reviewed_input 400, 재전송 200 같은 결과. 검토 UI는 아직 없다")
     out = run_sd("2", seeds=True, failure=True); m, _ = read_manifest(out)
     seeded = json.dumps(m.get("ext", {}), ensure_ascii=False) + (WORK / "sd-work-2" / "report.json").read_text()
     for f in (WORK / "datasets" / f"ds-{RID}" / m["version"] / "files").rglob("*.jsonl"):
@@ -1588,15 +1729,7 @@ def step7():
         rec(7, "REAL", f"synthetic-data가 I7(HTTP)로 CONFIRMED FailureCase를 읽어 새 데이터셋 버전 {m['version']}(이전 {prev})이 사례 ID를 시드로 인용. 저작으로의 환류는 7s(개선 신호). reviewed_input은 I7 읽기에서 그대로 보인다. 학습(model-lab) 회귀 평가가 reviewed_input을 쓰는지는 실행하지 못했다(CPU로 도는 model-lab 이미지가 없고 E2E_GPU는 신호 전, CR-D12)")
     else:
         rec("7b", "BLOCKED", f"새 데이터셋 버전 {m['version']}(이전 {prev})이 만들어졌으나 시드 인용이 없다(CONFIRMED가 아닌 사례는 시드로 쓰이지 않는다). 인용 확인: {cited}. 학습(model-lab)과 저작으로의 환류는 실행하지 않았다")
-
-def _ds_call(method, path, token=None, body=None, ctype=None):
-    """dataset-store(I2) 에 HTTP 로 직접 요청한다(상태 코드와 본문). 왜 SDK 가 아니라 urllib 인가: 201/200/409/403 을 구분해 단언해야 하고, 호스트 .venv 의 boundary-contracts 가 2.1.0 미만이면 HttpDatasetStore 가 없다(5n 과 같은 사정)."""
-    req = urllib.request.Request(URL("ds") + path, data=body, method=method)
-    if token: req.add_header("Authorization", f"Bearer {token}")
-    if ctype: req.add_header("Content-Type", ctype)
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r: return r.status, r.read()
-    except urllib.error.HTTPError as e: return e.code, e.read()
+    if defects: raise AssertionError("경계 결함: " + "; ".join(defects))
 
 def _ds_tar(manifest, root):
     import io, tarfile
@@ -1608,7 +1741,7 @@ def _ds_tar(manifest, root):
         for f in manifest["files"]: add("files/" + f["path"], (root / "files" / f["path"]).read_bytes())
     return buf.getvalue()
 
-@step('7d', repos=('synthetic-data', 'boundary-contracts', 'deploy:compose.yaml,compose.test.yaml,scripts/gen-secrets.sh'), deps=('1', '2'),
+@step('7d', repos=('synthetic-data', 'boundary-contracts', 'deploy:compose.yaml,scripts/gen-secrets.sh') + _GW, deps=('1', '2'),
       why="step7d 는 STATE['dataset'](step2)와 step2 가 WORK/datasets 에 쓴 manifest.json·files/ 를 읽어 dataset-store 에 게시한다(e2e_steps.py step7d). 실행 중 스택의 dataset-store 가 필요하다",
       also={'model-lab': 'model-lab 이 읽는 I2(dataset-store) 읽기 토큰 경로와 쓰기 거부(model-lab 코드는 E2E 에서 돌지 않는다)'})
 def step7d():
@@ -1616,8 +1749,7 @@ def step7d():
     if "dataset" not in STATE: rec("7d", "BLOCKED", "단계 2 가 게시한 데이터셋이 없다(STATE['dataset'])"); return
     ds = STATE["dataset"]; root = WORK / "datasets" / ds["id"] / ds["version"]
     m = json.loads((root / "manifest.json").read_text()); assert m["content_hash"] == ds["content_hash"], "단계 2 의 매니페스트가 바뀌었다"
-    WT, RT = TOK("dataset-store-write-synthetic-data"), TOK("dataset-store-read-model-lab")
-    body = _ds_tar(m, root); TAR = "application/x-tar"; q = urllib.parse.quote
+    body = _ds_tar(m, root); q = urllib.parse.quote
     # 실제 생산자 잡(synthetic-data import, store.kind=http)이 dataset-store 로 게시한다. 같은 입력이라 단계 2 의 파일 저장소 게시와 버전·content_hash 가 같아야 한다(결정적)
     # (잡은 이미지 안의 계약 패키지로 도므로 호스트 잡 환경의 버전을 따로 확인하지 않는다)
     hs = {"kind": "http", "base_url": DS_JOB_URL, "timeout": 60}   # 잡에 넘기는 주소: 서비스 이름(컨테이너 안에서 127.0.0.1 은 자기 자신)
@@ -1626,154 +1758,210 @@ def step7d():
     assert (o["version"], o["content_hash"]) == (ds["version"], ds["content_hash"]), ("잡이 HTTP 로 게시한 버전·해시가 단계 2 와 다르다", o)
     rc2, o2, _ = run_import("http2", 2, hs); assert rc2 == 0 and o2["status"] == "ALREADY_PUBLISHED", ("같은 잡 재실행이 멱등이 아니다", rc2, o2)
     via = f"실제 생산자 잡 import, store.kind=http, 결과 {o['status']}, 버전·해시는 단계 2 와 같다) -> 같은 잡 재실행 ALREADY_PUBLISHED"
-    c2, b2 = _ds_call("POST", "/v1/datasets", WT, body, TAR); assert c2 == 200 and json.loads(b2)["content_hash"] == m["content_hash"], ("같은 게시는 멱등 200 이어야 한다", c2, b2[:200])
-    # 읽기: 읽기 토큰으로 목록·버전·매니페스트·파일 바이트(해시를 manifest 와 대조)
-    c, b = _ds_call("GET", "/v1/datasets", RT); assert c == 200 and ds["id"] in b.decode(), ("목록", c, b[:200])
-    c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions", RT); assert c == 200 and ds["version"] in b.decode(), ("버전 목록", c, b[:200])
-    c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions/{q(ds['version'])}", RT); assert c == 200 and json.loads(b)["content_hash"] == m["content_hash"], ("매니페스트", c, b[:200])
-    validate("DatasetManifest", json.loads(b))
-    for f in m["files"]:
-        c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions/{q(ds['version'])}/files/{q(f['path'], safe='')}", RT)
-        assert c == 200 and "sha256:" + hashlib.sha256(b).hexdigest() == f["content_hash"], ("파일 바이트가 manifest 해시와 다르다", f["path"], c)
-    c, b = _ds_call("POST", "/v1/datasets", RT, body, TAR); assert c == 403, ("읽기 토큰으로 게시가 거부되지 않았다", c, b[:200])
     # 불변: 같은 (id, 버전)에 내용만 다른 매니페스트(created_at 만 다름, 새 content_hash)는 409. 저장된 것이 바뀌지 않았는지 다시 읽어 확인한다
     m2 = dict(m); m2["created_at"] = "2026-10-16T00:00:00Z" if m["created_at"] != "2026-10-16T00:00:00Z" else "2026-10-17T00:00:00Z"
     m2["content_hash"] = canonical.content_hash(m2); validate("DatasetManifest", m2)
-    c, b = _ds_call("POST", "/v1/datasets", WT, _ds_tar(m2, root), TAR); assert c == 409, ("같은 버전에 다른 내용은 409 여야 한다", c, b[:200])
-    c, b = _ds_call("GET", f"/v1/datasets/{q(ds['id'])}/versions/{q(ds['version'])}", RT); assert c == 200 and json.loads(b)["content_hash"] == m["content_hash"], "409 뒤에 저장된 버전이 바뀌었다"
+    # dataset-store 는 datasets 네트워크에만 있고 읽는 쪽(model-lab)·쓰는 쪽(synthetic-data)은 잡 컨테이너다. 이 시험은 dataset-store 컨테이너 안에서 그 서비스가 받는 두 토큰(쓰기=synthetic-data, 읽기=model-lab)으로 요청한다
+    o7 = _c3_py("dataset-store", '''
+import base64, hashlib
+B = "http://127.0.0.1:8080"; TAR = "application/x-tar"; ID, VER = V["id"], V["ver"]
+WT = _list("DATASET_STORE_WRITE_TOKENS_FILE")["synthetic-data"]; RT = _list("DATASET_STORE_READ_TOKENS_FILE")["model-lab"]
+body, body2 = base64.b64decode(V["body"]), base64.b64decode(V["body2"]); vp = B + "/v1/datasets/" + V["qid"] + "/versions/" + V["qver"]
+R = {"dup": call("POST", B + "/v1/datasets", WT, raw=body, ctype=TAR)[:2],
+     "list": call("GET", B + "/v1/datasets", RT)[:2], "versions": call("GET", B + "/v1/datasets/" + V["qid"] + "/versions", RT)[:2], "manifest": call("GET", vp, RT)[:2], "files": []}
+for p in V["files"]:
+    st, b, _ = call("GET", vp + "/files/" + V["quote"][p], RT, rawout=True); R["files"].append([p, st, "sha256:" + hashlib.sha256(b).hexdigest()])
+R["read_post"] = call("POST", B + "/v1/datasets", RT, raw=body, ctype=TAR)[0]
+R["conflict"] = call("POST", B + "/v1/datasets", WT, raw=body2, ctype=TAR)[0]
+R["after"] = call("GET", vp, RT)[:2]
+R["noauth_get"] = call("GET", B + "/v1/datasets")[::2]; R["noauth_post"] = call("POST", B + "/v1/datasets", None, raw=body, ctype=TAR)[0]
+R["badtok"] = call("GET", B + "/v1/datasets", "x" * 48)[::2]''',
+        timeout=120, id=ds["id"], ver=ds["version"], qid=q(ds["id"]), qver=q(ds["version"]), body=__import__("base64").b64encode(body).decode(), body2=__import__("base64").b64encode(_ds_tar(m2, root)).decode(),
+        files=[f["path"] for f in m["files"]], quote={f["path"]: q(f["path"], safe="") for f in m["files"]})
+    c2, b2 = o7["dup"]; assert c2 == 200 and b2["content_hash"] == m["content_hash"], ("같은 게시는 멱등 200 이어야 한다", c2, str(b2)[:200])
+    # 읽기: 읽기 토큰으로 목록·버전·매니페스트·파일 바이트(해시를 manifest 와 대조)
+    c, b = o7["list"]; assert c == 200 and ds["id"] in json.dumps(b), ("목록", c, str(b)[:200])
+    c, b = o7["versions"]; assert c == 200 and ds["version"] in json.dumps(b), ("버전 목록", c, str(b)[:200])
+    c, b = o7["manifest"]; assert c == 200 and b["content_hash"] == m["content_hash"], ("매니페스트", c, str(b)[:200])
+    validate("DatasetManifest", b)
+    want = {f["path"]: f["content_hash"] for f in m["files"]}
+    for p, c, h in o7["files"]: assert c == 200 and h == want[p], ("파일 바이트가 manifest 해시와 다르다", p, c)
+    assert len(o7["files"]) == len(m["files"])
+    assert o7["read_post"] == 403, ("읽기 토큰으로 게시가 거부되지 않았다", o7["read_post"])
+    assert o7["conflict"] == 409, ("같은 버전에 다른 내용은 409 여야 한다", o7["conflict"])
+    c, b = o7["after"]; assert c == 200 and b["content_hash"] == m["content_hash"], "409 뒤에 저장된 버전이 바뀌었다"
     # 토큰 없음·모르는 토큰은 401 + WWW-Authenticate: Bearer, 읽기 토큰으로 게시처럼 맞는 토큰의 권한 부족만 403 이다(계약 CONVENTIONS.md 6절, HTTP.md I2, RFC 9110 15.5.2, RFC 6750 3절; D106)
-    assert_401_bearer("토큰 없는 읽기", "GET", "ds", "/v1/datasets")
-    c, _ = _ds_call("POST", "/v1/datasets", None, body, TAR); assert c == 401, ("토큰 없는 게시", c)
-    assert_401_bearer("모르는 토큰", "GET", "ds", "/v1/datasets", "x" * 48)
-    rec("7d", "REAL", f"dataset-store 서버(실제 이미지)에 단계 2 와 같은 입력의 데이터셋 {ds['id']}@{ds['version']} 를 쓰기 토큰(synthetic-data)으로 게시({via}, 같은 tar 재게시는 멱등 200 -> 읽기 토큰(model-lab)으로 목록·버전·매니페스트(스키마 통과)·파일 {len(m['files'])}개 바이트(manifest 해시 일치) -> 읽기 토큰의 게시는 403 -> 같은 버전에 다른 내용은 409 이고 저장본 불변 -> 토큰 없음·모르는 토큰은 403(서버 계약이 401 이 아니다). 못 보는 것: 소비자 model-lab 의 실제 읽기 코드(그 영역), 큰 본문·동시 게시 한도, synthetic-data run(시드) 모드의 HTTP 게시(import 모드만 확인)")
+    for what, (c, w) in (("토큰 없는 읽기", o7["noauth_get"]), ("모르는 토큰", o7["badtok"])):
+        assert c == 401 and (w or "").split(" ")[0].rstrip(",") == "Bearer", (f"{what}: 토큰이 없거나 틀리면 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절)", c, w)
+    assert o7["noauth_post"] == 401, ("토큰 없는 게시", o7["noauth_post"])
+    rec("7d", "REAL", f"dataset-store 서버(실제 이미지)에 단계 2 와 같은 입력의 데이터셋 {ds['id']}@{ds['version']} 를 쓰기 토큰(synthetic-data)으로 게시({via}, 같은 tar 재게시는 멱등 200 -> 읽기 토큰(model-lab)으로 목록·버전·매니페스트(스키마 통과)·파일 {len(m['files'])}개 바이트(manifest 해시 일치) -> 읽기 토큰의 게시는 403 -> 같은 버전에 다른 내용은 409 이고 저장본 불변 -> 토큰 없음·모르는 토큰은 401 + WWW-Authenticate: Bearer. 요청은 dataset-store 컨테이너 안에서 그 서비스의 두 토큰으로 했다(서비스가 datasets 네트워크에만 있어 호스트·게이트웨이로는 닿지 않는다). 못 보는 것: 소비자 model-lab 의 실제 읽기 코드(그 영역), 큰 본문·동시 게시 한도, synthetic-data run(시드) 모드의 HTTP 게시(import 모드만 확인)")
 
-@step('8', repos=('release-gate', 'survey-service', 'kiosk-frontend', 'boundary-contracts'), deps=('1', '4', '6'),
+@step('8', repos=('release-gate', 'survey-service', 'kiosk-frontend', 'boundary-contracts') + _GW, deps=('1', '4', '6'),
       why="step8 은 STATE['cases'](step6)·['pointers'],['releases'](step4)·['qs'](step1)를 읽는다",
       also={'ops-feedback': 'ops-feedback이 release-gate에 롤백 요청(I5)'})
 def step8():
     title(8, "롤백 요청이 활성 릴리스를 되돌린다 (ops-feedback -> release-gate, I5 HTTP)")
-    gate_s = HttpGateService(URL("gate"), TOK("gate-write-ops-feedback")); gate_r = HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service"))
+    # 롤백을 요청하는 운영 주체는 ops-feedback 의 잡이다: 그 잡 컨테이너 안에서 그 잡의 쓰기 토큰(OPS_GATE_WRITE_TOKEN_FILE)으로 release-gate 를 부른다(잡은 release 네트워크에 있다)
+    rollback = lambda req: _c3_job_py("job-ops-feedback", 'R = call("POST", "http://release-gate:8080/v1/rollback", _tokfile("OPS_GATE_WRITE_TOKEN_FILE"), V["req"])[:2]', req=req)
     if "releases" not in STATE:
         req = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "request_id": f"rbk-{RID}-0", "requested_at": "2026-10-15T00:00:00Z", "from_release_id": f"rel-{RID}-new",
                "to_release_id": f"rel-{RID}-old", "reason": "E2E 시험", "evidence_refs": ["ev-e2e-test-1"], "requested_by_role": "ops-feedback"}
-        validate("RollbackRequest", req); rc = gate_s.request_rollback(req); validate("RollbackReceipt", dict(rc)); assert rc["status"] == "REJECTED"
+        validate("RollbackRequest", req); c, rc = rollback(req); assert c in (200, 201), (c, rc); validate("RollbackReceipt", dict(rc)); assert rc["status"] == "REJECTED"
         rec(8, "BLOCKED", "릴리스가 없어 APPLIED를 못 보인다. 요청 경로만 확인(REJECTED 영수증)"); return
     rels = STATE["releases"]; old, new = rels[STATE["qs"][0]["version"]], rels[STATE["qs"][-1]["version"]]
-    cur = gate_r.get_active_pointer(); assert cur["release_id"] == new
+    cur = _c3_pointer(); assert cur["release_id"] == new   # 활성 포인터는 운영자가 보는 것과 같다(운영자 계정, 게이트웨이)
     req = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "request_id": f"rbk-{RID}-1", "requested_at": "2026-10-15T00:00:00Z", "from_release_id": new,
            "to_release_id": old, "reason": "E2E 시험 롤백", "evidence_refs": [STATE["cases"][0]["case_id"]] if STATE.get("cases") else ["ev-e2e-test-1"], "requested_by_role": "ops-feedback"}
     validate("RollbackRequest", req)
-    rc = gate_s.request_rollback(req); validate("RollbackReceipt", dict(rc)); assert rc["status"] == "APPLIED", dict(rc)
-    assert dict(gate_s.request_rollback(req)) == dict(rc), "같은 request_id가 같은 결과가 아니다"
-    ap = gate_r.get_active_pointer(); validate("ActivePointer", dict(ap)); assert ap["release_id"] == old and ap["pointer_version"] > STATE["pointers"][-1]["pointer_version"]
-    r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == old else None)(survey_ready()), 60, f"survey가 이전 릴리스 {old}로 복귀")
+    c, rc = rollback(req); assert c in (200, 201), (c, rc); validate("RollbackReceipt", dict(rc)); assert rc["status"] == "APPLIED", dict(rc)
+    c2, rc2 = rollback(req); assert c2 in (200, 201) and dict(rc2) == dict(rc), "같은 request_id가 같은 결과가 아니다"
+    ap = _c3_pointer(); validate("ActivePointer", dict(ap)); assert ap["release_id"] == old and ap["pointer_version"] > STATE["pointers"][-1]["pointer_version"]
+    r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == old else None)(_c3_survey_ready()), 60, f"survey가 이전 릴리스 {old}로 복귀")
     assert not r["release_loader"]["rejections"]
     # 공개 API: 롤백 뒤에도 서비스가 산다. 새 세션은 이전 릴리스로 시작된다(/readyz active_release), 롤백 전에 시작한 세션도 이어서 처리된다
     sidb = f"sess-{RID}-b"
     c, st = kiosk("/v1/sessions", {"session_id": sidb, "kind": "SESSION_START"}); assert c == 200, (c, st)
     c, tb = public_turn(sidb, "turn-1", "뇌졸중은 없어요"); assert c == 200, (c, tb)
     kiosk(f"/v1/sessions/{sidb}/end", {"session_id": sidb, "kind": "SESSION_END"})
-    bad = HttpGateService(URL("gate"), TOK("gate-write-question-authoring"))
-    try: bad.request_rollback({**req, "request_id": f"rbk-{RID}-2"}); raise AssertionError("허용되지 않은 역할이 롤백함")
-    except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED"
-    rec(8, "REAL", f"ops-feedback 토큰의 RollbackRequest -> RollbackReceipt APPLIED(멱등), 활성 포인터 {new}->{old}, 실제 survey-service가 /readyz에서 이전 릴리스로 복귀, 롤백 권한 없는 역할은 PERMISSION_DENIED, 롤백 뒤 공개 API로 새 세션 한 턴 처리(이전 릴리스). 롤백을 요청한 주체는 e2e(ops-feedback 역할 토큰)이고 ops-feedback 잡의 자동 롤백 평가는 아님")
+    # 롤백 권한이 없는 역할(question-authoring 의 쓰기 토큰)은 거부된다: release-gate 컨테이너 안에서 그 서비스의 쓰기 토큰 목록의 다른 역할로 확인한다
+    cb, eb = _c3_py("release-gate", 'R = call("POST", "http://127.0.0.1:8080/v1/rollback", _list("GATE_WRITE_TOKENS_FILE")["question-authoring"], V["req"])[:2]', req={**req, "request_id": f"rbk-{RID}-2"})
+    assert cb in (400, 401, 403) and isinstance(eb, dict) and eb.get("code") == "PERMISSION_DENIED", ("허용되지 않은 역할이 롤백함", cb, str(eb)[:120])
+    rec(8, "REAL", f"ops-feedback 잡의 토큰(잡 컨테이너 안)으로 RollbackRequest -> RollbackReceipt APPLIED(멱등), 활성 포인터(운영자 계정, 게이트웨이) {new}->{old}, 실제 survey-service가 /readyz에서 이전 릴리스로 복귀, 롤백 권한 없는 역할은 PERMISSION_DENIED(release-gate 컨테이너 안), 롤백 뒤 공개 API로 새 세션 한 턴 처리(이전 릴리스). 롤백을 요청한 주체는 e2e가 띄운 ops-feedback 잡 컨테이너이고 ops-feedback 잡의 자동 롤백 평가는 아님")
 
-def _gate_clients():
-    return (HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")), with_user(HttpGateService(URL("gate"), TOK("gate-write-operator")), "op-test"),
-            HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")), with_user(HttpGateService(URL("gate"), TOK("gate-write-release-approver")), "trainer-test"))
+def _c3_sub_for(subj):
+    """제출 목록(승인자 계정, 게이트웨이)에서 이 조합(문항 세트·LoRA 쌍)의 제출을 찾는다. 없으면 None. 후보는 수집기 잡이 접수한다(운영에서 접수하는 주체)."""
+    ref = lambda r: (r["id"], str(r["version"]))
+    items, _ = _c3_gwc(HttpGateService, "approver").list_submissions(limit=100)
+    for v in items:
+        s = v.get("subject", {})
+        if all(ref(s.get(k, {"id": None, "version": None})) == ref(subj[k]) for k in ("question_set", "lora_a", "lora_b")): return dict(v)
+    return None
 
-@step('demo4', repos=('release-gate', 'model-lab'), deps=('1', '3'),
+def _c3_report_of(sid):   # 승인 요청 보고서(자동 검사 전이면 409 -> None)
+    c, j, _ = _c3_gw("GET", f"/v1/submissions/{sid}/review-report", "approver")
+    if c == 409: return None
+    assert c == 200, ("review-report", c, str(j)[:200])
+    return j
+
+def _c3_ms_get(path, auth=True):
+    """추론 서버(model-runtime)의 GET. 다른 호스트 역할의 추론 서버(--ms-url 또는 별도 프로젝트)면 그 주소로(호출자 토큰은 --ms-token-file 또는 이 구성이 만든 survey-service 용 토큰), 아니면 이 프로젝트의 model-serving 컨테이너 안에서 그 서버가 받는 토큰으로. (상태, JSON 또는 문자열)."""
+    base = (getattr(a, "ms_url", "") or "").rstrip("/") or SB.inference_url()
+    if base:
+        tf = getattr(a, "ms_token_file", "")
+        tok = pathlib.Path(tf).read_text().strip() if tf else _c3_tok("inference-survey-service")
+        req = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + tok} if auth else {})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r: st, b = r.status, r.read()
+        except urllib.error.HTTPError as e: st, b = e.code, e.read()
+        try: return st, json.loads(b or b"null")
+        except ValueError: return st, b.decode(errors="replace")
+    r = _c3_py("model-serving", 'R = call("GET", "http://127.0.0.1:8080" + V["path"], _list("MODEL_RUNTIME_TOKENS_FILE")["survey-service"] if V["auth"] else None)[:2]', path=path, auth=auth)
+    return r[0], r[1]
+
+def _c3_ms_container(): return getattr(a, "ms_container", "") or f"{a.project}-model-serving-1"   # 호스트에서 docker inspect/exec 하는 대상(운영자 역할)
+
+def _c3_ensure_sub(subj):
+    """이 조합의 제출. 수집기 잡이 접수한 것이 있으면 그것(운영의 경로, SubmissionView 스키마). 수집기는 문항 세트마다 가장 최근 검수 버전만 접수하므로 옛 버전의 조합은 없다:
+    그 경우 release-gate 컨테이너 안에서 operator 쓰기 토큰으로 POST /v1/submissions 를 한다(게이트웨이에는 이 경로가 없다: 운영에서는 수집기만 접수한다). 반환은 submission_id 가 든 dict."""
+    sub = _c3_sub_for(subj)
+    if sub: validate("SubmissionView", sub); return sub
+    c, j = _c3_py("release-gate", '''
+R = call("POST", "http://127.0.0.1:8080/v1/submissions", _list("GATE_WRITE_TOKENS_FILE")["operator"], {"subject": V["subj"], "requested_by_role": "operator"}, {"X-Openit-User": V["user"]})[:2]''', subj=subj, user=_C3_ACCT["operator"])
+    assert c in (200, 201, 202), ("후보 접수", c, str(j)[:200]); validate("GateSubmission", j)
+    return j
+
+@step('demo4', repos=('release-gate', 'model-lab') + _GW, deps=('1', '3'),
       why='demo.sh 전용. E2E 기본 실행에 들어가지 않는다')
 def demo4():
-    """demo.sh 용: 후보 수집·자동 검사까지 하고, 승인은 --demo-stop 이면 사람에게 남긴다(아니면 시험용 승인자 토큰으로 대신: TEST-SUB). 승인 화면에 볼 제출 하나는 항상 대기로 둔다."""
+    """demo.sh 용: 후보 수집·자동 검사까지 하고, 승인은 --demo-stop 이면 사람에게 남긴다(아니면 시험용 승인자 계정으로 대신: TEST-SUB). 승인 화면에 볼 제출 하나는 항상 대기로 둔다."""
     title("demo4", "데모 릴리스: 후보 수집·자동 검사 -> 승인 -> 활성화 (release-gate)")
     if "lora" not in STATE: rec("demo4", "BLOCKED", "단계 3의 패키지가 없다"); return
-    gate_r, gate_op, gate_rep, gate_ap = _gate_clients()
-    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
-    assert r.returncode in (0, 75), f"collect 종료 {r.returncode}: {(r.stderr + r.stdout)[-500:]}"
+    rc, out, err = _c3_job("job-release-gate-collect")
+    assert rc in (0, 75), f"collect 종료 {rc}: {(err + out)[-500:]}"
     A, B = STATE["lora"]["LORA_A"], STATE["lora"]["LORA_B"]
     subj = {v["version"]: {"question_set": v, "lora_a": A, "lora_b": B} for v in STATE["qs"]}
     subj_u = {"question_set": STATE["qsu"], "lora_a": A, "lora_b": B}
-    subs = {k: dict(gate_op.submit_candidate(sj, requested_by_role="operator")) for k, sj in subj.items()}
-    sub_u = dict(gate_op.submit_candidate(subj_u, requested_by_role="operator"))
-    def report_of(sid):
-        try: return dict(gate_rep.get_review_report(sid))
-        except bc.BoundaryError: return None
+    subs = {k: _c3_ensure_sub(sj) for k, sj in subj.items()}
+    sub_u = _c3_ensure_sub(subj_u)
     for k, sub in list(subs.items()) + [("u", sub_u)]:
-        wait_review_report(report_of, sub["submission_id"], k)
+        wait_review_report(_c3_report_of, sub["submission_id"], k)
     STATE["demo_subs"] = {**{k: v["submission_id"] for k, v in subs.items()}, "u": sub_u["submission_id"]}; save()
     if a.demo_stop:
         rec("demo4", "REAL", f"후보 수집·자동 검사까지 완료. 승인 대기 제출: " + ", ".join(f"문항 세트 v{k}={v['submission_id']}" for k, v in subs.items()) + f", 보지 못한 문항 세트={sub_u['submission_id']}. 사람이 /admin/ 에서 승인한 뒤 demo.sh activate")
         return
     rels = {}
     for k, sub in subs.items():
-        decide_approval("ap", sub["submission_id"], "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인")
+        _c3_approve("approver", sub["submission_id"], "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인")
     for k, sj in subj.items():
-        d = wait(lambda sj=sj: next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
+        d = wait(lambda sj=sj: next((x for x in _c3_decisions_for(sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
         rels[k] = d.get("release_id")
-    for k in sorted(rels): gate_activate(rels[k])
+    for k in sorted(rels): _c3_activate(rels[k])
     STATE["releases"] = rels; save()
-    rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 토큰으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
+    rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 승인자 계정으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
 
-@step('demo_activate', repos=('release-gate',), deps=('1', '3'),
+@step('demo_activate', repos=('release-gate',) + _GW, deps=('1', '3'),
       why='demo.sh 전용')
 def demo_activate():
     """사람이 /admin/ 에서 승인한 제출의 릴리스를 활성화한다(오래된 문항 세트 버전부터)."""
     title("demo_activate", "승인된 제출의 릴리스 활성화")
-    gate_r, gate_op, _, _ = _gate_clients()
     rels = {}
     for k in sorted(v["version"] for v in STATE["qs"]):
         sj = {"question_set": next(v for v in STATE["qs"] if v["version"] == k), "lora_a": STATE["lora"]["LORA_A"], "lora_b": STATE["lora"]["LORA_B"]}
-        d = next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None)
+        d = next((x for x in _c3_decisions_for(sj) if x["result"] == "PASS"), None)
         if d: rels[k] = d.get("release_id")
     if not rels: rec("demo_activate", "BLOCKED", "승인된(PASS) 제출이 아직 없다. /admin/ 에서 승인한 뒤 다시 실행한다"); return
-    cur = gate_r.get_active_pointer()
+    cur = _c3_pointer()
     for k in sorted(rels):
-        if not cur or cur["release_id"] != rels[k]: cur = gate_activate(rels[k])
+        if not cur or cur["release_id"] != rels[k]: cur = _c3_activate(rels[k])
     STATE["releases"] = rels; save()
     rec("demo_activate", "REAL", f"승인된 릴리스 활성화: {rels}, 현재 활성 {dict(cur)['release_id']}")
 
-@step('diag', repos=('release-gate',), deps=('3', '4', 'demo4', 'demo_activate', 'demo_swap'),
+@step('diag', repos=('release-gate',) + _GW, deps=('3', '4', 'demo4', 'demo_activate', 'demo_swap'),
       why='demo.sh 전용 진단')
 def diag():
-    """demo.sh diag: 켜져 있는 데모의 게이트·레지스트리 상태를 읽기 전용으로 요약한다(HTTP만, 토큰·비밀 값은 출력하지 않는다)."""
+    """demo.sh diag: 켜져 있는 데모의 게이트·레지스트리 상태를 읽기 전용으로 요약한다(게이트웨이·컨테이너 안 읽기만, 토큰·비밀 값은 출력하지 않는다)."""
     title("diag", "진단: 제출·판정·수집기·모델 패키지")
-    gs, rd = gate_diag_clients()
     try:
-        items, _ = gs.list_submissions(limit=100)
+        items, _ = _c3_gwc(HttpGateService, "approver").list_submissions(limit=100)
         print(f"-- release-gate 제출 {len(items)}건")
         for v in items:
             subj = v.get("subject", {}); qs = subj.get("question_set", {}); la = subj.get("lora_a", {}); lb = subj.get("lora_b", {})
             print(f"  [{v.get('status')}] {v['submission_id']} 문항 세트 {qs.get('id')}@{qs.get('version')} LoRA_A {la.get('id')}@{la.get('version')} LoRA_B {lb.get('id')}@{lb.get('version')} decision={v.get('decision_id')} release={v.get('release_id')}")
             if v.get("decision_id"):
-                print("\n".join("      " + l for l in decision_text(dict(rd.get_decision(v["decision_id"]))).splitlines()))
+                c, d = _c3_gate_read("/v1/decisions/" + v["decision_id"])
+                if c == 200: print("\n".join("      " + l for l in decision_text(d).splitlines()))
     except Exception as e:
         print(f"-- 제출 목록을 읽지 못했다: {type(e).__name__}: {str(e)[:200]}")
     try:
-        ap = rd.get_active_pointer(); print(f"-- 활성 릴리스 포인터: {ap}")
+        ap = _c3_pointer(); print(f"-- 활성 릴리스 포인터: {ap}")
     except Exception as e:
         print(f"-- 활성 포인터를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}")
-    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
-    print(f"-- 후보 수집기 run-once 다시 실행(멱등) 종료 코드 {r.returncode}; 마지막 출력: {(r.stdout.strip().splitlines() or ['(없음)'])[-1][:300]}")
-    try:
-        mr = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); ids = mr.list_ids()
-        print(f"-- model-registry 패키지 {len(ids)}개")
-        for i in ids:
-            vs = mr.list_versions(i); print(f"  {i}: 버전 {vs}")
-            for v in vs[-1:]:
-                m = mr.get_manifest(i, v); sc = m.get("serving_config", {}); print(f"      role={m.get('role')} base={m.get('base_model')} constraint.backend={sc.get('constraint', {}).get('backend')}@{sc.get('constraint', {}).get('backend_version')} prompt={sc.get('prompt_template_version')} runtime={m.get('lineage', {}).get('model_runtime_version')}")
+    rc, out, err = _c3_job("job-release-gate-collect")
+    print(f"-- 후보 수집기 run-once 다시 실행(멱등) 종료 코드 {rc}; 마지막 출력: {(out.strip().splitlines() or ['(없음)'])[-1][:300]}")
+    try:   # model-registry 는 release-gate 컨테이너 안에서 그 서비스의 읽기 토큰(GATE_I3_TOKEN_FILE)으로 읽는다(운영에서 패키지를 읽는 주체)
+        mr = _c3_py("release-gate", '''
+B = "http://model-registry:8080"; T = _tokfile("GATE_I3_TOKEN_FILE"); items = lambda b: b.get("items", b) if isinstance(b, dict) else b
+R = []
+for i in items(call("GET", B + "/v1/packages", T)[1]):
+    vs = items(call("GET", B + "/v1/packages/" + i + "/versions", T)[1]); last = call("GET", B + "/v1/packages/" + i + "/versions/" + vs[-1], T)[1] if vs else {}
+    R.append([i, vs, last])''', timeout=90)
+        print(f"-- model-registry 패키지 {len(mr)}개")
+        for i, vs, m in mr:
+            print(f"  {i}: 버전 {vs}")
+            if vs:
+                sc = m.get("serving_config", {}); print(f"      role={m.get('role')} base={m.get('base_model')} constraint.backend={sc.get('constraint', {}).get('backend')}@{sc.get('constraint', {}).get('backend_version')} prompt={sc.get('prompt_template_version')} runtime={m.get('lineage', {}).get('model_runtime_version')}")
     except Exception as e:
         print(f"-- model-registry 패키지를 읽지 못했다: {type(e).__name__}: {str(e)[:200]}")
     try:
-        c, info = http("GET", "ms", "/v1/info", INF_TOK())
+        c, info = _c3_ms_get("/v1/info")
         ex = (info.get("serving_config_expectation") or {}) if c == 200 else {}
         print(f"-- model-serving /v1/info: HTTP {c} backend={info.get('backend') if c == 200 else '-'} 기대 constraint={ex.get('constraint')} prompt={ex.get('prompt_template_versions')} loaded={info.get('loaded') if c == 200 else '-'}")
     except Exception as e:
         print(f"-- model-serving /v1/info 를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}")
     try:
-        c, rz = http("GET", "ms", "/readyz"); reason = rz.get("reason") if isinstance(rz, dict) else None
+        c, rz = _c3_ms_get("/readyz", auth=False); reason = rz.get("reason") if isinstance(rz, dict) else None
         print(f"-- model-serving /readyz: HTTP {c} status={rz.get('status') if isinstance(rz, dict) else rz} 사유={reason}")
-        r = sh([a.docker, "exec", MS_CONTAINER, "sh", "-c", "echo uid=$(id -u); echo hf_home=${HF_HOME:-<unset>}; d=${HF_HOME:-/var/lib/model-runtime/hf}; echo owner=$(stat -c %U:%u \"$d\"); (test -w \"$d\" && echo writable) || echo NOT-writable"], check=False)
+        r = sh([a.docker, "exec", _c3_ms_container(), "sh", "-c", "echo uid=$(id -u); echo hf_home=${HF_HOME:-<unset>}; d=${HF_HOME:-/var/lib/model-runtime/hf}; echo owner=$(stat -c %U:%u \"$d\"); (test -w \"$d\" && echo writable) || echo NOT-writable"], check=False)
         info_txt = " ".join((r.stdout or "").split()) or (r.stderr or "").strip()[:160]
         print(f"-- model-serving 컨테이너 안(읽기만, 쓰기 시험 없음): {info_txt}")
         if "NOT-writable" in (r.stdout or "") or "OSError" in str(reason):
@@ -1783,54 +1971,56 @@ def diag():
     print(f"-- 상태 파일 요약: 릴리스 {STATE.get('releases')}, 제출 {STATE.get('demo_subs')}, llm 대조 {STATE.get('llm_cfg_vs_server')}")
     rec("diag", "REAL", "진단 출력만 했다(변경 없음)")
 
-@step('demo_active', repos=('release-gate',), deps=(),
+@step('demo_active', repos=('release-gate',) + _GW, deps=(),
       why='demo.sh 전용')
 def demo_active():
-    """demo.sh swap-adapters 가 전후에 부른다: 활성 릴리스 포인터(읽기 전용)."""
+    """demo.sh swap-adapters 가 전후에 부른다: 활성 릴리스 포인터(읽기 전용, 운영자 계정)."""
     title("demo_active", "활성 릴리스 포인터 (읽기 전용)")
-    ap = dict(_gate_clients()[0].get_active_pointer())
+    ap = dict(_c3_pointer() or {})
     print(f"  활성 릴리스 {ap.get('release_id')} pointer_version {ap.get('pointer_version')}")
     rec("demo_active", "REAL", f"활성 릴리스 {ap.get('release_id')} (pointer_version {ap.get('pointer_version')})")
 
-@step('demo_swap', repos=('release-gate',), deps=('1', '2'),
+@step('demo_swap', repos=('release-gate',) + _GW, deps=('1', '2'),
       why='demo.sh 전용')
 def demo_swap():
     """demo.sh swap-adapters: 새 모델 패키지(LORA_A/LORA_B)를 게시 -> 후보 수집·자동 검사 -> 시험용 승인자(스크립트) 승인 -> 활성화 -> model-serving 만 새 번들을 적재.
     문항 세트는 가장 최근 것을 그대로 쓰고 어댑터 쌍만 바뀐다. 단계 3(make_packages, publish_packages)·5s(container_ids, check_unchanged, check_release_loaded)와 같은 함수를 쓴다."""
     title("demo_swap", "어댑터 교체: 게시 -> 자동 검사 -> 시험용 승인 -> 활성화 -> model-serving 적재")
     if "qs" not in STATE or "dataset" not in STATE: rec("demo_swap", "BLOCKED", "데모 상태(문항 세트·데이터셋)가 없다: demo.sh up 이 먼저"); return
-    print("  !! 승인자는 사람이 아니라 이 스크립트가 시험용 release-approver 토큰으로 대신한다(TEST-SUB) !!")
-    gate_r, gate_op, gate_rep, gate_ap = _gate_clients()
-    before_ptr = dict(gate_r.get_active_pointer())
+    print("  !! 승인자는 사람이 아니라 이 스크립트가 시험용 승인자 계정(release-approver)으로 대신한다(TEST-SUB) !!")
+    before_ptr = dict(_c3_pointer() or {})
     pk = make_packages(); refs = publish_packages(pk)
     subj = {"question_set": STATE["qs"][-1], "lora_a": refs["LORA_A"], "lora_b": refs["LORA_B"]}
     snap = container_ids(); assert set(snap) == set(SWAP_SERVICES), f"컨테이너를 찾지 못했다: {sorted(set(SWAP_SERVICES) - set(snap))}"
-    ms_before = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", MS_CONTAINER], check=False).stdout.strip()
-    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
-    assert r.returncode in (0, 75), f"collect 종료 {r.returncode}: {(r.stderr + r.stdout)[-500:]}"
-    sub = dict(gate_op.submit_candidate(subj, requested_by_role="operator")); validate("GateSubmission", sub); sid = sub["submission_id"]
-    def report_of(x):
-        try: return dict(gate_rep.get_review_report(x))
-        except bc.BoundaryError: return None
-    existing = next((d for d in decisions_for(gate_r, subj) if d["result"] == "PASS"), None)
+    ms_before = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", _c3_ms_container()], check=False).stdout.strip()
+    rc, out, err = _c3_job("job-release-gate-collect")
+    assert rc in (0, 75), f"collect 종료 {rc}: {(err + out)[-500:]}"
+    sub = _c3_ensure_sub(subj); sid = sub["submission_id"]
+    existing = next((d for d in _c3_decisions_for(subj) if d["result"] == "PASS"), None)
     if not existing:
-        rep = wait_review_report(report_of, sid, "교체 후보"); validate("ReviewReport", rep)
+        rep = wait_review_report(_c3_report_of, sid, "교체 후보"); validate("ReviewReport", rep)
         bad = [c for c in rep["checks"] if c["result"] not in ("PASS", "SKIPPED")]
         assert not bad, f"자동 검사가 통과하지 못했다(승인하지 않고 멈춤): {bad}"
         print("  자동 검사: " + ", ".join(f"{c['kind']}={c['result']}" for c in rep["checks"]))
-        dec = dict(decide_approval("ap", sid, "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인(어댑터 교체)")); validate("GateApproval", dec)
-        existing = wait(lambda: next((d for d in decisions_for(gate_r, subj) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
-    rid = existing.get("release_id"); validate("ReleaseManifest", dict(gate_r.get_release(rid)))
-    gate_r.load_bundle(rid, dest=WORK / "bundles")
-    unchanged_pointer = before_ptr["release_id"] == rid
-    ap = dict(before_ptr) if unchanged_pointer else dict(gate_activate(rid)); validate("ActivePointer", ap)
-    r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == rid else None)(survey_ready()), 300, f"survey가 릴리스 {rid} 적재", every=3)
-    tok = INF_TOK()
-    st = wait(lambda: (lambda cs: cs[1] if cs[0] == 200 and cs[1].get("state") in ("LOADED", "FAILED") else None)(http("GET", "ms", f"/v1/releases/{rid}", tok)), 600, f"model-serving 이 {rid} 적재", every=3)
+        dec = dict(_c3_approve("approver", sid, "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인(어댑터 교체)")); validate("GateApproval", dec)
+        existing = wait(lambda: next((d for d in _c3_decisions_for(subj) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
+    rid = existing.get("release_id")
+    c, rel = _c3_gate_read("/v1/releases/" + rid); assert c == 200, (c, rel); validate("ReleaseManifest", dict(rel))
+    # 번들(해시 검증 포함)은 그것을 읽는 소비자 survey-service 의 컨테이너 안에서 그 서비스의 읽기 토큰·계약 클라이언트로 푼다
+    bl = _c3_py("survey-service", '''
+from openit_link.clients import HttpReleaseReader
+import pathlib
+b = HttpReleaseReader("http://release-gate:8080", _tokfile("SURVEY_RELEASE_READER_TOKEN_FILE")).load_bundle(V["rid"], dest=pathlib.Path("/tmp/c3-bundles"))
+R = {"release_id": b.manifest["release_id"]}''', timeout=180, rid=rid)
+    assert bl["release_id"] == rid
+    unchanged_pointer = before_ptr.get("release_id") == rid
+    ap = dict(before_ptr) if unchanged_pointer else dict(_c3_activate(rid)); validate("ActivePointer", ap)
+    r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == rid else None)(_c3_survey_ready()), 300, f"survey가 릴리스 {rid} 적재", every=3)
+    st = wait(lambda: (lambda cs: cs[1] if cs[0] == 200 and cs[1].get("state") in ("LOADED", "FAILED") else None)(_c3_ms_get(f"/v1/releases/{rid}")), 600, f"model-serving 이 {rid} 적재", every=3)
     EA.check_release_loaded(st, rid)
     after = container_ids(); EA.check_unchanged({k: tuple(v) for k, v in snap.items()}, after, SWAP_SERVICES)
-    ms_after = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", MS_CONTAINER], check=False).stdout.strip()
-    print(f"  활성 릴리스: {before_ptr['release_id']} (pointer_version {before_ptr['pointer_version']}) -> {rid} (pointer_version {ap['pointer_version']})" + ("  [이미 활성이었다: 같은 어댑터 쌍, 교체 없음]" if unchanged_pointer else ""))
+    ms_after = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", _c3_ms_container()], check=False).stdout.strip()
+    print(f"  활성 릴리스: {before_ptr.get('release_id')} (pointer_version {before_ptr.get('pointer_version')}) -> {rid} (pointer_version {ap['pointer_version']})" + ("  [이미 활성이었다: 같은 어댑터 쌍, 교체 없음]" if unchanged_pointer else ""))
     print("  컨테이너 StartedAt (전 -> 후):")
     for svc in SWAP_SERVICES: print(f"    {svc:22} {snap[svc][1]} -> {after[svc][1]}  {'불변' if snap[svc] == after[svc] else '바뀜'}")
     print(f"    {'model-serving':22} {ms_before} -> {ms_after}  {'불변' if ms_before == ms_after else '바뀜(컨테이너 재시작)'}")
@@ -1838,14 +2028,22 @@ def demo_swap():
     STATE.setdefault("swaps", []).append({"release_id": rid, "packages": refs}); save()
     rec("demo_swap", "TEST-SUB", f"새 릴리스 {rid} 활성화(승인자는 스크립트가 대신함, TEST-SUB). model-serving 에서 LOADED. {', '.join(SWAP_SERVICES)} 컨테이너의 ID·StartedAt 불변")
 
+def _c3_qa_versions(qset):
+    """문항 세트 버전 목록(I1). 운영에서 이것을 읽는 주체는 release-gate(수집·판정)라서 release-gate 컨테이너 안에서 그 서비스의 I1 읽기 토큰으로 읽는다."""
+    r = _c3_py("release-gate", '''
+st, b, _ = call("GET", "http://question-authoring:8080/v1/question-sets/" + V["qs"] + "/versions", _tokfile("GATE_I1_TOKEN_FILE"))
+R = [st, b]''', qs=qset)
+    assert r[0] == 200, ("문항 버전 목록", r[0], str(r[1])[:120])
+    return r[1].get("items", r[1]) if isinstance(r[1], dict) else r[1]
+
 @step('5p', repos=('survey-service', 'question-authoring', 'release-gate', 'ops-feedback') + _GW, deps=('4',),
       why="STATE['pointers'] 가 없으면 활성 릴리스 없이 일부만 시험한다(has_release). postgres 를 stop/start 한다")
 def step5p():
     title("5p", "PostgreSQL 컨테이너 중지 -> 서비스 /readyz 비정상 관찰 -> 기동 -> /readyz 복구, 이전 데이터 보존, 새 쓰기 (D85)")
     pg = f"{a.project}-postgres-1"
     svcs = [("qa", "question-authoring"), ("gate", "release-gate"), ("ops", "ops-feedback-ingest"), ("survey", "survey-service")]
-    def ready(k):
-        try: return http("GET", k, "/readyz")
+    def ready(k):   # 서비스 컨테이너 안에서 본 /readyz (코드, 본문)
+        try: c, b, _ = _c3_probe(k, "/readyz"); return c, b
         except Exception as e: return 0, f"{type(e).__name__}"
     def healthy(k): return ready(k)[0] == 200
     def pgfp(db):
@@ -1859,16 +2057,16 @@ def step5p():
     qset = f"qs-{RID}-pgrestart"
     form = (ROOT / "test/fixtures/question-form-v2.txt").read_text()
     upload(qset, form, "pg1.txt")
-    before_v = [dict(v) for v in qa_reader().list_versions(qset)[0]]
+    before_v = [dict(v) for v in _c3_qa_versions(qset)]
     assert len(before_v) == 1, before_v
     dbs = ["qa", "gate", "ops_log", "ops_failure"] + (["survey"] if has_release else [])
     sidp = f"sess-{RID}-pgturn"
     if has_release:
         # 환자 세션: 값이 하나 확정된 상태에서 DB 를 멈춘다. Trace 전송이 끝나기를 기다려 행 지문이 흔들리지 않게 한다
-        rb0 = survey_ready()[1]
+        rb0 = _c3_survey_ready()[1]
         assert kiosk("/v1/sessions", {"session_id": sidp, "kind": "SESSION_START"})[0] == 200
         c, _p1 = public_turn(sidp, "p-1", "네 있어요"); assert c == 200, (c, _p1)
-        wait(lambda: survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
+        wait(lambda: _c3_survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
         time.sleep(3)
     fp0 = {d: pgfp(d) for d in dbs}
     for k, n in svcs: assert healthy(k), f"{n} /readyz 가 처음부터 200 이 아니다: {ready(k)}"
@@ -1889,11 +2087,11 @@ def step5p():
         out_turn = gk_turn(sidp, "p-2", "아니요 없어요", timeout=30)   # DB 가 멈춘 동안 환자 턴
         print(f"    환자 턴(DB 중지 중, gateway 경유): 상태 {out_turn[0]} {out_turn[3]:.1f}s 본문 {str(out_turn[1])[:160]}")
     for k, n in svcs:
-        hc = http("GET", k, "/healthz")[0]
+        hc = _c3_healthz(k)
         assert hc == 200, f"{n} /healthz 가 DB 중지 중 {hc} (살아 있음 점검은 DB 와 무관해야 한다)"
     # 3) 기동하고 복구를 기다린다
     t1 = time.time(); sh([a.docker, "start", pg])
-    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+    _c3_pg_wait(pg)
     t_pg = time.time() - t1
     rec_t = {}
     def all_up():
@@ -1905,10 +2103,10 @@ def step5p():
     fp1 = {d: pgfp(d) for d in dbs}
     diff = [d for d in dbs if fp0[d] != fp1[d]]
     assert not diff, f"재시작 전후 행 지문이 다르다: {diff}"
-    after_v = [dict(v) for v in qa_reader().list_versions(qset)[0]]
+    after_v = [dict(v) for v in _c3_qa_versions(qset)]
     assert after_v == before_v, ("문항 버전이 달라졌다", before_v, after_v)
     upload(qset, form.replace("알려 주세요.", "들려 주세요."), "pg2.txt")
-    assert len(qa_reader().list_versions(qset)[0]) == 2, "복구 뒤 새 쓰기(버전 2)가 반영되지 않았다"
+    assert len(_c3_qa_versions(qset)) == 2, "복구 뒤 새 쓰기(버전 2)가 반영되지 않았다"
     turn_note = ""
     if has_release:
         c, b, h, el = out_turn
@@ -1930,27 +2128,24 @@ def step5p():
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
 # ---- FAULT_MATRIX 1-1절 '4차 근거 대조'의 빈 10칸을 닫는 단계들 (5pn, 5pj, 5g, 5b). 기대는 head/docs/FAULT_POLICY.md 이다 ----
-def _pg_ready_wait(pg):
-    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+def _pg_ready_wait(pg): _c3_pg_wait(pg)
 
-def _ready_code(k):
-    try: return http("GET", k, "/readyz")[0]
-    except Exception: return 0
+def _ready_code(k): return _c3_ready(k)   # 서비스 컨테이너 안에서 본 /readyz 코드
 
 def _outbox_drained(timeout=120):
     """survey-service 의 Trace outbox 가 비기를 기다리고 그때의 전송 수(sent)를 돌려준다(계약 SurveyReadyz.trace_outbox.pending/sent).
     왜: ops_log 에는 잡뿐 아니라 ops-feedback-ingest(outbox 가 보낸 Trace)도 쓴다. 앞 단계의 DB 장애로 밀린 Trace 가 백오프 뒤 전송되면 ops_log 가 잡과 무관하게 바뀐다.
     /readyz 가 503(활성 릴리스 없음 등)이어도 본문의 trace_outbox 는 계약상 필수라 읽는다. 상한 120초는 측정값이 아니다(outbox 백오프 상한을 deploy 가 알지 못해 넉넉히 잡은 시작값)."""
     def drained():
-        try: c, r = survey_ready()
+        try: c, r = _c3_survey_ready()
         except Exception: return None
         ob = r.get("trace_outbox") if isinstance(r, dict) else None
         return (ob["sent"],) if ob and ob["pending"] == 0 else None
     return wait(drained, timeout, "survey-service trace_outbox.pending == 0(밀린 Trace 전송 끝)", every=1)[0]
 
-def _run_ops_job():   # run-job.sh 는 5p/스케줄러와 같은 경로(compose run --rm). 설정은 e2e.sh 가 내보낸 OPS_JOB_CONFIG
-    r = sh(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], env={"DEPLOY_PROJECT": a.project}, check=False)
-    return r.returncode, ((r.stdout or "") + (r.stderr or ""))[-300:]
+def _run_ops_job():   # 스케줄러와 같은 호출(compose run --rm job-ops-feedback). 설정은 e2e.sh 가 내보낸 OPS_JOB_CONFIG
+    rc, out, err = _c3_job("job-ops-feedback", timeout=120)
+    return rc, (out + err)[-300:]
 
 @step('5pn', repos=('survey-service', 'question-authoring', 'release-gate', 'ops-feedback') + _GW, deps=('4',),
       why="STATE['pointers'] 가 없으면 survey-service(A5)를 제외한다(has_release 와 같은 제한). postgres 를 서비스 DB 네트워크에서 disconnect/connect 하고 D1 잡을 한 번 돌린다")
@@ -1969,10 +2164,10 @@ def step5pn():
         sh([a.docker, "network", "disconnect", N, pg])
         try:
             wait(lambda: _ready_code(k) != 200 or None, 60, f"{name} 분리 뒤 /readyz 비정상", every=1)
-            t = time.time(); c, b = http("GET", k, "/readyz"); el = time.time() - t
+            c, b, el = _c3_probe(k, "/readyz")   # 걸린 시간은 서비스 컨테이너 안에서 잰다
             assert c == 503, f"{name} 분리 중 /readyz 가 503 이 아니다: {c} {str(b)[:100]}"
             assert el <= 2.5, f"{name} 분리 중 /readyz 응답 {el:.1f}s (FAULT_POLICY 5: 2초 안, 여유 0.5s)"
-            assert http("GET", k, "/healthz")[0] == 200, f"{name} /healthz 가 분리 중 200 이 아니다(원칙 5)"
+            assert _c3_healthz(k) == 200, f"{name} /healthz 가 분리 중 200 이 아니다(원칙 5)"
             body = json.dumps(b, ensure_ascii=False) if isinstance(b, dict) else str(b)
             assert "postgres://" not in body and "password" not in body.lower(), f"{name} /readyz 본문에 접속 정보가 있다"
             job_note = ""
@@ -2042,7 +2237,7 @@ def step5g():
     pub = lambda t: subprocess.run(["timeout", str(t), "bash", str(ROOT / "scripts/publish-images.sh"), "kiosk-frontend"], capture_output=True, text=True)
     r0 = pub(120); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다(종료 코드 {r0.returncode}): 표준 출력 끝 {r0.stdout[-300:]!r} / 표준 오류 끝 {r0.stderr[-300:]!r}"
     h0 = lock_hash(); notes = []
-    def live_ok(): return all(http("GET", k, "/healthz")[0] == 200 for k in ("qa", "gate", "ops"))
+    def live_ok(): return all(_c3_healthz(k) == 200 for k in ("qa", "gate", "ops"))
     sh([a.docker, "stop", reg])
     try:
         r = pub(60); assert r.returncode not in (0, 124), f"F1: 레지스트리 중지 중 게시가 {'성공' if r.returncode == 0 else '60s 안에 끝나지 않았다'}(종료 코드 {r.returncode}): 표준 출력 끝 {r.stdout[-200:]!r} / 표준 오류 끝 {r.stderr[-200:]!r}"
