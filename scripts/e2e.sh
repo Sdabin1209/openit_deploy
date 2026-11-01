@@ -231,7 +231,15 @@ pick_bind() { # 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는�
 BIND=$(pick_bind); export GATEWAY_BIND=$BIND INFERENCE_BIND=$BIND
 # 호스트 포트는 Docker 배정이 아니라 시작 때 고른 빈 포트로 **고정**한다(고정 포트 번호를 리포에 적지 않으므로 동시 실행 충돌 없음). 왜: 다른 호스트 역할의 추론 서버는
 # RELEASE_URL 에 게이트웨이 포트를, 제품은 INFERENCE_URL 에 추론 서버 포트를 들고 있다. 배정 포트는 컨테이너를 restart 하면 바뀌어(5d 의 kiosk-add-device.sh --apply 가 gateway 를 restart) 그 주소가 죽는다(2026-11-01 4차 실행).
-export GATEWAY_PORT=$(free_port) GATEWAY_TLS_PORT=$(free_port); INFERENCE_FIXED_PORT=$(free_port)
+docker_free_port() { # WSL 안에서 비어 있어도 Docker Desktop(윈도 포트 프록시)이 못 여는 포트가 있다(2026-11-02 "ports are not available"). Docker 로 실제 바인드해 본 포트만 쓴다
+  local p _t
+  for _t in 1 2 3 4 5 6 7 8; do p=$(free_port)
+    "$DOCKER" run --rm -p "127.0.0.1:$p:1" "$UTIL_REF" true >/dev/null 2>&1 && { echo "$p"; return 0; }
+  done
+  echo "Docker 가 바인드할 수 있는 빈 포트를 8번 안에 찾지 못했다" >&2; return 1
+}
+export GATEWAY_PORT=$(docker_free_port) GATEWAY_TLS_PORT=$(docker_free_port); INFERENCE_FIXED_PORT=$(docker_free_port)
+[ -n "$GATEWAY_PORT" ] && [ -n "$GATEWAY_TLS_PORT" ] && [ -n "$INFERENCE_FIXED_PORT" ] || { echo "호스트 포트 배정 실패" >&2; exit 1; }
 # 추론 서버가 TLS 로 부르는 이름(host.docker.internal)이 게이트웨이 인증서에 있어야 한다: 운영 설정 변수 GATEWAY_HOSTS 에 호출자가 쓰는 이름을 적는 것과 같다(실제 배포는 병원 내부 도메인)
 export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
 if [ "$BIND" = 127.0.0.1 ]; then echo "  컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는다: 게이트웨이·추론 서버는 127.0.0.1 에 게시한다"
