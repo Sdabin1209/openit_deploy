@@ -1,21 +1,27 @@
 # 단독 추론 서버(D72): model-serving 컨테이너 하나를 이 파일만으로 다른 호스트에서 띄운다.
 # deploy 의 compose.yaml·네트워크·서비스 이름·잠금 파일에 의존하지 않는다. 문진 스키마는 이미지에 내장되어 있다(/opt/survey-schema).
 #
-# 필수 변수 (이 셋만 있으면 `docker compose -f compose.inference.yaml config` 가 데몬 없이 병합된다):
+# 필수 변수 (이 다섯이면 `docker compose -f compose.inference.yaml config` 가 데몬 없이 병합된다):
 #   변수                 뜻
 #   INFERENCE_IMAGE      이미지 전체 참조, digest 로 고정(예: <레지스트리>/openit/model-serving@sha256:...). GPU 변형 이미지도 여기에 둔다
-#   RELEASE_URL          release-gate 주소(서버가 번들을 직접 읽는다). 이 호스트에서 닿아야 한다
+#   RELEASE_URL          **게이트웨이의 HTTPS 주소**(예: https://kiosk.hospital.local:443). 서버는 이 주소로 GET /v1/active-pointer, /v1/releases/{id}, /v1/releases/{id}/bundle 을 읽는다.
+#                        release-gate 를 직접 부르지 않는다(운영 compose 는 release-gate 를 호스트에 게시하지 않는다). 게이트웨이의 기계 토큰 경로: config/Caddyfile @inferencemachine, ADR 0049
 #   INFERENCE_TOKENS_FILE         파일 경로(값이 아니다). 내용: <호출자>=<토큰>[,...] 한 줄 (MODEL_RUNTIME_TOKENS, D84)
-#   INFERENCE_RELEASE_TOKEN_FILE  파일 경로(값이 아니다). 내용: 게이트 읽기 토큰 하나 (MODEL_RUNTIME_RELEASE_TOKEN)
-#                        두 파일은 컨테이너(uid 10001)가 읽을 수 있어야 한다(모드 644, 비밀을 둔 폴더는 700). 토큰은 환경 변수로 넣지 않는다.
+#   INFERENCE_RELEASE_TOKEN_FILE  파일 경로(값이 아니다). 내용: **게이트웨이 추론 토큰** 하나(deploy 의 secrets/tokens/gateway-inference-token). 예전과 달리 release-gate 읽기 토큰이 아니다.
+#                        게이트웨이가 이 토큰을 확인하고 자기가 가진 release-gate 읽기 토큰으로 바꿔 붙인다(MODEL_RUNTIME_RELEASE_TOKEN 으로 전달)
+#   INFERENCE_CA_FILE    파일 경로. 게이트웨이의 CA 루트 인증서(공개 인증서, 비밀 아님): deploy 호스트에서 scripts/export-gateway-ca.sh 로 꺼낸다. 공인 인증서를 쓰면 시스템 신뢰 저장소로 충분하다 -- 그래도 파일은 필요하니 공인 CA 번들을 준다
+#                        configs 로 /etc/openit/gateway-ca.crt 에 넣고 SSL_CERT_FILE 이 가리킨다(계약 클라이언트에 CA 인자가 없고 Python 기본 SSL 컨텍스트가 이 변수를 읽는다). 검증을 끄지 않는다
+#                        토큰 파일 두 개는 컨테이너(uid 10001)가 읽을 수 있어야 한다(모드 644, 비밀을 둔 폴더는 700). 토큰은 환경 변수로 넣지 않는다.
 # 선택 변수:
 #   INFERENCE_CONFIG_ENV_FILE  (비밀 아닌) 모델 설정 env 파일 경로(프로파일 등). 토큰을 넣지 않는다. 기본 /dev/null
 #   INFERENCE_BACKEND    기본 fake. GPU 변형 이미지는 model-runtime 이 정한 값(vllm 등)
 #   INFERENCE_BIND       호스트 바인드 주소. 기본 127.0.0.1 (감사 B8: 인증은 Bearer 토큰뿐이고 TLS 가 없어 기본으로 밖에 열지 않는다).
 #                        다른 호스트의 호출자가 닿아야 하면 서버의 사설 인터페이스 주소(권장) 또는 0.0.0.0 을 **명시**하고 방화벽으로 호출자만 허용한다. docs/RUN.md 7-1
+#   INFERENCE_NETWORK_MODE  기본 bridge. 게이트웨이에 ssh 터널처럼 **호스트 루프백**으로만 닿을 때 host 로 준다(컨테이너가 호스트 네트워크를 쓰므로 127.0.0.1 이 호스트다).
+#                        host 모드에서는 ports 게시가 무시되고 서버가 INFERENCE_LISTEN_HOST(기본 0.0.0.0):8080 에 직접 열린다 -- 밖에 열지 않으려면 INFERENCE_LISTEN_HOST=127.0.0.1 을 같이 준다
 #   INFERENCE_PORT       호스트 포트. 기본 8080. 빈 값(INFERENCE_PORT=)이면 Docker 가 배정한다(`docker port` 로 읽는다)
 # 사용 (추론 서버를 둘 호스트에서):
-#   INFERENCE_IMAGE=... RELEASE_URL=... INFERENCE_TOKENS_FILE=... INFERENCE_RELEASE_TOKEN_FILE=... docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
+#   INFERENCE_IMAGE=... RELEASE_URL=https://... INFERENCE_TOKENS_FILE=... INFERENCE_RELEASE_TOKEN_FILE=... INFERENCE_CA_FILE=... docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
 name: deploy-inference
 
 x-hardening: &hardening
@@ -30,6 +36,9 @@ secrets:
   model-runtime-tokens: {file: "${INFERENCE_TOKENS_FILE:?INFERENCE_TOKENS_FILE(MODEL_RUNTIME_TOKENS 값이 든 파일 경로)이 필요하다}"}
   model-runtime-release-token: {file: "${INFERENCE_RELEASE_TOKEN_FILE:?INFERENCE_RELEASE_TOKEN_FILE(게이트 읽기 토큰이 든 파일 경로)이 필요하다}"}
 
+configs:
+  gateway-ca: {file: "${INFERENCE_CA_FILE:?INFERENCE_CA_FILE(게이트웨이 CA 루트 인증서 파일 경로, scripts/export-gateway-ca.sh)가 필요하다}"}
+
 volumes:
   serving-data:     # 번들 캐시(게이트에서 다시 받을 수 있다)
   # hf-cache:       # GPU 변형: Hugging Face 모델 캐시. 아래 model-serving 의 주석을 같이 푼다 (마운트 경로는 이미지가 준비한 /var/lib/model-runtime/hf)
@@ -41,7 +50,12 @@ services:
     env_file:
       - ${INFERENCE_CONFIG_ENV_FILE:-/dev/null}   # 비밀 아님
     secrets: [model-runtime-tokens, model-runtime-release-token]
+    configs:
+      - {source: gateway-ca, target: /etc/openit/gateway-ca.crt}   # 공개 인증서라 secrets 가 아니라 configs 다
+    network_mode: ${INFERENCE_NETWORK_MODE:-bridge}
     environment:
+      SSL_CERT_FILE: /etc/openit/gateway-ca.crt   # 왜: 번들 읽기 클라이언트(boundary_contracts)와 probe() 의 urllib 이 이 CA 만으로 게이트웨이 TLS 를 검증한다. 시스템 신뢰 저장소를 고치지 않는다
+      MODEL_RUNTIME_HOST: ${INFERENCE_LISTEN_HOST:-0.0.0.0}   # bridge 에서는 0.0.0.0 이어야 게시 포트가 닿는다. host 모드에서만 바꾼다
       MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/model-runtime-release-token
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}

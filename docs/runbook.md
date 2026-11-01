@@ -242,12 +242,22 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 - gateway는 HTTPS가 필수다. 컨테이너 8443이 HTTPS, 8080은 평문이지만 `/healthz`만 답하고 나머지는 `308`로 https 주소로 보낸다. 호스트 포트는 `GATEWAY_PORT`(평문), `GATEWAY_TLS_PORT`(HTTPS, 기본 8443; 운영에서 443을 쓰려면 `GATEWAY_TLS_PORT=443`과 `GATEWAY_PUBLIC_TLS_PORT=443`).
 - 사이트 이름은 `GATEWAY_HOSTS`(기본 `localhost:8443, 127.0.0.1:8443`)다. 운영에서는 병원 내부 도메인으로 바꾼다(예: `GATEWAY_HOSTS=kiosk.hospital.local:8443`). 인증서는 Caddy 내부 CA가 발급하고, 루트와 발급 인증서는 볼륨 `gateway-data`(`/data/caddy/pki`)에 있어 재시작해도 유지된다(**볼륨을 지우면 루트가 바뀌어 모든 기기가 다시 신뢰해야 한다**; 이 볼륨은 CA 비밀키를 담으므로 유출·백업에 주의).
-- 루트 인증서를 꺼낸다: `docker cp deploy-gateway-1:/data/caddy/pki/authorities/local/root.crt ./openit-root.crt`. 이 파일은 공개해도 되는 인증서다(비밀키는 서버에만 있다).
+- 루트 인증서를 꺼낸다: `bash scripts/export-gateway-ca.sh --project deploy ./openit-root.crt`(내부적으로 `docker cp deploy-gateway-1:/data/caddy/pki/authorities/local/root.crt`; 재시도와 오류 처리 포함). 이 파일은 공개해도 되는 인증서다(비밀키는 서버에만 있다).
 - 키오스크와 직원 PC의 신뢰 저장소에 `openit-root.crt`를 넣는다(루트 권한이 필요한 사람 일): Windows는 `certutil -addstore -f ROOT openit-root.crt`, Ubuntu는 `/usr/local/share/ca-certificates/`에 복사 후 `sudo update-ca-certificates`, Firefox는 별도 저장소(설정에서 가져오기). 브라우저를 다시 시작한다.
 - 확인(서버나 PC에서): `curl --cacert openit-root.crt https://<도메인>:8443/healthz` 가 `ok`, `curl -I http://<도메인>:8080/` 가 `308`과 `Location: https://...`.
 - 공인 인증서(ACME)로 바꾸려면 병원 정보가 필요하다(도메인, 80/443 개방). `config/Caddyfile`의 HTTPS 사이트에서 `tls internal` 줄을 지우고 `GATEWAY_HOSTS`에 공인 도메인을 적는다(Caddy가 발급·갱신).
 - 서비스 사이(gateway→서비스→postgres)는 평문이다. 같은 서버의 Docker 내부 네트워크(서비스·DB 네트워크 internal)로 한정되며, 이 한계와 재검토 조건은 ADR 0005에 있다.
 - 이 PC에서 확인한 것: E2E가 시험용 CA만 신뢰하는 클라이언트로 gateway에 https로 접속하고, 평문 308, HSTS·`X-Content-Type-Options`·`X-Frame-Options`, `/config.json` 404를 확인한다. 확인하지 못한 것: 실제 키오스크 브라우저의 신뢰 절차, 공인 인증서 전환.
+
+### 9-1b. 원격 추론 서버: CA 배포와 토큰 발급 (ADR 0049)
+
+다른 호스트의 추론 서버가 게이트웨이를 거쳐 release-gate를 읽게 하는 절차다. 설정·변수는 `docs/RUN.md` 7-1.
+
+- CA 루트: `bash scripts/export-gateway-ca.sh --project deploy ./openit-root.crt`(없으면 재시도 뒤 오류로 끝난다. 프로젝트 이름이 다르면 `--project`). 공개 인증서라 일반 보안 복사로 서버 호스트에 옮겨도 된다. 서버는 이 파일만 신뢰한다(`INFERENCE_CA_FILE`; 시스템 신뢰 저장소를 고치지 않는다). 인증서가 바뀌는 경우(`gateway-data` 볼륨을 지움, 공인 인증서로 전환)에는 새 파일을 다시 배포한다.
+- 토큰 발급: `scripts/gen-secrets.sh`가 `secrets/tokens/gateway-inference-token`을 만든다(이미 있으면 그대로). 새로 생긴 설치에서 기존 게이트웨이가 떠 있다면 **게이트웨이를 다시 시작**한다(`docker restart deploy-gateway-1`: Caddy는 설정을 읽을 때 한 번 치환한다). 파일 내용은 출력하지 않고 보안 복사로 서버 호스트의 비밀 폴더(700) 안에 644로 둔다(컨테이너 uid 10001이 읽는다).
+- 토큰 교체(유출 의심 포함): ① deploy 호스트에서 `secrets/tokens/gateway-inference-token`을 지우고 `gen-secrets.sh` ② 게이트웨이 재시작 ③ 새 파일을 서버 호스트에 복사 ④ 서버 컨테이너를 다시 만든다(`docker compose -p deploy-inference -f compose.inference.yaml up -d --force-recreate`). 교체와 ④ 사이에는 서버가 새 릴리스를 읽지 못한다(이미 적재된 릴리스의 추론은 계속된다).
+- 확인: 서버 호스트에서 `curl --cacert openit-root.crt https://<도메인>:<포트>/healthz` 가 `ok`. 토큰 확인은 값을 출력하지 않는 방식으로: 상태 코드만 본다 `curl -s -o /dev/null -w '%{http_code}\n' --cacert openit-root.crt -H "Authorization: Bearer $(cat <토큰 파일>)" https://<도메인>:<포트>/v1/active-pointer`(200이면 통과, 401이면 토큰이 다르다. 명령 줄에 값이 보이므로 공용 터미널에서 하지 않는다).
+- 증상(아래 원인은 추정이며 실패를 일부러 만들어 확인하지는 않았다): 서버 `/readyz`가 "release 서버에 닿지 못한다(…)" -> CA 파일이 이 게이트웨이 것이 아니거나 호스트 이름이 `GATEWAY_HOSTS`에 없다. 적재 실패 -> 토큰이 다르다(교체 뒤 파일을 못 옮겼다). 404 `not found`(평문) -> 게이트웨이가 이 변경 전 설정이다(재시작).
 
 ### 9-2. 로그인 시도 속도 제한: 하지 않았다 (한계와 대안)
 
