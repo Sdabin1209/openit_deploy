@@ -21,19 +21,6 @@ ACTION_RULES_VERSION = load_rules()["rules_version"]   # 매니페스트·잡 �
 # repos: 결과가 의존하는 소스 리포('deploy:경로,...' 는 deploy 안의 그 경로만). deps: 앞 단계의 STATE 를 읽으면 그 단계(None 은 미확인). why: 근거.
 # deps 는 STATE[...] 읽기·쓰기를 ast 로 분석한 값과 같아야 한다(test_e2e_steps_decl.py).
 STEP_REGISTRY = {}
-def metric_registry():
-    """계약의 지표 레지스트리(metrics.json)의 지표 목록. 설치된 계약 패키지에 metrics() 가 있으면 그것을, 없으면 이 워크스페이스의 boundary-contracts 파일을 읽는다(읽기 전용). 없거나 모양이 다르면 실패한다."""
-    if hasattr(bc, "metrics"): ms = list(bc.metrics().values()); src = "boundary_contracts.metrics()"   # 왜: 계약의 metrics() 는 {지표 이름: 읽기 전용 항목} 이다(metrics_registry.py)
-    else:
-        f = pathlib.Path(__file__).resolve().parents[2] / "boundary-contracts" / "boundary_contracts" / "metrics.json"; src = str(f)
-        if not f.is_file(): raise SystemExit(f"지표 레지스트리 {f} 가 없다")
-        ms = json.loads(f.read_text(encoding="utf-8")).get("metrics")
-    need = {"name", "group", "higher_is_better", "status", "applies_to"}
-    if not isinstance(ms, list) or not ms or any(not isinstance(m, collections.abc.Mapping) or not need <= set(m) for m in ms):
-        raise SystemExit(f"{src}: metrics[] 의 각 항목에 {sorted(need)} 가 있어야 한다")
-    return ms
-
-
 def sample_metrics(role):
     """EvaluationReport 샘플 지표: 레지스트리에서 ACTIVE 이고 역할(LORA_A->A, LORA_B->B)에 맞는(applies_to 가 그 역할이거나 both) 방향이 정해진 지표만. 이름은 여기에 적지 않는다."""
     r = {"LORA_A": "A", "LORA_B": "B"}[role]
@@ -122,80 +109,19 @@ def http(method, k, path, token=None, body=None, raw=None, ctype="application/js
         b = e.read()
         try: return e.code, json.loads(b)
         except Exception: return e.code, b.decode(errors="replace")
-def status_www(method, k, path, token=None, body=None):
-    """(상태, WWW-Authenticate 값)만 돌려준다. 계약 CONVENTIONS.md 6절(RFC 9110 15.5.2, RFC 6750 3절): 토큰이 없거나 틀리면 401 + `WWW-Authenticate: Bearer`."""
-    req = urllib.request.Request(URL(k) + path, data=json.dumps(body).encode() if body is not None else None, method=method)
-    if token: req.add_header("Authorization", f"Bearer {token}")
-    if body is not None: req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r: return r.status, r.headers.get("WWW-Authenticate")
-    except urllib.error.HTTPError as e: return e.code, e.headers.get("WWW-Authenticate")
-def assert_401_bearer(what, method, k, path, token=None, body=None):
-    c, w = status_www(method, k, path, token, body)
-    assert c == 401 and (w or "").split(" ")[0].rstrip(",") == "Bearer", (f"{what}: 토큰이 없거나 틀리면 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절)", c, w)
-def with_user(client, user):
-    """승인(POST /v1/approvals)은 X-Openit-User 가 없으면 401 이고 approver_id 는 이 헤더 값으로 기록된다(release-gate CR-0008). SDK 클라이언트는 헤더를 못 보내므로 opener 의 기본 헤더로 붙인다(gateway 가 붙이는 인증 사용자 흉내, TEST-SUB)."""
-    client._opener.addheaders = [h for h in client._opener.addheaders if h[0].lower() != "x-openit-user"] + [("X-Openit-User", user)]
-    return client
-
 # 승인(POST /v1/approvals)은 계약 ApprovalRequest 본문을 직접 보낸다: 계약 클라이언트 HttpGateService.decide() 는 approver_id 를 본문에 싣고 report_hash 를 빠뜨릴 수 있어
 # ApprovalRequest(approver_id 금지, report_hash 필수)와 어긋난다(클라이언트 수정은 계약 3.0.3). 행위자는 X-Openit-User 헤더가 유일한 길이다(D88).
 APPROVER = {"ap": ("gate-write-release-approver", "trainer-test"), "op": ("gate-write-operator", "op-test")}
 _REPORT_HASH = {}   # 제출 -> 처음 읽은 보고서 해시(결정 뒤에는 보고서 상태가 달라질 수 있어 같은 제출의 재전송·번복은 처음 값을 쓴다)
 
-def report_hash_of(sid):
-    """GET /v1/submissions/{id}/review-report 응답 머리글 X-Openit-Report-Hash 를 그대로 쓴다(화면은 계산하지 않는다)."""
-    if sid not in _REPORT_HASH:
-        req = urllib.request.Request(URL("gate") + f"/v1/submissions/{sid}/review-report", headers={"Authorization": f"Bearer {TOK('gate-read-release-approver')}"})
-        with urllib.request.urlopen(req, timeout=30) as r: h = {k.lower(): v for k, v in r.headers.items()}
-        assert (h.get("x-openit-report-hash") or "").startswith("sha256:"), ("review-report 에 X-Openit-Report-Hash 가 없다", h)
-        _REPORT_HASH[sid] = h["x-openit-report-hash"]
-    return _REPORT_HASH[sid]
-
 _CODE_OF_STATUS = {400: "INVALID_RECORD", 401: "PERMISSION_DENIED", 403: "PERMISSION_DENIED", 404: "NOT_FOUND", 409: "CONFLICT"}
-
-def decide_approval(who, sid, decision, *, reason=None, report_hash=None):
-    """who: 'ap'(release-approver 쓰기 토큰, 사용자 trainer-test) | 'op'(operator 쓰기 토큰: 권한 시험). 본문은 보내기 전에 계약 ApprovalRequest 로 검사한다.
-    실패하면 응답의 BoundaryError(없으면 상태 코드로 정한 코드)를 bc.BoundaryError 로 올린다: 호출하는 쪽의 기대(PERMISSION_DENIED, CONFLICT)는 SDK 클라이언트 때와 같다."""
-    tokname, user = APPROVER[who]
-    body = {"submission_id": sid, "decision": decision, "approver_role": "release-approver", "report_hash": report_hash or report_hash_of(sid)}
-    if reason is not None: body["reason"] = reason
-    validate("ApprovalRequest", body)
-    req = urllib.request.Request(URL("gate") + "/v1/approvals", data=json.dumps(body).encode(), method="POST",
-                                 headers={"Authorization": f"Bearer {TOK(tokname)}", "X-Openit-User": user, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        raw = e.read()
-        try: j = json.loads(raw)
-        except Exception: j = {}
-        raise bc.BoundaryError(j.get("code") or _CODE_OF_STATUS.get(e.code, "FAILED_PRECONDITION"), j.get("message") or f"HTTP {e.code}")
 
 RVH = {"X-Openit-User": "reviewer-direct-e2e"}   # 검토 게시는 X-Openit-User(gateway 가 붙이는 인증 사용자)가 없으면 401(계약 6절·HTTP.md I7; 이전에는 403). gateway 를 거치지 않는 직접 호출에 시험용 값을 붙인다
 OPERATOR_ID = "operator-e2e-script"   # 시험용 운영자 ID: 게이트웨이가 계정 ID를 X-Openit-User 로 붙이는 것을 스크립트가 직접 흉내 낸다
-def gate_ops(path, body, user=OPERATOR_ID, token=None):
-    """release-gate 의 activate·rollback 을 HTTP 로 부른다(D85: 역할은 쓰기 토큰, 행위자는 X-Openit-User 헤더. SDK 는 헤더를 못 보낸다). (상태, JSON 본문)을 돌려준다.
-    user=None 이면 헤더를 붙이지 않는다. 본문의 requested_by_role 은 게이트가 무시한다(옛 게이트 호환을 위해 operator 로 넣는다)."""
-    req = urllib.request.Request(URL("gate") + path, data=json.dumps({"requested_by_role": "operator", **body}).encode(), method="POST")
-    req.add_header("Authorization", "Bearer " + (token or TOK("gate-write-operator"))); req.add_header("Content-Type", "application/json")
-    if user is not None: req.add_header("X-Openit-User", user)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
-    except urllib.error.HTTPError as e:
-        b = e.read()
-        try: return e.code, json.loads(b)
-        except Exception: return e.code, b.decode(errors="replace")
-def gate_activate(release_id, user=OPERATOR_ID):
-    c, b = gate_ops("/v1/activate", {"release_id": release_id}, user)
-    assert c == 200, f"activate {release_id} 실패 {c}: {str(b)[:200]}"
-    return b
 def sh(cmd, env=None, inp=None, check=True):
     r = subprocess.run(cmd, capture_output=True, text=True, input=inp, env={**os.environ, **(env or {})})
     if check: assert r.returncode == 0, f"{cmd[:3]} 실패({r.returncode}): {(r.stderr or r.stdout)[-600:]}"
     return r
-def docker_py(image, code, mounts=()):
-    cmd = [a.docker, "run", "--rm", "-i"] + [x for s, d in mounts for x in ("-v", f"{s}:{d}:ro")] + [image, "python", "-"]
-    r = sh(cmd, inp=code); return r.stdout
 def wait(fn, timeout, what, every=2):
     t = time.time()
     while time.time() - t < timeout:
@@ -212,19 +138,6 @@ def decision_text(dec):
     for r in dec.get("reject_reasons") or []: out.append(f"  * 사유: {str(r)[:400]}")
     return "\n".join(out)
 
-def gate_diag_clients():   # 읽기 전용(승인자 읽기 토큰, 게이트 읽기 토큰)
-    return HttpGateService(URL("gate"), TOK("gate-read-release-approver")), HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service"))
-
-def explain_submission(sid):
-    """(상태, 설명 문자열). 상태를 못 읽으면 (None, 이유)."""
-    try:
-        gs, rd = gate_diag_clients(); v = dict(gs.get_submission(sid)); st = v.get("status"); txt = f"제출 {sid} 상태 {st}"
-        if v.get("decision_id"):
-            txt += "\n" + decision_text(dict(rd.get_decision(v["decision_id"])))
-        return st, txt
-    except Exception as e:
-        return None, f"제출 {sid} 상태를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}"
-
 def wait_review_report(get_report, sid, label, timeout=60):
     """자동 검사 후 승인 요청 보고서를 기다린다. 제출이 반려(REJECTED_*)되면 시간 초과를 기다리지 않고 바로 GateDecision의 checks 를 보여 주며 실패한다."""
     t = time.time(); st = None
@@ -237,7 +150,6 @@ def wait_review_report(get_report, sid, label, timeout=60):
         time.sleep(2)
     raise AssertionError(f"시간 초과({timeout}s): 자동 검사 후 승인 요청 보고서 {label}.\n{explain_submission(sid)[1]}")
 
-qa_reader = lambda role="synthetic-data": HttpQuestionReader(URL("qa"), TOK(f"qa-read-{role}"))
 # synthetic-data 잡은 dataset-store 이미지에서 이미지 라벨 io.openit.jobs(계약 JobsDeclaration)가 선언한 argv 로 돌린다(U43): 명령 조립은 scripts/sd_jobs.py.
 # 설정 스키마가 survey_schema_dir 를 필수로 요구하지만 위치는 이미지가 정한다(이미지 환경 변수가 우선: synthetic-data ADR 0019, 설정 생략은 CR-009). 값은 쓰이지 않는다
 SD_UNUSED_DIR = "image-env-takes-precedence"
