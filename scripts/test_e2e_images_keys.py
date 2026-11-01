@@ -6,6 +6,7 @@ import pathlib, re, unittest
 H = pathlib.Path(__file__).resolve().parent
 STEPS = (H / "e2e_steps.py").read_text(encoding="utf-8")
 SH = (H / "e2e.sh").read_text(encoding="utf-8")
+DEMO = (H / "demo.sh").read_text(encoding="utf-8")   # 데모도 같은 드라이버를 부른다(2026-11-01: demo.sh 에 dataset-store 가 빠져 데모 단계 2 가 KeyError)
 
 
 class T(unittest.TestCase):
@@ -15,6 +16,12 @@ class T(unittest.TestCase):
         passed = set(re.findall(r'\\"([a-z][a-z0-9-]*)\\":', line))
         self.assertTrue(used, "e2e_steps.py 에서 IMAGES 키를 찾지 못했다(시험이 낡았다)")
         self.assertEqual(sorted(used - passed), [], f"e2e_steps.py 가 쓰는 IMAGES 키가 e2e.sh 의 IMAGES 에 없다: {sorted(used - passed)}")
+
+    def test_demo_passes_the_same_keys(self):
+        used = set(re.findall(r'IMAGES\["([a-z][a-z0-9-]*)"\]', STEPS))
+        line = next(l for l in DEMO.splitlines() if 'echo "{\\"survey-service\\":' in l)
+        passed = set(re.findall(r'\\"([a-z][a-z0-9-]*)\\":', line))
+        self.assertEqual(sorted(used - passed), [], f"e2e_steps.py 가 쓰는 IMAGES 키가 demo.sh 의 img 에 없다: {sorted(used - passed)}")
 
     def test_passed_digest_variables_exist_in_lock_use(self):
         line = next(l for l in SH.splitlines() if l.startswith('IMAGES="{'))
