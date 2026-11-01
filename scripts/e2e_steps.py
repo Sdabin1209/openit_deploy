@@ -369,20 +369,6 @@ def _c1_in(service, method, path, *, auth=None, headers=None, body=None, raw=Non
         "out(call(A['m'], A['u'], t, A['b'], A['h'], A['raw'].encode() if A['raw'] is not None else None, 'text/plain' if A['raw'] is not None else 'application/json'))\n")
     return st, pb, _C1Hdr(hd)
 
-def _c1_ms(calls):
-    """추론 서버 호출을 호출자 역할(survey-service) 컨테이너 안에서 한다: 주소(SURVEY_INFERENCE_URL)와 토큰이 운영과 같다. calls=[(메서드, 경로, 본문, 토큰을 붙이나)].
-    [(상태, 본문 문자열, 소문자 머리글)]"""
-    r = _c1_run("survey-service", f"A = {_c1_lit({'calls': calls})}\nbase = os.environ['SURVEY_INFERENCE_URL'].rstrip('/')\nt = tok('inference-survey-service')\n"
-        "out([list(call(m, base + p, t if w else None, b, parse=False)) for m, p, b, w in A['calls']])\n")
-    return [tuple(x) for x in r]
-
-def _c1_msc(path, body, *, method="POST", with_tok=True):
-    return _c1_ms([(method, path, body, with_tok)])[0]
-
-def _c1_ms_info():
-    c, text, _ = _c1_msc("/v1/info", None, method="GET")
-    return c, (json.loads(text) if c == 200 else text)
-
 def _c1_job(job, args=()):
     """(b) docker compose run --rm <job-*>. (종료 코드, 표준 출력). 종료 코드가 0 이 아니어도 돌려준다(수집기는 75 도 정상 종료 중 하나)."""
     try: r = SB.run_job(job, args)
@@ -597,7 +583,7 @@ def make_packages():
         adir = {r: root / r / "adapter" for r in gm}
         for r in gm: assert canonical.directory_hash(adir[r]) == gm[r]["adapter_hash"], f"{r} 어댑터 해시가 패키지 매니페스트와 다르다"
         try:
-            c, info = _c1_ms_info(); ex = info.get("serving_config_expectation") or {}
+            c, info_body, _ = ms_call("/v1/info", None, INF_TOK(), method="GET"); info = json.loads(info_body); ex = info.get("serving_config_expectation") or {}
             sc = gm["LORA_A"]["serving_config"]
             STATE["llm_cfg_vs_server"] = {"backend": info.get("backend"), "constraint_backend": [sc["constraint"].get("backend"), (ex.get("constraint") or {}).get("backend")],
                                           "template_ok": sc["prompt_template_version"] in ex.get("prompt_template_versions", [sc["prompt_template_version"]])}
@@ -611,7 +597,7 @@ def make_packages():
     else:
         fx = ROOT / "test/fixtures/e2e-test-adapter"
         # 추론 서버가 알려 주는 기대값(/v1/info의 serving_config_expectation)으로 fake용 serving_config를 만든다
-        c, info = _c1_ms_info(); assert c == 200, (c, info)
+        c, info_body, _ = ms_call("/v1/info", None, INF_TOK(), method="GET"); info = json.loads(info_body); assert c == 200, (c, info)
         ex = info["serving_config_expectation"]
         # LORA_A 는 제약 디코딩(ActionExtraction JSON), LORA_B 는 문장이라 제약 없음(model-runtime make_neutral_package.py 와 같은 규칙)
         mkcfg = lambda mode: {"prompt_template_version": ex["prompt_template_version_default"],
@@ -843,10 +829,11 @@ def gw_text(path, basic=None):
 def public_turn(sid, tid, text):
     c, r = kiosk(f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": text, "turn_id": tid}); return c, r
 
-def ms_call(path, body, token):
-    """추론 서버 직접 호출(v2): (상태, 본문 문자열, 소문자 헤더). (c) 다른 호스트 역할의 추론 서버를 inference_url() 로. 서비스를 거치지 않고 extract(JSON)·respond(text)의 계약을 확인하려는 것."""
-    req = urllib.request.Request(SB.inference_url().rstrip("/") + path, data=json.dumps(body, ensure_ascii=False).encode(), method="POST")
-    req.add_header("Authorization", f"Bearer {token}"); req.add_header("Content-Type", "application/json")
+def ms_call(path, body, token, method="POST"):
+    """추론 서버 직접 호출(v2): (상태, 본문 문자열, 소문자 헤더). (c) 다른 호스트 역할의 추론 서버를 inference_url() 로. 서비스를 거치지 않고 extract(JSON)·respond(text)의 계약을 확인하려는 것. token 이 없으면 Authorization 을 붙이지 않는다."""
+    req = urllib.request.Request(SB.inference_url().rstrip("/") + path, data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None, method=method)
+    if token: req.add_header("Authorization", f"Bearer {token}")
+    if body is not None: req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=30) as r: return r.status, r.read().decode(), {k.lower(): v for k, v in r.headers.items()}
     except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="replace"), {k.lower(): v for k, v in e.headers.items()}
@@ -862,32 +849,27 @@ def ereq_of(ein):
     req = {"input": ein, "flow": {"order": ff["order"], "skips": ff["skips"]}, "fields": fields}
     validate("ExtractRequest", req); return req
 
-def model_server_v2_check(new, tok=None):   # tok: 옛 인자(호출자 토큰). 이제 호출자 역할(survey-service) 컨테이너 안에서 그 컨테이너의 토큰·주소로 부른다
+def model_server_v2_check(new, tok):
     """PUT 적재(서비스가 이미 함) 뒤 extract(JSON) -> respond(text) 를 직접 한 번씩 부른다."""
     ein = {"question_id": "Q1.D03", "current_question": "다음은 고혈압입니다. 진단받은 적이 있으신지, 지금 약을 드시는지 알려 주세요.", "user_utterance": "십 년 전에 고혈압 진단을 받았어요.",
            "state": {"Q1.D02.diagnosed": {"value": False, "status": "ANSWERED"}}}
     validate("ActionExtractionInput", ein)
-    ereq = ereq_of(ein)
-    rin = {"action": "START", "topic": "고혈압 진단과 복약", "next": {"type": "NEXT", "question_id": "Q1.D01", "text": "혹시 고혈압으로 진단받으셨나요?"}}
-    validate("ResponseRequest", rin)
-    ex = f"/v1/releases/{new}/extract"
-    # 한 번의 컨테이너 실행으로 부른다(왜: 호출마다 docker exec 을 열면 느리다). 순서가 곧 아래 단언의 순서다
-    r = _c1_ms([("POST", ex, ein, True), ("POST", ex, ereq, True), ("POST", f"/v1/releases/{new}/respond", rin, True),
-                ("POST", ex, {"input": ein, "flow": ereq["flow"]}, True), ("POST", ex, {"input": ein, "flow": {"order": ereq["flow"]["order"]}, "fields": ereq["fields"]}, True),
-                ("POST", ex, {"question_id": "Q1"}, True), ("POST", "/v1/releases/rel-none-x/extract", ereq, True), ("GET", "/v1/info", None, True)])
     # 3.0: 옛 본문(ActionExtractionInput 그대로)과 fields 없는 요청은 400 INVALID_RECORD 다. 정상 호출은 ExtractRequest{input, flow, fields}뿐이다
-    c, old, _ = r[0]; assert c == 400, ("옛 본문(ActionExtractionInput)이 400이 아니다", c, old[:100])
-    c, body, h = r[1]; assert c == 200, (c, body[:200])
+    c, old, _ = ms_call(f"/v1/releases/{new}/extract", ein, tok); assert c == 400, ("옛 본문(ActionExtractionInput)이 400이 아니다", c, old[:100])
+    ereq = ereq_of(ein)
+    c, body, h = ms_call(f"/v1/releases/{new}/extract", ereq, tok); assert c == 200, (c, body[:200])
     out = json.loads(body); validate("ActionExtraction", out); assert out == FAKE_EXTRACTION, out
     assert h.get("content-type", "").startswith("application/json") and h.get("x-openit-outcome") == "ok", h
-    c, body, h = r[2]; assert c == 200, (c, body[:200])
+    rin = {"action": "START", "topic": "고혈압 진단과 복약", "next": {"type": "NEXT", "question_id": "Q1.D01", "text": "혹시 고혈압으로 진단받으셨나요?"}}
+    validate("ResponseRequest", rin)
+    c, body, h = ms_call(f"/v1/releases/{new}/respond", rin, tok); assert c == 200, (c, body[:200])
     assert body == FAKE_RESPONSE_TEXT and h.get("content-type", "").startswith("text/plain") and h.get("x-openit-outcome") == "ok", (body[:80], h)
     # I9 ExtractRequest{input, flow, fields}(계약 3.0, D108·D115): flow·fields 가 항상 있으니 서버가 규칙과 값 규칙을 보증한다. 불완전한 본문(fields 없음, skips 없는 flow)은 400이다.
-    c, bad1, _ = r[3]; assert c == 400, ("fields 없는 요청이 400이 아니다", c, bad1[:100])
-    c, bad2, _ = r[4]; assert c == 400, ("skips 없는 flow 가 400이 아니다", c, bad2[:100])
-    c, bad, _ = r[5]; assert c == 400, ("계약 위반 입력이 400이 아니다", c, bad[:100])
-    c, nf, _ = r[6]; assert c == 404  # 본문은 유효한 ExtractRequest: link 가 본문 검증(400)을 처리 함수보다 먼저 하므로 틀린 본문이면 404 를 시험하지 못한다, ("적재되지 않은 릴리스가 404가 아니다", c)
-    c, itxt, _ = r[7]; info = json.loads(itxt)
+    c, bad1, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": ereq["flow"]}, tok); assert c == 400, ("fields 없는 요청이 400이 아니다", c, bad1[:100])
+    c, bad2, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": {"order": ereq["flow"]["order"]}, "fields": ereq["fields"]}, tok); assert c == 400, ("skips 없는 flow 가 400이 아니다", c, bad2[:100])
+    c, bad, _ = ms_call(f"/v1/releases/{new}/extract", {"question_id": "Q1"}, tok); assert c == 400, ("계약 위반 입력이 400이 아니다", c, bad[:100])
+    c, nf, _ = ms_call("/v1/releases/rel-none-x/extract", ereq, tok); assert c == 404  # 본문은 유효한 ExtractRequest: link 가 본문 검증(400)을 처리 함수보다 먼저 하므로 틀린 본문이면 404 를 시험하지 못한다, ("적재되지 않은 릴리스가 404가 아니다", c)
+    c, info_body, _ = ms_call("/v1/info", None, tok, method="GET"); info = json.loads(info_body)
     assert info.get("system_prompt_sha256") == STATE.get("system_prompt"), f"서버가 쓰는 시스템 프롬프트 해시가 패키지와 다르다: {info.get('system_prompt_sha256')} / {STATE.get('system_prompt')}"
     return "extract(ExtractRequest{input, flow, fields} 200·JSON ActionExtraction 스키마·X-Openit-Outcome ok; 옛 본문·fields 없음·skips 없는 flow 는 400) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
 
@@ -901,7 +883,7 @@ def container_ids():
         if r.returncode == 0 and len(parts) == 2: out[svc] = (parts[0], parts[1])
     return out
 
-def fake_values_check(new, tok=None):   # tok: 옛 인자. 호출은 survey-service 컨테이너 안에서(model_server_v2_check 와 같다)
+def fake_values_check(new, tok):
     """가짜 A(칸 정의가 든 흐름 파일)가 값을 내고 건너뛰기를 적용하는지 추론 서버를 직접 불러 본다. 모델 정확성이 아니라 시험 구성의 확인이다."""
     cases = [("Q4", "아니요", "Q4.answer", False, "Q5"),          # 건너뛰기: Q4.answer == false -> Q4_1 건너뜀
              ("Q4", "네 있어요", "Q4.answer", True, "Q4_1"),
@@ -909,16 +891,14 @@ def fake_values_check(new, tok=None):   # tok: 옛 인자. 호출은 survey-serv
              ("Q8_1", "없어요", "Q8_1.days", 0, "Q9_1"),          # Q8_2 건너뜀
              ("Q8_1", "3일이요", "Q8_1.days", 3, "Q8_2"),
              ("Q2.D01", "네 있어요", "Q2.D01.family_history", True, "Q2.D02")]
-    eins = []
     for qid, utt, key, val, nxt in cases:
         ein = {"question_id": qid, "current_question": f"시험 문항 {qid}입니다.", "user_utterance": utt, "state": {}}
-        validate("ActionExtractionInput", ein); eins.append(ein)
-    res = _c1_ms([("POST", f"/v1/releases/{new}/extract", ereq_of(ein), True) for ein in eins])
-    for (qid, utt, key, val, nxt), (c, body, h) in zip(cases, res):
-        assert c == 200, (qid, c, body[:200])
+        validate("ActionExtractionInput", ein)
+        c, body, h = ms_call(f"/v1/releases/{new}/extract", ereq_of(ein), tok); assert c == 200, (qid, c, body[:200])
         out = json.loads(body); validate("ActionExtraction", out)
         EA.check_fake_extraction(out, key, val, nxt, f"[{qid} '{utt}']")
     return f"{len(cases)}건(Q4 아니요 -> Q4.answer=false·Q4_1 건너뜀, Q7 -> Q8_1, Q8_1 없어요 -> days=0·Q8_2 건너뜀 등)"
+
 @step('5', repos=('survey-service', 'model-runtime', 'kiosk-frontend') + _GW, deps=('3', '4'),
       why="step5 는 STATE['pointers'],['releases'](step4)·['system_prompt'](step3)를 읽는다. " + _P4,
       also={'release-gate': '활성화된 릴리스 번들을 survey-service와 model-serving이 읽는다(I4)'})
@@ -938,15 +918,15 @@ def step5():
     # 한 턴이 추론 서버(model-serving)를 거쳤다: 서버의 가짜 백엔드는 출력이 고정이라 생성기 문장이 "(가짜 응답)" 이다
     texts = " ".join(str(x.get("response_text")) for x in (t1, t2))
     assert "(가짜 응답)" in texts, f"model-serving의 고정 출력이 아니다(서비스 내부 가짜?): {texts[:200]}"
-    # 추론 서버 직접 조회는 호출자 역할(survey-service) 컨테이너 안에서(그 컨테이너의 추론 서버 주소·토큰)
-    (c, itxt, _), (c401, _b401, h401), (c2, stxt, _) = _c1_ms([("GET", "/v1/info", None, True), ("GET", "/v1/info", None, False), ("GET", f"/v1/releases/{new}", None, True)])
-    info = json.loads(itxt) if c == 200 else {}
+    ms_tok = INF_TOK()
+    c, info_body, _ = ms_call("/v1/info", None, ms_tok, method="GET"); info = json.loads(info_body) if c == 200 else {}
     assert c == 200 and new in info.get("loaded", []), (c, info)
     assert info["backend"] == "fake", info
+    c401, _b401, h401 = ms_call("/v1/info", None, None, method="GET")
     assert c401 == 401 and (h401.get("www-authenticate") or "").split(" ")[0].rstrip(",") == "Bearer", ("토큰 없는 추론 서버 /v1/info: 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절)", c401, h401.get("www-authenticate"))
-    st_ = json.loads(stxt) if c2 == 200 else {}; assert c2 == 200 and st_["state"] == "LOADED", (c2, stxt[:100])
-    v2chk = model_server_v2_check(new)
-    fvc = fake_values_check(new)
+    c2, stxt, _ = ms_call(f"/v1/releases/{new}", None, ms_tok, method="GET"); st_ = json.loads(stxt) if c2 == 200 else {}; assert c2 == 200 and st_["state"] == "LOADED", (c2, stxt[:100])
+    v2chk = model_server_v2_check(new, ms_tok)
+    fvc = fake_values_check(new, ms_tok)
     # 서비스를 거친 값 있는 턴: 가짜 A 가 매 턴 값(ANSWERED)을 내고, 서비스의 검증·저장을 통과해야 한다(실패 신호 없음, 추론 실패·형식 위반 증가 없음, Trace 전송)
     sv = f"sess-{RID}-val"; assert kiosk("/v1/sessions", {"session_id": sv, "kind": "SESSION_START"})[0] == 200
     rb = survey_ready()[1]; replies = []
