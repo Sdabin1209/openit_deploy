@@ -136,7 +136,7 @@
 
 ## 11. 시험 자료와 운영 설정의 분리
 
-- `test/`, `build/`, `state/`만 시험용이다(`compose.test.yaml` 은 ADR 0049 로 없어졌다). 게이트웨이는 이제 공개 API 경로(`/v1/sessions`)를 survey-service로 넘긴다(`config/Caddyfile`, 직원 개입 경로는 막음). `compose.yaml`과 `config/`는 시험 자료를 참조하지 않는다(E2E가 `compose.yaml`·`config/`에 시험용 정책·실행기·시험 워커가 없음을 확인한다).
+- `test/`, `build/`, `state/`만 시험용이다(`compose.test.yaml` 은 ADR 0050 로 없어졌다). 게이트웨이는 이제 공개 API 경로(`/v1/sessions`)를 survey-service로 넘긴다(`config/Caddyfile`, 직원 개입 경로는 막음). `compose.yaml`과 `config/`는 시험 자료를 참조하지 않는다(E2E가 `compose.yaml`·`config/`에 시험용 정책·실행기·시험 워커가 없음을 확인한다).
 - 시험 자료(D53 이후 게이트의 시험용 정책·실행기는 사라졌다): `test/ops-job/test-ops-job.yaml`(시험용 잡 설정), `test/fixtures/e2e-test-adapter/`(시험용 PEFT 형식 어댑터). 시험용 ID에도 `test`를 넣는다(`qs-e2e-test`, `pkg-e2e-test-*`).
 - 출고는 사람 승인이다(D53): 자동 검사 후 `AWAITING_APPROVAL`, 승인자가 `POST /v1/approvals`. 운영·시험 모두 게이트에 정책 파일이 필요 없다(기본 정책). E2E의 승인자는 시험용 release-approver 토큰을 쓰는 스크립트다.
 

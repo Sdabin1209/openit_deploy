@@ -11,7 +11,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 입력·출력을 스키마로 검증하므로(jsonschema, referencing) deploy .venv 의 파이썬을 쓴다(ADR 0045). lib.sh 의 DEPLOY_PY 가 작업 트리(worktree)에서도 본 리포의 .venv 를 찾는다
 DEPLOY_NO_DOCKER=1; source "$HERE/lib.sh"
-# 샌드박스 원칙(docs/adr/0049): 제품 compose 에 시험용 문이 없어야 한다. 위반이면 FAIL 줄을 내고 종료 코드 1 (check_all.py 의 규칙 표와 별개의 한 점검)
+# 샌드박스 원칙(docs/adr/0050): 제품 compose 에 시험용 문이 없어야 한다. 위반이면 FAIL 줄을 내고 종료 코드 1 (check_all.py 의 규칙 표와 별개의 한 점검)
 DOORS_RC=0; "$DEPLOY_PY" -I "$HERE/test_compose_no_test_doors.py" || DOORS_RC=1
 "$DEPLOY_PY" -I "$HERE/check_all.py" "$@" || exit 1
 exit $DOORS_RC

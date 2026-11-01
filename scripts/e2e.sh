@@ -172,7 +172,7 @@ cat <<BANNER
    - 단계 5 모델: 다른 호스트 역할의 추론 서버(compose.inference.yaml 을 별도 프로젝트 <P>-inf 로 띄운 컨테이너, CPU)의 가짜 백엔드. A 출력은 입력 문항 기준으로 유효한 ActionExtraction(NEXT, 다음 문항; 흐름 파일에 칸 정의가 있는 문항은 발화에서 첫 칸의 ANSWERED 값과 건너뛰기 적용, 단계 5g), B 출력은 문장 "(가짜 응답)"이다(표준 서버 + MODEL_RUNTIME_FAKE_FLOW_FILE=test/fake-model/question_flow.json, model-runtime ${DEPLOY_MR_TAG}). 시험용 번들의 serving_config는 서버 /v1/info 기대값으로 만든다(TEST-SUB)
    - 직원 콘솔 접근: 개발/E2E용 기본 인증(운영 방식은 미정). 실제 브라우저·STT·웹 푸시 수신은 E2E에서 볼 수 없다(BLOCKED, VAPID 키 없이 SSE만)
    - 단계 6 TraceEnvelope와 단계 7 reviewed_input·검토 확인은 이 스크립트가 만든 시험 자료/행위다
-   - 샌드박스(docs/adr/0049): 제품은 compose.yaml(+ 운영 overlay)이고 시험용 문이 없다. 드라이버는 호스트에서 게이트웨이(HTTPS)·compose exec/run/logs·추론 서버로만 들어간다
+   - 샌드박스(docs/adr/0050): 제품은 compose.yaml(+ 운영 overlay)이고 시험용 문이 없다. 드라이버는 호스트에서 게이트웨이(HTTPS)·compose exec/run/logs·추론 서버로만 들어간다
    - 시험 자료는 운영 설정(compose.yaml, config/)에 들어가지 않는다
 =============================================================================
 BANNER
@@ -207,7 +207,7 @@ abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null
 
-# ---- 샌드박스 기동(docs/adr/0049, 순서 고정). 제품은 compose.yaml 그대로이고 시험용 문이 없다. 추론 서버는 제품 밖(다른 호스트 역할)이다.
+# ---- 샌드박스 기동(docs/adr/0050, 순서 고정). 제품은 compose.yaml 그대로이고 시험용 문이 없다. 추론 서버는 제품 밖(다른 호스트 역할)이다.
 #  (1) 추론 서버: compose.inference.yaml 을 별도 프로젝트 <P>-inf 로(가짜 백엔드는 이 쪽 env 만). (2) 제품: up.sh --external-inference <추론 서버>.
 #  (3) 제품 입구(게이트웨이)의 TLS 포트와 CA 를 읽어 추론 서버가 그 입구로 release-gate 를 읽게 다시 만든다. (4) 호스트 포트가 바뀐 추론 서버 주소를 제품(survey-service)에 다시 알린다.
 # 왜 이 순서: 제품이 추론 서버 주소를 알아야 뜨고(2), 추론 서버는 제품 입구의 포트와 CA 가 생긴 뒤에야 설정을 끝낼 수 있다(3). 호스트 포트는 Docker 배정이라 다시 만들면 바뀐다(4).

@@ -9,7 +9,7 @@
 #   scripts/demo.sh swap-adapters [--adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE]   떠 있는 데모에서 새 모델 패키지를 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화해 model-serving 만 새 번들을 적재시킨다(다른 서비스는 재시작하지 않는다, D72/U08). 인자 없음 = 가짜 백엔드 데모의 시험용 어댑터, 인자 = --llm 데모의 진짜 어댑터(같은 사전 검사)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
 #   scripts/demo.sh status | reset [--stop-before-approval] | down [--purge-cache]   (모델 캐시 볼륨은 down 해도 남는다. --purge-cache 로 명시적으로 지운다)
-# 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 설정값 overlay(test/compose.sandbox.yaml)만 더한다. 시험용 문(내부 서비스 호스트 포트)은 없다: 데모의 단계 코드도 게이트웨이(HTTPS)로만 들어간다(docs/adr/0049).
+# 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 설정값 overlay(test/compose.sandbox.yaml)만 더한다. 시험용 문(내부 서비스 호스트 포트)은 없다: 데모의 단계 코드도 게이트웨이(HTTPS)로만 들어간다(docs/adr/0050).
 # 표준 `docker`만 쓴다. 컨테이너의 호스트 포트는 Docker가 배정한다(고정 포트 없음). 임시 레지스트리도 빈 포트를 고른다.
 # 환경 변수: DEMO_PROJECT(기본 deploy-demo, 반드시 deploy-demo 로 시작), DEMO_BIND(gateway 호스트 바인드, 기본 127.0.0.1; 다른 PC에서 보려면 0.0.0.0 -- HTTP·기본 인증이라 시험 때만),
 #           DEMO_REGISTRY_BIND(레지스트리 바인드, 기본 127.0.0.1; 데몬이 닿지 못하면 사용자가 0.0.0.0 으로 바꾼다 -- 끝나면 down).
@@ -96,7 +96,7 @@ demo_kiosk_prepare() { # 데모 때만 키오스크가 /config.json 으로 기�
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
-  # 샌드박스(docs/adr/0049): 호스트 포트가 있는 제품 서비스는 gateway 뿐이다. 추론 서버(ms)는 제품 밖일 때만 호스트에서 닿고(--ms-url), 이 구성의 model-serving 은 호스트 포트가 없어 0 이다
+  # 샌드박스(docs/adr/0050): 호스트 포트가 있는 제품 서비스는 gateway 뿐이다. 추론 서버(ms)는 제품 밖일 때만 호스트에서 닿고(--ms-url), 이 구성의 model-serving 은 호스트 포트가 없어 0 이다
   echo "{\"gw\":$(port_of $P-gateway-1 8443),\"ms\":0}"
 }
 run_steps() { # run_steps <--only 목록> [추가 인자]
