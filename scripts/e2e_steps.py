@@ -49,7 +49,7 @@ def step(name, repos, deps, why, also=None):   # also: repos 에 없어도 이 �
     def deco(fn):
         STEP_REGISTRY[name] = fn; return fn
     return deco
-_GW = ("deploy:config,compose.yaml,compose.test.yaml,test",)   # 게이트웨이(Caddyfile·계정)를 거치는 단계는 deploy 의 설정도 입력이다
+_GW = ("deploy:config,compose.yaml,compose.inference.yaml,compose.external-inference.yaml,scripts/e2e_sandbox.py,test",)   # e2e_plan.py 의 _GW_SEC 와 같아야 한다(샌드박스 D123: 시험 입력은 운영 compose·추론 서버 compose·접근 계층)   # 게이트웨이(Caddyfile·계정)를 거치는 단계는 deploy 의 설정도 입력이다
 _P4 = "step4 가 STATE['pointers']/['releases'] 를 쓰고 이 단계가 '\"pointers\" not in STATE' 로 BLOCKED 처리한다(e2e_steps.py 의 같은 이름 함수 앞부분)"
 
 ap = argparse.ArgumentParser()
@@ -69,6 +69,8 @@ ap.add_argument("--fail-fast", action="store_true", help="첫 FAIL 에서 중단
 ap.add_argument("--changed-only", action="store_true", help="입력 해시가 마지막 PASS 와 다른 단계와 그에 의존하는 단계(+상태 재구성에 필요한 상류)만 돌린다. 단독 실행이 증명되지 않은 단계는 항상 포함(e2e_plan.py)")
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
+import e2e_sandbox as SB   # 샌드박스 접근 계층(D123): 단계는 게이트웨이·docker exec/run·다른 호스트 역할 컨테이너로만 닿는다
+SB.init(project=a.project, secrets=a.secrets, gw_ca=a.gw_ca, docker=a.docker, root=a.root)
 import ssl
 if a.gw_ca:   # 게이트웨이 호출(urlopen)이 HTTPS 이고 이 CA 만 신뢰한다. boundary_contracts 클라이언트는 gateway 를 거치지 않아 영향 없다
     urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=a.gw_ca))))
@@ -86,11 +88,12 @@ MS_CONTAINER = a.ms_container or f"{a.project}-model-serving-1"
 def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가 바뀔 수 있어 매번 Docker에게 묻는다
     out = subprocess.run([a.docker, "port", MS_CONTAINER, "8080/tcp"], capture_output=True, text=True).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
-def _dyn_port(svc, key, cport="8080"):   # 멈췄다 다시 띄우는 단계(5q·5w·5u)가 있는 서비스는 Docker 배정 호스트 포트가 바뀔 수 있어 매번 묻는다
-    out = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1", f"{cport}/tcp"], capture_output=True, text=True).stdout
-    return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS[key]
-DYN = {"survey": "survey-service", "gate": "release-gate", "ops": "ops-feedback-ingest"}   # (gw 는 HTTPS 8443 이라 아래 URL 에서 따로)
-URL = lambda k: a.ms_url.rstrip("/") if (k == "ms" and a.ms_url) else f"{'https' if (k == 'gw' and a.gw_ca) else 'http'}://127.0.0.1:{_ms_port() if k == 'ms' else _dyn_port(DYN[k], k) if k in DYN else _dyn_port('gateway', 'gw', '8443') if k == 'gw' else PORTS[k]}"
+def URL(k):   # 샌드박스(D123): 호스트에서 닿을 수 있는 주소는 게이트웨이(gw)와 다른 호스트 역할의 추론 서버(ms)뿐이다. 내부 서비스 키는 시험용 문이었으므로 실패시킨다
+    if k == "ms":
+        return a.ms_url.rstrip("/") if a.ms_url else (SB.inference_url() or f"http://127.0.0.1:{_ms_port()}")
+    if k == "gw":
+        return SB.gw_url()
+    raise RuntimeError(f"샌드박스 위반: 내부 서비스 '{k}' 를 호스트에서 직접 부를 수 없다(게이트웨이·SB.exec_in/exec_py 를 쓴다, D123)")
 RESULTS = []; STATE_FILE = WORK / "state.json"
 STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
