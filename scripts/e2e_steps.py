@@ -2298,7 +2298,33 @@ def step5b():
     ok = done_dirs(); assert "pg-qa" in ok and "pg-gate" in ok, f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
     rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 실패한 qa 의 스냅샷 없음(EOF 전에 restic 을 죽여 만들지 않음; 성공한 다른 데이터베이스의 것은 남는다); 복구 뒤 재실행 성공(스냅샷 {len(ok)}개: {ok}).")
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+# ---- D72/D122/D123 (헤드, 2026-11-01): 추론 서버 위치 독립의 경계 확인. 적재 자체(LOADED)는 단계 5 가 다른 호스트 역할의 추론 서버(SB.inference_url)에서 확인한다 ----
+@step('5L', repos=('model-runtime', 'release-gate', 'boundary-contracts') + _GW, deps=('4',),
+      why="D72: 다른 호스트 역할의 추론 서버(별도 compose 프로젝트)는 운영 입구(게이트웨이 기계 토큰 경로 D122)로만 release-gate 를 읽는다. "
+          "음성: 사람 계정은 404, 무토큰은 401. release-gate 는 호스트에 게시되지 않는다(D123)")
+def step5L():
+    title("5L", "추론 서버 위치 독립(D72): 게이트웨이 기계 토큰 경로와 음성 확인")
+    if "pointers" not in STATE: rec("5L", "BLOCKED", _P4); return
+    ms = SB.inference_url(); assert ms, "다른 호스트 역할의 추론 서버가 없다(e2e.sh 가 compose.inference.yaml 을 별도 프로젝트로 띄운다)"
+    rid = STATE["pointers"][-1]["release_id"]
+    # 1) 추론 서버가 ready(release 도달 포함). 서버는 게이트웨이 HTTPS+CA+기계 토큰으로만 release-gate 에 닿는다
+    try:
+        with urllib.request.urlopen(ms + "/readyz", timeout=10) as r: rs = r.status
+    except urllib.error.HTTPError as e: rs = e.code
+    assert rs == 200, f"다른 호스트 역할의 추론 서버 /readyz 가 {rs}"
+    # 2) 기계 토큰은 200, 사람 계정(승인자)은 404, 무토큰은 401 — 같은 경로에서
+    tok = (pathlib.Path(a.secrets) / "tokens" / "gateway-inference-token").read_text().strip()
+    st_m, _, _ = SB.gw_request("GET", "/v1/active-pointer", token=tok); assert st_m == 200, f"기계 토큰 /v1/active-pointer: {st_m}"
+    st_b, _, _ = SB.gw_request("GET", f"/v1/releases/{rid}/bundle", token=tok); assert st_b == 200, f"기계 토큰 번들: {st_b}"
+    st_h, _, _ = _c3_gw("GET", f"/v1/releases/{rid}/bundle", "approver"); assert st_h == 404, f"승인자 계정 번들은 404 여야 한다: {st_h}"
+    st_n, _, _ = SB.gw_request("GET", f"/v1/releases/{rid}/bundle"); assert st_n == 401, f"무토큰 번들은 401 이어야 한다: {st_n}"
+    # 3) release-gate 는 호스트에 게시되지 않는다(시험용 문 없음)
+    out = subprocess.run([a.docker, "port", f"{a.project}-release-gate-1"], capture_output=True, text=True).stdout.strip()
+    assert out == "", f"release-gate 가 호스트에 게시돼 있다: {out}"
+    rec("5L", "REAL", f"다른 호스트 역할 추론 서버 ready(release 도달), 게이트웨이 기계 토큰 경로: active-pointer 200·bundle 200, 승인자 계정 404, 무토큰 401, release-gate 호스트 게시 없음 (D72·D122·D123)")
+
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []
