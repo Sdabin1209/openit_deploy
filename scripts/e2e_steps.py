@@ -1162,14 +1162,26 @@ def step5m():
     # model-runtime 요청 상한(MODEL_RUNTIME_REQUEST_DEADLINE_S 3.5s)과 엔진 멈춤 시 /readyz 503 은 pause 로는 볼 수 없다(컨테이너가 통째로 얼어 /readyz 도 응답하지 못한다).
     # 이 이미지가 그 코드를 가졌는지는 라벨의 model-runtime 태그로만 안다: 태그가 73e79f9(요청 상한) 이후를 포함해야 한다.
     # 감시 스택(Prometheus 규칙, ADR 0037)이 보는 것과 같은 필드를 직접 읽는다: model-serving /readyz 200(엔진 정상), release-gate /readyz 의 judging_loop(연속 실패 3 미만, 인증 실패 아님)
-    assert urllib.request.urlopen(URL("ms") + "/readyz", timeout=10).status == 200, "model-serving /readyz 가 200이 아니다"
-    jl = json.loads(urllib.request.urlopen(URL("gate") + "/readyz", timeout=10).read()).get("judging_loop")
+    assert _c2_ms_call("/readyz", None, None, "GET")[0] == 200, "model-serving /readyz 가 200이 아니다"
+    gc, gr = SB.readyz("release-gate"); assert gc == 200, ("release-gate /readyz", gc)   # 상태 관찰: 컨테이너 안 /readyz(감시 스택이 보는 같은 필드)
+    jl = gr.get("judging_loop")
     assert jl is not None and not jl.get("upstream_auth_failed") and (jl.get("consecutive_failures") or 0) < 3, ("release-gate 판정 루프", jl)
     rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 9s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택에서 직접 읽은 model-serving /readyz OK, release-gate 판정 루프 (연속 실패 {jl.get('consecutive_failures')}회)를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
 
 def gw_bytes(method, path, data, ctype, basic=None, headers=None):
     """게이트웨이 경유 원문 본문 호출(자료 업로드). (상태, JSON 또는 문자열, 헤더)"""
     return _c2_gw(method, path, account=basic, raw=data, ctype=ctype if data is not None else None, headers=headers, timeout=60)
+
+def _c2_qa_read(method, *args, **kw):
+    """이웃 읽기 면(I1)은 게이트웨이에 열지 않는다. 읽는 주체(synthetic-data·release-gate)가 제품 네트워크 안에 있으므로 question-authoring 컨테이너 안에서 그 이미지의 boundary_contracts 클라이언트(HttpQuestionReader)로 읽는다.
+    토큰은 서비스가 이미 가진 읽기 토큰 표(/run/secrets/qa-read-tokens)에서 release-gate 몫을 컨테이너 안에서 꺼낸다(호스트로 나오지 않는다)."""
+    code = ("import json\nfrom boundary_contracts.clients import HttpQuestionReader\n"
+            "tok=None\nfor ln in open('/run/secrets/qa-read-tokens'):\n n,_,v=ln.strip().partition('=')\n if n=='release-gate': tok=v.split(',')[0]\n"
+            "assert tok, 'qa-read-tokens 에 release-gate 항목이 없다'\n"
+            "P=json.loads(" + repr(json.dumps({"m": method, "a": list(args), "k": kw})) + ")\n"
+            "r=getattr(HttpQuestionReader('http://127.0.0.1:8080',tok),P['m'])(*P['a'],**P['k'])\n"
+            "print(json.dumps(r,default=lambda o: dict(o) if hasattr(o,'keys') else list(o)))\n")
+    return json.loads(SB.exec_py("question-authoring", code).strip().splitlines()[-1])
 
 @step('5a', repos=('question-authoring', 'admin-console') + _GW, deps=(),
       why='step5a 는 STATE 를 읽지 않는다. 그러나 앞 단계가 만든 저자 계정·문항 상태에 의존하는지는 코드를 읽어 확정하지 못했다')
@@ -1185,10 +1197,10 @@ def step5a():
     # 4-eyes: 저자는 자기 확인을 임상 승인하지 못하고, 검수자의 위조 X-Openit-User 는 무시되어 인증 계정이 기록된다
     body = {"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB)"}
     c, e, _ = _c2_raw("POST", "/v1/reviews", body, basic=_C2_AUTHOR); assert c == 403, ("저자가 자기 확인을 임상 승인했다", c, e)
-    c, r_, _ = _c2_raw("POST", "/v1/reviews", body, basic=_C2_CLINICAL, headers={"X-Openit-User": _C2_AUTHOR[0]}); assert c in (200, 201), ("임상 승인", c, r_)
-    revs = list(qa_reader().get_reviews(ref)); assert len(revs) == 2, len(revs)
+    c, r_, _ = _c2_raw("POST", "/v1/reviews", body, basic=_C2_CLINICAL, headers={"X-Openit-User": _C2_AUTHOR}); assert c in (200, 201), ("임상 승인", c, r_)
+    revs = list(_c2_qa_read("get_reviews", ref)); assert len(revs) == 2, len(revs)
     assert revs[-1]["clinical_basis_approved"] is True and revs[-1]["reviewer_id"] == _C2_CLINICAL, ("위조 헤더가 무시되고 인증 계정이 기록돼야 한다", revs[-1])
-    assert dict(qa_reader().latest(qset, reviewed_only=True))["version"] == ref["version"], "임상 승인 뒤 reviewed_only 에 나타나야 한다"
+    assert dict(_c2_qa_read("latest", qset, reviewed_only=True))["version"] == ref["version"], "임상 승인 뒤 reviewed_only 에 나타나야 한다"
     # 이웃 읽기 면(I1)은 gateway 에 열지 않는다. 본문 상한 8MiB 초과는 413
     assert _c2_raw("GET", "/v1/question-sets", basic=_C2_AUTHOR)[0] == 404, "I1 읽기 면이 gateway 에 열려 있다"
     # Caddy 는 상한을 넘는 본문을 읽다가 413 으로 끊는다. 클라이언트가 아직 보내는 중이면 응답을 받기 전에 연결이 끊겨(SSL EOF·연결 재설정) 상태 코드를 못 읽기도 한다: 둘 다 '거부됨'으로 본다(정상 업로드가 아님)
@@ -1206,15 +1218,7 @@ def step5d():
     wait_gw_ready(300)
     sid = f"sess-{RID}-devA"; A, B = dev_tok("e2e-a"), dev_tok("e2e-b")
     def gk(tok, method, path, body=None):
-        req = urllib.request.Request(URL("gw") + path, data=json.dumps(body).encode() if body is not None else None, method=method)
-        req.add_header("Authorization", "Bearer " + tok)
-        if body is not None: req.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r: return r.status, json.loads(r.read() or b"null")
-        except urllib.error.HTTPError as e:
-            b = e.read()
-            try: return e.code, json.loads(b)
-            except Exception: return e.code, b.decode(errors="replace")
+        c, b, _h = _c2_gw(method, path, body, token=tok); return c, b
     print("  진단: 기기별 /v1/sessions 응답 코드 " + ", ".join(f"{d}={gk(dev_tok(d), 'POST', '/v1/sessions', {'session_id': 'sess-diag-' + d, 'kind': 'SESSION_START'})[0]}" for d in ("e2e", "e2e-a", "e2e-b", "e2e-c")))
     c, st = gk(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, ("기기 A 세션 시작", c, st)
     c, r = gk(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "dA-1"}); assert c == 200, ("기기 A 발화", c, r)
@@ -1254,16 +1258,9 @@ def step5n():
     if "pointers" not in STATE: rec("5n", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
     wait(lambda: _c2_ready()[0] == 200, 300, "survey-service 가 활성 릴리스를 적재(/readyz 200)", every=3)
     def tcall(tok, method, path, body=None):   # 지정한 토큰으로 게이트웨이 경유 호출: (상태, 본문, 소문자 헤더)
-        req = urllib.request.Request(URL("gw") + path, data=json.dumps(body).encode() if body is not None else None, method=method)
-        if tok: req.add_header("Authorization", "Bearer " + tok)
-        if body is not None: req.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r: raw, code, hd = r.read(), r.status, dict(r.headers)
-        except urllib.error.HTTPError as e: raw, code, hd = e.read(), e.code, dict(e.headers)
-        try: b = json.loads(raw or b"null")
-        except ValueError: b = raw.decode(errors="replace")
+        code, b, hd = _c2_gw(method, path, body, token=tok)
         print(f"    호출 {method} {path} -> {code}", flush=True)   # 어느 호출이 어떤 코드를 받았는지 로그에 남긴다(단계 5n 첫 실행의 404 가 어느 호출인지 몰랐다)
-        return code, b, {k.lower(): v for k, v in hd.items()}
+        return code, b, hd
     def state_dev(tok, session=None):   # state_of 는 시험 기본 기기(e2e) 토큰이라 다른 기기가 만든 세션은 404 다(survey-service _device_denied). 세션을 만든 기기 토큰으로 조회한다
         for _ in range(8):
             time.sleep(0.7)
@@ -1293,7 +1290,7 @@ def step5n():
     cbr, _r, _h = tcall(B, "POST", f"/v1/sessions/{sid}/staff-call/report", {"outcome": "NOT_NOTIFIED", "turn_id": "n-rep-b"}); assert cbr in (404, 403), ("다른 기기 토큰의 실패 기록이 허용됐다", cbr)
     cf, _r, h_f = tcall("forged-" + "x" * 24, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cf == 401 and h_f.get("www-authenticate", "").startswith("Bearer"), ("위조 토큰의 재알림은 401 + WWW-Authenticate: Bearer (계약 6절)", cf, h_f)
     cn, _r, h_n = tcall(None, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-f"}); assert cn == 401 and h_n.get("www-authenticate", "").startswith("Bearer"), ("토큰 없는 재알림은 401 + WWW-Authenticate: Bearer (계약 6절)", cn, h_n)
-    cs = http("POST", "survey", f"/v1/sessions/{sid}/staff-call/retry", TOK("survey-api-staff"), {"turn_id": "n-retry-s"})[0]; assert cs == 403, ("직원 토큰으로 서비스에 직접 재알림이 403 이 아니다", cs)
+    cs = _c2_in("survey-service", "POST", f"/v1/sessions/{sid}/staff-call/retry", TOK("survey-api-staff"), {"turn_id": "n-retry-s"})[0]; assert cs == 403, ("직원 토큰으로 서비스에 직접 재알림이 403 이 아니다", cs)
     assert tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/retry", {"turn_id": "n-retry-2"})[0] in (200, 429), "거부 시도 뒤 기기 A 의 호출이 깨졌다"
     # (e) 실패 기록: StaffAlert 에 manual_notice_* 가 남고 직원 알림 목록에서 보인다. 같은 turn_id 같은 outcome 은 멱등, 다른 outcome 은 409
     c, rep, _h = tcall(A, "POST", f"/v1/sessions/{sid}/staff-call/report", {"outcome": "STAFF_NOTIFIED_MANUALLY", "turn_id": "n-rep-1"}); assert c == 200, ("실패 기록", c, str(rep)[:200])
@@ -1356,17 +1353,19 @@ def step5r():
     wait(lambda: _c2_ready()[0] == 200, 300, "survey-service 가 활성 릴리스를 적재(/readyz 200)", every=3)   # 단계 5 없이 단독으로 돌려도 되게
     sid = f"sess-{RID}-risk"; subj = f"e2e-subject-{RID}"; utter = "뇌졸중은 없고 약도 안 먹어요"
     RES = lambda: TOK("survey-result-reader"); RSK = lambda: TOK("survey-risk-source")   # 내부 호출용 토큰(게이트웨이에 열지 않는다)
+    # 위험 신호 감지기와 병원의 결과 조회는 운영에서 제품 네트워크 안의 호출자다(게이트웨이에 열지 않는다, D85): survey-service 컨테이너 안에서 그 API 를 부른다
+    svc_call = lambda m, pth, tk, bd=None: (lambda r: (r[0], _c2_dec(r[1])))(_c2_in("survey-service", m, pth, tk, bd))
     # (A) 기기 토큰으로 세션 시작(subject_ref), 발화 한 턴
     c, st = _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "subject_ref": subj}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
     c, tr = _c2_turn(sid, "rk-1", utter); assert c == 200, (c, tr)
     # (D) 위험 신호: risk-source 토큰으로 서비스에 직접. 맞는 토큰이라도 다른 역할이면 403, 게이트웨이에는 열려 있지 않다
     sig = {"signal_id": f"sig-{RID}-1", "source": "e2e-detector", "code": "TEST_RISK", "severity": "RISK"}
     for lab, tk in (("kiosk", _c2_kdev()), ("staff", TOK("survey-api-staff")), ("result-reader", RES())):
-        assert http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", tk, sig)[0] == 403, f"{lab} 토큰(맞는 토큰, 다른 역할)으로 위험 신호 입력이 열림"
-    assert http("POST", "gw", f"/v1/sessions/{sid}/risk-signals", _c2_kdev(), sig)[0] in (403, 404), "위험 신호 입력이 게이트웨이를 통과함"
-    c, r1 = http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 201, (c, r1)
+        assert svc_call("POST", f"/v1/sessions/{sid}/risk-signals", tk, sig)[0] == 403, f"{lab} 토큰(맞는 토큰, 다른 역할)으로 위험 신호 입력이 열림"
+    assert _c2_gw("POST", f"/v1/sessions/{sid}/risk-signals", sig, token=_c2_kdev())[0] in (403, 404), "위험 신호 입력이 게이트웨이를 통과함"
+    c, r1 = svc_call("POST", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 201, (c, r1)
     assert r1["session_status"] == "PAUSED_RISK" and r1["alert_id"], r1
-    c, r2 = http("POST", "survey", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 200 and r2["alert_id"] == r1["alert_id"], ("같은 signal_id 재전송이 멱등이 아님", c, r2)
+    c, r2 = svc_call("POST", f"/v1/sessions/{sid}/risk-signals", RSK(), sig); assert c == 200 and r2["alert_id"] == r1["alert_id"], ("같은 signal_id 재전송이 멱등이 아님", c, r2)
     # 직원 알림이 목록에 나온다(게이트웨이 경유, 직원 계정)
     c, pg = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     mine = [x for x in pg["items"] if x["session_id"] == sid and x["alert_id"] == r1["alert_id"]]; assert mine and mine[0]["status"] == "OPEN", ("위험 신호가 알림 목록에 없다", pg["items"][:2])
@@ -1386,12 +1385,12 @@ def step5r():
     assert sv2["status"] == "IN_PROGRESS", sv2["status"]
     c, en = _c2_kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"}); assert c == 200, (c, en)
     # (B) 결과 조회: result-reader 토큰. subject_ref·상태·answers 는 있고 환자 발화 원문은 없다
-    c, rs = http("GET", "survey", f"/v1/results/{sid}", RES()); assert c == 200, (c, rs); validate_survey("SessionResult", rs)
+    c, rs = svc_call("GET", f"/v1/results/{sid}", RES()); assert c == 200, (c, rs); validate_survey("SessionResult", rs)
     assert rs["subject_ref"] == subj and rs["status"].startswith("ENDED") and isinstance(rs["answers"], list), rs
     assert utter not in json.dumps(rs, ensure_ascii=False), "결과 조회 응답에 환자 발화 원문이 있다"
-    c, lst = http("GET", "survey", f"/v1/results?subject_ref={subj}", RES()); assert c == 200 and any(x["session_id"] == sid for x in lst["items"]), (c, str(lst)[:150])
+    c, lst = svc_call("GET", f"/v1/results?subject_ref={subj}", RES()); assert c == 200 and any(x["session_id"] == sid for x in lst["items"]), (c, str(lst)[:150])
     for lab, tk in (("kiosk", _c2_kdev()), ("staff", TOK("survey-api-staff")), ("risk-source", RSK())):
-        assert http("GET", "survey", f"/v1/results/{sid}", tk)[0] == 403, f"{lab} 토큰(맞는 토큰, 다른 역할)으로 결과 조회가 열림"
+        assert svc_call("GET", f"/v1/results/{sid}", tk)[0] == 403, f"{lab} 토큰(맞는 토큰, 다른 역할)으로 결과 조회가 열림"
     for pth in (f"/v1/results/{sid}", f"/v1/results?subject_ref={subj}"):
         assert _c2_raw("GET", pth, basic=_C2_STAFF)[0] == 404 and _c2_raw("GET", pth, basic=_C2_OPERATOR)[0] == 404, f"결과 조회 {pth} 가 게이트웨이에 열려 있다"
     # 접근 기록: 읽는 공개 경로가 없다(DB 를 열지 않는다). 기록을 못 남기면 데이터를 주지 않는 설계(fail-closed)라 위 조회 성공이 기록 쓰기 성공을 뜻한다. /readyz 에 접근 기록 항목이 있으면 함께 본다
@@ -1408,7 +1407,7 @@ def step5s():
     after = container_ids()
     EA.check_unchanged({k: tuple(v) for k, v in before.items()}, after, SWAP_SERVICES)
     new = STATE["releases"]["2"]
-    c, st = http("GET", "ms", f"/v1/releases/{new}", INF_TOK()); assert c == 200, (c, st)
+    c, st, _h = _c2_ms_call(f"/v1/releases/{new}", None, INF_TOK(), "GET"); assert c == 200, (c, st); st = json.loads(st)
     EA.check_release_loaded(st, new)
     rec("5s", "REAL", f"포인터 교체(활성화 2회째) 전후로 {', '.join(SWAP_SERVICES)} 컨테이너의 ID 와 StartedAt 이 같다(docker inspect 의 두 필드만 읽음). model-serving 의 /v1/releases/{new} 가 LOADED(오류 없음). 변경된 것은 model-serving 의 적재 릴리스뿐이다. 어댑터는 시험용 가짜(TEST-SUB)")
 
@@ -1449,9 +1448,9 @@ def step5f():
     c, en = _c2_kiosk(f"/v1/sessions/{sf}/end", {"session_id": sf, "kind": "SESSION_END"}); assert c == 200, (c, en)
     rec("5b", "REAL", "프론트의 공개 API 호출 순서가 게이트웨이(같은 출처, 토큰 없이)를 거쳐 실제 survey-service에 통과: 세션 시작 -> 발화 2턴 -> state(SessionState 스키마, ACTIVE) -> 종료")
     # (c) 직원 경로 권한 분리
-    c1 = http("GET", "gw", "/v1/staff/alerts", None)[0]; assert c1 == 401, ("인증 없는 직원 API는 401 (계약 6절, 사람 경로는 Basic)", c1)
-    c2 = http("GET", "survey", "/v1/staff/alerts", _c2_kdev())[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
-    c3 = http("GET", "gw", "/v1/staff/alerts", TOK("survey-api-kiosk"))[0]; assert c3 == 401, ("Bearer 는 사람 계정 경로의 자격이 아니다: 401 (계약 6절)", c3)   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
+    c1 = _c2_gw("GET", "/v1/staff/alerts")[0]; assert c1 == 401, ("인증 없는 직원 API는 401 (계약 6절, 사람 경로는 Basic)", c1)
+    c2 = _c2_in("survey-service", "GET", "/v1/staff/alerts", _c2_kdev())[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
+    c3 = _c2_gw("GET", "/v1/staff/alerts", token=TOK("survey-api-kiosk"))[0]; assert c3 == 401, ("Bearer 는 사람 계정 경로의 자격이 아니다: 401 (계약 6절)", c3)   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
     # (d) 위험 감지: 모든 발화 턴의 원문에 규칙을 먼저 적용한다(D88 U1·U2). 규칙은 E2E 가 SURVEY_RISK_RULES_FILE 로 넣은 시험용 파일(계약 SurveyRiskRulesFile)이다. 알림은 모델 추출·쓰기 확정과 무관하게 먼저 나간다
