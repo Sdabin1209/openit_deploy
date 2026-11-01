@@ -1776,102 +1776,140 @@ def step8():
     assert cb in (400, 401, 403) and isinstance(eb, dict) and eb.get("code") == "PERMISSION_DENIED", ("허용되지 않은 역할이 롤백함", cb, str(eb)[:120])
     rec(8, "REAL", f"ops-feedback 잡의 토큰(잡 컨테이너 안)으로 RollbackRequest -> RollbackReceipt APPLIED(멱등), 활성 포인터(운영자 계정, 게이트웨이) {new}->{old}, 실제 survey-service가 /readyz에서 이전 릴리스로 복귀, 롤백 권한 없는 역할은 PERMISSION_DENIED(release-gate 컨테이너 안), 롤백 뒤 공개 API로 새 세션 한 턴 처리(이전 릴리스). 롤백을 요청한 주체는 e2e가 띄운 ops-feedback 잡 컨테이너이고 ops-feedback 잡의 자동 롤백 평가는 아님")
 
-def _gate_clients():
-    return (HttpReleaseReader(URL("gate"), TOK("gate-read-survey-service")), with_user(HttpGateService(URL("gate"), TOK("gate-write-operator")), "op-test"),
-            HttpGateService(URL("gate"), TOK("gate-read-ops-feedback")), with_user(HttpGateService(URL("gate"), TOK("gate-write-release-approver")), "trainer-test"))
+def _c3_sub_for(subj):
+    """제출 목록(승인자 계정, 게이트웨이)에서 이 조합(문항 세트·LoRA 쌍)의 제출을 찾는다. 없으면 None. 후보는 수집기 잡이 접수한다(운영에서 접수하는 주체)."""
+    ref = lambda r: (r["id"], str(r["version"]))
+    items, _ = _c3_gwc(HttpGateService, "approver").list_submissions(limit=100)
+    for v in items:
+        s = v.get("subject", {})
+        if all(ref(s.get(k, {"id": None, "version": None})) == ref(subj[k]) for k in ("question_set", "lora_a", "lora_b")): return dict(v)
+    return None
 
-@step('demo4', repos=('release-gate', 'model-lab'), deps=('1', '3'),
+def _c3_report_of(sid):   # 승인 요청 보고서(자동 검사 전이면 409 -> None)
+    c, j, _ = _c3_gw("GET", f"/v1/submissions/{sid}/review-report", "approver")
+    if c == 409: return None
+    assert c == 200, ("review-report", c, str(j)[:200])
+    return j
+
+def _c3_ms_get(path, auth=True):
+    """추론 서버(model-runtime)의 GET. 다른 호스트 역할의 추론 서버(--ms-url 또는 별도 프로젝트)면 그 주소로(호출자 토큰은 --ms-token-file 또는 이 구성이 만든 survey-service 용 토큰), 아니면 이 프로젝트의 model-serving 컨테이너 안에서 그 서버가 받는 토큰으로. (상태, JSON 또는 문자열)."""
+    base = (getattr(a, "ms_url", "") or "").rstrip("/") or SB.inference_url()
+    if base:
+        tf = getattr(a, "ms_token_file", "")
+        tok = pathlib.Path(tf).read_text().strip() if tf else _c3_tok("inference-survey-service")
+        req = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + tok} if auth else {})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r: st, b = r.status, r.read()
+        except urllib.error.HTTPError as e: st, b = e.code, e.read()
+        try: return st, json.loads(b or b"null")
+        except ValueError: return st, b.decode(errors="replace")
+    r = _c3_py("model-serving", 'R = call("GET", "http://127.0.0.1:8080" + V["path"], _list("MODEL_RUNTIME_TOKENS_FILE")["survey-service"] if V["auth"] else None)[:2]', path=path, auth=auth)
+    return r[0], r[1]
+
+def _c3_ms_container(): return getattr(a, "ms_container", "") or f"{a.project}-model-serving-1"   # 호스트에서 docker inspect/exec 하는 대상(운영자 역할)
+
+def _c3_ensure_sub(subj):
+    """이 조합의 제출. 수집기 잡이 접수한 것이 있으면 그것(운영의 경로, SubmissionView 스키마). 수집기는 문항 세트마다 가장 최근 검수 버전만 접수하므로 옛 버전의 조합은 없다:
+    그 경우 release-gate 컨테이너 안에서 operator 쓰기 토큰으로 POST /v1/submissions 를 한다(게이트웨이에는 이 경로가 없다: 운영에서는 수집기만 접수한다). 반환은 submission_id 가 든 dict."""
+    sub = _c3_sub_for(subj)
+    if sub: validate("SubmissionView", sub); return sub
+    c, j = _c3_py("release-gate", '''
+R = call("POST", "http://127.0.0.1:8080/v1/submissions", _list("GATE_WRITE_TOKENS_FILE")["operator"], {"subject": V["subj"], "requested_by_role": "operator"}, {"X-Openit-User": V["user"]})[:2]''', subj=subj, user=_C3_ACCT["operator"])
+    assert c in (200, 201, 202), ("후보 접수", c, str(j)[:200]); validate("GateSubmission", j)
+    return j
+
+@step('demo4', repos=('release-gate', 'model-lab') + _GW, deps=('1', '3'),
       why='demo.sh 전용. E2E 기본 실행에 들어가지 않는다')
 def demo4():
-    """demo.sh 용: 후보 수집·자동 검사까지 하고, 승인은 --demo-stop 이면 사람에게 남긴다(아니면 시험용 승인자 토큰으로 대신: TEST-SUB). 승인 화면에 볼 제출 하나는 항상 대기로 둔다."""
+    """demo.sh 용: 후보 수집·자동 검사까지 하고, 승인은 --demo-stop 이면 사람에게 남긴다(아니면 시험용 승인자 계정으로 대신: TEST-SUB). 승인 화면에 볼 제출 하나는 항상 대기로 둔다."""
     title("demo4", "데모 릴리스: 후보 수집·자동 검사 -> 승인 -> 활성화 (release-gate)")
     if "lora" not in STATE: rec("demo4", "BLOCKED", "단계 3의 패키지가 없다"); return
-    gate_r, gate_op, gate_rep, gate_ap = _gate_clients()
-    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
-    assert r.returncode in (0, 75), f"collect 종료 {r.returncode}: {(r.stderr + r.stdout)[-500:]}"
+    rc, out, err = _c3_job("job-release-gate-collect")
+    assert rc in (0, 75), f"collect 종료 {rc}: {(err + out)[-500:]}"
     A, B = STATE["lora"]["LORA_A"], STATE["lora"]["LORA_B"]
     subj = {v["version"]: {"question_set": v, "lora_a": A, "lora_b": B} for v in STATE["qs"]}
     subj_u = {"question_set": STATE["qsu"], "lora_a": A, "lora_b": B}
-    subs = {k: dict(gate_op.submit_candidate(sj, requested_by_role="operator")) for k, sj in subj.items()}
-    sub_u = dict(gate_op.submit_candidate(subj_u, requested_by_role="operator"))
-    def report_of(sid):
-        try: return dict(gate_rep.get_review_report(sid))
-        except bc.BoundaryError: return None
+    subs = {k: _c3_ensure_sub(sj) for k, sj in subj.items()}
+    sub_u = _c3_ensure_sub(subj_u)
     for k, sub in list(subs.items()) + [("u", sub_u)]:
-        wait_review_report(report_of, sub["submission_id"], k)
+        wait_review_report(_c3_report_of, sub["submission_id"], k)
     STATE["demo_subs"] = {**{k: v["submission_id"] for k, v in subs.items()}, "u": sub_u["submission_id"]}; save()
     if a.demo_stop:
         rec("demo4", "REAL", f"후보 수집·자동 검사까지 완료. 승인 대기 제출: " + ", ".join(f"문항 세트 v{k}={v['submission_id']}" for k, v in subs.items()) + f", 보지 못한 문항 세트={sub_u['submission_id']}. 사람이 /admin/ 에서 승인한 뒤 demo.sh activate")
         return
     rels = {}
     for k, sub in subs.items():
-        decide_approval("ap", sub["submission_id"], "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인")
+        _c3_approve("approver", sub["submission_id"], "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인")
     for k, sj in subj.items():
-        d = wait(lambda sj=sj: next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
+        d = wait(lambda sj=sj: next((x for x in _c3_decisions_for(sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
         rels[k] = d.get("release_id")
-    for k in sorted(rels): gate_activate(rels[k])
+    for k in sorted(rels): _c3_activate(rels[k])
     STATE["releases"] = rels; save()
-    rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 토큰으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
+    rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 승인자 계정으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
 
-@step('demo_activate', repos=('release-gate',), deps=('1', '3'),
+@step('demo_activate', repos=('release-gate',) + _GW, deps=('1', '3'),
       why='demo.sh 전용')
 def demo_activate():
     """사람이 /admin/ 에서 승인한 제출의 릴리스를 활성화한다(오래된 문항 세트 버전부터)."""
     title("demo_activate", "승인된 제출의 릴리스 활성화")
-    gate_r, gate_op, _, _ = _gate_clients()
     rels = {}
     for k in sorted(v["version"] for v in STATE["qs"]):
         sj = {"question_set": next(v for v in STATE["qs"] if v["version"] == k), "lora_a": STATE["lora"]["LORA_A"], "lora_b": STATE["lora"]["LORA_B"]}
-        d = next((x for x in decisions_for(gate_r, sj) if x["result"] == "PASS"), None)
+        d = next((x for x in _c3_decisions_for(sj) if x["result"] == "PASS"), None)
         if d: rels[k] = d.get("release_id")
     if not rels: rec("demo_activate", "BLOCKED", "승인된(PASS) 제출이 아직 없다. /admin/ 에서 승인한 뒤 다시 실행한다"); return
-    cur = gate_r.get_active_pointer()
+    cur = _c3_pointer()
     for k in sorted(rels):
-        if not cur or cur["release_id"] != rels[k]: cur = gate_activate(rels[k])
+        if not cur or cur["release_id"] != rels[k]: cur = _c3_activate(rels[k])
     STATE["releases"] = rels; save()
     rec("demo_activate", "REAL", f"승인된 릴리스 활성화: {rels}, 현재 활성 {dict(cur)['release_id']}")
 
-@step('diag', repos=('release-gate',), deps=('3', '4', 'demo4', 'demo_activate', 'demo_swap'),
+@step('diag', repos=('release-gate',) + _GW, deps=('3', '4', 'demo4', 'demo_activate', 'demo_swap'),
       why='demo.sh 전용 진단')
 def diag():
-    """demo.sh diag: 켜져 있는 데모의 게이트·레지스트리 상태를 읽기 전용으로 요약한다(HTTP만, 토큰·비밀 값은 출력하지 않는다)."""
+    """demo.sh diag: 켜져 있는 데모의 게이트·레지스트리 상태를 읽기 전용으로 요약한다(게이트웨이·컨테이너 안 읽기만, 토큰·비밀 값은 출력하지 않는다)."""
     title("diag", "진단: 제출·판정·수집기·모델 패키지")
-    gs, rd = gate_diag_clients()
     try:
-        items, _ = gs.list_submissions(limit=100)
+        items, _ = _c3_gwc(HttpGateService, "approver").list_submissions(limit=100)
         print(f"-- release-gate 제출 {len(items)}건")
         for v in items:
             subj = v.get("subject", {}); qs = subj.get("question_set", {}); la = subj.get("lora_a", {}); lb = subj.get("lora_b", {})
             print(f"  [{v.get('status')}] {v['submission_id']} 문항 세트 {qs.get('id')}@{qs.get('version')} LoRA_A {la.get('id')}@{la.get('version')} LoRA_B {lb.get('id')}@{lb.get('version')} decision={v.get('decision_id')} release={v.get('release_id')}")
             if v.get("decision_id"):
-                print("\n".join("      " + l for l in decision_text(dict(rd.get_decision(v["decision_id"]))).splitlines()))
+                c, d = _c3_gate_read("/v1/decisions/" + v["decision_id"])
+                if c == 200: print("\n".join("      " + l for l in decision_text(d).splitlines()))
     except Exception as e:
         print(f"-- 제출 목록을 읽지 못했다: {type(e).__name__}: {str(e)[:200]}")
     try:
-        ap = rd.get_active_pointer(); print(f"-- 활성 릴리스 포인터: {ap}")
+        ap = _c3_pointer(); print(f"-- 활성 릴리스 포인터: {ap}")
     except Exception as e:
         print(f"-- 활성 포인터를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}")
-    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
-    print(f"-- 후보 수집기 run-once 다시 실행(멱등) 종료 코드 {r.returncode}; 마지막 출력: {(r.stdout.strip().splitlines() or ['(없음)'])[-1][:300]}")
-    try:
-        mr = HttpModelRegistry(URL("mr"), TOK("model-registry-read-release-gate")); ids = mr.list_ids()
-        print(f"-- model-registry 패키지 {len(ids)}개")
-        for i in ids:
-            vs = mr.list_versions(i); print(f"  {i}: 버전 {vs}")
-            for v in vs[-1:]:
-                m = mr.get_manifest(i, v); sc = m.get("serving_config", {}); print(f"      role={m.get('role')} base={m.get('base_model')} constraint.backend={sc.get('constraint', {}).get('backend')}@{sc.get('constraint', {}).get('backend_version')} prompt={sc.get('prompt_template_version')} runtime={m.get('lineage', {}).get('model_runtime_version')}")
+    rc, out, err = _c3_job("job-release-gate-collect")
+    print(f"-- 후보 수집기 run-once 다시 실행(멱등) 종료 코드 {rc}; 마지막 출력: {(out.strip().splitlines() or ['(없음)'])[-1][:300]}")
+    try:   # model-registry 는 release-gate 컨테이너 안에서 그 서비스의 읽기 토큰(GATE_I3_TOKEN_FILE)으로 읽는다(운영에서 패키지를 읽는 주체)
+        mr = _c3_py("release-gate", '''
+B = "http://model-registry:8080"; T = _tokfile("GATE_I3_TOKEN_FILE"); items = lambda b: b.get("items", b) if isinstance(b, dict) else b
+R = []
+for i in items(call("GET", B + "/v1/packages", T)[1]):
+    vs = items(call("GET", B + "/v1/packages/" + i + "/versions", T)[1]); last = call("GET", B + "/v1/packages/" + i + "/versions/" + vs[-1], T)[1] if vs else {}
+    R.append([i, vs, last])''', timeout=90)
+        print(f"-- model-registry 패키지 {len(mr)}개")
+        for i, vs, m in mr:
+            print(f"  {i}: 버전 {vs}")
+            if vs:
+                sc = m.get("serving_config", {}); print(f"      role={m.get('role')} base={m.get('base_model')} constraint.backend={sc.get('constraint', {}).get('backend')}@{sc.get('constraint', {}).get('backend_version')} prompt={sc.get('prompt_template_version')} runtime={m.get('lineage', {}).get('model_runtime_version')}")
     except Exception as e:
         print(f"-- model-registry 패키지를 읽지 못했다: {type(e).__name__}: {str(e)[:200]}")
     try:
-        c, info = http("GET", "ms", "/v1/info", INF_TOK())
+        c, info = _c3_ms_get("/v1/info")
         ex = (info.get("serving_config_expectation") or {}) if c == 200 else {}
         print(f"-- model-serving /v1/info: HTTP {c} backend={info.get('backend') if c == 200 else '-'} 기대 constraint={ex.get('constraint')} prompt={ex.get('prompt_template_versions')} loaded={info.get('loaded') if c == 200 else '-'}")
     except Exception as e:
         print(f"-- model-serving /v1/info 를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}")
     try:
-        c, rz = http("GET", "ms", "/readyz"); reason = rz.get("reason") if isinstance(rz, dict) else None
+        c, rz = _c3_ms_get("/readyz", auth=False); reason = rz.get("reason") if isinstance(rz, dict) else None
         print(f"-- model-serving /readyz: HTTP {c} status={rz.get('status') if isinstance(rz, dict) else rz} 사유={reason}")
-        r = sh([a.docker, "exec", MS_CONTAINER, "sh", "-c", "echo uid=$(id -u); echo hf_home=${HF_HOME:-<unset>}; d=${HF_HOME:-/var/lib/model-runtime/hf}; echo owner=$(stat -c %U:%u \"$d\"); (test -w \"$d\" && echo writable) || echo NOT-writable"], check=False)
+        r = sh([a.docker, "exec", _c3_ms_container(), "sh", "-c", "echo uid=$(id -u); echo hf_home=${HF_HOME:-<unset>}; d=${HF_HOME:-/var/lib/model-runtime/hf}; echo owner=$(stat -c %U:%u \"$d\"); (test -w \"$d\" && echo writable) || echo NOT-writable"], check=False)
         info_txt = " ".join((r.stdout or "").split()) or (r.stderr or "").strip()[:160]
         print(f"-- model-serving 컨테이너 안(읽기만, 쓰기 시험 없음): {info_txt}")
         if "NOT-writable" in (r.stdout or "") or "OSError" in str(reason):
@@ -1881,54 +1919,56 @@ def diag():
     print(f"-- 상태 파일 요약: 릴리스 {STATE.get('releases')}, 제출 {STATE.get('demo_subs')}, llm 대조 {STATE.get('llm_cfg_vs_server')}")
     rec("diag", "REAL", "진단 출력만 했다(변경 없음)")
 
-@step('demo_active', repos=('release-gate',), deps=(),
+@step('demo_active', repos=('release-gate',) + _GW, deps=(),
       why='demo.sh 전용')
 def demo_active():
-    """demo.sh swap-adapters 가 전후에 부른다: 활성 릴리스 포인터(읽기 전용)."""
+    """demo.sh swap-adapters 가 전후에 부른다: 활성 릴리스 포인터(읽기 전용, 운영자 계정)."""
     title("demo_active", "활성 릴리스 포인터 (읽기 전용)")
-    ap = dict(_gate_clients()[0].get_active_pointer())
+    ap = dict(_c3_pointer() or {})
     print(f"  활성 릴리스 {ap.get('release_id')} pointer_version {ap.get('pointer_version')}")
     rec("demo_active", "REAL", f"활성 릴리스 {ap.get('release_id')} (pointer_version {ap.get('pointer_version')})")
 
-@step('demo_swap', repos=('release-gate',), deps=('1', '2'),
+@step('demo_swap', repos=('release-gate',) + _GW, deps=('1', '2'),
       why='demo.sh 전용')
 def demo_swap():
     """demo.sh swap-adapters: 새 모델 패키지(LORA_A/LORA_B)를 게시 -> 후보 수집·자동 검사 -> 시험용 승인자(스크립트) 승인 -> 활성화 -> model-serving 만 새 번들을 적재.
     문항 세트는 가장 최근 것을 그대로 쓰고 어댑터 쌍만 바뀐다. 단계 3(make_packages, publish_packages)·5s(container_ids, check_unchanged, check_release_loaded)와 같은 함수를 쓴다."""
     title("demo_swap", "어댑터 교체: 게시 -> 자동 검사 -> 시험용 승인 -> 활성화 -> model-serving 적재")
     if "qs" not in STATE or "dataset" not in STATE: rec("demo_swap", "BLOCKED", "데모 상태(문항 세트·데이터셋)가 없다: demo.sh up 이 먼저"); return
-    print("  !! 승인자는 사람이 아니라 이 스크립트가 시험용 release-approver 토큰으로 대신한다(TEST-SUB) !!")
-    gate_r, gate_op, gate_rep, gate_ap = _gate_clients()
-    before_ptr = dict(gate_r.get_active_pointer())
+    print("  !! 승인자는 사람이 아니라 이 스크립트가 시험용 승인자 계정(release-approver)으로 대신한다(TEST-SUB) !!")
+    before_ptr = dict(_c3_pointer() or {})
     pk = make_packages(); refs = publish_packages(pk)
     subj = {"question_set": STATE["qs"][-1], "lora_a": refs["LORA_A"], "lora_b": refs["LORA_B"]}
     snap = container_ids(); assert set(snap) == set(SWAP_SERVICES), f"컨테이너를 찾지 못했다: {sorted(set(SWAP_SERVICES) - set(snap))}"
-    ms_before = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", MS_CONTAINER], check=False).stdout.strip()
-    r = subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), "job-release-gate-collect"], capture_output=True, text=True)
-    assert r.returncode in (0, 75), f"collect 종료 {r.returncode}: {(r.stderr + r.stdout)[-500:]}"
-    sub = dict(gate_op.submit_candidate(subj, requested_by_role="operator")); validate("GateSubmission", sub); sid = sub["submission_id"]
-    def report_of(x):
-        try: return dict(gate_rep.get_review_report(x))
-        except bc.BoundaryError: return None
-    existing = next((d for d in decisions_for(gate_r, subj) if d["result"] == "PASS"), None)
+    ms_before = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", _c3_ms_container()], check=False).stdout.strip()
+    rc, out, err = _c3_job("job-release-gate-collect")
+    assert rc in (0, 75), f"collect 종료 {rc}: {(err + out)[-500:]}"
+    sub = _c3_ensure_sub(subj); sid = sub["submission_id"]
+    existing = next((d for d in _c3_decisions_for(subj) if d["result"] == "PASS"), None)
     if not existing:
-        rep = wait_review_report(report_of, sid, "교체 후보"); validate("ReviewReport", rep)
+        rep = wait_review_report(_c3_report_of, sid, "교체 후보"); validate("ReviewReport", rep)
         bad = [c for c in rep["checks"] if c["result"] not in ("PASS", "SKIPPED")]
         assert not bad, f"자동 검사가 통과하지 못했다(승인하지 않고 멈춤): {bad}"
         print("  자동 검사: " + ", ".join(f"{c['kind']}={c['result']}" for c in rep["checks"]))
-        dec = dict(decide_approval("ap", sid, "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인(어댑터 교체)")); validate("GateApproval", dec)
-        existing = wait(lambda: next((d for d in decisions_for(gate_r, subj) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
-    rid = existing.get("release_id"); validate("ReleaseManifest", dict(gate_r.get_release(rid)))
-    gate_r.load_bundle(rid, dest=WORK / "bundles")
-    unchanged_pointer = before_ptr["release_id"] == rid
-    ap = dict(before_ptr) if unchanged_pointer else dict(gate_activate(rid)); validate("ActivePointer", ap)
-    r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == rid else None)(survey_ready()), 300, f"survey가 릴리스 {rid} 적재", every=3)
-    tok = INF_TOK()
-    st = wait(lambda: (lambda cs: cs[1] if cs[0] == 200 and cs[1].get("state") in ("LOADED", "FAILED") else None)(http("GET", "ms", f"/v1/releases/{rid}", tok)), 600, f"model-serving 이 {rid} 적재", every=3)
+        dec = dict(_c3_approve("approver", sid, "APPROVE", reason="데모: 시험용 승인자(스크립트)가 대신 승인(어댑터 교체)")); validate("GateApproval", dec)
+        existing = wait(lambda: next((d for d in _c3_decisions_for(subj) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
+    rid = existing.get("release_id")
+    c, rel = _c3_gate_read("/v1/releases/" + rid); assert c == 200, (c, rel); validate("ReleaseManifest", dict(rel))
+    # 번들(해시 검증 포함)은 그것을 읽는 소비자 survey-service 의 컨테이너 안에서 그 서비스의 읽기 토큰·계약 클라이언트로 푼다
+    bl = _c3_py("survey-service", '''
+from openit_link.clients import HttpReleaseReader
+import pathlib
+b = HttpReleaseReader("http://release-gate:8080", _tokfile("SURVEY_RELEASE_READER_TOKEN_FILE")).load_bundle(V["rid"], dest=pathlib.Path("/tmp/c3-bundles"))
+R = {"release_id": b.manifest["release_id"]}''', timeout=180, rid=rid)
+    assert bl["release_id"] == rid
+    unchanged_pointer = before_ptr.get("release_id") == rid
+    ap = dict(before_ptr) if unchanged_pointer else dict(_c3_activate(rid)); validate("ActivePointer", ap)
+    r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == rid else None)(_c3_survey_ready()), 300, f"survey가 릴리스 {rid} 적재", every=3)
+    st = wait(lambda: (lambda cs: cs[1] if cs[0] == 200 and cs[1].get("state") in ("LOADED", "FAILED") else None)(_c3_ms_get(f"/v1/releases/{rid}")), 600, f"model-serving 이 {rid} 적재", every=3)
     EA.check_release_loaded(st, rid)
     after = container_ids(); EA.check_unchanged({k: tuple(v) for k, v in snap.items()}, after, SWAP_SERVICES)
-    ms_after = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", MS_CONTAINER], check=False).stdout.strip()
-    print(f"  활성 릴리스: {before_ptr['release_id']} (pointer_version {before_ptr['pointer_version']}) -> {rid} (pointer_version {ap['pointer_version']})" + ("  [이미 활성이었다: 같은 어댑터 쌍, 교체 없음]" if unchanged_pointer else ""))
+    ms_after = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", _c3_ms_container()], check=False).stdout.strip()
+    print(f"  활성 릴리스: {before_ptr.get('release_id')} (pointer_version {before_ptr.get('pointer_version')}) -> {rid} (pointer_version {ap['pointer_version']})" + ("  [이미 활성이었다: 같은 어댑터 쌍, 교체 없음]" if unchanged_pointer else ""))
     print("  컨테이너 StartedAt (전 -> 후):")
     for svc in SWAP_SERVICES: print(f"    {svc:22} {snap[svc][1]} -> {after[svc][1]}  {'불변' if snap[svc] == after[svc] else '바뀜'}")
     print(f"    {'model-serving':22} {ms_before} -> {ms_after}  {'불변' if ms_before == ms_after else '바뀜(컨테이너 재시작)'}")
