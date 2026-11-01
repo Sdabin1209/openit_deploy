@@ -24,7 +24,7 @@
 | 경로 | 역할 |
 | --- | --- |
 | `compose.yaml` | 상시 구성: gateway, kiosk-frontend, admin-console, survey-service, question-authoring, ops-feedback-ingest, release-gate, model-serving, model-registry + 잡 2개(job-ops-feedback, job-release-gate-collect) |
-| `compose.registry.yaml` / `compose.test.yaml` / `compose.llm*.yaml` / `compose.inference.yaml` / `compose.external-inference.yaml` | 로컬 레지스트리 / E2E·데모용 시험 구성 / 실제 LLM(GPU) 데모 / 추론 서버 단독 / 외부 추론 서버 연결 |
+| `compose.registry.yaml` / `compose.llm*.yaml` / `compose.inference.yaml` / `compose.external-inference.yaml` | 로컬 레지스트리 / 실제 LLM(GPU) 데모 / 추론 서버 단독 / 외부 추론 서버 연결 |
 | `locks/images.lock` (+ `locks/history/`) | 이미지 digest 잠금(코드 축). 롤백은 이것을 되돌리는 일 |
 | `config/` | Caddyfile, 주기 잡 `jobs.yaml`, 백업 예시, 서비스별 env 예시 |
 | `scripts/` | `doctor.sh` 사전 점검, `build-images.sh`·`publish-images.sh`, `gen-secrets.sh`, `up.sh`·`down.sh`·`status.sh`, `rollback.sh`, `backup.sh`·`restore.sh`, `run-job.sh`(주기 잡 한 번 실행, 호출은 `config/systemd/`의 timer), `e2e.sh`, `demo.sh`, `check-*.sh` 점검기 |
@@ -37,7 +37,7 @@
                                                                    |
  gen-secrets.sh -> secrets/tokens/* -> (NAME_FILE) ->  up.sh -> compose.yaml -> gateway(edge) -> 서비스(serving/authoring/release/logs)
                                                                    |
- e2e.sh / demo.sh: 같은 구성 + compose.test.yaml(시험 대역)을 임시 프로젝트로 띄워 1~9단계를 확인
+ e2e.sh / demo.sh: 같은 제품 구성(시험용 문 없음, 설정값 overlay만)을 임시 프로젝트로 띄우고 호스트에서 게이트웨이·exec 로 들어가 1~9단계를 확인 (ADR 0049)
 ```
 
 ## 3. 실행 방법
@@ -120,6 +120,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0002 gateway는 Caddy](docs/adr/0002-caddy-gateway.md)
 - [0003 시간 불변식 체인(값은 0047이 대체)](docs/adr/0003-time-invariants.md)
 - [0048 gateway 상류 프록시 상한이 사슬 규칙을 지킨다](docs/adr/0048-gateway-proxy-limits-follow-the-chain.md)
+- [0049 E2E는 샌드박스로 돈다: 제품에는 시험용 문이 없다](docs/adr/0049-e2e-sandbox.md)
 - [0047 시간 상한 사슬 값: 키오스크 12s > gateway 10.5s > survey 턴 9s > 추출 3s + 응답 5s](docs/adr/0047-time-chain-values.md)
 - [0004 E2E는 가짜 모델로 하고 전체 모드와 --only/--fast를 둔다](docs/adr/0004-e2e-fake-model.md)
 - [0005 TLS는 gateway에서 HTTPS 필수, 기본은 Caddy 내부 CA(`tls internal`)](docs/adr/0005-tls-internal-ca.md)

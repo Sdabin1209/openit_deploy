@@ -18,6 +18,22 @@
 
 합격 조건: 1~9가 사람 손 없이 순서대로 실행되고, 모든 레코드가 계약 스키마와 해시 검증을 통과한다.
 
+## 샌드박스: 제품 무변경, 접근 셋 (ADR [0049](adr/0049-e2e-sandbox.md))
+
+E2E 는 제품에 시험용 문을 내지 않는다. 제품은 `compose.yaml`(+ 운영 모드 overlay `compose.external-inference.yaml`)이고, 덮어쓰기 파일 `compose.test.yaml` 은 없다. 제품에 더하는 것은 운영 설정 변수의 값(`test/sandbox.env`의 `GATE_POLL_SECONDS`, `test/compose.sandbox.yaml`)과 시험 자료 파일 연결(`test/compose.risk-rules.yaml`, 백업 대상 흉내 `compose.backup-target.yaml`)뿐이다.
+
+드라이버(`scripts/e2e_steps.py`)는 호스트에서 돌고(호스트 = 운영자 PC 역할) 허용 접근은 셋이다. 접근은 모두 `scripts/e2e_sandbox.py` 를 지난다.
+
+| 접근 | 무엇 | 함수 |
+| --- | --- | --- |
+| (a) 게이트웨이 호스트 포트 | HTTPS, 게이트웨이 CA 만 신뢰. 사람 계정(Basic), 기기 토큰, 추론 기계 토큰 | `gw_url`, `gw_request`, `gw_client` |
+| (b) 제품 네트워크 안 | `docker compose -p <P> exec / logs / run --rm <job-*>` | `exec_in`, `exec_py`, `readyz`, `psql`, `logs`, `run_job` |
+| (c) 다른 호스트 역할 | `compose.inference.yaml` 을 별도 프로젝트 `<P>-inf` 로 띄운 추론 서버(가짜 백엔드는 그 쪽 env 만) | `inference_url` |
+
+**끝 조건**: 단계 코드의 내부 포트 직접 호출 0건, 제품 compose 시험용 문 0건. 점검: `scripts/test_compose_no_test_doors.py`(`check-all.sh` 에 연결: gateway 와 `compose.inference.yaml` 의 model-serving 외 `ports:` 금지, 제품·운영 overlay 의 `MODEL_RUNTIME_ALLOW_FAKE` 금지, `compose.test.yaml` 존재 금지)와 `e2e.sh` 의 실행 중 점검(호스트 포트를 게시한 제품 컨테이너는 gateway 뿐). `e2e.sh` 가 단계에 넘기는 `--ports` JSON 은 `gw`(게이트웨이 TLS 포트)와 `ms`(추론 서버 호스트 포트)만이다. 옛 키를 쓰는 코드는 KeyError 로 드러난다.
+
+**기동 순서**(`scripts/e2e.sh`, 이유는 스크립트 주석): (1) 추론 서버 = `compose.inference.yaml` 별도 프로젝트 `<P>-inf`(가짜 백엔드 overlay `test/compose.fake-model.yaml`, 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿지 못하는 Docker 면 0.0.0.0 으로 게시) -> (2) 제품 `up.sh`(외부 추론 모드, `GATEWAY_TLS_PORT=` 로 Docker 배정) -> (3) 게이트웨이 TLS 포트와 내부 CA 를 읽고, 추론 서버를 `RELEASE_URL=https://host.docker.internal:<게이트웨이 TLS 포트>`·CA·추론 기계 토큰(`secrets/tokens/gateway-inference-token`)으로 다시 설정 -> (4) 다시 만든 추론 서버의 새 호스트 포트를 제품(survey-service)에 다시 알림. 추론 기계 토큰 파일이 없으면 e2e.sh 는 그 사실을 명확한 오류로 내고 멈춘다. `--up-only` 는 여기까지(도달·격리 점검 포함)만 하고 단계를 돌리지 않는다(전체 합격 아님).
+
 ## 단계 5c: 정정(CORRECT) 흐름 (deploy 소유, 시나리오 5의 일부)
 
 `scripts/e2e_steps.py`의 `5c`. 가짜 A(model-runtime 0.7.2)의 선택 항목 `corrections`를 `test/fake-model/question_flow.json`에 둔다: 발화에 `아까 말`이 있고 입력 `question_id`가 `Q1.D02`이면 `Q1.D01.diagnosed`를 `false`로 정정하는 `CORRECT`를 낸다(`Q1.D01.diagnosed`는 survey-service의 문진 스키마 `QuestionFlow`/시험 문항 세트에 있는 실제 칸 키다). 흐름: (1) 추론 서버를 직접 불러 `Q1.D02`에서는 `CORRECT`(값 `CORRECTION`), `Q1.D03`에서는 일반 `NEXT`임을 본다. (2) 서비스를 거쳐 `Q1.D01`에 "네 있어요"(저장) 뒤 "아까 말한 거 아니에요"를 보낸다. (3) 같은 발화를 `Q1.D01`에서 보낸 대조 세션은 정정이 아니다.
