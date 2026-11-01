@@ -18,7 +18,7 @@
 
 합격 조건: 1~9가 사람 손 없이 순서대로 실행되고, 모든 레코드가 계약 스키마와 해시 검증을 통과한다.
 
-## 샌드박스: 제품 무변경, 접근 셋 (ADR [0049](adr/0050-e2e-sandbox.md))
+## 샌드박스: 제품 무변경, 접근 셋 (ADR [0050](adr/0050-e2e-sandbox.md))
 
 E2E 는 제품에 시험용 문을 내지 않는다. 제품은 `compose.yaml`(+ 운영 모드 overlay `compose.external-inference.yaml`)이고, 덮어쓰기 파일 `compose.test.yaml` 은 없다. 제품에 더하는 것은 운영 설정 변수의 값(`test/sandbox.env`의 `GATE_POLL_SECONDS`, `test/compose.sandbox.yaml`)과 시험 자료 파일 연결(`test/compose.risk-rules.yaml`, 백업 대상 흉내 `compose.backup-target.yaml`)뿐이다.
 
