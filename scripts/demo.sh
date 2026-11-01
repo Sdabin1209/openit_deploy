@@ -154,6 +154,9 @@ llm_config_check() { # llm_config_check sentinel|real : 병합된 compose 설정
   if [ "$mode" = sentinel ]; then   # 상태 파일 없이: 자리표시 잠금·레지스트리·비밀(빈 파일)로 구조만 본다. 변수 전달 경로를 시험한다
     tmp=$(mktemp -d); expect="deploy-build/model-serving-gpu:config-check"
     cp "$DEPLOY_ROOT/locks/images.lock" "$tmp/images.lock"; echo "DEPLOY_REGISTRY=127.0.0.1:5000" > "$tmp/registry.env"; mkdir -p "$tmp/secrets"
+    # 구조만 보는 검증이므로, compose 가 요구하지만 리포 잠금에 아직 없는 digest 변수(새 서비스가 게시되기 전: dataset-store 가 그랬다, 2026-11-01)는 자리표시 digest 로 채운다. 실제 값은 게시가 쓴다
+    for v in $(grep -ohE '\$\{[A-Z_]+_DIGEST' "$DEPLOY_ROOT"/compose.yaml "$DEPLOY_ROOT"/compose.*.yaml | tr -d '${' | sort -u); do
+      grep -q "^$v=" "$tmp/images.lock" || echo "$v=sha256:$(printf '0%.0s' $(seq 1 64))" >> "$tmp/images.lock"; done
     for f in $(grep -oh 'SECRETS_DIR:-./secrets}/[A-Za-z./-]*' "$DEPLOY_ROOT/compose.yaml" | sed 's|.*secrets}/||' | sort -u); do mkdir -p "$tmp/secrets/$(dirname "$f")"; : > "$tmp/secrets/$f"; done
     rc=0; out=$( DEPLOY_LOCK="$tmp/images.lock" DEPLOY_REGISTRY_ENV="$tmp/registry.env" SECRETS_DIR="$tmp/secrets" MODEL_SERVING_GPU_IMAGE="$expect" dc "$P" --profile jobs config 2>&1 ) || rc=$?
     rm -rf "$tmp"
