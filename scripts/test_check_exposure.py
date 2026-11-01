@@ -10,7 +10,7 @@ from openit_deploy.components import exposure_check as C
 CADDY = (HERE.parent / "config/Caddyfile").read_text(encoding="utf-8")
 HOSTS = json.loads((HERE.parent / "config/exposure-hosts.json").read_text())
 ROLES = "staff operator release-approver reviewer author clinical-reviewer".split()
-TO = {"dial": 1000, "response_header": 13000}   # config/Caddyfile 의 release-gate 사람용 경로(ADR 0048)
+TO = {"dial": 1000, "response_header": 180000}   # config/Caddyfile 의 release-gate 사람용 경로(ADR 0051, D125)
 GATE = {"service": "release-gate", "routes": [
     {"paths": ["/v1/submissions", "/v1/submissions/*"], "methods": ["GET"], "auth": {"kind": "account", "roles": ["release-approver"]}, "timeouts_ms": TO, "upstream_token": "gate-read-release-approver", "user_header": "set"},
     {"paths": ["/v1/approvals"], "methods": ["POST"], "auth": {"kind": "account", "roles": ["release-approver"]}, "timeouts_ms": TO, "upstream_token": "gate-write-release-approver", "user_header": "set"},

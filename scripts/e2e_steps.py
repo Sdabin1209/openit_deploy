@@ -253,7 +253,7 @@ def _c1_dec(b):
         except ValueError: return b
     return b
 
-def _c1_gw(method, path, *, account=None, token=None, body=None, data=None, headers=None, timeout=30.0):
+def _c1_gw(method, path, *, account=None, token=None, body=None, data=None, headers=None, timeout=70.0):   # 클라이언트 읽기 대기는 gateway 환자 경로 상한(56s)보다 길게(D125, 키오스크 대기 60s + 여유)
     """(a) 게이트웨이 입구. account=계정 ID(암호는 접근 계층이 안다), token=기기 토큰(Bearer). (상태, 본문, 머리글)."""
     kw = {}
     if body is not None: kw["json"] = body
@@ -954,7 +954,7 @@ def _c2_dec(raw):
     try: return json.loads(raw or b"null")
     except ValueError: return raw.decode(errors="replace")
 
-def _c2_gw(method, path, body=None, *, account=None, token=None, raw=None, ctype=None, headers=None, timeout=30):
+def _c2_gw(method, path, body=None, *, account=None, token=None, raw=None, ctype=None, headers=None, timeout=70):   # 70 = 키오스크 대기 60s + 여유(D125): 무응답 상류에서 gateway 504 를 받을 때까지 기다린다
     """게이트웨이 한 요청 -> (상태, 본문(JSON 이면 파싱, 아니면 문자열), 소문자 헤더). 4xx/5xx 도 돌려준다."""
     h = dict(headers or {})
     if ctype: h["Content-Type"] = ctype
@@ -965,7 +965,7 @@ def _c2_raw(method, path, body=None, basic=None, headers=None):
     """사람 계정(basic=계정 ID 문자열) 또는 헤더로 직접 만든 자격으로 게이트웨이를 부른다. basic 이 (이름, 암호) 쌍이면 그 자격 그대로(틀린 암호 시험)."""
     h = dict(headers or {})
     if isinstance(basic, tuple): h["Authorization"] = "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode(); basic = None
-    return _c2_gw(method, path, body, account=basic, headers=h, timeout=30)
+    return _c2_gw(method, path, body, account=basic, headers=h, timeout=200)   # 200 = release-gate 상한 181s(연결 1s + 헤더 180s) + 여유(D125)
 
 def _c2_text(path, basic=None):
     c, b, h = _c2_raw("GET", path, basic=basic)
@@ -1100,31 +1100,31 @@ def step5o():
     rec("5o", "REAL", f"일수 칸 규격(0~7, 값 단위 day/week). 추론 서버 직접(ExtractRequest{{input, flow, fields}}): 8일 -> REASK/OUT_OF_RANGE(같은 문항, 저장 안 하는 UNCLEAR, targets Q8_1.days), 7일·0일 -> NEXT(경계 포함). 서비스 경유: {turns}턴으로 Q8_1 도달 뒤 '8일이요' -> 턴 action REASK, Q8_1.days=8 저장 없음 -> '3일이요' -> 3 저장(ANSWERED).")
 
 # ---- 시간 단언의 상수: 설정(config/Caddyfile, 서비스 문서)에서 도출한 값과 측정 환경별 관찰값을 이름으로 둔다. 단언의 의미(상한 안에 들어와야 한다)는 그대로이고, 한 환경의 측정값을 불변식처럼 쓰지 않는다.
-ADMIN_CONSOLE_WAIT_S = 15.0  # 관리 화면(admin-console 영역)의 대기: 승인·운영·검토·저작 경로의 gateway 상한(연결 + 헤더)이 이보다 짧아야 한다(ADR 0048)
-STAFF_SCREEN_WAIT_S = 12.0   # 직원 화면(kiosk-frontend REQUEST_TIMEOUT_MS)의 대기: 직원 API 경로(@staffapi)의 gateway 상한이 이보다 짧고 서버 턴 마감보다 길어야 한다
-KIOSK_WAIT_S = 12.0          # 키오스크 대기(kiosk-frontend 영역, 사용자 결정 2026-10-30, ADR 0003)
-SURVEY_TURN_DEADLINE_S = 9.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS, config/survey.env 가 정본이고 scripts/test_time_chain.py 가 같음을 본다)
+ADMIN_CONSOLE_WAIT_S = {'release-gate': 190.0, 'question-authoring': 130.0, 'ops-feedback-ingest': 70.0, 'admin-console': 70.0}   # 관리 화면(admin-console 영역)의 경로별 대기(CONVENTIONS 시간표 D125): 각 경로의 gateway 상한(연결 + 헤더)이 이보다 짧아야 한다(ADR 0051)
+STAFF_SCREEN_WAIT_S = 60.0   # 직원 화면(kiosk-frontend REQUEST_TIMEOUT_MS)의 대기: 직원 API 경로(@staffapi)의 gateway 상한이 이보다 짧고 서버 턴 마감보다 길어야 한다
+KIOSK_WAIT_S = 60.0          # 키오스크 대기(kiosk-frontend 영역, 계약 CONVENTIONS 시간표 D125: 프록시·LB 표준 60초)
+SURVEY_TURN_DEADLINE_S = 50.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS, config/survey.env 가 정본이고 scripts/test_time_chain.py 가 같음을 본다)
 GW_DIAL_PROXY_S = 1.0        # 사람용 프록시(proxy_limits) 연결 상한 dial_timeout
 GW_READYZ_CAP_S = 3.0        # gateway /readyz 프록시 = 연결 1s + 응답 헤더 2s (Caddyfile)
-GW_HDR_GATE_S, GW_HDR_OPS_S = 13.0, 10.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, 시작값)
+GW_HDR_GATE_S, GW_HDR_OPS_S = 180.0, 60.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, D125: 측정 최악 승인 128초·프록시 표준 60초 위의 여유)
 DOCKER_DNS_FAIL_S = 3.0      # 멈춘 컨테이너 이름을 Docker 내부 DNS가 해석하지 못하는 지연. 근거: 설정 없는 Caddy가 이름 해석 실패 502를 3.0s 뒤에 냈다(docs/E2E.md 관찰, 한 환경에서 측정)
 BASIC_AUTH_S = 2.0           # gateway 기본 인증(bcrypt) 확인 시간의 여유. 관찰: 이 PC 약 0.9s(검토 목록 pause 가 설정 10s 에 10.87s). 근거 기록 없음 이상의 일반화는 하지 않는다
 CLIENT_EXTRA_S = 2.0         # 호스트 클라이언트가 gateway 응답을 더 늦게 받는 정도. 관찰: gpu-dev(Docker Desktop 4.50) +0.5~1.9s, 이 PC 0 (docs/E2E.md 5w 계측)
-# 연결 거부(상류 stop)가 걸리는 시간의 상한 = dial + Docker DNS 실패 지연 + 여유. 응답 헤더 상한(release-gate 15s)까지 매달리지 않고 그보다 충분히 짧게 끝나야 한다.
-# 관찰값: 이 PC 2.7~3.8s, gpu-dev 4.6s. 한 환경의 측정이 아니라 위 설정·관찰에서 도출하되 헤더 상한의 절반 아래(7.5s)로 둔다.
+# 연결 거부(상류 stop)가 걸리는 시간의 상한 = dial + Docker DNS 실패 지연 + 여유. 응답 헤더 상한(release-gate 180s)까지 매달리지 않고 그보다 충분히 짧게 끝나야 한다.
+# 관찰값: 이 PC 2.7~3.8s, gpu-dev 4.6s. 한 환경의 측정이 아니라 위 설정·관찰에서 도출하되 헤더 상한의 절반 아래(90s)로 둔다.
 CONN_REFUSED_MAX_S = GW_DIAL_PROXY_S + DOCKER_DNS_FAIL_S + 1.5
 assert CONN_REFUSED_MAX_S < GW_HDR_GATE_S / 2, "연결 거부 상한이 응답 헤더 상한에 가까우면 단언이 의미가 없다"
 READYZ_PAUSED_MAX_S = GW_READYZ_CAP_S + CLIENT_EXTRA_S   # gateway /readyz 가 무응답 상류에서 504 를 주기까지(클라이언트가 본 시간)
-TURN_CLIENT_MAX_S = SURVEY_TURN_DEADLINE_S + CLIENT_EXTRA_S   # 클라이언트가 본 환자 턴 상한(서버 마감 + 호스트 전달 지연), 키오스크 대기(12s) 아래(gateway 상한 10.5s 는 호스트 전달 지연 여유 안)
+TURN_CLIENT_MAX_S = SURVEY_TURN_DEADLINE_S + CLIENT_EXTRA_S   # 클라이언트가 본 환자 턴 상한(서버 마감 + 호스트 전달 지연), 키오스크 대기(60s) 아래(gateway 상한 56s 는 호스트 전달 지연 여유 안)
 
-def gwk(method, path, body=None, timeout=30, auth=True):
+def gwk(method, path, body=None, timeout=70, auth=True):
     """게이트웨이 경유 호출(키오스크 기기 토큰). (상태, 본문, 소문자 헤더, 걸린 초). 연결 오류는 상태 0."""
     t0 = time.time()
     try: c, b, hd = _c2_gw(method, path, body, token=_c2_kdev() if auth else None, timeout=timeout)
     except Exception as e: return 0, type(e).__name__, {}, time.time() - t0
     return c, b, hd, time.time() - t0
 
-def gk_turn(sid, tid, text, timeout=30):
+def gk_turn(sid, tid, text, timeout=70):
     return gwk("POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": text, "turn_id": tid}, timeout)
 
 def staff_sv(sid):
@@ -1195,9 +1195,9 @@ def step5w():
     assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
     sh([a.docker, "pause", svc]); obs = {}
     try:
-        t_req = time.time(); c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=30); obs["turn"] = (c, round(el, 2))
+        t_req = time.time(); c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=70); obs["turn"] = (c, round(el, 2))
         assert c == 504 and b == {"code": "UPSTREAM_UNAVAILABLE"} and h.get("retry-after"), f"무응답 상류: 504 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
-        # 불변식: 키오스크 대기(12s) > gateway 처리 시간 > 서버 턴 총 마감(9s, SURVEY_TURN_DEADLINE_SECONDS). 설정은 연결 1s + 응답 헤더 9.5s(합 10.5s 상한, config/Caddyfile).
+        # 불변식: 키오스크 대기(60s) > gateway 처리 시간 > 서버 턴 총 마감(50s, SURVEY_TURN_DEADLINE_SECONDS). 설정은 연결 1s + 응답 헤더 55s(합 56s 상한, config/Caddyfile).
         # gateway 의 상한은 gateway 자신의 접근 로그 duration 으로 잰다(클라이언트가 본 시간에는 호스트 게시 포트 전달 지연이 섞인다: 아래 정책 단언과 docs/E2E.md 측정표)
         gd = gw_log_duration(f"/v1/sessions/{sid}/turns", t_req); assert gd, "gateway 접근 로그에서 이 요청을 찾지 못했다"
         obs["gw_duration"] = round(gd[0], 2); assert gd[1] == 504, ("gateway 로그의 상태", gd)
@@ -1208,7 +1208,7 @@ def step5w():
     finally: sh([a.docker, "unpause", svc])
     t0 = time.time(); wait_gw_ready(60); t_rec = time.time() - t0
     def client_seen(): assert obs["turn"][1] < KIOSK_WAIT_S, f"클라이언트가 본 시간 {obs['turn'][1]}s (gateway 처리 {obs['gw_duration']}s, 차이 {obs['turn'][1]-obs['gw_duration']:.2f}s: 호스트 게시 포트 경유 전달 지연)"
-    policy("5w", "Docker Desktop(WSL2) 호스트 게시 포트 전달 지연(운영 서버의 gateway 직접 접속에서는 해당 없음, 미확인)", "호스트 클라이언트가 본 gateway 504 시간이 키오스크 대기(12s) 미만이다", client_seen)
+    policy("5w", "Docker Desktop(WSL2) 호스트 게시 포트 전달 지연(운영 서버의 gateway 직접 접속에서는 해당 없음, 미확인)", "호스트 클라이언트가 본 gateway 504 시간이 키오스크 대기(60s) 미만이다", client_seen)
     time.sleep(3)   # 멈춘 사이 도착한 요청을 서비스가 풀린 뒤 처리했을 수 있다
     sv = staff_sv(sid); n_after_unpause = utt_count(sv, "네 있어요")
     c, r = _c2_turn(sid, "w-1", "네 있어요"); assert c == 200, ("복구 뒤 같은 turn_id 재전송이 200이 아니다", c, r)
@@ -1216,7 +1216,7 @@ def step5w():
     print(f"  관찰: 504 를 받은 턴 w-1 이 unpause 뒤 서비스에서 처리된 횟수 {n_after_unpause}, 같은 turn_id 재전송 뒤 기록 {n_final}회")
     policy("5w", "survey-service 의 turn_id 멱등(처리 중·확정 재전송은 새로 처리하지 않음)", "504 로 끝난 턴을 같은 turn_id 로 재전송해도 발화는 한 번만 기록된다", lambda: (_ for _ in ()).throw(AssertionError(f"기록 {n_final}회")) if n_final != 1 else None)
     _c2_kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
-    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 클라이언트 {obs['turn'][1]}s / gateway 접근 로그 duration {obs['gw_duration']}s (설정: 연결 1s + 응답 헤더 9.5s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
+    rec("5w", "REAL", f"survey-service pause 중 gateway 경유: 환자 턴 {obs['turn'][0]} 까지 클라이언트 {obs['turn'][1]}s / gateway 접근 로그 duration {obs['gw_duration']}s (설정: 연결 1s + 응답 헤더 55s), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s, 설정 2s), /healthz {obs['healthz']}. unpause 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 멈춘 사이 요청이 풀린 뒤 서비스에서 처리된 횟수 {n_after_unpause}")
 
 @step('5u', repos=('release-gate', 'survey-service') + _GW, deps=(),
       why='step5u 는 STATE 를 읽지 않는다. 활성 릴리스가 있어야 하는지는 코드를 읽어 확정하지 못했다',
@@ -1236,7 +1236,7 @@ def step5u():
     finally: sh([a.docker, "start", gate])
     wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", gate]).stdout.strip() == "healthy", 120, "release-gate healthy", every=2)
     wait(lambda: _c2_raw("GET", "/v1/submissions", basic=_C2_ADMIN)[0] == 200, 60, "승인 조회 복구(200)", every=2)
-    # (2) release-gate 무응답(pause): gateway 상한 15s(연결 2s + 헤더 15s 설정; 접근 로그 duration 으로 잰다)
+    # (2) release-gate 무응답(pause): gateway 상한(release-gate 연결 1s + 헤더 180s, ops-feedback 60s 설정; 접근 로그 duration 으로 잰다)
     def paused(svc, path, acct, lab, lo, hi):
         sh([a.docker, "pause", svc])
         try:
@@ -1249,7 +1249,7 @@ def step5u():
     wait(lambda: _c2_raw("GET", "/v1/submissions", basic=_C2_ADMIN)[0] == 200, 60, "승인 조회 복구(200)", every=2)
     paused(ops, "/v1/cases", _C2_REVIEWER, "검토 목록 pause", GW_HDR_OPS_S - 0.5, GW_HDR_OPS_S + BASIC_AUTH_S)
     wait(lambda: _c2_raw("GET", "/v1/cases", basic=_C2_REVIEWER)[0] == 200, 60, "검토 목록 복구(200)", every=2)
-    rec("5u", "REAL", "사람이 쓰는 화면 경로의 gateway 상류 상한: release-gate 중지 중 승인 조회 " + f"{obs['승인 조회 C7']}·운영자 읽기 {obs['운영자 active-pointer C8']}(코드, 초)가 503 {{\"code\":\"UPSTREAM_UNAVAILABLE\"}}; release-gate 무응답 중 승인 조회 {obs['승인 조회 pause']}(코드, 클라이언트 초, gateway duration 초; 설정 헤더 15s), ops-feedback-ingest 무응답 중 검토 목록 {obs['검토 목록 pause']}(설정 헤더 10s)이 504 UPSTREAM_UNAVAILABLE; 해제 뒤 모두 200 복구. 정적 화면(admin-console, kiosk-frontend) 프록시의 상한은 같은 설정이나 이 단계에서 시험하지 않았다")
+    rec("5u", "REAL", "사람이 쓰는 화면 경로의 gateway 상류 상한: release-gate 중지 중 승인 조회 " + f"{obs['승인 조회 C7']}·운영자 읽기 {obs['운영자 active-pointer C8']}(코드, 초)가 503 {{\"code\":\"UPSTREAM_UNAVAILABLE\"}}; release-gate 무응답 중 승인 조회 {obs['승인 조회 pause']}(코드, 클라이언트 초, gateway duration 초; 설정 헤더 180s), ops-feedback-ingest 무응답 중 검토 목록 {obs['검토 목록 pause']}(설정 헤더 60s)이 504 UPSTREAM_UNAVAILABLE; 해제 뒤 모두 200 복구. 정적 화면(admin-console, kiosk-frontend) 프록시의 상한은 같은 설정이나 이 단계에서 시험하지 않았다")
 
 @step('5m', repos=('survey-service', 'model-runtime', 'kiosk-frontend') + _GW, deps=('4',),
       why="STATE['pointers'] 를 읽고 model-serving 을 pause 한다. " + _P4)
@@ -1269,7 +1269,7 @@ def step5m():
         assert cr == 200 and (rr.get("turn_failure_signal") or {}).get("staff_alert") in ("DELIVERED", "DELIVERY_FAILED"), ("모델 서버가 멈췄는데 위험 발화의 직원 알림이 나가지 않았다", cr, str(rr)[:160])
         assert dt_r < TURN_CLIENT_MAX_S, f"위험 정지 턴이 마감을 넘겼다: {dt_r:.1f}s (상한 {TURN_CLIENT_MAX_S}s = 서버 마감 {SURVEY_TURN_DEADLINE_S}s + 클라이언트 지연 여유)"
         assert [x for x in _c2_staff("GET", "/v1/staff/alerts?status=OPEN")[1]["items"] if x["session_id"] == sidr], "모델 서버가 멈춘 중의 위험 발화가 직원 알림 목록에 없다"
-        t_req = time.time(); c, b, h, el = gk_turn(sid, "m-2", "아니요 없어요", timeout=30)
+        t_req = time.time(); c, b, h, el = gk_turn(sid, "m-2", "아니요 없어요", timeout=70)
         failed = c != 200 or (isinstance(b, dict) and b.get("turn_failure_signal"))
         assert failed, ("model-serving 이 멈췄는데 턴이 성공했다", c, str(b)[:120])
         gd = gw_log_duration(f"/v1/sessions/{sid}/turns", t_req); assert gd, "gateway 접근 로그에서 못 찾았다"
@@ -1302,7 +1302,7 @@ def step5m():
     gc, gr = SB.readyz("release-gate"); assert gc == 200, ("release-gate /readyz", gc)   # 상태 관찰: 컨테이너 안 /readyz(감시 스택이 보는 같은 필드)
     jl = gr.get("judging_loop")
     assert jl is not None and not jl.get("upstream_auth_failed") and (jl.get("consecutive_failures") or 0) < 3, ("release-gate 판정 루프", jl)
-    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 9s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택에서 직접 읽은 model-serving /readyz OK, release-gate 판정 루프 (연속 실패 {jl.get('consecutive_failures')}회)를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
+    rec("5m", "REAL", f"model-serving pause 중 환자 턴(gateway 경유): 상태 {c}, gateway duration {gd[0]:.2f}s(survey 턴 마감 50s 안), 실패 응답 {body}; 위험 발화는 같은 모델 정지 중에도 직원 알림(staff_alert)이 먼저 나갔다({dt_r:.1f}s); 값 저장 없음(Q1.D01 유지, Q1.D02 없음), 중지 중 발화 기록 {n_logged}건; unpause 뒤 새 turn_id 턴은 확정(값 저장, 서비스 복구); 같은 turn_id(m-2) 재전송은 정책 단언(survey-service 가 실패 응답을 저장해 계속 NOT_COMMITTED 를 돌려주면 POLICY-PENDING, CR-D25). 발화 기록 {n_final}건. 실제 스택에서 직접 읽은 model-serving /readyz OK, release-gate 판정 루프 (연속 실패 {jl.get('consecutive_failures')}회)를 읽었다. 못 보는 것: model-runtime 요청 상한 3.5s·엔진 멈춤 시 /readyz 503(pause 로는 컨테이너가 통째로 얼어 볼 수 없고, 이 E2E 이미지의 model-runtime 태그에 상한 코드가 들어 있는지는 docs/E2E.md 참고)")
 
 def gw_bytes(method, path, data, ctype, basic=None, headers=None):
     """게이트웨이 경유 원문 본문 호출(자료 업로드). (상태, JSON 또는 문자열, 헤더)"""
@@ -2217,7 +2217,7 @@ def step5p():
         sec, c, b = obs[k]; print(f"    {n:22} /readyz {c} ({sec:.0f}s 후) {b}")
     out_turn = None
     if has_release:
-        out_turn = gk_turn(sidp, "p-2", "아니요 없어요", timeout=30)   # DB 가 멈춘 동안 환자 턴
+        out_turn = gk_turn(sidp, "p-2", "아니요 없어요", timeout=70)   # DB 가 멈춘 동안 환자 턴
         print(f"    환자 턴(DB 중지 중, gateway 경유): 상태 {out_turn[0]} {out_turn[3]:.1f}s 본문 {str(out_turn[1])[:160]}")
     for k, n in svcs:
         hc = _c3_healthz(k)
@@ -2255,7 +2255,7 @@ def step5p():
         turn_note = f" 환자 턴(DB 중지 중): 상태 {c} {el:.1f}s, 응답 {json.dumps(b, ensure_ascii=False)[:110] if isinstance(b, dict) else str(b)[:60]}; 값 저장 없음, 중지 중 발화 기록 {n_logged}건; 복구 뒤 같은 turn_id 재전송은 200 으로 확정(값 1회)."
         def pol_deadline(): assert el <= TURN_CLIENT_MAX_S, f"{el:.1f}s (survey-service 턴 총 마감 {SURVEY_TURN_DEADLINE_S}s + 클라이언트 지연 여유 {CLIENT_EXTRA_S}s)"
         def pol_once(): assert utt_count(sv2, "아니요 없어요") == 1, f"재전송 뒤 같은 발화 기록 {utt_count(sv2, '아니요 없어요')}건(중지 중 {n_logged}건)"
-        policy("5p", "survey-service 의 턴 총 마감 시간(9s)과 DB 접속·문장 상한", "DB 중지 중 환자 턴이 총 마감(9s + 클라이언트 지연 여유) 안에 끝난다", pol_deadline)
+        policy("5p", "survey-service 의 턴 총 마감 시간(50s)과 DB 접속·문장 상한", "DB 중지 중 환자 턴이 총 마감(50s + 클라이언트 지연 여유) 안에 끝난다", pol_deadline)
         policy("5p", "survey-service 의 turn_id 멱등", "실패한 턴을 같은 turn_id 로 재전송하면 발화가 한 번만 기록된다", pol_once)
     detail = ", ".join(f"{n} {obs[k][1]}({obs[k][0]:.0f}s)->200({rec_t[k]:.0f}s)" for k, n in svcs)
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))

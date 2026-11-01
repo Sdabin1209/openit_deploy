@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-446: 시간 상한을 실패 판정 상한으로(D125, ADR 0051)
+- 목표(환자 턴 2초)를 상한으로 쓰던 값을 표준 기준으로 바꿨다(첫 환자 턴의 JIT 컴파일 지연에 턴이 실패하던 H4). 키오스크 60s > gateway 연결 1s + 헤더 55s > 턴 50s > survey 클라이언트 21/26s > model-runtime 20/25s. 사람 화면 gateway 헤더 release-gate 180s·question-authoring 120s·ops-feedback 60s.
+- 바뀐 곳: `config/Caddyfile`, `config/survey.env`, `config/model-serving.env`, `compose.inference.yaml`, E2E 상수·클라이언트 대기(`e2e_steps.py`), `test_time_chain.py`, `test_e2e_constants.py`. ADR 0047·0048 은 0051 이 대체한다.
+
 ## wo-434: publish push 실패 사유가 사라지던 결함
 - 결함: `publish-images.sh` 의 `out=$(timeout … docker push …); prc=$?` 는 `set -e` 아래에서 push 가 0이 아니면 대입문에서 셸이 죽어 'push 실패' 사유와 docker 출력이 버려졌다(E2E 5g: 출력 없이 종료 코드만). `prc=0; out=$(…) || prc=$?` 로 고쳤다. 같은 패턴을 scripts/*.sh 에서 모두 찾아 바꿨다(publish-image.sh, doctor.sh, prepare-areas.sh, demo.sh, e2e.sh, run-self-checks.sh; set -e 인 것은 publish 두 개뿐이고 나머지는 같은 모양으로 맞춘 것). 레지스트리 HEAD 확인(`reg=$(curl … | …)`)도 set -e/pipefail 에서 같은 문제라 `|| reg=""` 를 붙였다.
 - 시험: `test-images-env.sh`(가짜 docker 가 push 를 거부 -> 종료 코드 비0, docker 출력과 'push 실패' 사유, 잠금 불변, 패턴 정적 점검), `test-publish.sh`(실제 docker, push 만 거부하는 래퍼 -> 종료 4, 사유 출력, PublishResult). 실제 시간 판정 없음.

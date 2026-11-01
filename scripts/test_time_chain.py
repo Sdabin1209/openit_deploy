@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """시간 상한 사슬 정적 시험(ADR 0047): 바깥이 안쪽보다 길다. 값은 각자의 정본에서 읽는다: gateway = config/Caddyfile 의 환자 경로(@kioskapi) 연결 + 응답 헤더, survey = config/survey.env 의 SURVEY_*_SECONDS, 키오스크 대기 = e2e_steps.py 의 KIOSK_WAIT_S(deploy 에는 키오스크 설정 파일이 없고, 값은 kiosk-frontend 영역이 정한다).
-사슬(사용자 결정 2026-10-30): 키오스크 12s > gateway 10.5s > survey 턴 마감 9s > 값 추출 3s + 응답 생성 5s. 사용법: python3 scripts/test_time_chain.py"""
+사슬(사용자 결정 D125, 2026-11-02; ADR 0051이 0047을 대체): 키오스크 60s > gateway 56s > survey 턴 마감 50s > survey 클라이언트 extract 21s·respond 26s > model-runtime extract 20s·respond 25s. 사용법: python3 scripts/test_time_chain.py"""
 import pathlib, re, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -34,7 +34,8 @@ class Chain(unittest.TestCase):
         v = self.values()
         self.assertGreater(v["kiosk"], v["gateway"], v)
         self.assertGreater(v["gateway"], v["turn"], v)
-        self.assertGreater(v["turn"], v["extract"] + v["respond"], v)   # 한 턴이 추출과 응답을 순서대로 부르므로 합보다 길어야 마감이 먼저 오지 않는다
+        # 한 턴이 모델을 두 번(추출, 응답) 순서대로 부르므로 서버 상한의 합이 턴 마감보다 짧아야 마감이 먼저 오지 않는다. survey 클라이언트 상한은 서버 상한보다 1초 길다(test_model_serving_deadlines 가 본다)
+        self.assertGreater(v["turn"], v["extract"] + v["respond"], v)   # survey 클라이언트 상한의 합 47s < 턴 마감 50s
 
     def test_model_serving_deadlines_match_contract_table_and_survey(self):
         """model-serving 서버 쪽 요청 상한(config/model-serving.env, compose.inference.yaml)이 계약 시간표(extract 3.0·respond 5.0)와 같고 survey.env 의 호출별 상한과도 같으며, 사슬 규칙(survey 턴 > 추출 + 응답)을 지킨다. 명시하지 않으면 서버 기본값(respond 2.0)이 쓰여 respond 가 잘린다."""
@@ -42,15 +43,15 @@ class Chain(unittest.TestCase):
         g = lambda txt, k: float(re.search(rf"^\s*{k}[=:]\s*\"?([0-9.]+)\"?\s*(#.*)?$", txt, re.M).group(1))
         inf = (ROOT / "compose.inference.yaml").read_text(encoding="utf-8")
         for src, txt in (("config/model-serving.env", ms), ("compose.inference.yaml", inf)):
-            self.assertEqual((g(txt, "MODEL_RUNTIME_EXTRACT_DEADLINE_S"), g(txt, "MODEL_RUNTIME_RESPOND_DEADLINE_S")), (3.0, 5.0), f"{src}: 계약 CONVENTIONS 시간표(D119)와 다르다")
+            self.assertEqual((g(txt, "MODEL_RUNTIME_EXTRACT_DEADLINE_S"), g(txt, "MODEL_RUNTIME_RESPOND_DEADLINE_S")), (20.0, 25.0), f"{src}: 계약 CONVENTIONS 시간표(D125)와 다르다")
         self.assertIn("model-serving.env", (ROOT / "compose.yaml").read_text(encoding="utf-8"), "compose.yaml 의 model-serving 이 이 env 파일을 읽는다")
         v = self.values()
-        self.assertEqual((g(ms, "MODEL_RUNTIME_EXTRACT_DEADLINE_S"), g(ms, "MODEL_RUNTIME_RESPOND_DEADLINE_S")), (v["extract"], v["respond"]), "서버 상한과 survey.env 의 호출별 상한이 다르다")
+        self.assertEqual((g(ms, "MODEL_RUNTIME_EXTRACT_DEADLINE_S") + 1.0, g(ms, "MODEL_RUNTIME_RESPOND_DEADLINE_S") + 1.0), (v["extract"], v["respond"]), "survey.env 의 호출별 클라이언트 상한은 서버 상한 + 1초여야 한다(서버가 먼저 503 을 낸다)")
         self.assertGreater(v["turn"], g(ms, "MODEL_RUNTIME_EXTRACT_DEADLINE_S") + g(ms, "MODEL_RUNTIME_RESPOND_DEADLINE_S"))
 
     def test_decided_values(self):
         v = self.values()
-        self.assertEqual((v["extract"], v["respond"], v["turn"], v["gateway"], v["kiosk"]), (3.0, 5.0, 9.0, 10.5, 12.0), "사용자 결정(2026-10-30)과 다르다: 바꾸려면 ADR 0047 을 대체하는 새 ADR 이 먼저다")
+        self.assertEqual((v["extract"], v["respond"], v["turn"], v["gateway"], v["kiosk"]), (21.0, 26.0, 50.0, 56.0, 60.0), "사용자 결정 D125(2026-11-02)와 다르다: 바꾸려면 ADR 0051 을 대체하는 새 ADR 이 먼저다")
 
     def test_e2e_derived_limits_stay_below_kiosk(self):
         self.assertLess(const("SURVEY_TURN_DEADLINE_S") + const("CLIENT_EXTRA_S"), const("KIOSK_WAIT_S") + const("CLIENT_EXTRA_S"))
@@ -80,7 +81,10 @@ class ProxyChain(unittest.TestCase):
     """gateway 의 모든 상류 프록시 상한(연결 + 응답 헤더)이 사슬 규칙을 지킨다(ADR 0048, CONVENTIONS 시간표 D119): 바깥(클라이언트 대기)이 안쪽(gateway 상한)보다, gateway 상한이 서버 마감보다 길다."""
 
     def test_every_proxy_is_covered_and_follows_the_chain(self):
-        turn, kiosk, staff, admin = env("SURVEY_TURN_DEADLINE_SECONDS"), const("KIOSK_WAIT_S"), const("STAFF_SCREEN_WAIT_S"), const("ADMIN_CONSOLE_WAIT_S")
+        turn, kiosk, staff = env("SURVEY_TURN_DEADLINE_SECONDS"), const("KIOSK_WAIT_S"), const("STAFF_SCREEN_WAIT_S")
+        admin_wait = eval(re.search(r"^ADMIN_CONSOLE_WAIT_S\s*=\s*(\{.*?\})", STEPS, re.M).group(1))   # 경로별 화면 대기(상수 정의가 dict 리터럴)
+        # 서버 전체 마감(각 영역이 정한다, CONVENTIONS 시간표)보다 gateway 상한이 길어야 서버의 실패 응답이 먼저 온다
+        server_deadline = {"release-gate": 170.0, "question-authoring": 110.0, "ops-feedback-ingest": 55.0, "admin-console": 0.0}
         seen, bad = {}, []
         for host, body, dial, hdr in proxy_blocks():
             total = dial + hdr
@@ -91,7 +95,8 @@ class ProxyChain(unittest.TestCase):
                 if lo is not None and not (lo < total < hi): bad.append(f"{kind}: 연결 {dial}s + 헤더 {hdr}s = {total}s 는 ({lo}s, {hi}s) 사이여야 한다")
             elif host in ("release-gate", "ops-feedback-ingest", "question-authoring", "admin-console"):
                 kind = host
-                if not total < admin: bad.append(f"{host}: 연결 {dial}s + 헤더 {hdr}s = {total}s 는 관리 화면 대기 {admin}s 보다 짧아야 한다")
+                admin = admin_wait[host]
+                if not server_deadline[host] < total < admin: bad.append(f"{host}: 연결 {dial}s + 헤더 {hdr}s = {total}s 는 ({server_deadline[host]}s, 화면 대기 {admin}s) 사이여야 한다")
             else: kind = host   # kiosk-frontend 정적 화면 등: 사람이 쓰는 브라우저 화면, 대기 상한이 deploy 에 기록된 클라이언트가 없다
             seen[kind] = seen.get(kind, 0) + 1
         self.assertEqual(bad, [])
