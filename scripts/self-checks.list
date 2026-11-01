@@ -54,3 +54,4 @@ E2E 의 synthetic-data 실행 설정(sd_config)이 계약 SyntheticJobConfigRun 
 publish-image.sh 의 PublishResult 가 내보내기 전에 계약으로 검증된다 (R7; 위반이면 표준 출력 비움·성공이면 종료 70) :: bash "$DEPLOY_ROOT/scripts/test-publish-result-contract.sh"
 기동 전 설정·환경 계약 검증 관문 (R7: 실제 합쳐진 compose 환경이 통과, 계약 위반은 종료 1·값 비출력, 없는 스키마는 실패, up.sh 가 compose up 앞에서 부른다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_config_contract_gate.py"
 Caddyfile 이 읽는 비밀이 gateway 마운트·정의·생성과 일치한다 (원격 추론 서버 기계 토큰 포함, ADR 0049) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_caddy_secret_mounts.py"
+복구 검증의 컨테이너 안 코드 조각이 호스트에서 컴파일되고 겹친 중괄호가 없다 (4차 E2E 재발 방지) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_restore_verify_snippets.py"
