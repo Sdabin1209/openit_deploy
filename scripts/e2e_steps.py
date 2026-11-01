@@ -762,7 +762,9 @@ def public_turn(sid, tid, text):
 
 def ms_call(path, body, token, method="POST"):
     """추론 서버 직접 호출(v2): (상태, 본문 문자열, 소문자 헤더). (c) 다른 호스트 역할의 추론 서버를 inference_url() 로. 서비스를 거치지 않고 extract(JSON)·respond(text)의 계약을 확인하려는 것. token 이 없으면 Authorization 을 붙이지 않는다."""
-    req = urllib.request.Request(SB.inference_url().rstrip("/") + path, data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None, method=method)
+    base = a.ms_url.rstrip("/") if a.ms_url else SB.inference_url()   # 외부 주소(--ms-url) > 다른 호스트 역할 프로젝트 > 없으면 제품 안 model-serving 컨테이너에서(데모처럼 추론 서버가 제품 안에 있을 때; 호스트 포트는 없다, D123)
+    if base is None: return _c2_in("model-serving", method, path, token, body)
+    req = urllib.request.Request(base + path, data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None, method=method)
     if token: req.add_header("Authorization", f"Bearer {token}")
     if body is not None: req.add_header("Content-Type", "application/json")
     try:
