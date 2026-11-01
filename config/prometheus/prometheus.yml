@@ -19,10 +19,18 @@ scrape_configs:
       - {source_labels: [__address__], target_label: __param_target}
       - {source_labels: [__param_target], target_label: instance}
       - {target_label: __address__, replacement: 'blackbox-exporter:9115'}
-  - job_name: probe-readyz  # 준비됨. release-gate(판정 루프 포함)와 model-serving(엔진 멈춤·사망 시 503)
+  - job_name: probe-readyz  # 준비됨. release-gate(판정 루프 포함)
     metrics_path: /probe
     params: {module: [http_2xx]}
-    static_configs: [{targets: ['http://release-gate:8080/readyz', 'http://model-serving:8080/readyz']}]
+    static_configs: [{targets: ['http://release-gate:8080/readyz']}]
+    relabel_configs: *blackbox_relabel
+  # 제품 안 model-serving(엔진 멈춤·사망 시 503). 외부 추론 모드(D72, compose.external-inference.yaml)에서는 제품 안에 model-serving 이 없어 이 대상이 항상 실패한다.
+  # 그래서 대상을 파일로 분리하고(PROMETHEUS_INFERENCE_TARGETS 가 고른다: 기본 local-inference-targets.yml, 외부 추론 모드는 빈 목록 no-local-inference-targets.yml) 외부 모드에서는 탐침하지 않는다.
+  # 외부 추론 서버의 감시는 그 서버가 있는 호스트의 몫이다(이 감시 스택은 제품 안만 본다).
+  - job_name: probe-readyz-local-inference
+    metrics_path: /probe
+    params: {module: [http_2xx]}
+    file_sd_configs: [{files: [/etc/prometheus/inference-targets.yml]}]
     relabel_configs: *blackbox_relabel
   - job_name: probe-external  # 서버 밖에서 보는 공개 주소(사용자 결정 뒤에 채운다). 기본은 빈 목록
     metrics_path: /probe

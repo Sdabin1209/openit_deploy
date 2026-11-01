@@ -111,7 +111,7 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
 }
 
 demo_ca() { # gateway 내부 CA 루트(데모 스택에서 꺼내 작업 폴더에 둔다). e2e_steps 가 이것만 신뢰한다
-  local f="$W/gateway-ca.crt"; "$DOCKER" cp "$P-gateway-1:/data/caddy/pki/authorities/local/root.crt" "$f" >/dev/null 2>&1 || true; echo "$f"
+  local f="$W/gateway-ca.crt"; bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$f" >/dev/null 2>&1 || true; echo "$f"
 }
 guide() {
   local gw; gw=$(port_of "$P-gateway-1" 8443)

@@ -27,6 +27,7 @@ services:
     volumes:
       - ${CONFIG_DIR:-./config}/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ${CONFIG_DIR:-./config}/prometheus/external-targets.yml:/etc/prometheus/external-targets.yml:ro
+      - ${CONFIG_DIR:-./config}/prometheus/${PROMETHEUS_INFERENCE_TARGETS:-local-inference-targets.yml}:/etc/prometheus/inference-targets.yml:ro   # 외부 추론 모드는 no-local-inference-targets.yml (prometheus.yml 주석)
       - ${CONFIG_DIR:-./config}/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     networks: [monitoring]
