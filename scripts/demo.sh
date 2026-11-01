@@ -140,7 +140,7 @@ guide() {
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )
  $( [ $LLM = 1 ] && [ -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 기반 모델(프로파일 $LLM_PROFILE_NAME) + 학습 서버에서 가져온 LoRA-A/B(평가하지 않음, 릴리스 평가 보고서는 시험용 고정값) + 사용자가 준 시스템 프롬프트. 어댑터가 학습 때와 같은 프롬프트로 만든 것인지는 사용자가 보증한다. 첫 응답은 적재가 끝난 뒤부터 된다." )
  $( [ $LLM = 1 ] && [ ! -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 학습하지 않은 기반 모델(프로파일 $LLM_PROFILE_NAME, gpu-12g 는 Qwen/Qwen3-1.7B) + 학습 데이터의 시스템 프롬프트(prompt-4 조립) + 효과 없는 LoRA(lora_B=0, 시험용 대체). 학습된 모델이 아니라서 A 출력이 형식을 못 지키면 그 턴은 실패 신호로 처리된다(503 OUTPUT_INVALID, 값을 지어내지 않는다, D75). 12GB GPU에서 적재되는지는 서버 미검증이다. 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다." )
- 직원 알림: 지금은 입력원이 없다(OPEN_GAPS G01). 직원 콘솔(/staff/)에 알림이 뜨지 않는 것이 정상이며 survey-service /readyz 의 staff_alert_source.active=false 로 드러난다.
+ 직원 알림: 규칙 기반 위험 문구 감지가 모든 턴에서 켜져 있다(D88 U1, 문구 목록은 임상 검토 전 임시 L11). 위험 발화가 있을 때만 직원 콘솔(/staff/)에 알림이 뜬다.
  승인 화면: 승인 대기 시험 제출이 있다$( [ $STOP = 1 ] && echo " (--stop-before-approval: 문항 세트 v1·v2 모두 대기. 승인한 뒤 scripts/demo.sh activate)" || echo " (보지 못한 문항 세트 제출 1건. v1·v2는 스크립트가 시험용 승인자로 이미 승인·활성화)")
  실패 사례 검토 화면: 시험 사례 1건(PENDING). /admin/ 의 검토 메뉴(검토자 계정)
 
@@ -173,17 +173,23 @@ llm_config_check() { # llm_config_check sentinel|real : 병합된 compose 설정
   case "$expect" in *:unset) echo "build/images.env 에 model-serving-gpu 항목이 없다: build-images.sh --gpu 를 먼저 (GPU 이미지는 빌드되어 있어야 한다)" >&2; return 1;; esac
 }
 wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 시간 상한 후에도 실패시키지 않고 안내하고 끝낸다
-  local mins=${DEMO_LLM_WAIT_MIN:-20} t0=$SECONDS mp sp sc ms
-  mp=$(port_of "$P-model-serving-1" 8080); sp=$(port_of "$P-survey-service-1" 8080)
+  # 샌드박스(D123, ADR 0050): 제품 서비스는 호스트 포트가 없다. survey-service 준비는 운영 입구(게이트웨이 /readyz 가 survey-service 를 반영)로, model-serving 사유는 컨테이너 안에서 본다
+  local mins=${DEMO_LLM_WAIT_MIN:-20} t0=$SECONDS gp sc ms
+  gp=$(port_of "$P-gateway-1" 8443)
   echo "== 실제 LLM 적재 대기 (최대 ${mins}분, 환경 변수 DEMO_LLM_WAIT_MIN 로 바꾼다). 첫 기동은 huggingface.co 에서 모델(약 4GB(Qwen3-1.7B 추정))을 받고 적재한다"
   while [ $((SECONDS - t0)) -lt $((mins * 60)) ]; do
-    sc=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$sp/readyz" 2>/dev/null || true)
-    if [ "$sc" = 200 ]; then echo "survey-service 준비됨: 활성 릴리스 적재를 마쳤다. 위 주소에서 키오스크를 눌러 본다"; return 0; fi
-    ms=$(curl -s -m 5 "http://127.0.0.1:$mp/readyz" 2>/dev/null | python3 -I -c 'import sys,json;d=json.load(sys.stdin);print(d.get("status"),"사유:",d.get("reason") or "-")' 2>/dev/null || echo "응답 없음")
-    echo "  [$(((SECONDS - t0) / 60))분 경과] model-serving /readyz: $ms ; survey-service /readyz: ${sc:-없음}"
+    sc=$(curl -s -o /dev/null -m 5 -w '%{http_code}' --cacert "$(demo_ca)" "https://127.0.0.1:$gp/readyz" 2>/dev/null || true)
+    if [ "$sc" = 200 ]; then echo "survey-service 준비됨(게이트웨이 /readyz 200): 활성 릴리스 적재를 마쳤다. 위 주소에서 키오스크를 눌러 본다"; return 0; fi
+    ms=$("$DOCKER" exec "$P-model-serving-1" python -c 'import json,urllib.request,urllib.error
+try:
+    r=urllib.request.urlopen("http://127.0.0.1:8080/readyz",timeout=5); d=json.load(r)
+except urllib.error.HTTPError as e:
+    d=json.load(e)
+print(d.get("status"),"사유:",d.get("reason") or "-")' 2>/dev/null || echo "응답 없음")
+    echo "  [$(((SECONDS - t0) / 60))분 경과] model-serving /readyz: $ms ; gateway /readyz(survey-service 반영): ${sc:-없음}"
     sleep 30
   done
-  echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 survey-service /readyz 가 200 이 된다."
+  echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 게이트웨이 /readyz 가 200 이 된다"
   return 0
 }
 case "$CMD" in up|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
