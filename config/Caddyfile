@@ -255,10 +255,10 @@ http://:8080 {
 			header_down Cache-Control "no-store"
 		}
 	}
-	# 토큰이 없거나 틀린 기계 호출은 401 이다. 사람(Basic)은 건드리지 않는다: 번들·릴리스 경로는 아래 handle /v1/* 가 404, /v1/active-pointer 는 운영자 블록이 판단한다.
+	# 토큰이 없거나 틀린 기계 호출은 401 이다. 사람(Basic)은 건드리지 않는다: 릴리스·번들 경로는 아래 handle /v1/* 가 404 다. /v1/active-pointer 는 일부러 여기에 넣지 않았다: 자격이 없거나 틀리면 운영자 블록이 Basic 도전(WWW-Authenticate: Basic)으로 401 을 낸다(사람 화면의 계약, scripts/test-gateway-auth.sh).
 	@inferencedenied {
 		method GET
-		path /v1/active-pointer /v1/releases/*
+		path /v1/releases/*
 		not header Authorization Basic*
 	}
 	handle @inferencedenied {
