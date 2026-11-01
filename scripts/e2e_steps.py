@@ -950,8 +950,15 @@ def step5():
         finally:
             sh([a.docker, "start", mname])
         wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", mname]).stdout.strip() == "healthy", 60, "추론 서버 복구")
-        cu, ru = public_turn(sidc, "turn-up", "뇌졸중은 없고 약도 안 먹어요")
-        assert cu == 200 and not (isinstance(ru, dict) and ru.get("turn_failure_signal")) and "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
+        # 다시 뜬 추론 서버는 적재했던 릴리스를 잃었다(다른 호스트 역할이라 서비스가 다시 적재시킨다: 404 를 보고 PUT). 적재가 끝날 때까지의 턴은 실패할 수 있어(NOT_COMMITTED) 턴 ID 를 바꿔 가며 제한 시간 안에 한 턴이 성공하는지 본다
+        # (같은 turn_id 재전송은 실패 응답이 그대로 온다: docs/E2E.md 5m, CR-D25). 복구까지 걸린 시도 수는 단계 출력에 남긴다
+        tries_up = []
+        def recovered():
+            cu_, ru_ = public_turn(sidc, f"turn-up-{len(tries_up)}", "뇌졸중은 없고 약도 안 먹어요"); tries_up.append((cu_, ru_))
+            return (cu_, ru_) if cu_ == 200 and not (isinstance(ru_, dict) and ru_.get("turn_failure_signal")) else None
+        cu, ru = wait(recovered, 90, "추론 서버를 다시 띄운 뒤 서비스가 복구해 턴이 성공한다", every=3)
+        assert "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
+        print(f"  추론 서버 재시작 뒤 복구: {len(tries_up)}번째 시도에서 성공(앞선 {len(tries_up) - 1}번은 실패 신호)", flush=True)
         kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
     # D85 F절: 기기 토큰 없음·틀린 토큰·서비스 kiosk 토큰을 기기 토큰으로 쓰기는 모두 401, 올바른 기기 토큰은 통과
