@@ -142,7 +142,7 @@ if [ $UP_ONLY = 0 ]; then
     warn "curl 이 없어 인터넷 도달을 확인하지 못했다" "curl 설치(선택). 이미지 빌드에는 인터넷이 필요하다"
   fi
   # --- 고정 포트 금지
-  if grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT/compose.test.yaml" >/dev/null 2>&1; then fail "compose.test.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
+  if grep -rnE '^[[:space:]]*-[[:space:]]*"?([0-9.]+:)?[0-9]+:[0-9]+"?[[:space:]]*$' "$DEPLOY_ROOT"/test --include='compose*.yaml' >/dev/null 2>&1; then fail "test/compose*.yaml 에 고정 호스트 포트가 있다" "시험 구성은 \"127.0.0.1::8080\" 처럼 Docker 가 포트를 배정하게 한다"; else ok "고정 포트 없음: 시험 구성(test/compose*.yaml)의 호스트 포트는 Docker 가 배정하고 임시 레지스트리만 빈 포트를 고른다"; fi
 fi
 # --- 비밀 파일 권한(docs/adr/0022-secret-file-permissions.md): 비밀 폴더가 있으면 점검한다(없으면 아직 gen-secrets.sh 전이다: 이 점검은 건너뛴다)
 SDIR="${SECRETS_DIR:-$DEPLOY_ROOT/secrets}"

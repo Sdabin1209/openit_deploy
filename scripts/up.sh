@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 사용: up.sh <프로젝트> [--external-inference <URL>] [compose up 인자...]   기본 프로젝트는 deploy. 시험은 COMPOSE_EXTRA=compose.test.yaml 로 덮어쓴다.
+# 사용: up.sh <프로젝트> [--external-inference <URL>] [compose up 인자...]   기본 프로젝트는 deploy. 시험(E2E)은 COMPOSE_EXTRA 로 설정값 overlay(test/compose.sandbox.yaml)만 더한다: 시험용 문을 내는 overlay 는 없다(docs/adr/0049).
 #   --external-inference <URL>   이 구성의 model-serving 을 끄고 그 주소의 추론 서버를 쓴다(compose.external-inference.yaml, D72).
 #                                토큰은 환경 변수 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE(경로)로 준다. 값을 인자로 받지 않는다.
 set -euo pipefail

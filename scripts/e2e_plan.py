@@ -28,7 +28,7 @@ class Decl:
     also: tuple = ()      # ((영역, 이유), ...) repos 에 없어도 이 단계가 경계를 보는 영역
 
 
-_GW_SEC = ("deploy:config,compose.yaml,compose.test.yaml,test",)   # e2e_steps.py 의 _GW 와 같은 구간 입력(구간 선언 전용)
+_GW_SEC = ("deploy:config,compose.yaml,compose.inference.yaml,compose.external-inference.yaml,scripts/e2e_sandbox.py,test",)   # e2e_steps.py 의 _GW 와 같은 구간 입력(구간 선언 전용)
 
 
 def decls_from_source(path=None):

@@ -1,0 +1,7 @@
+# E2E 샌드박스(docs/adr/0049): 제품(compose.yaml)에 더하는 것은 **운영 설정 변수의 값**뿐이다. 문(호스트 포트, 시험 네트워크, 가짜 백엔드)은 없다.
+# 변수는 제품이 이미 가진 설정이다(config/release-gate.env 의 GATE_POLL_SECONDS: 운영 값 60초). 시험은 판정 루프를 기다리는 시간을 줄이려고 값만 바꾼다.
+# scripts/test_compose_no_test_doors.py 가 이 폴더의 yaml 에 ports 가 없음을 확인한다.
+services:
+  release-gate:
+    env_file:
+      - ./test/sandbox.env

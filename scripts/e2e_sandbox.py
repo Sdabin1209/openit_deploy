@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E 드라이버(e2e_steps.py)가 제품에 닿는 유일한 접근 계층(샌드박스, docs/adr/0048-e2e-sandbox.md).
+"""E2E 드라이버(e2e_steps.py)가 제품에 닿는 유일한 접근 계층(샌드박스, docs/adr/0049-e2e-sandbox.md).
 
 드라이버는 호스트(= 운영자 PC 역할)에서 돌고 제품(compose.yaml)에는 시험용 문이 없다. 허용되는 접근은 셋뿐이다.
   (a) 게이트웨이 호스트 포트(HTTPS, 게이트웨이 CA 만 신뢰): gw_url, gw_request, gw_client
