@@ -938,21 +938,20 @@ def step5():
     rec("5g", "REAL", f"가짜 A 의 값 추출(흐름 파일 slots/skips): 직접 호출 {fvc}. 서비스 경유 값 있는 3턴(Q1.D01~: '네 있어요','아니요 없어요','네 있어요'): 실패 신호 없음(검증 통과·쓰기 확정), /readyz inference 의 failures·output_invalid·retries·timeouts·outcome_fallback 증가 0, 턴마다 Trace 전송. 모델은 가짜(정확성 아님, 시험 구성 확인). 한계: 저장된 값을 돌려주는 공개 읽기 경로가 없고(PUBLIC_API 에 없음) ops-feedback 은 실패 사례만 노출하므로 저장 값 자체는 단언하지 않았다. 가짜 A 는 CORRECT 를 내지 않아 정정은 시험하지 않았다")
     rd = survey_ready()[1]; inf = rd.get("inference") or {}
     if not a.skip_ms_restart:
-        # 추론 서버를 멈췄다 다시 띄운다: 그 턴만 실패하고 서비스는 산다, 다시 띄우면 복구(404 -> PUT 재적재)
+        # 추론 서버가 응답하지 않는다: 그 턴만 실패하고 서비스는 산다, 되살리면 다음 턴이 복구된다.
+        # 왜 stop/start 가 아니라 pause/unpause 인가: 추론 서버는 별도 프로젝트(다른 호스트 역할)이고 호스트 포트를 Docker 가 배정한다. 다시 띄우면 포트가 바뀌어 제품(survey-service)의 추론 서버 주소가
+        # 어긋나 이후 모든 단계가 깨진다(운영의 추론 서버는 고정 주소). 그래서 연결 거부(stop) 경로는 이 구성에서 시험하지 못하고 무응답(pause) 경로만 본다. 연결 거부는 5m 이전 시험이 보던 경로였다.
         mname = MS_CONTAINER
         sidc = f"sess-{RID}-c"; assert kiosk("/v1/sessions", {"session_id": sidc, "kind": "SESSION_START"})[0] == 200
-        sh([a.docker, "stop", "-t", "3", mname])
+        sh([a.docker, "pause", mname])
         try:
             cd_, rd_ = public_turn(sidc, "turn-down", "뇌졸중은 없고 약도 안 먹어요")
             failed = cd_ != 200 or (isinstance(rd_, dict) and rd_.get("turn_failure_signal"))
-            assert failed, f"추론 서버가 멈췄는데 턴이 성공했다: {cd_} {rd_}"
-            assert _c1_in("survey-service", "GET", "/healthz")[0] == 200, "추론 서버 중단으로 서비스가 죽었다"
+            assert failed, f"추론 서버가 응답하지 않는데 턴이 성공했다: {cd_} {rd_}"
+            assert _c1_in("survey-service", "GET", "/healthz")[0] == 200, "추론 서버 무응답으로 서비스가 죽었다"
         finally:
-            sh([a.docker, "start", mname])
-        wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", mname]).stdout.strip() == "healthy", 60, "추론 서버 복구")
-        # 다시 뜬 추론 서버는 적재했던 릴리스를 잃었다(다른 호스트 역할이라 서비스가 다시 적재시킨다: 404 를 보고 PUT). 적재가 끝날 때까지의 턴은 실패할 수 있다(NOT_COMMITTED).
-        # 같은 세션에서 연속 실패가 쌓이면 서비스가 직원 호출로 세션을 멈추므로(응답 문장 없음) 시도마다 새 세션·새 turn_id 로 첫 턴을 보내 제한 시간 안에 한 번 성공하는지 본다.
-        # 복구까지 걸린 시도 수는 단계 출력에 남긴다
+            sh([a.docker, "unpause", mname])
+        # 같은 세션에서 연속 실패가 쌓이면 서비스가 직원 호출로 세션을 멈추므로(응답 문장 없음) 새 세션·새 turn_id 로 첫 턴을 보내 제한 시간 안에 성공하는지 본다. 걸린 시도 수는 단계 출력에 남긴다
         tries_up = []
         def recovered():
             sid_u = f"sess-{RID}-up{len(tries_up)}"
@@ -960,9 +959,9 @@ def step5():
             cu_, ru_ = public_turn(sid_u, "turn-up", "뇌졸중은 없고 약도 안 먹어요"); tries_up.append((cu_, ru_))
             kiosk(f"/v1/sessions/{sid_u}/end", {"session_id": sid_u, "kind": "SESSION_END"})
             return (cu_, ru_) if cu_ == 200 and not (isinstance(ru_, dict) and ru_.get("turn_failure_signal")) else None
-        cu, ru = wait(recovered, 90, "추론 서버를 다시 띄운 뒤 서비스가 복구해 턴이 성공한다", every=3)
+        cu, ru = wait(recovered, 60, "추론 서버가 되살아난 뒤 서비스가 복구해 턴이 성공한다", every=3)
         assert "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
-        print(f"  추론 서버 재시작 뒤 복구: {len(tries_up)}번째 시도에서 성공(앞선 {len(tries_up) - 1}번은 실패)", flush=True)
+        print(f"  추론 서버 무응답 뒤 복구: {len(tries_up)}번째 시도에서 성공(앞선 {len(tries_up) - 1}번은 실패)", flush=True)
         kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
     # D85 F절: 기기 토큰 없음·틀린 토큰·서비스 kiosk 토큰을 기기 토큰으로 쓰기는 모두 401, 올바른 기기 토큰은 통과
@@ -1000,7 +999,7 @@ def step5():
     # 서비스가 턴마다 Trace를 I6로 보냈는지(outbox 전송 수)
     sent = wait(lambda: (lambda cr: cr[1]["trace_outbox"]["sent"] if cr[1]["trace_outbox"]["sent"] >= 2 else None)(survey_ready()), 30, "Trace 전송")
     STATE["sess_a"] = sid; save()
-    rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9 v2: 서비스 -> PUT 적재 -> extract(JSON) -> respond(text))를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 서버 직접 호출: {v2chk}. 추론 서버를 멈추면 그 턴만 실패하고 서비스는 살아 있으며 다시 띄우면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
+    rec(5, "REAL", f"게이트웨이 경유 공개 API(Bearer 토큰, 없으면 401): 세션 시작·발화 2턴·종료, 응답 FrontendInput 스키마 통과, 같은 turn_id 재시도는 같은 응답, 게이트웨이는 토큰 없이 부른 키오스크 요청에 kiosk 토큰을 붙이고(survey 직접 호출은 토큰 없으면 401), 직원 개입은 인증 없으면 401, survey에서 키오스크 토큰은 403·직원 토큰은 멈추지 않은 세션에 409. 실제 survey-service가 게이트 포인터를 HTTP로 폴링해 릴리스 {new} 적재(번들 해시 검증)하고 턴마다 Trace를 I6로 전송(outbox sent={sent}). 한 턴이 model-serving 컨테이너(I9 v2: 서비스 -> PUT 적재 -> extract(JSON) -> respond(text))를 거쳤다(고정 출력 '(가짜 응답)' 확인, /v1/info loaded, 토큰 없으면 거부). 서버 직접 호출: {v2chk}. 추론 서버가 응답하지 않으면(pause) 그 턴만 실패하고 서비스는 살아 있으며 되살리면 다음 턴이 복구된다. 모델은 fake 백엔드와 시험용 번들(TEST-SUB)")
 
 @step('5c', repos=('survey-service', 'model-runtime') + _GW, deps=('4',),
       why="STATE['pointers'],['releases'] 를 읽는다. " + _P4)
