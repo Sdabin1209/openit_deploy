@@ -21,6 +21,29 @@ ACTION_RULES_VERSION = load_rules()["rules_version"]   # 매니페스트·잡 �
 # repos: 결과가 의존하는 소스 리포('deploy:경로,...' 는 deploy 안의 그 경로만). deps: 앞 단계의 STATE 를 읽으면 그 단계(None 은 미확인). why: 근거.
 # deps 는 STATE[...] 읽기·쓰기를 ast 로 분석한 값과 같아야 한다(test_e2e_steps_decl.py).
 STEP_REGISTRY = {}
+def metric_registry():
+    """계약의 지표 레지스트리(metrics.json)의 지표 목록. 설치된 계약 패키지에 metrics() 가 있으면 그것을, 없으면 이 워크스페이스의 boundary-contracts 파일을 읽는다(읽기 전용). 없거나 모양이 다르면 실패한다."""
+    if hasattr(bc, "metrics"): ms = list(bc.metrics().values()); src = "boundary_contracts.metrics()"   # 왜: 계약의 metrics() 는 {지표 이름: 읽기 전용 항목} 이다(metrics_registry.py)
+    else:
+        f = pathlib.Path(__file__).resolve().parents[2] / "boundary-contracts" / "boundary_contracts" / "metrics.json"; src = str(f)
+        if not f.is_file(): raise SystemExit(f"지표 레지스트리 {f} 가 없다")
+        ms = json.loads(f.read_text(encoding="utf-8")).get("metrics")
+    need = {"name", "group", "higher_is_better", "status", "applies_to"}
+    if not isinstance(ms, list) or not ms or any(not isinstance(m, collections.abc.Mapping) or not need <= set(m) for m in ms):
+        raise SystemExit(f"{src}: metrics[] 의 각 항목에 {sorted(need)} 가 있어야 한다")
+    return ms
+
+
+def status_www(status, headers):   # (상태, WWW-Authenticate 첫 토큰). headers 는 대소문자 무관 매핑
+    h = {str(k).lower(): v for k, v in dict(headers or {}).items()}
+    return status, (h.get("www-authenticate") or "").split(" ")[0].rstrip(",")
+
+def assert_401_bearer(what, status, headers):
+    """인증 없는 호출의 기대: 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS 6절, RFC 9110 15.5.2·RFC 6750 3절). 403 이나 머리글 없는 401, Basic 안내는 거부한다.
+    샌드박스(D123)에서는 요청을 호출자가 게이트웨이(SB.gw_request) 또는 컨테이너 안에서 하고, 이 함수는 그 결과만 판정한다."""
+    st, scheme = status_www(status, headers)
+    assert st == 401 and scheme == "Bearer", f"{what}: 401 + WWW-Authenticate: Bearer 여야 한다 (실제 {st}, {scheme or '머리글 없음'})"
+
 def sample_metrics(role):
     """EvaluationReport 샘플 지표: 레지스트리에서 ACTIVE 이고 역할(LORA_A->A, LORA_B->B)에 맞는(applies_to 가 그 역할이거나 both) 방향이 정해진 지표만. 이름은 여기에 적지 않는다."""
     r = {"LORA_A": "A", "LORA_B": "B"}[role]
@@ -339,7 +362,7 @@ def _c1_pack(pk):
     assert total < 60 * 1024 * 1024, f"어댑터가 커서 코드에 실을 수 없다({total} 바이트): 큰 어댑터는 컨테이너로 복사하는 접근 계층 API 가 필요하다"
     return items
 
-def _c1_decide(who, sid, decision, *, reason=None, report_hash=None):
+def decide_approval(who, sid, decision, *, reason=None, report_hash=None):
     """who: 'ap' = 승인자 계정(게이트웨이 POST /v1/approvals) | 'op' = operator 쓰기 토큰을 게이트 컨테이너 안에서(권한 시험: 서비스 자신의 역할 검사). 실패는 bc.BoundaryError 로."""
     body = {"submission_id": sid, "decision": decision, "approver_role": "release-approver", "report_hash": report_hash or _c1_report_hash(sid)}
     if reason is not None: body["reason"] = reason
@@ -681,9 +704,9 @@ def step4():
     sid_ = subs["1"]["submission_id"]
     c, b, _ = _c1_gw("POST", "/v1/approvals", account=_C1_OPERATOR, body={"submission_id": sid_, "decision": "APPROVE", "approver_role": "release-approver", "reason": "시험", "report_hash": _c1_report_hash(sid_)})
     assert c == 403, ("operator 계정이 게이트웨이로 승인함", c, str(b)[:100])
-    try: _c1_decide("op", sid_, "APPROVE", reason="시험"); raise AssertionError("operator가 승인함")
+    try: decide_approval("op", sid_, "APPROVE", reason="시험"); raise AssertionError("operator가 승인함")
     except bc.BoundaryError as e: assert e.code == "PERMISSION_DENIED", e.code
-    try: _c1_decide("ap", sid_, "APPROVE", reason="시험", report_hash="sha256:" + "0" * 64); raise AssertionError("낡은 보고서 해시로 승인됨")
+    try: decide_approval("ap", sid_, "APPROVE", reason="시험", report_hash="sha256:" + "0" * 64); raise AssertionError("낡은 보고서 해시로 승인됨")
     except bc.BoundaryError as e: assert e.code == "CONFLICT", e.code
     # 반려(REJECT) -> FAIL 판정
     ru = reject_via_gateway(sub_u["submission_id"]); validate("GateApproval", ru)
@@ -692,10 +715,10 @@ def step4():
     assert du["result"] == "REJECT" and hu and hu[0]["result"] == "FAIL" and "CHECK_FAILED" in du["reject_codes"], dict(du)
     # 승인(APPROVE) 멱등, 다른 결정 충돌
     sid1 = subs["1"]["submission_id"]
-    a1 = dict(_c1_decide("ap", sid1, "APPROVE", reason="시험: 지표 검토함")); validate("GateApproval", a1)
-    a1b = dict(_c1_decide("ap", sid1, "APPROVE", reason="시험: 지표 검토함"))
+    a1 = dict(decide_approval("ap", sid1, "APPROVE", reason="시험: 지표 검토함")); validate("GateApproval", a1)
+    a1b = dict(decide_approval("ap", sid1, "APPROVE", reason="시험: 지표 검토함"))
     assert a1b == a1, "같은 결정 재전송이 같은 결과가 아니다"
-    try: _c1_decide("ap", sid1, "REJECT", reason="번복"); raise AssertionError("다른 결정이 받아들여짐")
+    try: decide_approval("ap", sid1, "REJECT", reason="번복"); raise AssertionError("다른 결정이 받아들여짐")
     except bc.BoundaryError as e: assert e.code == "CONFLICT", e.code
     d1 = wait(lambda: next((d for d in _c1_decisions(subj["1"]) if d["result"] == "PASS"), None), 30, "승인 뒤 PASS 판정")
     validate("GateDecision", dict(d1)); assert any(c["kind"] == "HUMAN_APPROVAL" and c["result"] == "PASS" for c in d1["checks"])
@@ -709,7 +732,7 @@ def step4():
     sid2 = subs["2"]["submission_id"]
     c, rep2, _ = _c1_gw("GET", f"/v1/submissions/{sid2}/review-report", account=_C1_APPROVER); assert c == 200, (c, str(rep2)[:100]); validate("ReviewReport", rep2)
     assert rep2["comparisons"], "활성 릴리스와의 비교가 비어 있다"
-    a2 = dict(_c1_decide("ap", sid2, "APPROVE", reason="시험: 둘째 후보 검토함")); validate("GateApproval", a2)
+    a2 = dict(decide_approval("ap", sid2, "APPROVE", reason="시험: 둘째 후보 검토함")); validate("GateApproval", a2)
     d2 = wait(lambda: next((d for d in _c1_decisions(subj["2"]) if d["result"] == "PASS"), None), 30, "둘째 PASS 판정"); validate("GateDecision", dict(d2))
     rid2 = d2.get("release_id"); rel2 = _c1_release(rid2); validate("ReleaseManifest", rel2)
     STATE["containers_before_swap"] = container_ids(); save()   # 포인터 1 -> 2 활성화 직전(StartedAt, ID 만 읽는다)

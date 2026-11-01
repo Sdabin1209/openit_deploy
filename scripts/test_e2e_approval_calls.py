@@ -21,7 +21,7 @@ class T(unittest.TestCase):
         src = ast.get_source_segment(SRC, func("decide_approval"))
         self.assertIn('validate("ApprovalRequest", body)', src)
         self.assertNotIn("approver_id", src)
-        self.assertIn('"X-Openit-User": user', src)
+        self.assertNotIn('"X-Openit-User": user', src)   # 샌드박스(D123): 승인자 ID 는 게이트웨이가 인증 계정에서 붙인다. 드라이버가 사용자 머리글을 싣지 않는다
         self.assertIn('"report_hash"', src)
 
     def test_body_validates_against_contract(self):

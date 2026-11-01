@@ -4,7 +4,7 @@
 맞는 토큰의 권한 부족만 403. 서버 구현의 실제 동작이 아니라 계약이 기대값이다.
 1) e2e_steps.py 에 토큰 없이(token 인자 없음/None) 부른 http() 의 상태를 403 과 견주는 곳이 없다(정적, AST).
 2) 헬퍼 assert_401_bearer 가 401 + Bearer 만 통과시키고 403, 헤더 없는 401, Basic 안내는 거부한다(가짜 서버로 실제 동작)."""
-import ast, http.server, json, os, pathlib, threading, unittest, urllib.request, urllib.error
+import ast, json, os, pathlib, unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
 SRC = pathlib.Path(os.environ.get("E2E_STEPS", HERE / "e2e_steps.py")).read_text(encoding="utf-8")
@@ -31,36 +31,25 @@ class Static(unittest.TestCase):
         self.assertEqual(bad, [], "토큰 없는 호출에 403 을 기대한다(계약은 401 + WWW-Authenticate: Bearer): " + ", ".join(bad))
 
 
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        code, www = {"/a": (401, "Bearer"), "/b": (401, None), "/c": (403, None), "/d": (401, 'Basic realm="restricted"'), "/e": (200, None)}[self.path]
-        self.send_response(code)
-        if www: self.send_header("WWW-Authenticate", www)
-        self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
-    def log_message(self, *a): pass
-
-
 class Helper(unittest.TestCase):
+    """샌드박스(D123) 뒤 도우미는 순수 함수다: 요청은 게이트웨이·컨테이너 안에서 하고 (상태, 머리글)만 판정한다."""
     @classmethod
     def setUpClass(cls):
-        cls.srv = http.server.HTTPServer(("127.0.0.1", 0), H); threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
         want = {"status_www", "assert_401_bearer"}
         funcs = [n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name in want]
-        cls.ns = {"urllib": urllib, "json": json, "URL": lambda k: f"http://127.0.0.1:{cls.srv.server_port}"}
+        cls.ns = {}
         for f in funcs: exec(compile(ast.Module([f], []), "e2e_steps.py", "exec"), cls.ns)
         cls.have = {f.name for f in funcs}
-
-    @classmethod
-    def tearDownClass(cls): cls.srv.shutdown()
 
     def test_helper_exists(self):
         self.assertEqual(self.have, {"status_www", "assert_401_bearer"}, "e2e_steps.py 에 401+Bearer 헬퍼가 없다")
 
     def test_accepts_only_401_with_bearer(self):
         f = self.ns["assert_401_bearer"]
-        f("ok", "GET", "x", "/a")
-        for path in ("/b", "/c", "/d", "/e"):
-            with self.assertRaises(AssertionError, msg=path): f("bad", "GET", "x", path)
+        f("ok", 401, {"WWW-Authenticate": "Bearer realm=x"})
+        f("ok-lower", 401, {"www-authenticate": "Bearer"})
+        for st, h in ((403, {"WWW-Authenticate": "Bearer"}), (401, {}), (401, {"WWW-Authenticate": "Basic realm=x"}), (200, {"WWW-Authenticate": "Bearer"})):
+            with self.assertRaises(AssertionError, msg=(st, h)): f("bad", st, h)
 
 
 if __name__ == "__main__":
