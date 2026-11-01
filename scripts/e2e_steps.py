@@ -161,6 +161,15 @@ def decision_text(dec):
     for r in dec.get("reject_reasons") or []: out.append(f"  * 사유: {str(r)[:400]}")
     return "\n".join(out)
 
+def explain_submission(sid):   # 진단용(시간 초과 메시지): 승인자 계정으로 게이트웨이의 제출 조회만 읽는다(샌드박스 D123). 판정 본문은 게이트웨이에 열리지 않아 ID 만 적는다
+    """(상태, 설명 문자열). 상태를 못 읽으면 (None, 이유)."""
+    try:
+        v = dict(SB.gw_client(HttpGateService, account="trainer-e2e").get_submission(sid)); st = v.get("status"); txt = f"제출 {sid} 상태 {st}"
+        if v.get("decision_id"): txt += f" (판정 {v['decision_id']}: 본문은 release-gate 컨테이너 안 GET /v1/decisions/{v['decision_id']})"
+        return st, txt
+    except Exception as e:
+        return None, f"제출 {sid} 상태를 읽지 못했다: {type(e).__name__}: {str(e)[:120]}"
+
 def wait_review_report(get_report, sid, label, timeout=60):
     """자동 검사 후 승인 요청 보고서를 기다린다. 제출이 반려(REJECTED_*)되면 시간 초과를 기다리지 않고 바로 GateDecision의 checks 를 보여 주며 실패한다."""
     t = time.time(); st = None
