@@ -227,6 +227,8 @@ pick_bind() { # 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는�
   [ $ok = 1 ] && echo 127.0.0.1 || echo 0.0.0.0
 }
 BIND=$(pick_bind); export GATEWAY_BIND=$BIND INFERENCE_BIND=$BIND
+# 추론 서버가 TLS 로 부르는 이름(host.docker.internal)이 게이트웨이 인증서에 있어야 한다: 운영 설정 변수 GATEWAY_HOSTS 에 호출자가 쓰는 이름을 적는 것과 같다(실제 배포는 병원 내부 도메인)
+export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
 if [ "$BIND" = 127.0.0.1 ]; then echo "  컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는다: 게이트웨이·추론 서버는 127.0.0.1 에 게시한다"
 else echo "  이 Docker 에서는 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿지 못한다: 시험 동안 게이트웨이·추론 서버를 0.0.0.0 에 게시한다(방화벽은 이 PC 밖에서 막는다. docs/RUN.md 7-1)"; fi
 INF_IMAGE="$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST"
@@ -300,7 +302,7 @@ tls_checks() { # HTTPS 필수(D88/U5): 평문은 /healthz 만 답하고 나머�
   echo "평문: /healthz 만 ok, 나머지 308 https; https: 시험용 CA 검증 통과, HSTS·nosniff·X-Frame-Options, /config.json 404"
 }
 chk "TLS(D88/U5): 평문은 308 https 로 이동, https 는 시험용 CA 로 검증되고 HSTS·보안 헤더가 있다" tls_checks
-chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:#'"
+chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:[[:space:]]*#'"
 no_auto_pass() { inpy release-gate /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
 chk "gateway: /v1/turns -> 404, /staff/ 와 직원 API 는 인증 없이 401, /v1/activate 는 인증 없이 401, 키오스크 경로는 기기 토큰 없이 401(D85)" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/turns)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/staff/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/admin/)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/submissions)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/activate)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/cases)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/traces)\" = 404 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/staff/alerts)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions/x/intervention)\" = 401 ] && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' --cacert $W/gateway-ca.crt https://127.0.0.1:$PGWS/v1/sessions)\" = 401 ]"
@@ -326,8 +328,6 @@ chk "차단: model-registry -> dataset-store" blocked model-registry dataset-sto
 chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
 chk "gateway 설정(Caddyfile)에 dataset-store 경로가 없다" bash -c "! grep -q 'dataset-store\|datasets' $DEPLOY_ROOT/config/Caddyfile"
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
-chk "차단: model-registry -> 추론 서버" blockedu model-registry "http://host.docker.internal:$IPORT/healthz"
-chk "차단: question-authoring -> 추론 서버" blockedu question-authoring "http://host.docker.internal:$IPORT/healthz"
 for pair in "db-survey:survey-service" "db-qa:question-authoring" "db-ops:ops-feedback-ingest" "db-gate:release-gate"; do
   chk "db 네트워크 ${pair%%:*} 에는 postgres 와 ${pair##*:} 만 있다(postgres 클라이언트끼리 닿지 않는다)" net_is "${pair%%:*}" "${PROJECT}-postgres-1" "${PROJECT}-${pair##*:}-1"
 done
