@@ -1936,14 +1936,22 @@ def demo_swap():
     STATE.setdefault("swaps", []).append({"release_id": rid, "packages": refs}); save()
     rec("demo_swap", "TEST-SUB", f"새 릴리스 {rid} 활성화(승인자는 스크립트가 대신함, TEST-SUB). model-serving 에서 LOADED. {', '.join(SWAP_SERVICES)} 컨테이너의 ID·StartedAt 불변")
 
+def _c3_qa_versions(qset):
+    """문항 세트 버전 목록(I1). 운영에서 이것을 읽는 주체는 release-gate(수집·판정)라서 release-gate 컨테이너 안에서 그 서비스의 I1 읽기 토큰으로 읽는다."""
+    r = _c3_py("release-gate", '''
+st, b, _ = call("GET", "http://question-authoring:8080/v1/question-sets/" + V["qs"] + "/versions", _tokfile("GATE_I1_TOKEN_FILE"))
+R = [st, b]''', qs=qset)
+    assert r[0] == 200, ("문항 버전 목록", r[0], str(r[1])[:120])
+    return r[1].get("items", r[1]) if isinstance(r[1], dict) else r[1]
+
 @step('5p', repos=('survey-service', 'question-authoring', 'release-gate', 'ops-feedback') + _GW, deps=('4',),
       why="STATE['pointers'] 가 없으면 활성 릴리스 없이 일부만 시험한다(has_release). postgres 를 stop/start 한다")
 def step5p():
     title("5p", "PostgreSQL 컨테이너 중지 -> 서비스 /readyz 비정상 관찰 -> 기동 -> /readyz 복구, 이전 데이터 보존, 새 쓰기 (D85)")
     pg = f"{a.project}-postgres-1"
     svcs = [("qa", "question-authoring"), ("gate", "release-gate"), ("ops", "ops-feedback-ingest"), ("survey", "survey-service")]
-    def ready(k):
-        try: return http("GET", k, "/readyz")
+    def ready(k):   # 서비스 컨테이너 안에서 본 /readyz (코드, 본문)
+        try: c, b, _ = _c3_probe(k, "/readyz"); return c, b
         except Exception as e: return 0, f"{type(e).__name__}"
     def healthy(k): return ready(k)[0] == 200
     def pgfp(db):
@@ -1957,16 +1965,16 @@ def step5p():
     qset = f"qs-{RID}-pgrestart"
     form = (ROOT / "test/fixtures/question-form-v2.txt").read_text()
     upload(qset, form, "pg1.txt")
-    before_v = [dict(v) for v in qa_reader().list_versions(qset)[0]]
+    before_v = [dict(v) for v in _c3_qa_versions(qset)]
     assert len(before_v) == 1, before_v
     dbs = ["qa", "gate", "ops_log", "ops_failure"] + (["survey"] if has_release else [])
     sidp = f"sess-{RID}-pgturn"
     if has_release:
         # 환자 세션: 값이 하나 확정된 상태에서 DB 를 멈춘다. Trace 전송이 끝나기를 기다려 행 지문이 흔들리지 않게 한다
-        rb0 = survey_ready()[1]
+        rb0 = _c3_survey_ready()[1]
         assert kiosk("/v1/sessions", {"session_id": sidp, "kind": "SESSION_START"})[0] == 200
         c, _p1 = public_turn(sidp, "p-1", "네 있어요"); assert c == 200, (c, _p1)
-        wait(lambda: survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
+        wait(lambda: _c3_survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
         time.sleep(3)
     fp0 = {d: pgfp(d) for d in dbs}
     for k, n in svcs: assert healthy(k), f"{n} /readyz 가 처음부터 200 이 아니다: {ready(k)}"
@@ -1987,11 +1995,11 @@ def step5p():
         out_turn = gk_turn(sidp, "p-2", "아니요 없어요", timeout=30)   # DB 가 멈춘 동안 환자 턴
         print(f"    환자 턴(DB 중지 중, gateway 경유): 상태 {out_turn[0]} {out_turn[3]:.1f}s 본문 {str(out_turn[1])[:160]}")
     for k, n in svcs:
-        hc = http("GET", k, "/healthz")[0]
+        hc = _c3_healthz(k)
         assert hc == 200, f"{n} /healthz 가 DB 중지 중 {hc} (살아 있음 점검은 DB 와 무관해야 한다)"
     # 3) 기동하고 복구를 기다린다
     t1 = time.time(); sh([a.docker, "start", pg])
-    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+    _c3_pg_wait(pg)
     t_pg = time.time() - t1
     rec_t = {}
     def all_up():
@@ -2003,10 +2011,10 @@ def step5p():
     fp1 = {d: pgfp(d) for d in dbs}
     diff = [d for d in dbs if fp0[d] != fp1[d]]
     assert not diff, f"재시작 전후 행 지문이 다르다: {diff}"
-    after_v = [dict(v) for v in qa_reader().list_versions(qset)[0]]
+    after_v = [dict(v) for v in _c3_qa_versions(qset)]
     assert after_v == before_v, ("문항 버전이 달라졌다", before_v, after_v)
     upload(qset, form.replace("알려 주세요.", "들려 주세요."), "pg2.txt")
-    assert len(qa_reader().list_versions(qset)[0]) == 2, "복구 뒤 새 쓰기(버전 2)가 반영되지 않았다"
+    assert len(_c3_qa_versions(qset)) == 2, "복구 뒤 새 쓰기(버전 2)가 반영되지 않았다"
     turn_note = ""
     if has_release:
         c, b, h, el = out_turn
@@ -2028,27 +2036,24 @@ def step5p():
     rec("5p", "REAL", f"postgres 컨테이너 stop -> /readyz 비정상 관찰 -> start (healthy {t_pg:.0f}s) -> 복구. 서비스별 중지 뒤 처음 비정상 코드(경과)->복구 200(기동 뒤 경과): {detail}. /healthz 는 중지 중에도 200. 행 지문 보존: {', '.join(dbs)}. 복구 뒤 새 쓰기 반영(question-authoring 버전 2)." + turn_note + ("" if has_release else " survey-service 는 활성 릴리스가 없는 단독 실행이라 제외."))
 
 # ---- FAULT_MATRIX 1-1절 '4차 근거 대조'의 빈 10칸을 닫는 단계들 (5pn, 5pj, 5g, 5b). 기대는 head/docs/FAULT_POLICY.md 이다 ----
-def _pg_ready_wait(pg):
-    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+def _pg_ready_wait(pg): _c3_pg_wait(pg)
 
-def _ready_code(k):
-    try: return http("GET", k, "/readyz")[0]
-    except Exception: return 0
+def _ready_code(k): return _c3_ready(k)   # 서비스 컨테이너 안에서 본 /readyz 코드
 
 def _outbox_drained(timeout=120):
     """survey-service 의 Trace outbox 가 비기를 기다리고 그때의 전송 수(sent)를 돌려준다(계약 SurveyReadyz.trace_outbox.pending/sent).
     왜: ops_log 에는 잡뿐 아니라 ops-feedback-ingest(outbox 가 보낸 Trace)도 쓴다. 앞 단계의 DB 장애로 밀린 Trace 가 백오프 뒤 전송되면 ops_log 가 잡과 무관하게 바뀐다.
     /readyz 가 503(활성 릴리스 없음 등)이어도 본문의 trace_outbox 는 계약상 필수라 읽는다. 상한 120초는 측정값이 아니다(outbox 백오프 상한을 deploy 가 알지 못해 넉넉히 잡은 시작값)."""
     def drained():
-        try: c, r = survey_ready()
+        try: c, r = _c3_survey_ready()
         except Exception: return None
         ob = r.get("trace_outbox") if isinstance(r, dict) else None
         return (ob["sent"],) if ob and ob["pending"] == 0 else None
     return wait(drained, timeout, "survey-service trace_outbox.pending == 0(밀린 Trace 전송 끝)", every=1)[0]
 
-def _run_ops_job():   # run-job.sh 는 5p/스케줄러와 같은 경로(compose run --rm). 설정은 e2e.sh 가 내보낸 OPS_JOB_CONFIG
-    r = sh(["bash", str(ROOT / "scripts/run-job.sh"), "job-ops-feedback"], env={"DEPLOY_PROJECT": a.project}, check=False)
-    return r.returncode, ((r.stdout or "") + (r.stderr or ""))[-300:]
+def _run_ops_job():   # 스케줄러와 같은 호출(compose run --rm job-ops-feedback). 설정은 e2e.sh 가 내보낸 OPS_JOB_CONFIG
+    rc, out, err = _c3_job("job-ops-feedback", timeout=120)
+    return rc, (out + err)[-300:]
 
 @step('5pn', repos=('survey-service', 'question-authoring', 'release-gate', 'ops-feedback') + _GW, deps=('4',),
       why="STATE['pointers'] 가 없으면 survey-service(A5)를 제외한다(has_release 와 같은 제한). postgres 를 서비스 DB 네트워크에서 disconnect/connect 하고 D1 잡을 한 번 돌린다")
@@ -2067,10 +2072,10 @@ def step5pn():
         sh([a.docker, "network", "disconnect", N, pg])
         try:
             wait(lambda: _ready_code(k) != 200 or None, 60, f"{name} 분리 뒤 /readyz 비정상", every=1)
-            t = time.time(); c, b = http("GET", k, "/readyz"); el = time.time() - t
+            c, b, el = _c3_probe(k, "/readyz")   # 걸린 시간은 서비스 컨테이너 안에서 잰다
             assert c == 503, f"{name} 분리 중 /readyz 가 503 이 아니다: {c} {str(b)[:100]}"
             assert el <= 2.5, f"{name} 분리 중 /readyz 응답 {el:.1f}s (FAULT_POLICY 5: 2초 안, 여유 0.5s)"
-            assert http("GET", k, "/healthz")[0] == 200, f"{name} /healthz 가 분리 중 200 이 아니다(원칙 5)"
+            assert _c3_healthz(k) == 200, f"{name} /healthz 가 분리 중 200 이 아니다(원칙 5)"
             body = json.dumps(b, ensure_ascii=False) if isinstance(b, dict) else str(b)
             assert "postgres://" not in body and "password" not in body.lower(), f"{name} /readyz 본문에 접속 정보가 있다"
             job_note = ""
@@ -2140,7 +2145,7 @@ def step5g():
     pub = lambda t: subprocess.run(["timeout", str(t), "bash", str(ROOT / "scripts/publish-images.sh"), "kiosk-frontend"], capture_output=True, text=True)
     r0 = pub(120); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다(종료 코드 {r0.returncode}): 표준 출력 끝 {r0.stdout[-300:]!r} / 표준 오류 끝 {r0.stderr[-300:]!r}"
     h0 = lock_hash(); notes = []
-    def live_ok(): return all(http("GET", k, "/healthz")[0] == 200 for k in ("qa", "gate", "ops"))
+    def live_ok(): return all(_c3_healthz(k) == 200 for k in ("qa", "gate", "ops"))
     sh([a.docker, "stop", reg])
     try:
         r = pub(60); assert r.returncode not in (0, 124), f"F1: 레지스트리 중지 중 게시가 {'성공' if r.returncode == 0 else '60s 안에 끝나지 않았다'}(종료 코드 {r.returncode}): 표준 출력 끝 {r.stdout[-200:]!r} / 표준 오류 끝 {r.stderr[-200:]!r}"
