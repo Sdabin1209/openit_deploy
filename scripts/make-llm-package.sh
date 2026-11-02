@@ -6,7 +6,7 @@
 # model-runtime 리포지토리를 직접 읽지 않고 태그($DEPLOY_MR_TAG, 기본은 lib.sh 의 DEPLOY_MR_TAG)의 git archive 에서 scripts/make_neutral_package.py 와
 # profiles/<이름>.json 을 꺼내 deploy 전용 .venv 의 python 으로 실행한다(표준 라이브러리 + boundary-contracts 만 쓴다).
 # 기반 모델의 차원(Qwen3 등)은 코드에 박지 않고 Hugging Face config.json 을 고정 리비전으로 받아 쓴다(build/hf-config/ 에 보관, sha256 검사).
-# 시스템 프롬프트는 test/llm-demo/lora_{a,b}.system.txt(학습 데이터의 system 메시지, model-lab 리포 prompts/ 에서 복사한 데모 입력)로 바꿔 넣는다.
+# 시스템 프롬프트는 test/llm-demo/lora_{a,b}.system.txt 로 바꿔 넣는다. A는 데모 입력(학습하지 않은 기반 모델이 쓰므로 학습이 가르쳤을 것 — 출력 형식, 문항별 칸 이름·자료형 — 을 프롬프트가 대신 준다. 문항 순서는 넣지 않는다: next_item은 서버가 정한다, 계약 3.1.3 ADR 0014). B는 학습 데이터의 system 메시지(model-lab prompts/ 복사). 실제 학습 어댑터를 얹을 때는 --prompt-a/--prompt-b 로 학습 때 프롬프트를 준다(D77 글자 일치).
 # 결과: <출력>/LORA_A, LORA_B (adapter/ 와 manifest.json), SUMMARY.json. 같은 입력이면 같은 바이트(결정적).
 set -euo pipefail
 DEPLOY_NO_DOCKER=1
