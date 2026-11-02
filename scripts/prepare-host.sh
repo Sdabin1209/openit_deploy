@@ -14,7 +14,8 @@ case "${1:-}" in
     # model-runtime 은 check-all 이 공개 이름(model_runtime.prompts.SUPPORTED_TEMPLATE_VERSIONS)을 읽으려고 기준 태그로 설치한다(구조 규칙 1: 이웃 소스 파일을 열지 않는다). 의존 패키지는 설치하지 않는다(--no-deps: 읽는 모듈은 prompts 뿐). 다른 위치는 MODEL_RUNTIME_SOURCE (예: git+file:///.../model-runtime)
     "$VENV/bin/pip" install -q --no-deps "${MODEL_RUNTIME_SOURCE:-git+ssh://git@github.com/Sdabin1209/openit_model-runtime.git}@$DEPLOY_MR_TAG" 2>&1 | tail -1 ;;
   wheels)
+    # 문진 스키마 wheel 은 기준표 태그(DEPLOY_SS_TAG)의 버전만 고른다. 왜: build/hostwheels/survey-schema 에 옛 열차의 wheel 이 남아 있으면 glob 이 두 버전을 pip 한 명령에 넣어 ResolutionImpossible 로 실패한다(2026-11-02 데모 기동 실패)
     # 호스트에서 쓰는 검증기·클라이언트: 영역 빌드가 만든 태그 wheel(boundary-contracts)과 survey-service HEAD 의 문진 스키마(v2 구조의 FrontendInput·TurnTrace 검증용)
-    "$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG"/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/hostwheels/survey-schema/openit_survey_schema-*.whl 2>&1 | tail -1 ;;
+    "$VENV/bin/pip" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$DEPLOY_BC_TAG"/boundary_contracts-*.whl "$DEPLOY_ROOT"/build/hostwheels/survey-schema/openit_survey_schema-"${DEPLOY_SS_TAG#survey-schema-v}"-*.whl 2>&1 | tail -1 ;;
   *) echo "사용: prepare-host.sh venv|wheels" >&2; exit 2 ;;
 esac
