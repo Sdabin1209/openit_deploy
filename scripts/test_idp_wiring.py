@@ -64,7 +64,7 @@ class Compose(unittest.TestCase):
             self.assertNotIn("ports", S[n], n)
         for net in ("auth", "db-keycloak"):
             self.assertTrue(C["networks"][net].get("internal"), net)
-        self.assertEqual(S["keycloak"]["networks"], ["auth", "db-keycloak"]); self.assertEqual(S["oauth2-proxy"]["networks"], ["auth"])
+        self.assertEqual(S["keycloak"]["networks"], ["auth", "db-keycloak", "pki"]); self.assertEqual(S["oauth2-proxy"]["networks"], ["auth", "pki"])
         self.assertIn("auth", S["gateway"]["networks"])
         self.assertIn("db-keycloak", S["postgres"]["networks"])
 
@@ -72,13 +72,13 @@ class Compose(unittest.TestCase):
         for n in ("keycloak", "oauth2-proxy"):
             for k, v in S[n]["environment"].items():
                 if re.search(r"(PASSWORD|SECRET)", k): self.assertTrue(k.endswith("_FILE"), f"{n}.{k}: 비밀은 *_FILE 경로만")
-                if k.endswith("_FILE"): self.assertTrue(str(v).startswith("/run/secrets/"), f"{n}.{k}")
+                if k.endswith("_FILE") and k != "SSL_CERT_FILE": self.assertTrue(str(v).startswith("/run/secrets/"), f"{n}.{k}")
         self.assertEqual(S["oauth2-proxy"]["environment"]["OAUTH2_PROXY_PROVIDER"], "oidc", "keycloak-oidc 는 realm 역할을 role: 그룹으로 섞는다")
 
     def test_oauth2_proxy_urls_and_groups(self):
         e = S["oauth2-proxy"]["environment"]
         self.assertEqual(e["OAUTH2_PROXY_OIDC_GROUPS_CLAIM"], "groups"); self.assertEqual(e["OAUTH2_PROXY_SET_XAUTHREQUEST"], "true")
-        self.assertTrue(e["OAUTH2_PROXY_REDEEM_URL"].startswith("http://keycloak:8080/auth/")); self.assertTrue(e["OAUTH2_PROXY_OIDC_JWKS_URL"].startswith("http://keycloak:8080/auth/"))
+        self.assertTrue(e["OAUTH2_PROXY_REDEEM_URL"].startswith("https://keycloak/auth/")); self.assertTrue(e["OAUTH2_PROXY_OIDC_JWKS_URL"].startswith("https://keycloak/auth/"))
         self.assertTrue(S["keycloak"]["environment"]["KC_HOSTNAME"].endswith("/auth")); self.assertEqual(S["keycloak"]["environment"]["KC_HTTP_RELATIVE_PATH"], "/auth")
 
     def test_keycloak_gets_secrets_from_files_not_environment(self):
@@ -117,8 +117,8 @@ class Gateway(unittest.TestCase):
 
     def test_idp_routes(self):
         c = code(CF)
-        self.assertIn("handle /oauth2/*", c); self.assertIn("reverse_proxy oauth2-proxy:4180", c)
-        self.assertIn("handle /auth/*", c); self.assertIn("reverse_proxy keycloak:8080", c)
+        self.assertIn("handle /oauth2/*", c); self.assertIn("reverse_proxy https://oauth2-proxy", c)
+        self.assertIn("handle /auth/*", c); self.assertIn("reverse_proxy https://keycloak", c)
         self.assertRegex(c, r"@kcmaster path /auth/realms/master[^\n]*/auth/admin/master"); self.assertIn("@oauth2internal path /oauth2/auth", c)
 
 

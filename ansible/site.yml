@@ -1,5 +1,5 @@
 ---
-# 배치 플레이북(ADR 0060): 서버마다 (a) 그 서버 몫의 env·비밀·인증서 파일을 지휘 기계에서 배포하고 (b) 상대 서비스 주소를 인벤토리에서 계산한 override 를 놓고
+# 배치 플레이북(ADR 0061): 서버마다 (a) 그 서버 몫의 env·비밀·인증서 파일을 지휘 기계에서 배포하고 (b) 상대 서비스 주소를 인벤토리에서 계산한 override 를 놓고
 # (c) 그 서버 몫만, 서버를 넘나드는 단계 순서(scripts/placement.py STAGES: postgres -> step-ca -> keycloak -> 저장소·서버 서비스 -> survey·model-serving -> gateway)로 기동한다. 다음 단계 전에 앞 단계의 게시된 서비스가 /readyz 에 응답하는지 지휘 기계에서 기다린다. 다시 실행하면 바뀐 것만 바뀐다(멱등).
 # 서버에는 SSH·python3·Docker 만 있으면 된다: Docker 전용 Ansible 모듈을 쓰지 않는다(서버에 파이썬 라이브러리를 요구하지 않으려고). compose 는 command 로 부른다.
 # 지휘 기계에서만 도는 점검: 배치 정의 점검, 서버별 설정·환경이 계약을 따르는지(check_config_contracts, placement_check_contracts: false 로 끈다. 시험용). 서버에는 jsonschema 를 요구하지 않는다.

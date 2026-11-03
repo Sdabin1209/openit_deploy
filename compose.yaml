@@ -18,6 +18,26 @@ x-hardening: &hardening
 
 x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0023-compose-resource-limits.md)
 
+x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공식 이미지(GATEWAY_IMAGE 와 같은 digest). 앱의 네트워크 네임스페이스에 붙어(network_mode: service:<앱>) step-ca 에서 ACME 로 서비스 이름 인증서를 받고 TLS 를 끝내 127.0.0.1 의 앱으로 넘긴다
+  image: ${GATEWAY_IMAGE:?locks/images.lock}
+  user: "65532:65532"   # 왜: 비루트. 80·443 은 NET_BIND_SERVICE 하나만 더한다(ACME 검증이 80/443 으로 온다, 측정함)
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  cap_add: ["NET_BIND_SERVICE"]
+  read_only: true
+  tmpfs: ["/tmp", "/data:uid=65532,gid=65532"]   # 인증서는 24시간짜리라 재기동 때 다시 받는다(저장 불필요)
+  mem_limit: 64m   # 측정 안 함(시작값)
+  cpus: 0.25
+  pids_limit: 64
+  logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+  configs: [{source: tls-sidecar, target: /etc/caddy/Caddyfile}]
+  volumes: [pki-root:/etc/openit/pki:ro]
+  healthcheck: {test: ["CMD", "nc", "-z", "127.0.0.1", "443"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
+  depends_on:
+    step-ca: {condition: service_healthy}
+    pki-root: {condition: service_completed_successfully}
+
 x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 curl 없음)
   interval: 15s
   timeout: 3s
@@ -26,6 +46,8 @@ x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 c
   start_interval: 1s   # 왜: start_period 동안만 1초 간격으로 확인한다(기본 5초). 뜬 직후 healthy가 되어 depends_on 사슬과 `up --wait`가 빨라진다. 평시 간격(interval)은 그대로. Docker 엔진 25 이상 필요(doctor.sh가 확인)
 
 networks:
+  pki:        # step-ca(ACME)와 서비스 사이드카 사이. internal: 호스트로 열지 않는다(ADR 0060)
+    internal: true
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
   serving:    # 문진 서비스 런타임 경로: survey-service <-> 수집 API, 릴리스 읽기
   monitoring: # 지표 수집(U71, ADR 0053): survey-service·model-serving 의 /metrics 를 Prometheus 가 읽는 길 하나. 두 서비스와 감시 스택(compose.monitoring.yaml)만 붙는다. gateway 는 붙지 않는다(공개 노출 없음)
@@ -44,6 +66,8 @@ networks:
     internal: true
   db-keycloak:   # keycloak <-> postgres 만
     internal: true
+  db-reload:   # postgres-reload <-> postgres 만
+    internal: true
   db-survey:
     internal: true
   db-qa:
@@ -60,9 +84,22 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
   datasets-data:  # dataset-store: 학습 데이터셋(DatasetManifest + files/). 쓰기는 dataset-store 서버만(D49: 이웃은 볼륨이 아니라 HTTP). 백업 대상(ADR 0032)
   gateway-data:   # gateway(Caddy)의 내부 CA 루트와 발급 인증서(/data/caddy/pki). 비밀키가 들어 있어 백업·유출에 주의
+  pki-ca:         # step-ca: 루트·중간 키(암호화됨)와 DB. **비밀 키가 있다. 백업 대상(루트 키 분실 = 모든 인증서 재발급, 사람 보관: docs/runbook.md PKI 절)**
+  pki-root:       # 루트 인증서(공개)만. 모든 호출자가 읽기 전용으로 마운트한다
+  pg-tls:         # postgres 서버 인증서·키(step-ca 발급, 24시간 갱신)
   pg-data:        # postgres: 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 볼륨 복사가 아니라 scripts/pg-backup.sh(pg_dump)
 
 configs:
+  gateway-tls-internal:
+    file: ${CONFIG_DIR:-./config}/gateway-tls/internal.caddy
+  gateway-tls-files:
+    file: ${CONFIG_DIR:-./config}/gateway-tls/files.caddy
+  gateway-tls-acme:
+    file: ${CONFIG_DIR:-./config}/gateway-tls/acme.caddy
+  gateway-tls-cert:   # 공개 인증서(비밀 아님)
+    file: ${GATEWAY_TLS_CERT_FILE:-./config/gateway-tls/unused.pem}
+  tls-sidecar:
+    file: ${CONFIG_DIR:-./config}/tls-sidecar.caddy
   gateway-caddyfile:
     file: ${CONFIG_DIR:-./config}/Caddyfile
   gateway-auth:
@@ -80,6 +117,10 @@ configs:
 # PostgreSQL: postgres-password(슈퍼유저)와 db-<이름>-password(계정 암호)는 postgres 서비스만 마운트한다(초기화 스크립트가 읽는다).
 #   db-<이름>-dsn(접속 문자열)은 소유 서비스가 영역이 PostgreSQL로 바뀔 때 마운트한다(이름 규칙은 docs/RUN.md 4-1-1).
 secrets:
+  gateway-tls-key:     # mode=files 일 때 인증서 키(비밀 파일, D84). 아니면 빈 파일
+    file: ${GATEWAY_TLS_KEY_FILE:-./config/gateway-tls/unused.pem}
+  step-ca-password:     # step-ca 가 루트·중간 키를 암호화하는 비밀번호(gen-secrets.sh 가 1회 만든다)
+    file: ${SECRETS_DIR:-./secrets}/tokens/step-ca-password
   postgres-password:
     file: ${SECRETS_DIR:-./secrets}/tokens/postgres-password
   db-survey-password:
@@ -194,6 +235,122 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/dataset-store-write-tokens
 
 services:
+  step-ca:   # 독립 인증기관(사설 PKI + ACME, ADR 0060). 공식 이미지(digest 고정). 루트·중간 키는 처음 기동에 1회 만들어 pki-ca 볼륨에 둔다(비밀번호는 비밀 파일)
+    restart: unless-stopped
+    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    user: "1000:1000"   # 이미지의 step 사용자(비루트)
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    mem_limit: 128m   # 측정 안 함(시작값)
+    cpus: 0.5
+    pids_limit: 128
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    group_add: *secretgid
+    cap_add: ["NET_BIND_SERVICE"]   # step-ca 바이너리에 파일 권한이 있어 cap_drop ALL 이면 실행이 거부된다(측정함: Operation not permitted; gateway 와 같은 사정). 실제로는 9000 을 연다
+    entrypoint: ["sh", "-c", "test -f /home/step/config/ca.json || step ca init --name OpenIt --dns step-ca --address :9000 --provisioner admin --acme --password-file /run/secrets/step-ca-password --provisioner-password-file /run/secrets/step-ca-password >/dev/null 2>&1; exec step-ca /home/step/config/ca.json --password-file /run/secrets/step-ca-password"]   # 왜 공식 entrypoint 의 DOCKER_STEPCA_INIT_* 를 쓰지 않나: 그 경로는 CA 관리 비밀번호를 컨테이너 로그에 찍는다(비밀은 로그 금지, D84). 같은 step ca init 을 출력 없이 1회 실행한다
+    secrets: [step-ca-password]
+    volumes: [pki-ca:/home/step]
+    networks: [pki]
+  pki-root:   # 루트 인증서(공개)를 읽기 전용 볼륨 pki-root 로 복사하는 일회성 잡. 키가 든 pki-ca 는 호출자에게 마운트하지 않는다
+    restart: "no"
+    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    user: "1000:1000"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    entrypoint: ["sh", "-c", "cp /ca/certs/root_ca.crt /home/step/root_ca.crt && chmod 644 /home/step/root_ca.crt"]
+    volumes: ["pki-ca:/ca:ro", "pki-root:/home/step"]
+    networks: [pki]
+    depends_on:
+      step-ca: {condition: service_healthy}
+  postgres-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
+    restart: unless-stopped
+    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    group_add: *secretgid
+    mem_limit: 64m   # 측정 안 함(시작값)
+    cpus: 0.25
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    environment: {STEPPATH: /tmp}
+    entrypoint: ["sh", "-c", "while true; do step ca certificate postgres /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --san postgres --not-after 24h --force >/dev/null 2>&1 && chmod 600 /pg-tls/server.key; sleep 28800; done"]
+    secrets: [step-ca-password]
+    volumes: ["pg-tls:/pg-tls", "pki-root:/etc/openit/pki:ro"]
+    networks: [pki]
+    healthcheck: {test: ["CMD", "test", "-s", "/pg-tls/server.key"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
+    depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+  postgres-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
+    restart: unless-stopped
+    image: ${POSTGRES_IMAGE:?locks/images.lock}
+    user: "999:999"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    group_add: *secretgid
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    entrypoint: ["sh", "-c", "while true; do sleep 28860; PGPASSWORD=$$(cat /run/secrets/postgres-password) psql -qAt 'host=postgres user=postgres dbname=postgres sslmode=verify-full sslrootcert=/etc/openit/pki/root_ca.crt' -c 'select pg_reload_conf()' >/dev/null; done"]
+    secrets: [postgres-password]
+    volumes: ["pki-root:/etc/openit/pki:ro"]
+    networks: [db-reload]
+    depends_on:
+      postgres: {condition: service_healthy}
+  survey-service-tls:   # survey-service 의 TLS 사이드카(ADR 0060): https://survey-service 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:survey-service"
+    environment: {TLS_NAME: survey-service, TLS_UPSTREAM: "127.0.0.1:8080"}
+  question-authoring-tls:   # question-authoring 의 TLS 사이드카(ADR 0060): https://question-authoring 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:question-authoring"
+    environment: {TLS_NAME: question-authoring, TLS_UPSTREAM: "127.0.0.1:8080"}
+  ops-feedback-ingest-tls:   # ops-feedback-ingest 의 TLS 사이드카(ADR 0060): https://ops-feedback-ingest 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:ops-feedback-ingest"
+    environment: {TLS_NAME: ops-feedback-ingest, TLS_UPSTREAM: "127.0.0.1:8080"}
+  release-gate-tls:   # release-gate 의 TLS 사이드카(ADR 0060): https://release-gate 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:release-gate"
+    environment: {TLS_NAME: release-gate, TLS_UPSTREAM: "127.0.0.1:8080"}
+  model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): https://model-serving 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:model-serving"
+    environment: {TLS_NAME: model-serving, TLS_UPSTREAM: "127.0.0.1:8080"}
+  model-registry-tls:   # model-registry 의 TLS 사이드카(ADR 0060): https://model-registry 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:model-registry"
+    environment: {TLS_NAME: model-registry, TLS_UPSTREAM: "127.0.0.1:8080"}
+  dataset-store-tls:   # dataset-store 의 TLS 사이드카(ADR 0060): https://dataset-store 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:dataset-store"
+    environment: {TLS_NAME: dataset-store, TLS_UPSTREAM: "127.0.0.1:8080"}
+  admin-console-tls:   # admin-console 의 TLS 사이드카(ADR 0060): https://admin-console 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:admin-console"
+    environment: {TLS_NAME: admin-console, TLS_UPSTREAM: "127.0.0.1:8080"}
+  kiosk-frontend-tls:   # kiosk-frontend 의 TLS 사이드카(ADR 0060): https://kiosk-frontend 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:kiosk-frontend"
+    environment: {TLS_NAME: kiosk-frontend, TLS_UPSTREAM: "127.0.0.1:8080"}
+  keycloak-tls:   # keycloak 의 TLS 사이드카(ADR 0060): https://keycloak 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:keycloak"
+    environment: {TLS_NAME: keycloak, TLS_UPSTREAM: "127.0.0.1:8080"}
+  oauth2-proxy-tls:   # oauth2-proxy 의 TLS 사이드카(ADR 0060): https://oauth2-proxy 으로 받는다
+    <<: *tlssidecar
+    network_mode: "service:oauth2-proxy"
+    environment: {TLS_NAME: oauth2-proxy, TLS_UPSTREAM: "127.0.0.1:4180"}
   postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
     <<: *hardening
     mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -208,8 +365,10 @@ services:
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ${CONFIG_DIR:-./config}/postgres/pg_hba.conf:/etc/openit/pg_hba.conf:ro   # 네트워크 접속은 TLS 만(ADR 0060)
+      - pg-tls:/etc/openit/pg-tls:ro   # step-ca 발급 서버 인증서·키(postgres-cert-init)
     tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-survey, db-qa, db-ops, db-gate, db-keycloak]
+    networks: [db-survey, db-qa, db-ops, db-gate, db-keycloak, db-reload]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
     # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
     #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
@@ -218,6 +377,16 @@ services:
     #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
     command:
       - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/openit/pg-tls/server.crt
+      - -c
+      - ssl_key_file=/etc/openit/pg-tls/server.key
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - hba_file=/etc/openit/pg_hba.conf
       - -c
       - log_statement=none
       - -c
@@ -235,6 +404,8 @@ services:
       - -c
       - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
+    depends_on:
+      postgres-cert: {condition: service_healthy}
     healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
@@ -258,7 +429,11 @@ services:
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
       - {source: gateway-device-tls, target: /etc/caddy/device-tls.caddy}
       - {source: gateway-device-ca, target: /etc/caddy/device-ca.pem}
-    secrets: [gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
+      - {source: gateway-tls-internal, target: /etc/caddy/gateway-tls/internal.caddy}
+      - {source: gateway-tls-files, target: /etc/caddy/gateway-tls/files.caddy}
+      - {source: gateway-tls-acme, target: /etc/caddy/gateway-tls/acme.caddy}
+      - {source: gateway-tls-cert, target: /etc/openit/gateway-tls/server.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
+    secrets: [gateway-tls-key, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
@@ -270,9 +445,13 @@ services:
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
+      GATEWAY_TLS_MODE: ${GATEWAY_TLS_MODE:-internal}   # 공개 입구 인증서 출처: internal(기본)|files|acme (ADR 0060)
+      GATEWAY_ACME_EMAIL: ${GATEWAY_ACME_EMAIL:-internal@invalid.example}
+      GATEWAY_ACME_DIRECTORY: ${GATEWAY_ACME_DIRECTORY:-https://acme-v02.api.letsencrypt.org/directory}
       GATEWAY_HOST_NAMES: ${GATEWAY_HOST_NAMES:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다(L20, ADR 0056)}   # CSRF 허용 호스트 이름 목록. 직접 정하지 않는다
     volumes:
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
+      - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
     tmpfs: ["/tmp", "/config:uid=10001,gid=10001"]
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308
@@ -286,7 +465,8 @@ services:
     cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
     pids_limit: ${KIOSK_FRONTEND_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
-    networks: [ui]
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
+    networks: [ui, pki]
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
@@ -296,7 +476,8 @@ services:
     cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
     pids_limit: ${ADMIN_CONSOLE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
-    networks: [ui]
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
+    networks: [ui, pki]
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
@@ -317,9 +498,11 @@ services:
       SURVEY_RESULT_READER_TOKEN_FILE: /run/secrets/survey-result-reader   # 결과 조회 API(result-reader 역할, 병원/의사 시스템용: 게이트웨이에 열지 않는다)
       SURVEY_RISK_SOURCE_TOKEN_FILE: /run/secrets/survey-risk-source       # 위험 신호 입력 API(risk-source 역할, 감지기용: 게이트웨이에 열지 않는다)
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &survey_secrets [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
-    volumes: [survey-data:/data]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
-    networks: [edge, serving, db-survey, monitoring]
+    volumes: [survey-data:/data, pki-root:/etc/openit/pki:ro]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
+    networks: [edge, serving, db-survey, monitoring, pki]
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -335,6 +518,7 @@ services:
     cpus: ${QUESTION_AUTHORING_CPUS:-1.0}
     pids_limit: ${QUESTION_AUTHORING_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
     environment: &qa_env
@@ -343,9 +527,11 @@ services:
       QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
       QA_FAILURES_TOKEN_FILE: /run/secrets/ops-read-question-authoring
       QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
     tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
-    networks: [authoring, release, db-qa]
+    networks: [authoring, release, db-qa, pki]
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
@@ -365,10 +551,11 @@ services:
     image: openit-keycloak-optimized:26.4   # 로컬 빌드 이름(base 는 digest 고정). 이미지에 비밀이 없다
     build: {context: ./images/keycloak, args: {KEYCLOAK_BASE: "${KEYCLOAK_IMAGE:?locks/images.lock}"}}
     read_only: true
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     command: ["--config-file=/run/secrets/keycloak-secrets.conf", "start", "--optimized", "--import-realm"]   # 비밀(db-password, bootstrap-admin-password)은 환경 변수가 아니라 설정 파일로 받는다: 프로세스 환경(/proc/1/environ)에도 값이 없다(D84, 3차 E2E check-secrets-hidden). --config-file 은 kc.sh 의 전역 옵션이라 start 앞에 온다(시험으로 확인)
     environment:   # 비밀 아님
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt
       KC_DB_USERNAME: keycloak
       KC_BOOTSTRAP_ADMIN_USERNAME: kcadmin
       KC_HTTP_ENABLED: "true"          # TLS 는 gateway 가 끝낸다(내부망 auth 안에서만 평문)
@@ -382,7 +569,7 @@ services:
     secrets:
       - keycloak-secrets.conf          # db-password, bootstrap-admin-password (scripts/gen-secrets.sh)
       - {source: keycloak-realm.json, target: /opt/keycloak/data/import/openit-realm.json}   # realm 가져오기: 클라이언트 비밀·초기 admin 임시 비밀번호가 값으로 들어 있어 비밀 파일이다(scripts/gen-keycloak-realm.sh)
-    networks: [auth, db-keycloak]
+    networks: [auth, db-keycloak, pki]
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:   # 관리 포트(9000)의 /auth/health/ready. 이미지에 curl 이 없어 bash 의 /dev/tcp 로 요청한다
@@ -398,6 +585,7 @@ services:
     cpus: ${OAUTH2_PROXY_CPUS:-0.5}
     pids_limit: ${OAUTH2_PROXY_PIDS_LIMIT:-128}
     image: ${OAUTH2_PROXY_IMAGE:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     environment:   # 비밀 아님(비밀은 *_FILE). 밖에서 보이는 주소는 GATEWAY_PUBLIC_URL(첫 GATEWAY_HOSTS 이름 + 밖에 보이는 포트)이고 사람 화면은 이 이름으로 쓴다(ADR 0057)
       OAUTH2_PROXY_PROVIDER: oidc   # keycloak-oidc 가 아니다: 그 공급자는 realm 역할을 `role:<이름>` 그룹으로 섞어 넣어(default-roles-openit 등) 그룹이 비지 않고 X-Openit-Roles 에 잡음이 들어간다(스모크 시험이 잡았다)
       OAUTH2_PROXY_CLIENT_ID: openit-gateway
@@ -406,8 +594,9 @@ services:
       OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"   # 발급자(iss)는 밖에 보이는 주소이고 서버끼리는 내부 주소로 부른다: 주소를 직접 준다
       OAUTH2_PROXY_OIDC_ISSUER_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit
       OAUTH2_PROXY_LOGIN_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit/protocol/openid-connect/auth
-      OAUTH2_PROXY_REDEEM_URL: http://keycloak:8080/auth/realms/openit/protocol/openid-connect/token
-      OAUTH2_PROXY_OIDC_JWKS_URL: http://keycloak:8080/auth/realms/openit/protocol/openid-connect/certs
+      OAUTH2_PROXY_PROVIDER_CA_FILES: /etc/openit/pki/root_ca.crt   # keycloak 사이드카 인증서를 step-ca 루트로 검증(ADR 0060)
+      OAUTH2_PROXY_REDEEM_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/certs
       OAUTH2_PROXY_REDIRECT_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/oauth2/callback
       OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
       OAUTH2_PROXY_UPSTREAMS: static://202
@@ -425,8 +614,10 @@ services:
       OAUTH2_PROXY_COOKIE_REFRESH: 5m     # 그룹(역할) 변경·계정 정지가 반영되는 지연의 상한. Keycloak 액세스 토큰 기본 수명 5분(realm accessTokenLifespan 300s)과 맞췄다. 측정 안 함(ADR 0058)
       OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
       OAUTH2_PROXY_AUTH_LOGGING: "true"
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [oauth2-proxy-client-secret, oauth2-proxy-cookie-secret]
-    networks: [auth]
+    networks: [auth, pki]
     depends_on:
       keycloak: {condition: service_healthy}
 
@@ -436,6 +627,7 @@ services:
     cpus: ${OPS_FEEDBACK_MIGRATE_CPUS:-0.5}
     pids_limit: ${OPS_FEEDBACK_MIGRATE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     command: ["python", "-m", "ops_feedback.admin", "migrate"]
     environment:
       OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn           # 소유자 계정(DDL)
@@ -457,6 +649,7 @@ services:
     cpus: ${OPS_FEEDBACK_INGEST_CPUS:-1.0}
     pids_limit: ${OPS_FEEDBACK_INGEST_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     env_file:
       - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
     environment:
@@ -465,9 +658,11 @@ services:
       OPS_REVIEW_TOKENS_FILE: /run/secrets/ops-review-tokens
       OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-app-dsn           # 원본 Trace 로그(PostgreSQL, D85). 앱 계정(DML만, L08)
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn   # 실패 사례(PostgreSQL). 앱 계정
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-app-dsn, db-ops-failure-app-dsn]
     tmpfs: ["/tmp", "/data"]
-    networks: [serving, logs, authoring, db-ops]
+    networks: [serving, logs, authoring, db-ops, pki]
     depends_on:
       postgres: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
       ops-feedback-migrate: {condition: service_completed_successfully}   # L08: 스키마는 소유자 계정의 migrate 가 먼저 만든다. 서버는 verify 만 한다
@@ -489,9 +684,11 @@ services:
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
       GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn   # 릴리스 레지스트리는 PostgreSQL(D85). 번들 파일(releases/)은 gate-data 볼륨 그대로
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &gate_secrets [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
-    volumes: [gate-data:/data]
-    networks: [serving, release, db-gate]
+    volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]
+    networks: [serving, release, db-gate, pki]
     stop_grace_period: 40s   # release-gate 최악 종료 시간 하드 상한 35초(요청 소켓 30s 등, 근거 release-gate docs/adr/0008-timeouts.md, 측정 안 함) + 여유 5초 -> SIGKILL 전에 끝나게 한다. 값은 scripts/test_e2e_constants.py 가 35초와 대조한다
     depends_on:
       postgres: {condition: service_healthy}
@@ -510,10 +707,13 @@ services:
     environment:
       MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/gate-read-model-serving
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [model-runtime-tokens, gate-read-model-serving]
     volumes:
       - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다)
-    networks: [serving, monitoring]   # monitoring: /metrics 수집 전용(ADR 0053)
+      - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
+    networks: [serving, monitoring, pki]   # monitoring: /metrics 수집 전용(ADR 0053)
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -527,9 +727,11 @@ services:
     environment:
       MODEL_REGISTRY_READ_TOKENS_FILE: /run/secrets/model-registry-read-tokens
       MODEL_REGISTRY_WRITE_TOKENS_FILE: /run/secrets/model-registry-write-tokens
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [model-registry-read-tokens, model-registry-write-tokens]
-    volumes: [models-data:/data]
-    networks: [release]
+    volumes: [models-data:/data, pki-root:/etc/openit/pki:ro]
+    networks: [release, pki]
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -543,9 +745,11 @@ services:
     environment:
       DATASET_STORE_READ_TOKENS_FILE: /run/secrets/dataset-store-read-tokens
       DATASET_STORE_WRITE_TOKENS_FILE: /run/secrets/dataset-store-write-tokens
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [dataset-store-read-tokens, dataset-store-write-tokens]
-    volumes: [datasets-data:/data]   # 이미지의 DATASET_STORE_ROOT=/data (uid 10001 소유). 서버의 임시 폴더(/data/.tmp)도 같은 볼륨이라 게시 rename 이 원자적이다. 루트는 read_only
-    networks: [datasets]
+    volumes: [datasets-data:/data, pki-root:/etc/openit/pki:ro]   # 이미지의 DATASET_STORE_ROOT=/data (uid 10001 소유). 서버의 임시 폴더(/data/.tmp)도 같은 볼륨이라 게시 rename 이 원자적이다. 루트는 read_only
+    networks: [datasets, pki]
     stop_grace_period: 40s   # 서버는 SIGTERM 에서 진행 중 요청을 끝까지 기다린다(daemon_threads=False). 요청 소켓 timeout 30초(DATASET_STORE_SOCKET_TIMEOUT 기본) + 여유 10초. 하드 상한은 그 영역이 확정하지 않았다(큰 게시·느린 읽기는 더 걸릴 수 있다, 측정 안 함). SIGKILL 이어도 게시는 임시 폴더 후 rename 이라 반쯤 쓴 버전이 보이지 않는다(synthetic-data ADR 0008·0012). 근거 docs/adr/0032-dataset-store-boundary.md
     healthcheck:
       <<: *pyhealth
@@ -567,11 +771,14 @@ services:
       OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-app-dsn           # 앱 계정(DML만, L08)
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn
       OPS_DB_SCHEMA: verify   # L08: 잡도 스키마를 만들지 않는다(apply 는 시작 거부). 계약 OpsFeedbackServerEnv 기본값과 같다
+      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
+      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback, db-ops-log-app-dsn, db-ops-failure-app-dsn]
     depends_on:
       ops-feedback-migrate: {condition: service_completed_successfully}
     volumes:
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
+      - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
     networks: [logs, release, db-ops]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -586,6 +793,7 @@ services:
     cpus: ${JOB_SURVEY_PURGE_CPUS:-0.5}
     pids_limit: ${JOB_SURVEY_PURGE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     command: ["python", "-m", "survey_service", "purge"]
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env
@@ -605,6 +813,7 @@ services:
     pids_limit: ${JOB_QUESTION_AUTHORING_PURGE_PIDS_LIMIT:-100}
     profiles: ["jobs"]
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     command: ["python", "-m", "question_authoring", "purge"]
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env
@@ -629,7 +838,7 @@ services:
       - ${CONFIG_DIR:-./config}/release-gate.env
     environment: *gate_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
     secrets: *gate_secrets
-    volumes: [gate-data:/data]
+    volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]
     networks: [db-gate]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -649,7 +858,7 @@ services:
       - ${CONFIG_DIR:-./config}/release-gate.env
     environment: *gate_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
     secrets: *gate_secrets
-    volumes: [gate-data:/data]
+    volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]
     networks: [release, db-gate]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]

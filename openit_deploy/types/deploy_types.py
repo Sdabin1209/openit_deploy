@@ -148,6 +148,9 @@ class GatewayEnv(TypedDict):
     GATEWAY_HOSTS: NotRequired[str]
     GATEWAY_HOST_NAMES: NotRequired[str]
     GATEWAY_PUBLIC_TLS_PORT: NotRequired[str]
+    GATEWAY_TLS_MODE: NotRequired[Literal['internal', 'files', 'acme']]
+    GATEWAY_ACME_EMAIL: NotRequired[str]
+    GATEWAY_ACME_DIRECTORY: NotRequired[str]
 
 
 class ImageLabelCheckRequest(TypedDict):

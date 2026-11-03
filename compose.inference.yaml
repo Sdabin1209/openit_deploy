@@ -9,6 +9,10 @@
 #   INFERENCE_TOKENS_FILE         파일 경로(값이 아니다). 내용: <호출자>=<토큰>[,...] 한 줄 (MODEL_RUNTIME_TOKENS, D84)
 #   INFERENCE_RELEASE_TOKEN_FILE  파일 경로(값이 아니다). 내용: **게이트웨이 추론 토큰** 하나(deploy 의 secrets/tokens/gateway-inference-token). 예전과 달리 release-gate 읽기 토큰이 아니다.
 #                        게이트웨이가 이 토큰을 확인하고 자기가 가진 release-gate 읽기 토큰으로 바꿔 붙인다(MODEL_RUNTIME_RELEASE_TOKEN 으로 전달)
+#   INFERENCE_PKI_ROOT_FILE  파일 경로. deploy step-ca 의 루트 인증서(공개, 비밀 아님; deploy 호스트의 pki-root 볼륨 root_ca.crt). 사이드카가 ACME 서버를 검증하는 데 쓴다(ADR 0060)
+#   INFERENCE_STEP_CA_ACME_URL   deploy step-ca 의 ACME 디렉터리 주소(https://<step-ca 주소>/acme/acme/directory). step-ca 가 TLS_NAME:443 으로 닿아 소유를 검증한다(RFC 8555)
+#   INFERENCE_TLS_NAME   이 서버의 이름(호출자가 https://<이름> 으로 부르는 DNS 이름 = 인증서 이름)
+#   INFERENCE_SIDECAR_IMAGE  TLS 사이드카(Caddy 공식 이미지, digest 참조; deploy 잠금의 GATEWAY_IMAGE 와 같은 값)
 #   INFERENCE_CA_FILE    파일 경로. 게이트웨이의 CA 루트 인증서(공개 인증서, 비밀 아님): deploy 호스트에서 scripts/export-gateway-ca.sh 로 꺼낸다. 공인 인증서를 쓰면 시스템 신뢰 저장소로 충분하다 -- 그래도 파일은 필요하니 공인 CA 번들을 준다
 #                        configs 로 /etc/openit/gateway-ca.crt 에 넣고 SSL_CERT_FILE 이 가리킨다(계약 클라이언트에 CA 인자가 없고 Python 기본 SSL 컨텍스트가 이 변수를 읽는다). 검증을 끄지 않는다
 #                        토큰 파일 두 개는 컨테이너(uid 10001)가 읽을 수 있어야 한다(모드 644, 비밀을 둔 폴더는 700). 토큰은 환경 변수로 넣지 않는다.
@@ -37,6 +41,8 @@ secrets:
   model-runtime-release-token: {file: "${INFERENCE_RELEASE_TOKEN_FILE:?INFERENCE_RELEASE_TOKEN_FILE(게이트 읽기 토큰이 든 파일 경로)이 필요하다}"}
 
 configs:
+  tls-sidecar: {file: "${INFERENCE_TLS_SIDECAR_CONFIG:-./config/tls-sidecar.caddy}"}   # deploy/config/tls-sidecar.caddy 와 같은 파일(이름·상류·ACME 주소는 환경 변수)
+  pki-root: {file: "${INFERENCE_PKI_ROOT_FILE:?INFERENCE_PKI_ROOT_FILE(step-ca 루트 인증서 파일 경로)이 필요하다}"}
   gateway-ca: {file: "${INFERENCE_CA_FILE:?INFERENCE_CA_FILE(게이트웨이 CA 루트 인증서 파일 경로, scripts/export-gateway-ca.sh)가 필요하다}"}
 
 volumes:
@@ -69,7 +75,7 @@ services:
       # - hf-cache:/var/lib/model-runtime/hf   # GPU 변형(예시, 주석): 이미지가 uid 10001 소유로 준비한 HF_HOME 기본 경로. HF_HOME 을 덮어쓰지 않는다
     extra_hosts: ["host.docker.internal:host-gateway"]   # 게이트가 같은 호스트의 다른 컴포즈 프로젝트에 있을 때(시험·단일 서버)
     ports:
-      - "${INFERENCE_BIND:-127.0.0.1}:${INFERENCE_PORT-8080}:8080"
+      - "${INFERENCE_BIND:-127.0.0.1}:${INFERENCE_PORT-443}:443"   # 밖에 열리는 것은 TLS 사이드카(443)뿐이다. 앱의 8080 은 게시하지 않는다(ADR 0060)
     # GPU 예약(예시, 주석): NVIDIA Container Toolkit 이 있는 호스트에서
     # deploy:
     #   resources:
@@ -82,3 +88,25 @@ services:
       timeout: 3s
       retries: 5
       start_period: 20s
+  model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): deploy step-ca 에서 ACME 로 INFERENCE_TLS_NAME 인증서를 받고 TLS 를 끝내 127.0.0.1:8080 으로 넘긴다
+    image: ${INFERENCE_SIDECAR_IMAGE:?INFERENCE_SIDECAR_IMAGE(Caddy 이미지, digest 참조)가 필요하다}
+    user: "65532:65532"
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    read_only: true
+    tmpfs: ["/tmp", "/data:uid=65532,gid=65532"]
+    network_mode: "service:model-serving"
+    environment:
+      TLS_NAME: ${INFERENCE_TLS_NAME:?INFERENCE_TLS_NAME(호출자가 부르는 이름)이 필요하다}
+      TLS_UPSTREAM: "127.0.0.1:8080"
+      STEP_CA_ACME_URL: ${INFERENCE_STEP_CA_ACME_URL:?INFERENCE_STEP_CA_ACME_URL(step-ca ACME 디렉터리 주소)이 필요하다}
+      STEP_CA_ROOT: /etc/openit/pki/root_ca.crt
+    configs:
+      - {source: tls-sidecar, target: /etc/caddy/Caddyfile}
+      - {source: pki-root, target: /etc/openit/pki/root_ca.crt}
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    healthcheck: {test: ["CMD", "nc", "-z", "127.0.0.1", "443"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
+    depends_on:
+      model-serving: {condition: service_healthy}

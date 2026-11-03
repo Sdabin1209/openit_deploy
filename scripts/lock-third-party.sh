@@ -13,6 +13,7 @@ pin() { # pin <변수> <이름:태그>
 pin GATEWAY_IMAGE caddy:2-alpine
 pin REGISTRY_IMAGE registry:2
 pin UTIL_IMAGE python:3.12-slim
+pin STEP_CA_IMAGE smallstep/step-ca:0.28.1   # 독립 인증기관(ADR 0060). 공식 이미지
 pin POSTGRES_IMAGE postgres:16   # 공식 이미지. 서비스마다 DB·계정을 나눈 하나의 서버(compose.yaml postgres)
 # 감시 스택(compose.monitoring.yaml, ADR 0037). 버전은 고른 시점의 최신 안정 릴리스이고 digest 로 고정한다.
 pin PROMETHEUS_IMAGE prom/prometheus:v3.5.0

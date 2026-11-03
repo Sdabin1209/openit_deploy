@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""배치 정의(ansible 인벤토리) 검증과 서버별 산출물 계산. ADR 0060.
+"""배치 정의(ansible 인벤토리) 검증과 서버별 산출물 계산. ADR 0061.
 
   placement.py validate <인벤토리> [--compose compose.yaml]
   placement.py render   <인벤토리> --host <서버> --out <폴더> [--compose compose.yaml] [--secrets-dir <폴더>]
@@ -16,7 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 FOUNDATION = ["postgres", "step-ca", "keycloak", "gateway"]   # 기반 요소(명세 "배치" 행). compose 에 있는 것만 요구한다
 # 기동 순서(명세): postgres -> step-ca -> keycloak -> 나머지. 각 단계는 그 서버에 있는 서비스만 올린다
-# 서버를 넘나드는 기동 단계(ADR 0060): 앞 단계가 준비된 뒤에 다음 단계를 올린다. 목록에 없는 서비스는 3단계(저장소·서버 서비스)에 든다
+# 서버를 넘나드는 기동 단계(ADR 0061): 앞 단계가 준비된 뒤에 다음 단계를 올린다. 목록에 없는 서비스는 3단계(저장소·서버 서비스)에 든다
 STAGES = [["postgres"], ["step-ca"], ["keycloak"],
           ["release-gate", "question-authoring", "ops-feedback-migrate", "ops-feedback-ingest", "model-registry", "dataset-store"],
           ["survey-service", "model-serving"],

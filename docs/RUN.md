@@ -357,7 +357,7 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 - 자체 시험: `python3 scripts/test_probe_serving.py`(일부러 OUTPUT_INVALID를 섞은 가짜 응답과 가짜 서버로 집계를 확인). GPU 측정 절차는 `docs/GPU_HOLE.md` H4.
 - 한계: 이 PC에서는 가짜 백엔드(출력 고정)에만 돌려 봤다. 실제 모델의 OUTPUT_INVALID 분포는 측정 전이다.
 
-## 7-3. 여러 서버에 배치 (Ansible, ADR 0060)
+## 7-3. 여러 서버에 배치 (Ansible, ADR 0061)
 
 서버 한 대면 지금처럼 `scripts/up.sh` 하나로 끝난다(Ansible 이 필요 없다). 서비스를 여러 서버에 나눌 때만 아래를 쓴다. 서버에는 SSH, python3, Docker 만 있으면 된다(새 OS 패키지 없음).
 
@@ -371,7 +371,7 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 
 기동 순서는 서버를 넘나든다: postgres, step-ca, keycloak, 저장소·서버 서비스(release-gate, question-authoring, ops-feedback, model-registry, dataset-store), survey-service·model-serving, gateway 순이며 단계 사이에 게시된 서비스의 `/readyz` 를 지휘 기계가 기다린다. 첫 단계에서 서버별 환경을 계약(`check_config_contracts`)으로 검증하고 실패면 멈춘다.
 
-제약(ADR 0060): 서버 사이 TLS(https)와 postgres verify-full 은 TLS 작업이 합쳐진 뒤 확인한다.
+제약(ADR 0061): 서버 사이 TLS(https)와 postgres verify-full 은 TLS 작업이 합쳐진 뒤 확인한다.
 
 시험(E2E 밖, 한 PC): `bash scripts/test-split-placement.sh` 는 가상 서버 3개(compose 프로젝트 3개, 서로 다른 네트워크)를 같은 플레이북으로 띄워 묶음별 `/healthz` 와 묶음 사이 호출, 멱등, 잘못된 배치 거부를 확인한다. 대역 서비스를 쓴다(`SPLIT_IMAGE=<이미지 참조>` 로 실제 이미지의 파이썬을 쓸 수 있다). 실제 영역 서비스의 분리 기동은 확인하지 않는다.
 

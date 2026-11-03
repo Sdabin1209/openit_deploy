@@ -118,7 +118,8 @@ def collect(caddy_text, roles):
                 # 역할 블록 안쪽의 매처 handle(예: @role_clinician 안의 @clinicianpush)은 바깥 역할을 그대로 이어받는다. 이어받지 않으면 역할이 비어 라벨과 어긋나 보인다
                 walk(n["c"], dict(ctx, paths=m["paths"], methods=m["methods"], auth="machine-token" if m.get("bearer") else ctx["auth"], roles=list(ctx["roles"])))
             elif k == "reverse_proxy":
-                host = t[1].split(":")[0]; port = t[1].split(":")[1] if ":" in t[1] else ""
+                up = re.sub(r"^https?://", "", t[1])   # ADR 0060: 상류는 https://<서비스 이름>(사이드카 443). 포트가 없으면 이미지 포트와 대조하지 않는다
+                host = up.split(":")[0]; port = up.split(":")[1] if ":" in up else "8080"   # 사이드카는 앱의 8080 으로 넘긴다(tls-sidecar.caddy)
                 e = {"host": host, "port": port, "paths": ctx["paths"] or ["/*"], "methods": ctx["methods"], "auth": ctx["auth"] or "none", "roles": sorted(set(ctx["roles"])),
                      "upstream_token": None, "user_header": None, "timeouts": {}, "order": order[0]}
                 order[0] += 1

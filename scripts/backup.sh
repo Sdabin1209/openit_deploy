@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: gate-data models-data datasets-data registry-data gateway-data (파일 저장소. 비우면 전부). 데이터베이스는 PostgreSQL 이라 pg-backup.sh 가 맡는다.
+# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: gate-data models-data datasets-data registry-data gateway-data pki-ca (파일 저장소. 비우면 전부). 데이터베이스는 PostgreSQL 이라 pg-backup.sh 가 맡는다.
 #  환경: DEPLOY_PROJECT(기본 deploy), BACKUP_CONFIG(기본 config/backup.env), REGISTRY_PROJECT(기본 deploy-registry: 레지스트리 볼륨은 별도 프로젝트 소유)
 # 설정(BACKUP_DIR, BACKUP_RETENTION_DAYS, BACKUP_PASSWORD_FILE)이 없거나 비어 있으면 CRIT 로 거부한다(종료 코드 2, 코드에 기본값 없음). 설정·restic 호출은 backup-lib.sh.
 # 저장소 하나가 restic 스냅샷 하나다(--host 가 저장소 이름, 태그 set-<UTC 시각>). restic 이 중복 제거·암호화(AES-256, 인증)·무결성 해시를 맡는다(ADR 0038).
 # gateway-data(내부 CA 루트·비밀키)도 같은 경로로 백업한다(점검 M3). 복원하면 루트가 유지되어 기기들이 다시 신뢰하지 않아도 된다(runbook 9-1).
+# pki-ca(step-ca 루트·중간 키, ADR 0060)도 같은 경로로 백업한다. 루트 키를 잃으면 모든 인증서를 다시 발급하고 모든 호출자의 루트를 바꿔야 한다.
 # datasets-data 를 넣은 이유: 학습 데이터셋은 게시된 버전이 불변이고 모델 패키지 계보(lineage.dataset)가 id·버전·content_hash 로 가리킨다. 잃으면 같은 데이터로 재학습·재현을 못 한다.
 # registry-data 를 넣은 이유: 이미지는 CI 로 다시 만들 수 있으나 digest 로 고정된 운영 이미지를 레지스트리가 잃으면 롤백이 불가능하다(docs/adr/0020-backup-tool-and-encryption.md).
 # 제외: datasets-data/.tmp 는 dataset-store 서버의 요청 임시 폴더다(시작 때 비우고 다시 만든다, synthetic-data ADR 0012). 복구할 데이터가 아니다.
@@ -13,7 +14,7 @@ source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/backup-lib.sh"
 backup_load_config
 P=${DEPLOY_PROJECT:-deploy}
-STORES=${*:-gate-data models-data datasets-data registry-data gateway-data}
+STORES=${*:-gate-data models-data datasets-data registry-data gateway-data pki-ca}
 for s in $STORES; do [[ "$s" =~ ^[a-z][a-z0-9-]*$ ]] || die "저장소 이름 형식 오류: $s"; done
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 # 겹침 실행 방지(점검 M4): 같은 BACKUP_DIR 에서 두 번째 백업이 동시에 돌면 forget --prune 이 진행 중인 백업과 겹친다. 잠금을 못 잡으면 거부한다(종료 4)

@@ -8,7 +8,7 @@ source "$(dirname "$0")/lib.sh"
 P=${1:-${DEPLOY_PROJECT:-deploy}}; D=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}; ACC=$DEPLOY_ROOT/test/gateway-oidc/accounts.test.conf
 KC() { dc "$P" exec -T keycloak /opt/keycloak/bin/kcadm.sh "$@" --config /tmp/kcadm.config </dev/null; }   # </dev/null: exec 이 아래 while read 의 표준 입력(사용자 목록)을 먹지 않게 한다
 kc_pw=$(tr -d '\r\n' < "$D/tokens/keycloak-bootstrap-admin-password")
-KC config credentials --server http://localhost:8080/auth --realm master --user kcadmin --password "$kc_pw" >/dev/null 2>&1 || die "Keycloak 관리 로그인 실패(keycloak 컨테이너가 healthy 인지 확인)"
+KC config credentials --server http://127.0.0.1:8080/auth --realm master --user kcadmin --password "$kc_pw" >/dev/null 2>&1 || die "Keycloak 관리 로그인 실패(keycloak 컨테이너가 healthy 인지 확인)"
 unset kc_pw
 n=0
 while read -r user groups _; do case "$user" in ""|\#*) continue;; esac

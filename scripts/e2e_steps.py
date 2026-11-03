@@ -72,7 +72,7 @@ ap.add_argument("--run-id", default="e2e-test")
 ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기까지만 만든다(사람이 /admin/ 에서 승인)")
 ap.add_argument("--gw-ca", default="", help="gateway(HTTPS)의 내부 CA 루트 인증서 파일(시험용 CA). 있으면 gw 주소는 https 이고 이 CA만 신뢰한다")
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
-ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: http://gpu-host:8080). 비우면 이 프로젝트의 model-serving 컨테이너")
+ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: https://gpu-host). 비우면 이 프로젝트의 model-serving 컨테이너")
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(내용이 토큰 하나). 비우면 이 구성이 만든 토큰")
 ap.add_argument("--llm-package", default="", help="실제 LLM 데모: make_neutral_package.py 가 만든 폴더(LORA_A, LORA_B). 단계 3이 시험용 fake 어댑터 대신 이 중립 LoRA 패키지(vllm 서빙 설정)를 게시한다")
@@ -306,7 +306,7 @@ def call(method, url, token=None, body=None, headers=None, raw=None, ctype="appl
     return st, pb, {k.lower(): v for k, v in hd.items()}
 def out(x): print("\n@@C1@@" + json.dumps(x, default=lambda o: dict(o)))
 '''
-_C1_RD = 'from openit_link.clients import HttpReleaseReader, HttpGateService\nrd = HttpReleaseReader("http://release-gate:8080", tok("gate-read-survey-service"))\n'   # I4 읽기: survey-service 가 쓰는 읽기 토큰과 주소
+_C1_RD = 'from openit_link.clients import HttpReleaseReader, HttpGateService\nrd = HttpReleaseReader("https://release-gate", tok("gate-read-survey-service"))\n'   # I4 읽기: survey-service 가 쓰는 읽기 토큰과 주소
 
 def _c1_lit(obj): return f"json.loads({json.dumps(obj)!r})"   # 코드에 값을 싣는 법: JSON 문자열을 파이썬 리터럴로(비밀 값은 싣지 않는다)
 
@@ -375,7 +375,7 @@ def _c1_upload(set_id, text, fname):
 def _c1_i1_read(qs, qsu, qsb):
     """I1 읽기(문항 세트 버전·본문·검수·변경 분류). 읽는 주체는 release-gate(읽기 토큰 qa-read-release-gate): 그 컨테이너 안에서 한다."""
     return _c1_run("release-gate", f"A = {_c1_lit({'qs': qs, 'qsu': qsu, 'qsb': qsb})}\nfrom openit_link.clients import HttpQuestionReader\n"
-        "rd = HttpQuestionReader('http://question-authoring:8080', tok('qa-read-release-gate'))\n"
+        "rd = HttpQuestionReader('https://question-authoring', tok('qa-read-release-gate'))\n"
         "vers = [dict(v) for v in rd.list_versions(A['qs'])[0]]\nlatest = dict(rd.latest(A['qs'], reviewed_only=True))\nlatest_u = dict(rd.latest(A['qsu'], reviewed_only=True))\nlatest_b = dict(rd.latest(A['qsb'], reviewed_only=True))\n"
         "banks, revs, chg = {}, {}, {}\nfor v in vers + [latest_u, latest_b]:\n    k = v['id'] + '@' + v['version']\n    banks[k] = rd.get_question_bank(v); revs[k] = [dict(r) for r in rd.get_reviews(v)]; c = rd.get_change(v); chg[k] = dict(c) if c is not None else None\n"
         "out({'versions': vers, 'latest': latest, 'latest_u': latest_u, 'latest_b': latest_b, 'banks': banks, 'reviews': revs, 'change': chg})\n")
@@ -499,10 +499,10 @@ def imp_config(name, max_invalid_rows, store_root):
 
 # synthetic-run 잡이 부르는 이웃(문항 읽기 question-authoring, 실패 사례 ops-feedback-ingest)은 compose 의 authoring 네트워크에 함께 붙어 있다(compose.yaml 이 정본, test_e2e_job_urls 가 대조).
 SD_RUN_NETWORK = lambda: f"{a.project}_authoring"
-SD_QA_JOB_URL = "http://question-authoring:8080"    # 서비스 이름·컨테이너 포트
-SD_OPS_JOB_URL = "http://ops-feedback-ingest:8080"
+SD_QA_JOB_URL = "https://question-authoring"    # 서비스 이름·컨테이너 포트
+SD_OPS_JOB_URL = "https://ops-feedback-ingest"
 DS_JOB_NETWORK = lambda: f"{a.project}_datasets"   # dataset-store(I2) 전용 internal 네트워크(compose.yaml networks.datasets). 잡은 서비스 이름 dataset-store 로 닿는다
-DS_JOB_URL = "http://dataset-store:8080"   # 잡 컨테이너가 쓰는 dataset-store 주소(서비스 이름·컨테이너 포트). 호스트에서 부르는 URL("ds") 와 다르다
+DS_JOB_URL = "https://dataset-store"   # 잡 컨테이너가 쓰는 dataset-store 주소(서비스 이름·컨테이너 포트). 호스트에서 부르는 URL("ds") 와 다르다
 
 def run_import(name, max_invalid_rows, store_root):
     p = imp_config(name, max_invalid_rows, store_root)
@@ -616,7 +616,7 @@ def publish_packages(pk):
     want = {role: {"id": mf["package_id"], "version": mf["version"], "content_hash": mf["content_hash"]} for role, (mf, adir, rep) in pk.items()}
     assert refs == want, ("게시 결과 참조가 매니페스트와 다르다", refs, want)
     got = _c1_run("release-gate", f"A = {_c1_lit([dict(role=r, **want[r]) for r in want])}\nimport pathlib, shutil, tempfile\nfrom boundary_contracts import canonical\nfrom openit_link.clients import HttpModelRegistry\n"
-        "rr = HttpModelRegistry('http://model-registry:8080', tok('model-registry-read-release-gate'))\nroot = pathlib.Path(tempfile.mkdtemp()); res = {}\ntry:\n"
+        "rr = HttpModelRegistry('https://model-registry', tok('model-registry-read-release-gate'))\nroot = pathlib.Path(tempfile.mkdtemp()); res = {}\ntry:\n"
         "    for it in A:\n        g = dict(rr.get_manifest(it['id'], it['version'])); rep = rr.get_eval_report(g['eval_report_ref'])\n"
         "        p = rr.open_adapter(it['id'], it['version'], dest=root / it['role'])   # 해시 검증 포함\n"
         "        res[it['role']] = {'manifest': g, 'report': rep.decode(), 'adapter_ok': canonical.directory_hash(p) == g['adapter_hash']}\nfinally: shutil.rmtree(root, ignore_errors=True)\nout(res)\n", timeout=180)
@@ -630,7 +630,7 @@ def _c1_registry_publish_code_with_read_token(pk):
     """읽기 토큰(release-gate)으로 게시하면 거부되는가: 거부 코드(없으면 None)."""
     it = _c1_pack({"LORA_A": pk["LORA_A"]})[0]
     return _c1_run("release-gate", f"A = {_c1_lit(it)}\nimport base64, pathlib, shutil, tempfile\nfrom boundary_contracts import BoundaryError\nfrom openit_link.clients import HttpModelRegistry\n"
-        "rr = HttpModelRegistry('http://model-registry:8080', tok('model-registry-read-release-gate'))\nroot = pathlib.Path(tempfile.mkdtemp())\ntry:\n"
+        "rr = HttpModelRegistry('https://model-registry', tok('model-registry-read-release-gate'))\nroot = pathlib.Path(tempfile.mkdtemp())\ntry:\n"
         "    for rel, b in A['files'].items():\n        p = root / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(base64.b64decode(b))\n"
         "    try: rr.publish(A['manifest'], root, A['report'].encode()); code = None\n    except BoundaryError as e: code = e.code\nfinally: shutil.rmtree(root, ignore_errors=True)\nout(code)\n", timeout=120)
 
@@ -1750,7 +1750,7 @@ def _c3_survey_ready(): return SB.readyz("survey-service")   # (상태, 본문)
 def _c3_gate_read(path):
     """release-gate 의 읽기 면(I4)을 survey-service 컨테이너 안에서 읽는다(survey-service 가 쓰는 읽기 토큰 그대로: 운영에서 릴리스를 읽는 주체). (상태, JSON)."""
     r = _c3_py("survey-service", '''
-st, b, _ = call("GET", "http://release-gate:8080" + V["path"], _tokfile("SURVEY_RELEASE_READER_TOKEN_FILE"))
+st, b, _ = call("GET", "https://release-gate" + V["path"], _tokfile("SURVEY_RELEASE_READER_TOKEN_FILE"))
 R = [st, b]''', path=path)
     return r[0], r[1]
 
@@ -1795,7 +1795,7 @@ def step6():
     env = trace_env(rel, 1); STATE["trace_env"] = env; save()
     # Trace 를 ops-feedback 으로 보내는 운영 주체는 survey-service(outbox)다: 그 컨테이너 안에서, 그 서비스의 수집 토큰으로 이웃 서비스 이름 주소를 부른다
     o = _c3_py("survey-service", '''
-u = "http://ops-feedback-ingest:8080/v1/traces"; t = _tokfile("SURVEY_TRACE_INGEST_TOKEN_FILE")
+u = "https://ops-feedback-ingest/v1/traces"; t = _tokfile("SURVEY_TRACE_INGEST_TOKEN_FILE")
 r1 = call("POST", u, t, V["env"]); r2 = call("POST", u, t, V["env"])
 n = call("POST", u, None, V["env"]); bad = call("POST", u, t, {**V["env"], "trace": {"x": 1}})
 R = {"r1": r1[:2], "r2": r2[:2], "noauth": [n[0], n[2]], "bad": bad[:2]}''', env=env)
@@ -1974,7 +1974,7 @@ R["badtok"] = call("GET", B + "/v1/datasets", "x" * 48)[::2]''',
 def step8():
     title(8, "롤백 요청이 활성 릴리스를 되돌린다 (ops-feedback -> release-gate, I5 HTTP)")
     # 롤백을 요청하는 운영 주체는 ops-feedback 의 잡이다: 그 잡 컨테이너 안에서 그 잡의 쓰기 토큰(OPS_GATE_WRITE_TOKEN_FILE)으로 release-gate 를 부른다(잡은 release 네트워크에 있다)
-    rollback = lambda req: _c3_job_py("job-ops-feedback", 'R = call("POST", "http://release-gate:8080/v1/rollback", _tokfile("OPS_GATE_WRITE_TOKEN_FILE"), V["req"])[:2]', req=req)
+    rollback = lambda req: _c3_job_py("job-ops-feedback", 'R = call("POST", "https://release-gate/v1/rollback", _tokfile("OPS_GATE_WRITE_TOKEN_FILE"), V["req"])[:2]', req=req)
     if "releases" not in STATE:
         req = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "request_id": f"rbk-{RID}-0", "requested_at": "2026-10-15T00:00:00Z", "from_release_id": f"rel-{RID}-new",
                "to_release_id": f"rel-{RID}-old", "reason": "E2E 시험", "evidence_refs": ["ev-e2e-test-1"], "requested_by_role": "ops-feedback"}
@@ -2112,7 +2112,7 @@ def diag():
     print(f"-- 후보 수집기 run-once 다시 실행(멱등) 종료 코드 {rc}; 마지막 출력: {(out.strip().splitlines() or ['(없음)'])[-1][:300]}")
     try:   # model-registry 는 release-gate 컨테이너 안에서 그 서비스의 읽기 토큰(GATE_I3_TOKEN_FILE)으로 읽는다(운영에서 패키지를 읽는 주체)
         mr = _c3_py("release-gate", '''
-B = "http://model-registry:8080"; T = _tokfile("GATE_I3_TOKEN_FILE"); items = lambda b: b.get("items", b) if isinstance(b, dict) else b
+B = "https://model-registry"; T = _tokfile("GATE_I3_TOKEN_FILE"); items = lambda b: b.get("items", b) if isinstance(b, dict) else b
 R = []
 for i in items(call("GET", B + "/v1/packages", T)[1]):
     vs = items(call("GET", B + "/v1/packages/" + i + "/versions", T)[1]); last = call("GET", B + "/v1/packages/" + i + "/versions/" + vs[-1], T)[1] if vs else {}
@@ -2182,7 +2182,7 @@ def demo_swap():
     bl = _c3_py("survey-service", '''
 from openit_link.clients import HttpReleaseReader
 import pathlib
-b = HttpReleaseReader("http://release-gate:8080", _tokfile("SURVEY_RELEASE_READER_TOKEN_FILE")).load_bundle(V["rid"], dest=pathlib.Path("/tmp/c3-bundles"))
+b = HttpReleaseReader("https://release-gate", _tokfile("SURVEY_RELEASE_READER_TOKEN_FILE")).load_bundle(V["rid"], dest=pathlib.Path("/tmp/c3-bundles"))
 R = {"release_id": b.manifest["release_id"]}''', timeout=180, rid=rid)
     assert bl["release_id"] == rid
     unchanged_pointer = before_ptr.get("release_id") == rid
@@ -2203,7 +2203,7 @@ R = {"release_id": b.manifest["release_id"]}''', timeout=180, rid=rid)
 def _c3_qa_versions(qset):
     """문항 세트 버전 목록(I1). 운영에서 이것을 읽는 주체는 release-gate(수집·판정)라서 release-gate 컨테이너 안에서 그 서비스의 I1 읽기 토큰으로 읽는다."""
     r = _c3_py("release-gate", '''
-st, b, _ = call("GET", "http://question-authoring:8080/v1/question-sets/" + V["qs"] + "/versions", _tokfile("GATE_I1_TOKEN_FILE"))
+st, b, _ = call("GET", "https://question-authoring/v1/question-sets/" + V["qs"] + "/versions", _tokfile("GATE_I1_TOKEN_FILE"))
 R = [st, b]''', qs=qset)
     assert r[0] == 200, ("문항 버전 목록", r[0], str(r[1])[:120])
     return r[1].get("items", r[1]) if isinstance(r[1], dict) else r[1]

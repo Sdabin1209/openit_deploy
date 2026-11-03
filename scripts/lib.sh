@@ -191,3 +191,18 @@ secret_fix() {
   local f=$1 n=${2:-$(basename "$1")} m; m=$(secret_mode "$n"); chmod "$m" "$f"
   if [ "$m" = 640 ] && [ "$(stat -c %g "$f")" != "$SECRETS_GID" ]; then chgrp "$SECRETS_GID" "$f" 2>/dev/null || echo "경고: $n 의 그룹을 $SECRETS_GID 로 바꾸지 못했다(그 그룹의 구성원이어야 한다)" >&2; fi
 }
+
+# 게이트웨이 설정을 시험할 때 쓰는 TLS 재료(ADR 0060): 일회용 루트 CA 와 상류 이름용 잎 인증서를 만든다(제품 PKI 는 step-ca 이고 이것은 시험 폴더 안에만 있다).
+# 사용: gateway_test_pki <빈 폴더> <상류 이름...>. 폴더에 root_ca.crt, leaf.crt, leaf.key 가 생긴다. 게이트웨이 컨테이너에는 gateway_test_mounts 가 주는 -v/-e 인자를 붙인다.
+gateway_test_pki() {
+  local d=$1; shift; local san="" n
+  for n in "$@"; do san+="${san:+,}DNS:$n"; done
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$d/root.key" -out "$d/root_ca.crt" -subj "/CN=openit-test-root" -days 2 >/dev/null 2>&1 || return 1
+  openssl req -newkey rsa:2048 -nodes -keyout "$d/leaf.key" -out "$d/leaf.csr" -subj "/CN=openit-test-leaf" >/dev/null 2>&1 || return 1
+  printf 'subjectAltName=%s\n' "$san" > "$d/san.ext"
+  openssl x509 -req -in "$d/leaf.csr" -CA "$d/root_ca.crt" -CAkey "$d/root.key" -CAcreateserial -out "$d/leaf.crt" -days 2 -extfile "$d/san.ext" >/dev/null 2>&1 || return 1
+  chmod 644 "$d"/*
+}
+gateway_test_mounts() { # gateway_test_mounts <gateway_test_pki 폴더>: 게이트웨이 컨테이너에 더할 인자(루트 인증서, TLS 출처 조각)
+  printf '%s\n' -v "$DEPLOY_ROOT/config/gateway-tls:/etc/caddy/gateway-tls:ro" -v "$1/root_ca.crt:/etc/openit/pki/root_ca.crt:ro" -e GATEWAY_TLS_MODE=internal
+}

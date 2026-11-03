@@ -26,7 +26,7 @@ class T(unittest.TestCase):
             self.assertNotRegex(v, r"URL\(|127\.0\.0\.1|localhost", f"행 {ln}: 잡에 넘기는 base_url 이 호스트 주소다: {v}")
 
     def test_service_name_url_constant(self):
-        self.assertIn('DS_JOB_URL = "http://dataset-store:8080"', SRC)
+        self.assertIn('DS_JOB_URL = "https://dataset-store"', SRC)
 
     def test_http_store_jobs_join_compose_network(self):
         self.assertIn('network=net', SRC)
@@ -45,14 +45,14 @@ class T(unittest.TestCase):
 
     def test_job_networks_and_ports_match_compose(self):
         comp = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
-        consts = dict(re.findall(r'^(SD_QA_JOB_URL|SD_OPS_JOB_URL|DS_JOB_URL) = "(http://[a-z-]+:\d+)"', SRC, re.M))
+        consts = dict(re.findall(r'^(SD_QA_JOB_URL|SD_OPS_JOB_URL|DS_JOB_URL) = "(https://[a-z-]+)"', SRC, re.M))
         self.assertEqual(sorted(consts), ["DS_JOB_URL", "SD_OPS_JOB_URL", "SD_QA_JOB_URL"])
         nets = {k: re.search(r'^%s = lambda: f"\{a\.project\}_([a-z-]+)"' % k, SRC, re.M).group(1) for k in ("SD_RUN_NETWORK", "DS_JOB_NETWORK")}
         for const, url in consts.items():
-            host, port = re.fullmatch(r"http://([a-z-]+):(\d+)", url).groups()
+            host, = re.fullmatch(r"https://([a-z-]+)", url).groups()
             self.assertIn(host, comp, f"{const}: compose 에 서비스 {host} 가 없다")
             hc = " ".join(comp[host].get("healthcheck", {}).get("test", []))
-            self.assertIn(f":{port}/", hc, f"{const}: 포트 {port} 가 {host} 컨테이너 포트(헬스체크)와 다르다")
+            self.assertIn(f"{host}-tls", comp, f"{const}: {host} 의 TLS 사이드카({host}-tls)가 없다(ADR 0060)")
             net = nets["DS_JOB_NETWORK"] if const == "DS_JOB_URL" else nets["SD_RUN_NETWORK"]
             self.assertIn(net, comp[host]["networks"], f"{const}: 잡 네트워크 {net} 에 {host} 가 붙어 있지 않다")
 

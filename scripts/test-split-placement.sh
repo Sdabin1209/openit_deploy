@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 분리 배치 시험(E2E 밖, 단독, ADR 0060): 이 PC 한 대에서 "가상 서버 3개" = compose 프로젝트 3개(서로 다른 Docker 네트워크)에 서비스를 3묶음으로 나눠 같은 플레이북(ansible/site.yml)으로 띄운다.
+# 분리 배치 시험(E2E 밖, 단독, ADR 0061): 이 PC 한 대에서 "가상 서버 3개" = compose 프로젝트 3개(서로 다른 Docker 네트워크)에 서비스를 3묶음으로 나눠 같은 플레이북(ansible/site.yml)으로 띄운다.
 # 확인: (1) 묶음마다 /healthz  (2) 묶음 사이 호출 1건씩 성공(survey-service -> release-gate, release-gate -> question-authoring): 호스트 게시 포트로만  (3) 같은 네트워크가 아님(이름으로 닿지 않는다)
 #       (4) 인벤토리 점검이 잘못된 배치를 거부  (5) 플레이북을 다시 돌리면 바뀐 것이 없다(멱등)
 # 대역 서비스를 쓴다(test/split/): 실제 이미지는 레지스트리 digest 로만 받는다. 이 시험은 배치를 본다.
