@@ -85,7 +85,7 @@ CT=${PUBLISH_CONNECT_TIMEOUT:-3}; PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; HEAD_T=${
 # push 와 digest 확인(레지스트리가 아는 digest와 push 출력이 같아야 한다)
 REF="$REG/openit/$SVC:build-$TAGREV"
 "$DOCKER" tag "$IMG" "$REF"
-curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "http://$REG/v2/" 2>/dev/null || { echo "거부: 레지스트리가 응답하지 않는다(${PROBE_T}초): $REG" >&2; exit 4; }
+curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "$(registry_scheme "$REG")://$REG/v2/" 2>/dev/null || { echo "거부: 레지스트리가 응답하지 않는다(${PROBE_T}초): $REG" >&2; exit 4; }
 # 왜 빈 DOCKER_CONFIG 인가: 로컬 레지스트리는 인증이 없는데, docker push 는 사용자 ~/.docker/config.json 의 credsStore(WSL 에서는 Windows 의 docker-credential-desktop.exe)를 먼저 불러 레지스트리 자격을 찾는다.
 #  그 도우미가 응답하지 않으면 push 가 "error getting credentials ... accept4 failed 110" 으로 죽는다(3차 E2E). 표준 방법은 DOCKER_CONFIG(도커 공식 환경 변수)로 설정 폴더를 바꾸는 것이다: push 한 번에만 빈 설정을 쓰므로 사용자 Docker 설정을 읽거나 고치라고 요구하지 않는다.
 #  엔드포인트가 기본(소켓)이 아닌 사용자 컨텍스트면 그 주소를 DOCKER_HOST 로 넘긴다(컨텍스트 정보는 설정 폴더에 있어서 빈 폴더에서는 사라진다). 인증이 필요한 레지스트리에는 PUBLISH_DOCKER_CONFIG 로 설정 폴더를 준다.
@@ -99,7 +99,7 @@ prc=0; out=$(DOCKER_CONFIG="$PCFG" timeout "$PUSH_T" "$DOCKER" push "$REF" 2>&1)
 DIGEST=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
 [ -n "$DIGEST" ] || { echo "$out" | tail -3 >&2; echo "거부: digest 를 읽지 못했다" >&2; exit 4; }
 reg=$(curl -fsSI --connect-timeout "$CT" --max-time "$HEAD_T" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-      "http://$REG/v2/openit/$SVC/manifests/build-$TAGREV" 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p') || reg=""
+      "$(registry_scheme "$REG")://$REG/v2/openit/$SVC/manifests/build-$TAGREV" 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p') || reg=""
 [ "$reg" = "$DIGEST" ] || { echo "거부: 레지스트리 digest('$reg')와 push 출력('$DIGEST')이 다르다" >&2; exit 4; }
 
 # 잠금 기록(직렬화, 임시 파일 -> 바꿔 넣기). 같은 digest면 아무것도 바꾸지 않는다

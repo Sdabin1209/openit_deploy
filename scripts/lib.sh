@@ -13,6 +13,9 @@ DEPLOY_PY="$VENV/bin/python"
 if [ ! -x "$DEPLOY_PY" ]; then DEPLOY_COMMON_ROOT="$(cd "$(git -C "$DEPLOY_ROOT" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)"; DEPLOY_PY="$DEPLOY_COMMON_ROOT/.venv/bin/python"; fi
 # 왜 시스템 python3 로 조용히 넘어가지 않는가: 거기엔 계약 패키지(boundary_contracts)가 없어 점검이 엉뚱한 이유로 실패한다(TLS worktree 에서 "시험 빌드 라벨" 점검이 그렇게 죽었다). 환경 문제는 코드로 숨기지 않고 고칠 방법을 말하며 멈춘다.
 deploy_py() { [ -x "$DEPLOY_PY" ] || { echo "오류: deploy .venv 가 없다: bash scripts/prepare-areas.sh (docs/SETUP.md)" >&2; exit 1; }; printf '%s\n' "$DEPLOY_PY"; }
+# 레지스트리 주소의 스킴: loopback(127.x, localhost, ::1)이면 http, 아니면 https. 계약 3.4.1 클라이언트의 규칙(loopback 밖 평문 http 거부)과 같고, Docker 도 loopback 밖 평문 레지스트리는
+# insecure-registries 설정 없이는 거부한다. 같은 호스트 안의 로컬 레지스트리(registry:2, 인증·TLS 없음)는 loopback 에만 게시한다(compose.registry.yaml).
+registry_scheme() { local h=${1%%/*}; h=${h%:*}; case "$h" in 127.*|localhost|\[::1\]|::1) echo http;; *) echo https;; esac; }
 die() { echo "오류: $*" >&2; exit 1; }
 # 시험 전용: 롤백 시험처럼 '같은 소스인데 다른 digest 의 새 버전'이 필요할 때 이미지에 시험 라벨 하나(openit.test-build=<ID>)를 더한다. BUILD_TEST_ID 가 없으면 아무것도 하지 않는다.
 # 왜 revision 에 접미사를 붙이지 않는가: io.openit.revision 은 소스 커밋(hex)이어야 한다(영역 Dockerfile 의 형식 검사와 계약 ImageLabels 의 ^[0-9a-f]{7,40}$). revision 에 접미사(-test2)를 붙이던 예전 방식은 이 규칙과 충돌했다.

@@ -78,7 +78,7 @@ check "새 digest 로 바뀌고 이전 잠금이 history 에 남음" bash -c "[ 
 "$DOCKER" save deploy-pubtest/b:1 -o "$W/b.tar" >/dev/null 2>&1
 expect_rc 0 "tar 파일로 게시" $P ops-feedback "$W/b.tar"
 check "tar 게시: question-authoring 과 같은 이미지라 digest 가 같다" bash -c "[ \"\$(sed -n 's/^QUESTION_AUTHORING_DIGEST=//p' $DEPLOY_LOCK)\" = \"\$(sed -n 's/^OPS_FEEDBACK_DIGEST=//p' $DEPLOY_LOCK)\" ]"
-check "레지스트리에서 digest 로 받을 수 있다" bash -c "curl -fsSI -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' http://$DEPLOY_REGISTRY/v2/openit/survey-service/manifests/$D2 >/dev/null"
+check "레지스트리에서 digest 로 받을 수 있다" bash -c "curl -fsSI -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' $(registry_scheme $DEPLOY_REGISTRY)://$DEPLOY_REGISTRY/v2/openit/survey-service/manifests/$D2 >/dev/null"
 # 3차 E2E: 사용자 Docker 설정의 credsStore 도우미가 죽어 있으면(WSL 의 Windows 도우미 응답 없음) push 가 "error getting credentials" 로 실패했다. 같은 상태를 만들어 재현한다: 없는 도우미를 가리키는 설정 폴더
 mkdir -p "$W/badcreds"; echo '{"credsStore":"openit-nonexistent-helper"}' > "$W/badcreds/config.json"
 check "재현 조건: 이 설정에서는 그냥 docker push 가 자격증명 오류로 실패한다" bash -c "DOCKER_CONFIG=$W/badcreds $DOCKER push 127.0.0.1:1/x:y 2>&1 | grep -q 'getting credentials'"

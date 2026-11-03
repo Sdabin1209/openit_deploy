@@ -46,8 +46,8 @@ ok "step-ca 루트를 아는 호출자(SSL_CERT_FILE)는 https 로 앱 응답을
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/x.key" -out "$T/other_root.crt" -subj "/CN=other-root" -days 1 >/dev/null 2>&1; chmod 644 "$T/other_root.crt"
 ok "다른 루트만 아는 호출자는 검증 실패로 거부된다" bash -c '! docker run --rm --network $1 -e SSL_CERT_FILE=/pki/other_root.crt -v $2:/pki:ro "$3" python -c "$4"' _ $NET "$T" "$UTIL" "$CLIENT"
 ok "루트를 지정하지 않은 호출자(시스템 신뢰 저장소)도 거부된다" bash -c '! docker run --rm --network $1 "$2" python -c "$3"' _ $NET "$UTIL" "$CLIENT"
-ok "평문 http 로 사이드카 443 을 부르면 거부된다" bash -c '! docker run --rm --network $1 "$2" python -c "import urllib.request;urllib.request.urlopen(\"http://$3:443/\",timeout=5)"' _ $NET "$UTIL" $NAME
-ok "다른 컨테이너에서 앱 포트(8080)는 연결 거부된다 (앱은 loopback 에 바인드, 사이드카만 닿는다)" bash -c '! docker run --rm --network $1 "$2" python -c "import urllib.request;urllib.request.urlopen(\"http://$3:8080/\",timeout=5)"' _ $NET "$UTIL" $NAME
+ok "평문 http 로 사이드카 443 을 부르면 거부된다" bash -c '! docker run --rm --network $1 "$2" python -c "import urllib.request;urllib.request.urlopen(\"http://$3:443/\",timeout=5)"' _ $NET "$UTIL" $NAME   # plaintext-rejection-test
+ok "다른 컨테이너에서 앱 포트(8080)는 연결 거부된다 (앱은 loopback 에 바인드, 사이드카만 닿는다)" bash -c '! docker run --rm --network $1 "$2" python -c "import urllib.request;urllib.request.urlopen(\"http://$3:8080/\",timeout=5)"' _ $NET "$UTIL" $NAME   # plaintext-rejection-test
 # 6) 서버를 나눈 배치: 호출자는 다른 Docker 망에 있고, 서비스 이름을 extra_hosts(host-gateway)로 서버 쪽으로 돌려 <이름>:<게시 포트> 로 부른다
 HP=$(docker port $ID-app 443/tcp | head -1 | sed 's/.*://')
 SPLIT='import urllib.request,sys;print(urllib.request.urlopen("https://"+sys.argv[1]+":'$HP'/",timeout=5).read().decode())'
