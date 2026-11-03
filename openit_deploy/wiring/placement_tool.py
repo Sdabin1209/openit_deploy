@@ -324,7 +324,10 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
         for f in files:
             if DSN_RE.match(os.path.basename(f)):
                 src = open(os.path.join(secrets_dir, f), encoding="utf-8").read()
-                dst = src.replace("@postgres:5432/", "@postgres:%d/" % ports["postgres"]).rstrip("\n") + q + "\n"
+                dst = src.replace("@postgres:5432/", "@postgres:%d/" % ports["postgres"]).rstrip("\n")
+                if "?" not in dst:   # gen-secrets 가 이미 sslmode=verify-full&sslrootcert 를 넣는다(TLS 작업). 없을 때만 더한다
+                    dst += q
+                dst += "\n"
                 path = os.path.join(out, "secrets", f)
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
