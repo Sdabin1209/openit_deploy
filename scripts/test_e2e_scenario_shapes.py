@@ -5,7 +5,10 @@
 사용: <deploy .venv>/bin/python -W ignore scripts/test_e2e_scenario_shapes.py"""
 import ast, base64, json, os, pathlib, re, subprocess, sys, unittest
 
-import boundary_contracts as bc
+try:
+    import boundary_contracts as bc
+except ModuleNotFoundError:   # 시스템 python3 로 돌리면 계약 패키지가 없다: 원인 불명 실패로 두지 않고 고칠 방법을 말한다(lib.sh deploy_py 와 같은 원칙)
+    raise SystemExit("오류: 계약 패키지(boundary_contracts)가 없다. deploy .venv 의 python 으로 돌린다: .venv/bin/python scripts/test_e2e_scenario_shapes.py (설치: bash scripts/prepare-host.sh)")
 import jsonschema
 import survey_schema
 from referencing import Registry, Resource

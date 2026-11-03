@@ -17,6 +17,19 @@ def const(name):
     return vals[names.index(name)]
 
 
+def proxy_blocks(name):
+    """`reverse_proxy [https://]<name>[:8080] {` 블록들을 중괄호 짝으로 잘라 낸다(블록 안의 {http.request...} 자리표시 때문에 [^}]* 정규식은 쓸 수 없다)."""
+    out = []
+    for m in re.finditer(r"reverse_proxy (?:https://)?%s(?::8080)? \{" % re.escape(name), CADDY):
+        depth, k = 0, m.end() - 1
+        while True:
+            depth += CADDY[k] == "{"; depth -= CADDY[k] == "}"
+            if depth == 0: break
+            k += 1
+        out.append(CADDY[m.start():k + 1])
+    return out
+
+
 def secs(v):
     return float(v[:-2]) / 1000 if v.endswith("ms") else float(v.rstrip("s"))
 
@@ -32,12 +45,17 @@ class T(unittest.TestCase):
 
     def test_human_proxy_limits_match_constants(self):
         self.assertAlmostEqual(secs(re.search(r"\(proxy_limits\)[^}]*?dial_timeout\s+(\S+)", CADDY, re.S).group(1)), const("GW_DIAL_PROXY_S"))
-        gate = {secs(x) for x in re.findall(r"reverse_proxy release-gate:8080 \{[^}]*?import proxy_limits (\S+)", CADDY, re.S)}
-        ops = {secs(x) for x in re.findall(r"reverse_proxy ops-feedback-ingest:8080 \{[^}]*?import proxy_limits (\S+)", CADDY, re.S)}
+        gate = {secs(x) for blk in proxy_blocks("release-gate") for x in re.findall(r"import proxy_limits (\S+)", blk)}
+        ops = {secs(x) for blk in proxy_blocks("ops-feedback-ingest") for x in re.findall(r"import proxy_limits (\S+)", blk)}
         self.assertEqual(gate, {const("GW_HDR_GATE_S")}); self.assertEqual(ops, {const("GW_HDR_OPS_S")})
 
     def test_readyz_cap_matches(self):
-        blk = CADDY[CADDY.index("handle /readyz"):][:600]
+        i = CADDY.index("handle /readyz"); j = CADDY.index("{", i); depth = 0; k = j   # 블록 길이를 고정하지 않고 중괄호 짝으로 자른다(블록이 커져도 값을 찾는다)
+        while True:
+            depth += CADDY[k] == "{"; depth -= CADDY[k] == "}"
+            if depth == 0: break
+            k += 1
+        blk = CADDY[i:k + 1]
         dial = secs(re.search(r"dial_timeout\s+([0-9.]+m?s)", blk).group(1)); hdr = secs(re.search(r"response_header_timeout\s+([0-9.]+m?s)", blk).group(1))
         self.assertAlmostEqual(dial + hdr, const("GW_READYZ_CAP_S"))
 
