@@ -15,7 +15,7 @@ ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
 T=$(mktemp -d)
 trap 'rc=$?; if [ $rc -ne 0 ]; then for s in data app; do docker ps -a --filter "label=com.docker.compose.project=deploy-$ID-$s" --format "{{.Names}} {{.Status}}" >&2; for n in $(docker ps -a -q --filter "label=com.docker.compose.project=deploy-$ID-$s"); do echo "--- $(docker inspect -f "{{.Name}}" $n)" >&2; docker logs --tail 8 $n 2>&1 | cut -c1-200 >&2; done; done; tail -25 "$T/run1.log" 2>/dev/null >&2; fi; [ "${SPLIT_KEEP:-0}" = 1 ] || { for s in data app; do docker compose -p "deploy-$ID-$s" down -v --remove-orphans >/dev/null 2>&1; done; rm -rf "$T" "$ROOT/build/placement/$ID"-*; }; exit $rc' EXIT
 freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
-PGP=$(freeport); SCP=$(freeport)   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
+PGP=$(freeport); SCP=$(freeport); RGP=$(freeport)   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1); [ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 LOCK="$T/images.lock"; cp locks/images.lock "$LOCK"
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK"); PGIMG=$(sed -n 's/^POSTGRES_IMAGE=//p' "$LOCK"); CAIMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$LOCK")
@@ -26,7 +26,7 @@ mkdir -p "$T/secrets"; DEPLOY_NO_DOCKER=1 bash scripts/gen-secrets.sh --db-only 
 "$PY" - "$ROOT/compose.yaml" "$T/compose.subset.yaml" <<'PYEOF'
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-keep = ["step-ca", "pki-root", "pki-tokens", "postgres", "postgres-cert", "postgres-reload", "release-gate", "release-gate-cert", "release-gate-tls"]
+keep = ["step-ca", "pki-root", "pki-tokens", "postgres", "postgres-cert", "postgres-reload", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-tls"]
 svc = {k: c["services"][k] for k in keep}
 rg = svc["release-gate"]
 for k in ("env_file", "environment", "volumes", "stop_grace_period"):
@@ -39,9 +39,16 @@ for n, s in svc.items():
     d = s.get("depends_on")
     if isinstance(d, dict):
         s["depends_on"] = {k: v for k, v in d.items() if k in keep}
+# 다른 서버의 호출자(대역): 계약 클라이언트처럼 https://release-gate 를 SSL_CERT_FILE 루트로 부른다. 주소 설정은 제품 config/survey.env 의 값 그대로(이름만)다
+svc["survey-service"] = {"image": "${UTIL_IMAGE}", "restart": "no", "networks": ["serving"],
+    "env_file": ["${CONFIG_DIR:-./config}/survey.env"], "environment": {"SSL_CERT_FILE": "/etc/openit/pki/root_ca.crt"},
+    "volumes": ["pki-root:/etc/openit/pki:ro"],
+    "entrypoint": ["python", "-c", "import http.server as h, os, urllib.request as u\nclass H(h.BaseHTTPRequestHandler):\n    def do_GET(s):\n        url = os.environ['SURVEY_RELEASE_READER_URL'] + '/'\n        try:\n            r = u.urlopen(url, timeout=4); out = '%d %s %s' % (r.status, url, r.read().decode()[:20])\n        except u.HTTPError as e:\n            out = '%d %s' % (e.code, url)\n        except Exception as e:\n            out = 'ERR %s %s' % (url, type(e).__name__)\n        s.send_response(200); s.end_headers(); s.wfile.write(out.encode())\n    def log_message(s, *a): pass\nh.ThreadingHTTPServer(('127.0.0.1', 8080), H).serve_forever()"],
+    "healthcheck": {"test": ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/',timeout=8)"], "interval": "3s", "timeout": "9s", "retries": 10}}
 c["services"] = svc
 yaml.safe_dump(c, open(sys.argv[2], "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
 PYEOF
+ln -s "$ROOT/config" "$T/config"   # 배치 도구가 compose 옆의 config/*.env 에서 호출 설정을 읽는다
 cat > "$T/inv.yml" <<YML
 all:
   vars:
@@ -53,9 +60,9 @@ all:
     placement_secrets_dir: $T/secrets
     placement_probe_address: 127.0.0.1
     placement_bind_address: 0.0.0.0
-    placement_ports: {step-ca: $SCP, postgres: $PGP}
+    placement_ports: {step-ca: $SCP, postgres: $PGP, release-gate: $RGP}
   hosts:
-    $ID-data: {ansible_host: $HOSTADDR, placement_region: r1, placement_project: deploy-$ID-data, placement_remote_dir: $T/r/data, placement_services: [step-ca, postgres]}
+    $ID-data: {ansible_host: $HOSTADDR, placement_region: r1, placement_project: deploy-$ID-data, placement_remote_dir: $T/r/data, placement_services: [step-ca, postgres, survey-service]}
     $ID-app: {ansible_host: $HOSTADDR, placement_region: r2, placement_project: deploy-$ID-app, placement_remote_dir: $T/r/app, placement_services: [release-gate]}
 YML
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose "$T/compose.subset.yaml" >/dev/null || bad "인벤토리 점검"
@@ -72,6 +79,29 @@ grep -q 'step-ca:' "$T/r/app/compose.placement.yaml" && ok "(2) app 서버 overr
 S=$(docker run --rm --network none -v ${A}_certs-release-gate:/c:ro "$UTIL" cat /c/tls.crt | openssl x509 -noout -subject -issuer 2>/dev/null)
 case "$S" in *"CN = release-gate"*|*"CN=release-gate"*) ok "(2) app 서버 -cert 가 다른 망의 step-ca 에서 서비스 이름(release-gate) 인증서를 받았다";; *) bad "인증서 주체: $S";; esac
 [ "$(docker inspect -f '{{.State.Health.Status}}' $A-release-gate-tls-1)" = healthy ] && ok "(2) 사이드카가 그 인증서로 443 을 연다(healthy)" || bad "사이드카가 healthy 가 아니다"
+# --- R3.2·R3.4·R4.1·R4.2·R6.2: 실제 사이드카·<서비스>-net 구조에서, 다른 서버의 호출자가 보는 것 ---
+CALL() { docker exec $D-survey-service-1 python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/',timeout=15).read().decode())"; }
+R=$(CALL); case "$R" in "200 https://release-gate:"*" ok") ok "(R1.4) 다른 서버의 호출자가 https://<서비스 이름>:<게시 포트> 로 사이드카를 거쳐 앱 응답을 받는다 ($R)";; *) bad "기준 호출: $R";; esac
+A_APP=$A-release-gate-1; A_TLS=$A-release-gate-tls-1; A_NET=$A-release-gate-net-1
+waith() { local i; for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' "$1")" = healthy ] && return 0; sleep 1; done; return 1; }   # 복구는 준비 확인(healthcheck)으로 판단한다(R4.3)
+notok() { case "$1" in 200\ *) return 1;; *) return 0;; esac; }
+S0=$(docker inspect -f '{{.State.StartedAt}}' $A_TLS)
+docker stop -t 2 $A_APP >/dev/null; R=$(CALL)
+notok "$R" && case "$R" in "502 "*|"503 "*|"504 "*|"ERR "*) ok "(R3.2) 앱 컨테이너가 멈추면 다른 서버의 호출자는 실패를 본다, 앱 응답을 위조하지 않는다 ($R)";; *) bad "R3.2 응답: $R";; esac || bad "R3.2: 앱이 멈췄는데 200: $R"
+docker start $A_APP >/dev/null; waith $A_APP || bad "앱이 healthy 로 돌아오지 않는다"; R=$(CALL); case "$R" in "200 "*" ok") ok "(R4.1) 앱 재시작 뒤 같은 이름·주소로 200 (다른 구성요소를 손대지 않음) ($R)";; *) bad "R4.1 복구: $R";; esac
+[ "$(docker inspect -f '{{.State.StartedAt}}' $A_TLS)" = "$S0" ] || bad "앱 재시작에 사이드카가 같이 재시작됐다(네트워크 공간이 앱 수명과 묶였다)"; ok "(R3.2) 앱 stop/start 에 사이드카와 망 공간(-net)은 그대로"
+SA=$(docker inspect -f '{{.State.StartedAt}}' $A_APP)
+docker stop -t 2 $A_TLS >/dev/null; R=$(CALL)
+notok "$R" && case "$R" in "ERR "*|"502 "*|"503 "*) ok "(R3.4) 사이드카가 멈추면 다른 서버의 호출자는 연결 실패를 본다 ($R)";; *) bad "R3.4 응답: $R";; esac || bad "R3.4: 사이드카가 멈췄는데 200: $R"
+docker start $A_TLS >/dev/null; waith $A_TLS || bad "사이드카가 healthy 로 돌아오지 않는다"; R=$(CALL); case "$R" in "200 "*" ok") ok "(R4.2) 사이드카 재시작 뒤 앱을 건드리지 않고 같은 주소로 200 ($R)";; *) bad "R4.2 복구: $R";; esac
+[ "$(docker inspect -f '{{.State.StartedAt}}' $A_APP)" = "$SA" ] || bad "사이드카 재시작에 앱이 같이 재시작됐다"; ok "(R4.2) 사이드카 stop/start 에 앱은 재시작되지 않았다"
+# R6.2: 인증서 발급용 망(pki)과 DB 망은 서로의 서비스에 닿지 않는다(계약 호출 관계 밖의 쌍)
+PROBE() { docker run --rm --network "$1" "$UTIL" python -c "import socket,sys
+try:
+    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=3); print('reachable')
+except Exception: print('blocked')" "$2" "$3"; }
+[ "$(PROBE ${D}_pki postgres 5432)" = blocked ] && ok "(R6.2) 인증서 발급 망(pki)에서 postgres 에 닿지 않는다" || bad "R6.2: pki 망에서 postgres 에 닿는다"
+[ "$(PROBE ${D}_db-keycloak step-ca $SCP)" = blocked ] && ok "(R6.2) DB 망에서 step-ca 에 닿지 않는다" || bad "R6.2: DB 망에서 step-ca 에 닿는다"
 O=$(docker run --rm --network none -v ${D}_pg-tls:/p:ro "$UTIL" stat -c %u /p/server.key); [ "$O" = 999 ] || bad "pg-tls 의 server.key 소유자 $O"; ok "(3) postgres-cert 의 pg-tls 소유자 999"
 DSN="$T/r/app/secrets/tokens/db-gate-dsn"; grep -q "@postgres:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
 ok "(3) app 서버 DSN = postgres:$PGP, sslmode=verify-full"
