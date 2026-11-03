@@ -14,7 +14,7 @@ class H(http.server.BaseHTTPRequestHandler):
             try:
                 code = urllib.request.urlopen(url, timeout=3, context=ctx).status
             except Exception as e:
-                code = 599
+                code = 599; url += " " + repr(e)[:120]
             self.send_response(200); self.end_headers(); self.wfile.write(("%s %d" % (url, code)).encode()); return
         self.send_response(404); self.end_headers()
     def log_message(self, *a): pass
