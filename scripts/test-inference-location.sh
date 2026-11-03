@@ -26,7 +26,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT="$REGP" REGISTRY_HOST_BIND="${LOC_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
 export SECRETS_DIR="$W/secrets" GATEWAY_PORT= GATEWAY_TLS_PORT=
 # 왜 시험 호스트 이름을 넣는가: 추론 서버는 https://host.docker.internal:<포트> 로 부르고, 게이트웨이 인증서는 사이트 이름(GATEWAY_HOSTS)에 든 이름으로만 발급된다. 검증을 끄지 않는다
-export GATEWAY_HOSTS="host.docker.internal:8443, localhost:8443, 127.0.0.1:8443"
+export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"   # 첫 이름이 사람 화면의 공개 주소(Keycloak 발급자·로그인 쿠키)다: 시험 호스트가 풀 수 있는 localhost 를 앞에 둔다. 컨테이너 쪽 호출자는 host.docker.internal 로 부른다
 
 cleanup() {
   echo "== 정리 ($P, $INF, $REGP, state/loc-test)"
@@ -60,7 +60,7 @@ bash "$DEPLOY_ROOT/scripts/publish-images.sh" || bail "게시 실패"
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null || bail "비밀 생성 실패"
 
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_LOCK")
-cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 644 "$W/inference-token"
+cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 640 "$W/inference-token"
 export INFERENCE_TOKEN_FILE="$W/inference-token"
 INF_IMAGE=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST" )
 BRIDGE_GW=$("$DOCKER" network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null | tr -d '\r')
@@ -86,6 +86,17 @@ done
 [ -n "$SCP" ] || bail "게시할 수 있는 빈 포트를 찾지 못했다"
 export STEP_CA_PORT=$SCP STEP_CA_DNS_NAMES=host.docker.internal COMPOSE_EXTRA="${COMPOSE_EXTRA:-} $DEPLOY_ROOT/compose.step-ca-publish.yaml"
 mkdir -p "$W/pki"
+GWP=""
+for _try in 1 2 3 4 5 6 7 8; do
+  _p=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+  if "$DOCKER" run --rm --network none -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then GWP=$_p; break; fi
+done
+[ -n "$GWP" ] || bail "게이트웨이에 게시할 수 있는 빈 포트를 찾지 못했다"
+export GATEWAY_TLS_PORT=$GWP
+# 사람 인증(U82, ADR 0057): Keycloak 의 발급자와 oauth2-proxy 의 콜백은 밖에서 보이는 주소(첫 호스트 이름 + 밖에 보이는 포트)로 정해진다. 호스트 포트를 시험이 먼저 정하므로 그 포트를 밖에 보이는 포트로 준다
+export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT
+# 한 줄의 export 안에서는 $(...) 가 앞의 대입보다 먼저 풀린다(e2e.sh 3차 E2E 와 같은 결함). 그래서 따로 쓴다
+export GATEWAY_PUBLIC_URL="$(gateway_public_url)"; export GATEWAY_HOST_NAMES="$(gateway_host_names)"
 OK=0
 for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   [ -n "$BIND" ] || continue
@@ -100,7 +111,7 @@ for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$UTIL" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || bail "step-ca 루트를 꺼내지 못했다"
   # 지휘 쪽: 이 서버 이름(host.docker.internal)의 일회용 토큰을 발급해 파일로 준다(비밀번호는 이 컨테이너만 읽는다)
   "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$SCP" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; bail "일회용 토큰을 발급하지 못했다"; }
-  chmod 644 "$W/tls.ott"
+  chmod 640 "$W/tls.ott"
   echo "== (나) 다른 호스트: 별도 프로젝트 $INF, compose.inference.yaml 하나 (바인드 $BIND, 포트는 Docker 배정)"
   inf_compose up -d --wait || { echo "  추론 서버가 준비되지 않았다 (바인드 $BIND)"; "$DOCKER" logs --tail 20 "$INF-model-serving-1" 2>&1 | sed 's/^/    /'; bail "추론 서버 기동 실패"; }
   IPORT=$(port_of "$INF-model-serving-1" 443)
@@ -150,17 +161,15 @@ chk "추론 토큰으로 GET /v1/releases (목록)는 열리지 않는다(사람
 echo "== 3. 음성 확인"
 # (ㄱ) 사람 세션: E2E 단계 5u·test-idp-smoke.sh 와 같은 OIDC 로그인 도우미(scripts/e2e_sandbox.py oidc_login: Keycloak 로그인 -> _openit_session 쿠키)로 승인자 계정 세션을 만든다
 bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$P" >/dev/null 2>&1 || bail "시험 사용자(Keycloak)를 만들지 못했다"
-HCOOKIE=$(DEPLOY_ROOT="$DEPLOY_ROOT" "$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GW" "$CA" "$MS_HOST" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" <<'PY'
+HCOOKIE=$(DEPLOY_ROOT="$DEPLOY_ROOT" "$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GATEWAY_PUBLIC_URL" "$CA" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" <<'PY'
 import os, socket, sys
 sys.path.insert(0, os.path.join(os.environ["DEPLOY_ROOT"], "scripts"))
 import e2e_sandbox as SB
-base, ca, addr, pwf = sys.argv[1:5]
-_orig = socket.getaddrinfo
-socket.getaddrinfo = lambda h, *a, **k: _orig(addr if h == "host.docker.internal" else h, *a, **k)   # 시험 호스트가 이 이름을 풀지 못해도 게시 주소로 간다(curl --resolve 와 같다)
+base, ca, pwf = sys.argv[1:4]
 jar = SB.oidc_login(base, "trainer-e2e", open(pwf).read().strip(), ca=ca)
 print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session")))
 PY
-) 2>"$W/oidc.err" || { tail -4 "$W/oidc.err" | sed "s/^/    /" >&2; bail "승인자 OIDC 로그인에 실패했다"; }
+) 2>"$W/oidc.err" || { tail -4 "$W/oidc.err" | sed "s/^/    /" >&2; echo "  로그인 대상 $GATEWAY_PUBLIC_URL, 게시 포트 $GWPORT, 컨테이너 상태:" >&2; "$DOCKER" ps -a --filter "label=com.docker.compose.project=$P" --format "    {{.Names}} {{.Status}}" 2>&1 | grep -E "gateway-1|oauth2-proxy-1|keycloak-1" >&2; "$DOCKER" logs --tail 5 "$P-gateway-1" 2>&1 | cut -c1-240 | sed "s/^/    gw: /" >&2; bail "승인자 OIDC 로그인에 실패했다"; }
 [ -n "$HCOOKIE" ] || bail "승인자 세션 쿠키가 비었다"
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
