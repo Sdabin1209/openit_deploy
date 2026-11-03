@@ -105,7 +105,7 @@ if [ $UP_ONLY = 0 ]; then
   if [ $AREAS_OK = 0 ]; then :
   elif [ -z "$MISSING" ]; then ok "형제 리포 $(echo $NEED | wc -w)개가 $WORKSPACE 옆에 있다"; else fail "형제 리포가 없다:$MISSING" "docs/SETUP.md C절: head 를 clone 한 뒤 bash <루트>/head/setup.sh (폴더 이름은 head/workspace.yaml 과 같아야 한다)"; fi
   # --- 영역 시험 환경(check-all 의 SKIP 원인). 환경 위치와 시험 명령은 영역의 setup-env 보고(SetupEnvReport, prepare-areas.sh 가 state/setup-env/ 에 모은 것)만 본다(U43: 이웃의 .venv·node_modules 를 짐작하지 않는다)
-  SEP="${LABELS_PYTHON:-$DEPLOY_ROOT/.venv/bin/python}"; [ -x "$SEP" ] || SEP=python3
+  SEP="${LABELS_PYTHON:-$DEPLOY_PY}"; [ -x "$SEP" ] || SEP=""   # 없으면 아래에서 빈 값으로 처리한다(환경 문제로 보고하고 python3 로 넘어가지 않는다)
   NOENV=""; NODEAREAS=""
   for r in $( [ $AREAS_OK = 1 ] && areas_list --kind python,node,library 2>/dev/null ); do
     [ -e "$WORKSPACE/$r/.git" ] || continue

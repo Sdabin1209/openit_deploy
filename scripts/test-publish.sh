@@ -7,7 +7,7 @@ ID=$$; W="$DEPLOY_ROOT/state/pubtest-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" REGISTRY_PROJECT="deploy-pubtest-$ID" REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 grep -E '^[A-Z0-9_]+_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
-PYV=${LABELS_PYTHON:-$DEPLOY_ROOT/.venv/bin/python}; [ -x "$PYV" ] || PYV=python3
+PYV=${LABELS_PYTHON:-$(deploy_py)} || exit 1
 # 마지막 줄은 계약 PublishResult JSON 이고 exit_code 가 실제 종료 코드와 같다(docs/ci.md)
 pubres() { tail -1 "$W/out.txt" | "$PYV" -W ignore -c 'import json,sys;from boundary_contracts import validator;r=json.loads(sys.stdin.read());e=[x.message for x in validator("PublishResult").iter_errors(r)];assert not e,e;print(r.get(sys.argv[1],""))' "$1"; }
 FAILS=0; ok() { echo "  [PASS] $1"; }; ng() { echo "  [FAIL] $1"; FAILS=$((FAILS+1)); }

@@ -7,7 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
 ENVF=${IMAGES_ENV:-$DEPLOY_ROOT/build/images.env}
 [ -s "$ENVF" ] || { echo "검증 못 함: $ENVF 가 없다(먼저 scripts/build-images.sh)"; exit 3; }
-PY=${LABELS_PYTHON:-$DEPLOY_ROOT/.venv/bin/python}; [ -x "$PY" ] || PY=python3
+PY=${LABELS_PYTHON:-$(deploy_py)} || exit 1
 J=$(mktemp); trap 'rm -f "$J"' EXIT
 "$PY" -W ignore - "$ENVF" "$DOCKER" > "$J" <<'P' || exit 3
 import json, subprocess, sys
