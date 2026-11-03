@@ -72,23 +72,32 @@ reach() {
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   # 이 변수들은 "다른 호스트" 쪽 compose 의 환경이다(제품 쪽에는 없다). fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험 전용 표시, model-runtime ADR 0009)
   INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gateway-inference-token" \
+  INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$SCP" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott" \
   INFERENCE_CA_FILE="$W/gateway-ca.crt" RELEASE_URL="https://host.docker.internal:$GWPORT" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
 
+STEP_IMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$DEPLOY_LOCK"); SC_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")
+SCP=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')   # 빈 포트(고정 포트 금지). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml)
+export STEP_CA_PORT=$SCP STEP_CA_DNS_NAMES=host.docker.internal COMPOSE_EXTRA="${COMPOSE_EXTRA:-} $DEPLOY_ROOT/compose.step-ca-publish.yaml"
+mkdir -p "$W/pki"
 OK=0
 for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   [ -n "$BIND" ] || continue
   [ "$BIND" = 127.0.0.1 ] || echo "== 사유: 컨테이너가 host.docker.internal 로 더 좁은 바인드의 게시 포트에 닿지 못했다. 시험 동안만 $BIND 로 게시한다"
   "$DOCKER" compose -p "$INF" down -v --remove-orphans >/dev/null 2>&1 || true
   echo "== (가) 제품 기동(바인드 $BIND): 운영 모드, model-serving 끔, 외부 추론 서버 자리표시 주소"
-  GATEWAY_BIND=$BIND bash "$DEPLOY_ROOT/scripts/up.sh" "$P" --external-inference "$PLACEHOLDER" || bail "제품 기동 실패"
+  STEP_CA_BIND=$BIND GATEWAY_BIND=$BIND bash "$DEPLOY_ROOT/scripts/up.sh" "$P" --external-inference "$PLACEHOLDER" || bail "제품 기동 실패"
   GWPORT=$(port_of "$P-gateway-1" 8443)
   [ -n "$GWPORT" ] || bail "게이트웨이 TLS 호스트 포트를 읽지 못했다 (바인드 $BIND)"
   bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$W/gateway-ca.crt" || bail "게이트웨이 CA 를 꺼내지 못했다"
   if ! reach "https://host.docker.internal:$GWPORT/healthz" "$W/gateway-ca.crt"; then echo "  컨테이너에서 게이트웨이 https://host.docker.internal:$GWPORT 에 닿지 못했다 (바인드 $BIND)"; continue; fi
+  "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$UTIL" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || bail "step-ca 루트를 꺼내지 못했다"
+  # 지휘 쪽: 이 서버 이름(host.docker.internal)의 일회용 토큰을 발급해 파일로 준다(비밀번호는 이 컨테이너만 읽는다)
+  "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$SCP" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; bail "일회용 토큰을 발급하지 못했다"; }
+  chmod 644 "$W/tls.ott"
   echo "== (나) 다른 호스트: 별도 프로젝트 $INF, compose.inference.yaml 하나 (바인드 $BIND, 포트는 Docker 배정)"
   inf_compose up -d --wait || { echo "  추론 서버가 준비되지 않았다 (바인드 $BIND)"; "$DOCKER" logs --tail 20 "$INF-model-serving-1" 2>&1 | sed 's/^/    /'; bail "추론 서버 기동 실패"; }
-  IPORT=$(port_of "$INF-model-serving-1" 8080)
+  IPORT=$(port_of "$INF-model-serving-1" 443)
   [ -n "$IPORT" ] || bail "추론 서버 호스트 포트를 읽지 못했다"
   if reach "https://host.docker.internal:$IPORT/healthz" "$W/pki/root_ca.crt"; then OK=1; break; fi
   echo "  컨테이너에서 추론 서버 host.docker.internal:$IPORT 에 닿지 못했다 (바인드 $BIND)"
