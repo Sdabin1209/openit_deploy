@@ -25,9 +25,10 @@ def ss_tag():
 class FormPassesSurveySchema(unittest.TestCase):
     def test_bank_from_e2e_form_passes_reference_schema(self):
         tag = ss_tag()
-        py = setup_env.env_python("question-authoring", WS)
-        self.assertIsNotNone(py, "question-authoring 의 setup-env 환경이 없다(bash scripts/prepare-areas.sh question-authoring)")
-        r = subprocess.run([str(py), "-c", EXTRACT, str(ROOT / "test/fixtures/question-form-v2.txt")], capture_output=True, text=True, cwd=str(WS / "question-authoring"))
+        py = setup_env.env_python("question-authoring", WS) or sys.executable   # 보고가 없으면 이 시험의 파이썬(추출기는 영역 폴더(cwd)에서 import 한다)
+        import tempfile as _tf
+        hdr = _tf.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8"); hdr.write("문진표 ID: qs-fixture\n문진표 제목: 시험 문진표\n" + (ROOT / "test/fixtures/question-form-v2.txt").read_text(encoding="utf-8")); hdr.close()   # 4.0.0: 은행에 문진표 ID·제목이 필수라 e2e_steps.form_for 와 같이 머리를 붙인다
+        r = subprocess.run([str(py), "-c", EXTRACT, hdr.name], capture_output=True, text=True, cwd=str(WS / "question-authoring"))
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
         ext = json.loads(r.stdout.strip().splitlines()[-1])
         self.assertEqual(ext["status"], "PARSED", ext.get("reason"))

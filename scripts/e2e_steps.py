@@ -189,6 +189,7 @@ SD_UNUSED_DIR = "image-env-takes-precedence"
 # 문진표(계약 3.3.0): 저자가 문진표 둘을 올린다. 둘 다 question-authoring 리포의 forms/ 에 있는 제품 양식이다(wo-320). ID·제목은 양식이 정한다. 보지 못한 문진표(QSU)는 학습에 쓰이지 않는 평가용이라 실행 ID 로 만든다.
 QS, QSB, QSU = "health-screening", "health-screening-b", f"qs-{RID}-unseen"
 QS_TITLE, QSB_TITLE = "건강검진 문진표", "건강검진 문진표(순서 B)"
+V2_FROM, V2_TO = "현재 약물 치료 중이십니까?", "현재 약물을 복용 중이십니까?"   # 양식 v1 의 Q1.D01 질문 문장(실제 양식에서 확인, 11곳 중 첫 곳만 바꾼다): 문구 하나가 다른 둘째 버전. test_e2e_scenario_shapes 가 같은 상수로 실제 양식에서 추출한다
 QS_FIRST, QSB_FIRST = "Q1.D01", "Q3"   # 첫 문항: A 는 Q1.D01, B 는 Q3 블록이 먼저(순서는 문진표 자신의 order 에서 나온다)
 FORMS_DIR = pathlib.Path(a.forms_dir)   # 양식 정본은 question-authoring 리포의 forms/ (읽기만). 위치는 e2e.sh 가 --forms-dir 로 넘긴다(드라이버는 이웃 폴더 위치를 짐작하지 않는다)
 def read_form(name):
@@ -204,11 +205,11 @@ def upload(set_id, text, fname):   # 샌드박스(D123): 저자 경로는 게이
 def step1():
     title(1, "저자가 문항 자료를 올리고 미리보기를 확인한다 (question-authoring: 저자 경로는 게이트웨이 계정, I1 읽기는 release-gate 컨테이너 안)")
     form = read_form("health-screening-v1.txt"); form_b = read_form("health-screening-short-order.txt")
-    form2 = form.replace("알려 주세요.", "말씀해 주세요.", 1); assert form2 != form, "문진표 A 의 둘째 버전을 만들 문구('알려 주세요.')가 양식에 없다: 이 문구를 바꾸는 것으로 버전 2 를 만든다"
+    form2 = form.replace(V2_FROM, V2_TO, 1); assert form2 != form, f"문진표 A 의 둘째 버전을 만들 문구({V2_FROM!r})가 양식에 없다"
     r1, raw1 = _c1_upload(QS, form, "form1.txt")
     r2, _ = _c1_upload(QS, form2, "form2.txt")
     rb, _ = _c1_upload(QSB, form_b, "form-b.txt")
-    ru, _ = _c1_upload(QSU, form.replace("알려 주세요.", "들려 주세요."), "unseen.txt")
+    ru, _ = _c1_upload(QSU, form.replace("현재 약물 치료 중이십니까?", "지금 약물 치료 중이십니까?"), "unseen.txt")
     c, e_, _ = _c1_gw("POST", "/v1/reviews", account=_C1_AUTHOR, body={"question_set": r1, "decision": "APPROVED", "clinical_basis_approved": True}); assert c == 403, ("저자가 자기 확인을 임상 승인했다(4-eyes)", c, e_)
     # 인증 없는 입구: 게이트웨이는 401, 서비스 자신은 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절, RFC 9110 15.5.2·RFC 6750 3절)
     assert _c1_gw("GET", "/v1/drafts")[0] == 401, "인증 없이 게이트웨이 저작 경로가 열려 있다"
@@ -355,9 +356,15 @@ def _c1_activate(rid):
     c, b, _ = _c1_gw("POST", "/v1/activate", account=_C1_OPERATOR, body={"requested_by_role": "operator", "release_id": rid})
     return c, b
 
+def form_for(set_id, text):
+    """양식 머리의 `문진표 ID:`·`문진표 제목:`(question-authoring ADR 0027)을 올리는 ID 와 맞춘다: 서버는 쿼리의 question_set_id 와 머리의 ID 가 다르면 거절한다. 머리가 있으면 ID 만 바꾸고 제목은 둔다, 없으면 앞에 붙인다."""
+    import re
+    if re.search(r"^문진표 ID:", text, re.M): return re.sub(r"^문진표 ID:.*$", f"문진표 ID: {set_id}", text, count=1, flags=re.M)
+    return f"문진표 ID: {set_id}\n문진표 제목: 시험 문진표 {set_id}\n" + text
+
 def _c1_upload(set_id, text, fname):
     """저자 경로(게이트웨이, 저자 계정)로 자료 등록 -> 미리보기 -> 확인, 임상 검수자 계정이 임상 근거를 승인한다(4-eyes). (문항 세트 참조, 원본 바이트)."""
-    raw = text.encode()
+    raw = form_for(set_id, text).encode()
     c, d, _ = _c1_gw("POST", f"/v1/materials?question_set_id={set_id}&filename={fname}", account=_C1_AUTHOR, data=raw, headers={"Content-Type": "text/plain"}); assert c in (200, 201), f"자료 등록 {c} {d}"
     c, pv, _ = _c1_gw("GET", f"/v1/drafts/{d['draft_id']}/preview", account=_C1_AUTHOR); assert c == 200 and pv["ready_to_confirm"], pv
     c, ref, _ = _c1_gw("POST", f"/v1/drafts/{d['draft_id']}/confirm", account=_C1_AUTHOR, body={"preview_hash": pv["preview_hash"]}); assert c == 200, ref
@@ -1345,7 +1352,7 @@ def _c2_qa_read(method, *args, **kw):
       why='step5a 는 STATE 를 읽지 않는다. 그러나 앞 단계가 만든 저자 계정·문항 상태에 의존하는지는 코드를 읽어 확정하지 못했다')
 def step5a():
     title("5a", "저자 경로(question-authoring)를 gateway 기본 인증 뒤에서: 자료 등록·확인(author), 임상 근거 승인(clinical-reviewer), 자기 승인 403, 본문 상한 (D88/U9)")
-    qset = f"qs-{RID}-gwauthor"; form = (ROOT / "test/fixtures/question-form-v2.txt").read_bytes()
+    qset = f"qs-{RID}-gwauthor"; form = form_for(qset, (ROOT / "test/fixtures/question-form-v2.txt").read_text()).encode()
     up = f"/v1/materials?question_set_id={qset}&filename=gw.txt"
     assert gw_bytes("POST", up, form, "text/plain")[0] == 401, "인증 없이 저자 경로가 열려 있다"
     assert gw_bytes("POST", up, form, "text/plain", basic=_C2_STAFF)[0] == 403, "author 역할이 아닌 계정(staff)이 저자 경로를 쓸 수 있다"
@@ -2270,7 +2277,7 @@ def step5p():
     assert not diff, f"재시작 전후 행 지문이 다르다: {diff}"
     after_v = [dict(v) for v in _c3_qa_versions(qset)]
     assert after_v == before_v, ("문항 버전이 달라졌다", before_v, after_v)
-    upload(qset, form.replace("알려 주세요.", "들려 주세요."), "pg2.txt")
+    upload(qset, form.replace("현재 약물 치료 중이십니까?", "지금 약물 치료 중이십니까?"), "pg2.txt")
     assert len(_c3_qa_versions(qset)) == 2, "복구 뒤 새 쓰기(버전 2)가 반영되지 않았다"
     turn_note = ""
     if has_release:
