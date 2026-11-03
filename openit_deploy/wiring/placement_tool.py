@@ -22,7 +22,7 @@ STAGES = [["step-ca"], ["postgres"], ["keycloak"],   # step-ca 가 먼저: 모�
           ["survey-service", "model-serving"],
           ["oauth2-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3
-CONTAINER_PORT = {"postgres": 5432, "step-ca": 9000}   # 나머지는 8080(이미지 규칙, HTTP.md)
+CONTAINER_PORT = {"postgres": 5432}   # 나머지는 8080(이미지 규칙, HTTP.md)
 STEP_CA_BOUND = ("pki-root", "pki-tokens")   # step-ca 서버에서만 돈다: pki-tokens 는 프로비저너 비밀(step-ca-password)을 읽고 pki-root 는 키가 든 pki-ca 볼륨을 읽는다. 둘 다 step-ca 서버 밖으로 나가지 않는다(ADR 0061)
 PUBLISH_NET = "placement-publish"      # 내부 전용 네트워크에만 붙은 서비스가 호스트 포트를 열 수 있게 더하는 일반 네트워크
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -160,8 +160,6 @@ def check(p, compose):
     for srv, d in p["servers"].items():
         if any(n in called for n in d["services"]) and not IP_RE.match(d["address"]):
             errs.append("서버 %s: 다른 서버가 이름을 이 서버로 돌리는 extra_hosts 는 IP 만 받는다(address 는 IP 여야 한다)" % srv)
-    if (p.get("ports") or {}).get("step-ca", 9000) != 9000:
-        errs.append("placement_ports 의 step-ca 는 9000 이어야 한다(인증서 발급 명령이 https://step-ca:9000 으로 고정이라 게시 포트가 같아야 한다)")
     for port in (p.get("ports") or {}):
         if port not in known:
             errs.append("ports: 서비스 '%s' 는 compose 서비스 목록에 없다" % port)
@@ -220,7 +218,7 @@ def env_of(svc, compose_dir):
 
 
 def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
-    sidecared = set(leaders(compose).values()) - {"postgres"}
+    sidecared = set(leaders(compose).values()) - {"postgres", "step-ca"}   # step-ca 는 pki-root·pki-tokens 의 짝일 뿐 TLS 사이드카가 없다(자기 포트 9000)
     servers = p["servers"]
     if host not in servers:
         fail(["서버 '%s' 는 인벤토리에 없다" % host])
@@ -268,7 +266,9 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     # 내부 전용 네트워크에만 붙은 서비스가 게시되면 일반 네트워크를 더한다(internal 네트워크는 호스트 포트를 열지 못한다)
     nets = compose.get("networks") or {}
     addnet = set()
-    for n in published:
+    # 다른 서버를 부르는 서비스도 같다: internal 네트워크에만 붙어 있으면 호스트 밖으로 나가지 못한다(예: pki 망의 <서비스>-cert 가 다른 서버의 step-ca 에 닿으려면)
+    callers = {n for n in local if call_targets(p, compose, n, host, owner)}
+    for n in sorted(published | callers):
         sn = compose["services"][n].get("networks") or []
         sn = list(sn) if not isinstance(sn, dict) else list(sn)
         if sn and all((nets.get(x) or {}).get("internal") for x in sn):
@@ -297,7 +297,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
                 lines.append("      - %s" % x)
         if n in published and not (compose["services"][n].get("ports")):
             lines.append("    ports:")
-            lines.append("      - \"%s:%d:%d\"" % (bind, ports[n], 443 if n in sidecared else CONTAINER_PORT.get(n, 8080)))   # 사이드카가 있는 서비스는 사이드카의 443 을 연다(앱 포트는 사이드카 뒤 loopback)
+            lines.append("      - \"%s:%d:%d\"" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else CONTAINER_PORT.get(n, 8080))))   # 사이드카가 있는 서비스는 사이드카의 443, step-ca 는 안팎이 같은 STEP_CA_PORT, 나머지는 8080(postgres 5432)
     if addnet:
         lines += ["networks:", "  %s: {}" % PUBLISH_NET]
     if len(lines) == 2:
@@ -318,11 +318,14 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
         q = ""
         mode = p.get("db_sslmode", "verify-full" if scheme == "https" else "")
         if mode:
-            q = "?sslmode=%s&sslrootcert=%s" % (mode, p.get("db_sslrootcert", "/run/secrets/postgres-ca.pem"))
+            q = "?sslmode=%s&sslrootcert=%s" % (mode, p.get("db_sslrootcert", "/etc/openit/pki/root_ca.crt"))
         for f in files:
             if DSN_RE.match(os.path.basename(f)):
                 src = open(os.path.join(secrets_dir, f), encoding="utf-8").read()
-                dst = src.replace("@postgres:5432/", "@postgres:%d/" % ports["postgres"]).rstrip("\n") + q + "\n"
+                dst = src.replace("@postgres:5432/", "@postgres:%d/" % ports["postgres"]).rstrip("\n")
+                if "?" not in dst:   # gen-secrets 가 이미 sslmode=verify-full&sslrootcert 를 넣는다(TLS 작업). 없을 때만 더한다
+                    dst += q
+                dst += "\n"
                 path = os.path.join(out, "secrets", f)
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -338,7 +341,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     stage_tokens = []
     for st in stages:
         stage_tokens.append(sorted(n[:-5] for n in st if n.endswith("-cert") and ca_host and ca_host != host))
-    plan = {"host": host, "step_ca_host": ca_host, "stage_tokens": stage_tokens, "region": servers[host]["region"], "services": local, "stages": stages,
+    plan = {"host": host, "oneshots": sorted(one & localset), "step_ca_host": ca_host, "step_ca_port": ports.get("step-ca"), "stage_tokens": stage_tokens, "region": servers[host]["region"], "services": local, "stages": stages,
             "secrets": secrets, "configs": configs, "secret_files": sorted(set(files)), "generated_secret_files": generated,
             "published": {n: ports[n] for n in sorted(published)}}
     return "\n".join(lines) + "\n", plan

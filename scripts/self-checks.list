@@ -74,3 +74,7 @@ deploy .venv 가 없으면 시스템 python3 로 조용히 넘어가지 않고 �
 E2E 저작 시나리오가 QA_REQUIRE_TWO_PERSON 구성(기본 false, L13)과 맞는다: false 에서 /v1/reviews 는 403 기대 (4차 데모 단계 1) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_two_person_scenario.py"
 추론 compose 도 비밀 규칙(group_add, 640 + 그룹)을 따른다 (L02, ADR 0060) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_inference_group_add.py"
 게이트웨이가 상류로 부르는 서비스는 모두 healthy 를 기다린다 (oauth2-proxy 는 사이드카의 /ping, ADR 0060) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_gateway_depends.py"
+sslrootcert 를 쓰는 모든 서비스가 pki-root 를 그 경로에 마운트한다 (정적, 빠지면 실패, ADR 0061) :: bash "$DEPLOY_ROOT/scripts/test-sslrootcert-mounts.sh"
+분리 배치 시험 (가상 서버 3개=compose 프로젝트 3개, 게시 포트 호출, https, 멱등, 잘못된 배치 거부, Docker 필요, ADR 0061) :: bash "$DEPLOY_ROOT/scripts/test-split-placement.sh"
+분리 배치의 인증서 경로 (실제 step-ca 토큰을 다른 서버 볼륨으로 전달해 https 검증, Docker 필요, ADR 0061) :: bash "$DEPLOY_ROOT/scripts/test-split-pki.sh"
+분리 배치의 실제 플레이북 경로 (토큰 전달, 다른 망 step-ca 발급, 다른 망 postgres verify-full, 멱등, Docker 필요, ADR 0061) :: bash "$DEPLOY_ROOT/scripts/test-split-pki-playbook.sh"

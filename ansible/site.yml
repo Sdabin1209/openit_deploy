@@ -39,6 +39,7 @@
       ansible.builtin.shell: |
         set -e
         export SECRETS_DIR="{{ p_secrets }}" COMPOSE_EXTRA="{{ p_out }}/compose.placement.yaml"
+        {{ ("export STEP_CA_PORT=" ~ (plan.step_ca_port | string)) if plan.step_ca_port else ":" }}
         source "{{ p_root }}/scripts/lib.sh"
         dc "{{ p_project }}" config --format json > "{{ p_out }}/config.json"
         "$DEPLOY_PY" -W ignore "{{ p_root }}/scripts/check_config_contracts.py" --compose-json "{{ p_out }}/config.json"

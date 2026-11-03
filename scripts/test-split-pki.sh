@@ -33,7 +33,7 @@ ok "서비스 이름 일회용 토큰이 발급된다" bash -c 'docker run --rm 
 # 4) 앱(loopback 8080) + 인증서 컨테이너(토큰으로 1회 발급 + renew 데몬) + 사이드카(같은 네트워크 네임스페이스). 앱의 443 만 호스트에 게시한다(서버를 나눈 배치의 게시 포트)
 docker run -d --name $ID-app --network $NET --network-alias $NAME --sysctl net.ipv4.ip_unprivileged_port_start=0 -p 127.0.0.1::443 "$SC_IMG" caddy respond --listen 127.0.0.1:8080 "hello-from-app" >/dev/null
 # 3b) 다른 서버로 토큰 전달(ADR 0061, 플레이북과 같은 명령): step-ca 서버 쪽 볼륨에서 토큰과 루트(공개)만 JSON 으로 읽어 지휘 기계를 거쳐 다른 서버의 볼륨에 쓴다(640). 프로비저너 비밀은 CA 쪽에만 있다
-docker run --rm --network none -v $ID-tok:/t:ro -v $ID-root:/r:ro "$UTIL" python -c 'import json,sys;print(json.dumps({"root":open("/r/root_ca.crt").read(),"tokens":{n:open("/t/%s.ott"%n).read().strip() for n in sys.argv[1:]}}))' $NAME > "$T/tokens.json"
+docker run --rm --network none -v $ID-tok:/t:ro -v $ID-root:/r:ro "$UTIL" python -c 'import json,sys;import base64;print(base64.b64encode(json.dumps({"root":open("/r/root_ca.crt").read(),"tokens":{n:open("/t/%s.ott"%n).read().strip() for n in sys.argv[1:]}}).encode()).decode())' $NAME > "$T/tokens.json"
 docker run -i --rm --network none --user 0 -v $ID-tokB:/t -v $ID-rootB:/r -v "$DEPLOY_ROOT/ansible/files/put-tokens.py:/p.py:ro" "$UTIL" python /p.py < "$T/tokens.json" >/dev/null
 rm -f "$T/tokens.json"
 ok "다른 서버의 토큰 볼륨에 토큰이 640 으로 있고 소유자는 인증서 컨테이너 uid 다" bash -c '[ "$(docker run --rm --network none -v $1:/t:ro "$3" sh -c "stat -c %a:%u /t/$2.ott")" = 640:1000 ]' _ $ID-tokB $NAME "$UTIL"
