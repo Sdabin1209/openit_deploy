@@ -329,7 +329,7 @@ if not isinstance(d,dict) or not d: sys.exit('본문이 비어 있지 않은 JSO
 if sch!='-':
     e=[x.message for x in validator(sch).iter_errors(d)]
     if e: sys.exit(sch+' 위반: '+e[0][:100])
-if d.get('ready') is False or d.get('status') not in (None,'ok'): sys.exit('준비되지 않았다: '+json.dumps(d)[:80])" "$sch"; }   # health_check inpy <서비스> <경로>
+if d.get('ready') is False or d.get('status') in ('not-ready','error','fail','failed'): sys.exit('준비되지 않았다: '+json.dumps(d)[:80])   # status 값은 서비스별이다(question-authoring 은 "ready"): 스키마가 없으면 비어 있지 않은 객체 + 명백한 비정상만 거른다" "$sch"; }   # health_check inpy <서비스> <경로>
 no_doors() { local bad; bad=$("$DOCKER" ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | tr -d '\r' | grep -- '->' | grep -v "^${PROJECT}-gateway-1 " | grep -v "^${PROJECT}-step-ca-1 "); [ -z "$bad" ] || { echo "gateway 밖에서 호스트 포트를 게시한 제품 컨테이너: $bad"; return 1; }; echo "호스트 포트를 게시한 제품 컨테이너는 gateway 뿐이다 (시험용 문 0)"; }
 chk "샌드박스: 제품에 시험용 문이 없다 (호스트 포트는 gateway 뿐, 실행 중 컨테이너 기준)" no_doors
 chk "샌드박스: 제품 compose 정적 점검 (시험용 포트·가짜 백엔드·compose.test.yaml 없음)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_no_test_doors.py"
