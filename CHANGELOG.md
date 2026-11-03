@@ -1,5 +1,12 @@
 # 변경 이력
 
+## wo-450 D6 (U82): 사람 인증을 Keycloak(OIDC)로 (ADR 0057)
+- 새 서비스 `keycloak`(26.4)·`oauth2-proxy`(v7.12.0), 게이트웨이 `(authenticate)` 는 `forward_auth`(config/gateway-auth.caddy). `/oauth2/*`(oauth2-proxy)·`/auth/*`(Keycloak) 경로, `/oauth2/auth`·master realm 은 닫음. 신원 헤더 `X-Openit-User`(사용자 이름)·`X-Openit-Roles`(그룹)를 인증 결과에서 붙이고 위조 헤더는 지운다. 인증 없음: `/v1/*` 401+Bearer, 화면 302(`/oauth2/start`), 그룹 없음 403 `ACCOUNT_PENDING_APPROVAL`.
+- realm `openit` 가져오기(그룹 8개, 자가 등록, 이벤트 365일, 클라이언트 `openit-gateway`, 초기 admin). `scripts/gen-keycloak-realm.sh`(GATEWAY_HOSTS → 허용 리다이렉트), `gen-secrets.sh`(Keycloak·oauth2-proxy 비밀, `keycloak` DB 계정), `idp-test-users.sh`(시험 사용자, kcadm).
+- 삭제: 정적 계정 파일 경로(`staff-accounts.conf`, `apply-accounts.sh`, `gateway-accounts.caddy`, 평문 암호·해시 파일), 해당 시험(`test-staff-accounts.sh`, `test-hash-password-argv.sh`). E2E 접근 계층(`e2e_sandbox.py`)은 사람 계정을 OIDC 로그인 세션 쿠키로 부른다. e2e.sh·demo.sh 는 밖에 보이는 포트를 정하고 시험 사용자를 만든다.
+- 시험: `test-gateway-auth.sh`(가짜 oauth2-proxy·상류, 69건), `test-idp-smoke.sh`(진짜 Keycloak·oauth2-proxy·Caddy: 로그인·역할·가입·승인 대기·승인·로그아웃·이벤트), `test_idp_wiring.py`. 진짜 스택 스모크가 `keycloak-oidc` 공급자의 `role:` 그룹 혼입과 비밀 파일 줄바꿈 문제를 잡았다. 전체 E2E 는 돌리지 않았다.
+- D6a 의 계정 `map`(basic 단계의 X-Openit-Roles)은 Caddy 지시어 순서상 인증보다 먼저 평가되어 역할이 비었을 것으로 보이며(순서 추정, 직접 확인하지는 않았다) D6b 로 대체됐다.
+
 ## wo-450 D6a (U82 준비): X-Openit-Roles, QA_USER_ROLES 삭제
 - 게이트웨이가 인증 계정의 역할 목록을 `X-Openit-Roles`(계약 CONVENTIONS 6절 3.4.0)로 붙이고(`gateway-accounts.caddy` 의 `map` → `{user_roles}`) 클라이언트가 보낸 같은 헤더를 지운다. `config/question-authoring.env` 의 `QA_USER_ROLES` 삭제. 시험 `test_gateway_roles_header.py`. 이 단계는 basic_auth 의 계정 역할에서 붙이고, OIDC(D6b)에서는 같은 `{user_roles}` 를 oauth2-proxy 그룹에서 채운다.
 

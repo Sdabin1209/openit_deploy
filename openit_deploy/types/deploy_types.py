@@ -146,6 +146,7 @@ class ExposureCheckResult(TypedDict):
 
 class GatewayEnv(TypedDict):
     GATEWAY_HOSTS: NotRequired[str]
+    GATEWAY_HOST_NAMES: NotRequired[str]
     GATEWAY_PUBLIC_TLS_PORT: NotRequired[str]
 
 

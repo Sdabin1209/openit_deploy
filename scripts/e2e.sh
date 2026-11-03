@@ -242,6 +242,8 @@ export GATEWAY_PORT=$(docker_free_port) GATEWAY_TLS_PORT=$(docker_free_port); IN
 [ -n "$GATEWAY_PORT" ] && [ -n "$GATEWAY_TLS_PORT" ] && [ -n "$INFERENCE_FIXED_PORT" ] || { echo "호스트 포트 배정 실패" >&2; exit 1; }
 # 추론 서버가 TLS 로 부르는 이름(host.docker.internal)이 게이트웨이 인증서에 있어야 한다: 운영 설정 변수 GATEWAY_HOSTS 에 호출자가 쓰는 이름을 적는 것과 같다(실제 배포는 병원 내부 도메인)
 export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
+# 사람 인증(U82, ADR 0057): Keycloak 의 발급자와 oauth2-proxy 의 콜백은 밖에서 보이는 주소(첫 호스트 이름 + 밖에 보이는 포트)로 정해진다. 호스트 포트가 Docker 배정이므로 그 포트를 밖에 보이는 포트로 알린다
+export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT GATEWAY_PUBLIC_URL="$(gateway_public_url)" GATEWAY_HOST_NAMES="$(gateway_host_names)"
 if [ "$BIND" = 127.0.0.1 ]; then echo "  컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는다: 게이트웨이·추론 서버는 127.0.0.1 에 게시한다"
 else echo "  이 Docker 에서는 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿지 못한다: 시험 동안 게이트웨이·추론 서버를 0.0.0.0 에 게시한다(방화벽은 이 PC 밖에서 막는다. docs/RUN.md 7-1)"; fi
 INF_IMAGE="$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST"
@@ -262,6 +264,7 @@ export INFERENCE_TOKEN_FILE="$W/inference-token"
 external_inference_setup "http://host.docker.internal:$IPORT"
 export PROMETHEUS_INFERENCE_METRICS_TARGETS=no-local-inference-targets.yml; export PROMETHEUS_INFERENCE_TARGETS=no-local-inference-targets.yml   # 외부 추론 모드: 제품 안에 model-serving 이 없으니 감시 스택이 그 탐침 대상을 갖지 않는다(config/prometheus/prometheus.yml 주석)
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
+chk "시험 사용자를 Keycloak(realm openit)에 만든다 (운영 입구 kcadm, 사람 계정은 OIDC 로그인)" bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$PROJECT"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
 abort_if_failed
 PGW=$(port_of "${PROJECT}-gateway-1" 8080); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS. 제품의 호스트 포트는 gateway 뿐이다

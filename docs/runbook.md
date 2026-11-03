@@ -215,13 +215,13 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 **권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 640 + 그룹 `SECRETS_GID`(기본 `id -g`)이고 서비스는 `group_add` 로 읽는다([adr/0054-secret-files-640-group-add.md](adr/0054-secret-files-640-group-add.md); 다른 호스트로 옮기면 그 호스트의 `SECRETS_GID` 로 `gen-secrets.sh` 를 다시 돌린다). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
 
-**직원 계정은 조직이 준다(ADR 0039).** 이 프로젝트는 직원 계정을 발급하지 않고 암호를 만들지 않는다. 조직(병원 정보부서 등)이 `secrets/staff-accounts.conf`(`<계정> <역할[,역할]> <bcrypt 해시>`, 형식은 `config/staff-accounts.conf.example`)를 주고, 게이트웨이는 그 해시를 그대로 Caddy 파일에 넣는다. 해시 만드는 법은 예시 파일 머리말(`docker run --rm -it caddy:2-alpine caddy hash-password`, 암호는 화면에 안 보이고 인자에도 안 남는다). 평문 암호 파일(`account-<id>-password`)은 E2E·데모 시험 계정(`*-e2e`, `gen-secrets.sh --test-fixtures`)만 쓴다.
+**사람 계정은 Keycloak에 있다(U82, [ADR 0057](adr/0057-human-auth-keycloak-oauth2-proxy.md); ADR 0039의 정적 계정 파일은 대체됐다).** 계정 추가·삭제·역할 변경·비밀번호 재설정은 Keycloak 관리 화면(`<밖에서 보이는 주소>/auth/admin/openit/console/`)에서 `admin` 그룹 계정이 한다. 이 프로젝트는 계정을 발급하지 않는다. 비밀 파일로 만드는 것은 Keycloak·oauth2-proxy의 비밀(`keycloak-bootstrap-admin-password`, `openit-initial-admin-password`, `oauth2-proxy-client-secret`, `oauth2-proxy-cookie-secret`, `db-keycloak-password`)뿐이다.
 
 **회전 절차.**
-1. 직원 계정(추가·삭제·암호 변경): 조직이 `secrets/staff-accounts.conf`를 고쳐 주면 `bash scripts/apply-accounts.sh --apply`(형식·역할·bcrypt 검사 후 계정 조각을 다시 쓰고 게이트웨이를 다시 시작한다. 검사에 실패하면 기존 조각을 바꾸지 않는다). 이 프로젝트가 새 암호를 만들거나 전달하지 않는다.
+1. 사람 계정(추가·삭제·역할·암호): Keycloak 관리 화면에서 한다(재시작 불필요). OIDC 클라이언트 비밀을 돌리려면 `oauth2-proxy-client-secret` 파일을 지우고 `gen-secrets.sh` 후 Keycloak 관리 화면의 클라이언트 `openit-gateway` 자격 증명에서 같은 값으로 바꾸고 `oauth2-proxy`를 다시 만든다(realm은 이미 있으면 다시 가져오지 않는다).
 2. 서비스 토큰·DB 암호 한 개: 해당 파일을 지우고 `gen-secrets.sh`를 다시 실행(목록 값 파일도 새 값으로 다시 쓴다). DB 암호는 `bash scripts/pg-roles.sh sync`로 서버의 계정 암호를 맞춘다. 그다음 소유 서비스와 그 클라이언트를 다시 만든다(`up.sh deploy`).
 3. 기기 토큰: `bash scripts/kiosk-add-device.sh remove <ID> --apply` 후 `add <ID> --apply`, 새 토큰을 기기에 한 번 전한다.
-4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, 조직에 모든 직원 계정의 해시 교체 요청, 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
+4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, Keycloak에서 모든 계정 비밀번호 재설정 요구(로그인 세션 모두 로그아웃), 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
 5. 토큰에는 만료가 없다. 회전은 수동이며 주기는 정하지 않았다(근거 없음, 사용자 결정 대기: 이 저장소의 OPEN_GAPS).
 
 한계: 시험 계정의 해시를 만들 때 암호는 `docker run -i`의 표준 입력으로 전달되어 프로세스 목록(인자)에는 보이지 않는다(`scripts/test-hash-password-argv.sh`로 확인). docker 그룹 사용자는 어차피 모든 비밀에 닿는다(docker 그룹은 root와 같다).
@@ -279,7 +279,7 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 ### 9-4. 저자 경로(question-authoring)를 gateway로 여는 구성 (D88/U9)
 
 - 경로: `POST /v1/materials`, `/v1/drafts`, `/v1/drafts/*`, `POST /v1/reviews`. 개별 계정 인증(Basic) 뒤에서 역할 `author` 또는 `clinical-reviewer`만 통과하고(없으면 401, 다른 역할은 403), gateway가 서비스 토큰(`qa-gateway-token`, 서비스의 `QA_GATEWAY_TOKENS`)과 인증된 계정 ID(`X-Openit-User`)를 붙인다. 클라이언트가 보낸 `Authorization`·`X-Openit-User`는 덮어쓴다. 이웃 읽기 면(I1 `/v1/question-sets*`)은 열지 않는다.
-- 역할은 한 곳이다(3.4.0): gateway 계정(조직이 준 `secrets/staff-accounts.conf`, 역할 `author`/`clinical-reviewer`)이 게이트웨이 계정의 역할이 `X-Openit-Roles` 로 서비스에 전달된다(서비스에 사용자→역할 표는 없다, `QA_USER_ROLES` 삭제). 시험 계정(`author-e2e`, `clinical-e2e`)은 시험 폴더에만 있다. 운영에서는 실제 계정을 쓴다(`gen-secrets.sh`는 계정 파일의 모든 계정에 암호를 만든다).
+- 역할은 한 곳이다(3.4.0): Keycloak 그룹이 정본이고 게이트웨이가 인증 뒤 `X-Openit-Roles` 로 서비스에 전달한다(서비스에 사용자→역할 표는 없다, `QA_USER_ROLES` 삭제). 시험 사용자(`author-e2e`, `clinical-e2e`)는 시험 환경의 Keycloak 에만 있다.
 - 4-eyes는 서비스가 강제한다: 저자의 확인은 `clinical_basis_approved=false`이고 임상 근거 승인은 저자와 다른 `clinical-reviewer`가 `POST /v1/reviews`로 해야 `reviewed_only`에 나타난다(자기 승인 403).
 - 본문 상한은 사이트 기본 8MiB(자료 업로드). 응답 헤더 대기는 release-gate 180초(`proxy_limits`, ADR 0051).
 - E2E 단계 `5a`가 gateway 경유로 위 흐름(401, 403, 등록·확인, 자기 승인 403, 위조 헤더 무시, 승인 뒤 `reviewed_only`, I1 404, 본문 상한)을 확인한다.

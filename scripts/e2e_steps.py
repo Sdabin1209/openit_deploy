@@ -124,7 +124,7 @@ def http(method, k, path, token=None, body=None, raw=None, ctype="application/js
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
     req = urllib.request.Request(URL(k) + path, data=data, method=method)
     if token: req.add_header("Authorization", f"Bearer {token}")
-    if basic: req.add_header("Authorization", "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode())
+    if basic: raise RuntimeError("http(basic=…) 는 없어졌다(U82): 사람 계정은 SB.gw_request(account=…) 의 OIDC 세션 쿠키")
     if data is not None: req.add_header("Content-Type", ctype)
     for hk, hv in (headers or {}).items(): req.add_header(hk, hv)
     try:
@@ -663,7 +663,7 @@ def gw_raw(method, path, body=None, basic=None, headers=None):
 def reject_via_gateway(sid):
     """승인 화면이 하는 경로를 게이트웨이를 거쳐 한 번 탄다: 목록(AWAITING_APPROVAL) -> review-report(헤더 해시) -> POST approvals(그 해시)."""
     c, _, _ = gw_raw("GET", "/v1/submissions?status=AWAITING_APPROVAL"); assert c == 401, f"인증 없이 /v1/submissions 가 열려 있다 {c}"
-    assert gw_text("/admin/")[0] == 401, "인증 없이 /admin/ 이 열려 있다"
+    assert gw_text("/admin/")[0] == 302, "인증 없이 /admin/ 이 열려 있다(화면 경로는 로그인으로 302)"
     c, page, _ = gw_raw("GET", "/v1/submissions?status=AWAITING_APPROVAL", basic=ADMIN()); assert c == 200, (c, page)
     assert any(x.get("submission_id") == sid for x in page["items"]), "대기 목록에 제출이 없다"
     c, one, _ = gw_raw("GET", f"/v1/submissions/{sid}", basic=ADMIN()); assert c == 200, (c, one)
@@ -991,9 +991,9 @@ def _c2_gw(method, path, body=None, *, account=None, token=None, raw=None, ctype
     return s, _c2_dec(b), hd
 
 def _c2_raw(method, path, body=None, basic=None, headers=None):
-    """사람 계정(basic=계정 ID 문자열) 또는 헤더로 직접 만든 자격으로 게이트웨이를 부른다. basic 이 (이름, 암호) 쌍이면 그 자격 그대로(틀린 암호 시험)."""
+    """사람 계정(basic=계정 ID 문자열) 또는 헤더로 직접 만든 자격으로 게이트웨이를 부른다. basic 이 튜플이면 쓸 수 없다(Basic 인증이 없어졌다, U82: 위조 자격 시험은 Cookie 머리글로)."""
     h = dict(headers or {})
-    if isinstance(basic, tuple): h["Authorization"] = "Basic " + __import__("base64").b64encode(f"{basic[0]}:{basic[1]}".encode()).decode(); basic = None
+    if isinstance(basic, tuple): raise RuntimeError("튜플 자격(Basic)은 없어졌다(U82): 사람 계정은 계정 ID 문자열, 위조 자격은 headers={'Cookie': …}")
     return _c2_gw(method, path, body, account=basic, headers=h, timeout=200)   # 200 = release-gate 상한 181s(연결 1s + 헤더 180s) + 여유(D125)
 
 def _c2_text(path, basic=None):
@@ -1605,14 +1605,14 @@ def step5f():
     if "pointers" not in STATE: rec("5f", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
     # (a) 정적 화면
     c, html, _ = _c2_text("/"); assert c == 200 and "문진" in html, (c, html[:100])
-    assert _c2_text("/staff/")[0] == 401, "직원 콘솔이 인증 없이 열려 있다"
-    assert _c2_text("/staff/", ("staff", "wrong"))[0] == 401
+    c, _b, hd = _c2_text("/staff/"); assert c == 302 and hd.get("location", "").startswith("/oauth2/start"), ("직원 콘솔이 인증 없이 열려 있다(화면 경로는 로그인으로 302)", c, hd.get("location"))
+    c, _b, hd = _c2_gw("GET", "/staff/", headers={"Cookie": "_openit_session=forged"}); assert c == 302, ("위조한 세션 쿠키는 인증이 아니다(로그인으로 302)", c)
     c, stf, _ = _c2_text("/staff/", _C2_STAFF); assert c == 200 and "직원 콘솔" in stf, (c, stf[:100])
     c, sw, h = _c2_text("/staff/sw.js", _C2_STAFF); assert c == 200, c
     assert _c2_text("/healthz")[0] == 200
     c, _t, hd = _c2_text("/"); assert "default-src 'self'" in " ".join(f"{v}" for k, v in hd.items() if k.lower() == "content-security-policy"), "CSP 헤더가 없다"
     assert _c2_text("/v1/turns")[0] == 404
-    rec("5a", "REAL", "게이트웨이 경유 kiosk-frontend: /(키오스크 화면) 200, /staff/ 는 인증 없이·틀린 암호로 401, 기본 인증으로 200, /staff/sw.js 200, CSP 헤더, /v1 기타 경로 404")
+    rec("5a", "REAL", "게이트웨이 경유 kiosk-frontend: /(키오스크 화면) 200, /staff/ 는 인증 없이·위조한 세션 쿠키로 로그인 302, OIDC 로그인 세션으로 200, /staff/sw.js 200, CSP 헤더, /v1 기타 경로 404")
     # (b) 브라우저가 부르는 순서를 HTTP로(토큰 없이 같은 출처): 세션 시작, 발화 2턴, state 조회, 종료
     sf = f"sess-{RID}-fe"
     c, st = _c2_kiosk("/v1/sessions", {"session_id": sf, "kind": "SESSION_START", "question_set_id": QS}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
@@ -1623,7 +1623,7 @@ def step5f():
     c, en = _c2_kiosk(f"/v1/sessions/{sf}/end", {"session_id": sf, "kind": "SESSION_END"}); assert c == 200, (c, en)
     rec("5b", "REAL", "프론트의 공개 API 호출 순서가 게이트웨이(같은 출처, 토큰 없이)를 거쳐 실제 survey-service에 통과: 세션 시작 -> 발화 2턴 -> state(SessionState 스키마, ACTIVE) -> 종료")
     # (c) 직원 경로 권한 분리
-    c1 = _c2_gw("GET", "/v1/staff/alerts")[0]; assert c1 == 401, ("인증 없는 직원 API는 401 (계약 6절, 사람 경로는 Basic)", c1)
+    c1 = _c2_gw("GET", "/v1/staff/alerts")[0]; assert c1 == 401, ("인증 없는 직원 API는 401 (계약 6절: /v1/* 는 401 + Bearer 안내, 화면은 로그인 302)", c1)
     c2 = _c2_in("survey-service", "GET", "/v1/staff/alerts", _c2_kdev())[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
     c3 = _c2_gw("GET", "/v1/staff/alerts", token=TOK("survey-api-kiosk"))[0]; assert c3 == 401, ("Bearer 는 사람 계정 경로의 자격이 아니다: 401 (계약 6절)", c3)   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
@@ -1676,7 +1676,7 @@ def _c3_tok(name):   # 시험 비밀 폴더의 토큰 파일(값은 출력하지
     return (pathlib.Path(a.secrets) / "tokens" / name).read_text().strip()
 
 def _c3_gw(method, path, role=None, body=None, headers=None, timeout=30):
-    """게이트웨이 경유 한 요청(사람 역할 계정 = Basic 인증). (상태, JSON 또는 문자열 본문, 소문자 헤더). role=None 이면 인증 없이."""
+    """게이트웨이 경유 한 요청(사람 역할 계정 = OIDC 로그인 세션 쿠키). (상태, JSON 또는 문자열 본문, 소문자 헤더). role=None 이면 인증 없이."""
     st, h, raw = SB.gw_request(method, path, account=_C3_ACCT[role] if role else None, json=body, headers=headers, timeout=timeout)
     try: j = json.loads(raw) if raw else None
     except ValueError: j = raw.decode(errors="replace")

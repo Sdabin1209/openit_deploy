@@ -17,7 +17,7 @@ class T(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         (pathlib.Path(self.tmp.name) / "tokens").mkdir()
-        (pathlib.Path(self.tmp.name) / "tokens" / "account-op-e2e-password").write_text("pw-for-test\n")
+        (pathlib.Path(self.tmp.name) / "tokens" / "idp-test-op-e2e-password").write_text("pw-for-test\n")
         self.f = Fake()
         S.init(project="P1", secrets=self.tmp.name, gw_ca="", docker="docker", inference_project="P1-inf", root="/r", run=self.f)
 
@@ -70,15 +70,39 @@ class T(unittest.TestCase):
         self.f.rc = 1; self.assertIsNone(S.inference_url())
 
     def test_gw_client_account_header_and_user(self):
+        # 사람 계정은 OIDC 로그인 세션 쿠키(U82): 로그인은 session_cookie 가 하므로 여기서는 대신한다. 기본 주소는 밖에서 보이는 주소(GATEWAY_PUBLIC_URL)다
         self.f.stdout = "0.0.0.0:49153\n"
         class C:
             def __init__(self, base, token, timeout=10.0, *, user=None): self.base, self.token, self.user, self._headers = base, token, user, {}
-        c = S.gw_client(C, account="op-e2e", user="u1")
-        self.assertEqual(c.base, "https://127.0.0.1:49153"); self.assertIsNone(c.token); self.assertEqual(c.user, "u1")
-        self.assertTrue(c._headers["Authorization"].startswith("Basic "))
-        c2 = S.gw_client(C, token="tok"); self.assertEqual(c2.token, "tok"); self.assertNotIn("Authorization", c2._headers)
+        import os
+        old = os.environ.get("GATEWAY_PUBLIC_URL"); os.environ["GATEWAY_PUBLIC_URL"] = "https://localhost:49153"
+        orig = S.session_cookie; S.session_cookie = lambda a: f"_openit_session={a}-cookie"
+        try:
+            c = S.gw_client(C, account="op-e2e", user="u1")
+            self.assertEqual(c.base, "https://localhost:49153"); self.assertIsNone(c.token); self.assertEqual(c.user, "u1")
+            self.assertEqual(c._headers["Cookie"], "_openit_session=op-e2e-cookie"); self.assertNotIn("Authorization", c._headers)
+        finally:
+            S.session_cookie = orig
+            if old is None: os.environ.pop("GATEWAY_PUBLIC_URL", None)
+            else: os.environ["GATEWAY_PUBLIC_URL"] = old
+        c2 = S.gw_client(C, token="tok"); self.assertEqual(c2.token, "tok"); self.assertNotIn("Authorization", c2._headers); self.assertEqual(c2.base, "https://127.0.0.1:49153")
         with self.assertRaises(ValueError): S.gw_client(C, account="a", token="t")
 
+    def test_test_password_comes_from_file(self):
+        self.assertEqual(S._test_password("op-e2e"), "pw-for-test")
+
+    def test_cookies_of_reads_set_cookie(self):
+        import email.message
+        m = email.message.Message(); m["Set-Cookie"] = "_openit_session=abc; Path=/; Secure; HttpOnly"; m["Set-Cookie"] = "_openit_session_1=def; Path=/"
+        self.assertEqual(S._cookies_of(m), {"_openit_session": "abc", "_openit_session_1": "def"})
+
+    def test_human_gw_url_needs_public_url(self):
+        import os
+        old = os.environ.pop("GATEWAY_PUBLIC_URL", None); self.f.stdout = "0.0.0.0:49153\n"
+        try:
+            with self.assertRaises(RuntimeError): S.gw_url(human=True)
+        finally:
+            if old is not None: os.environ["GATEWAY_PUBLIC_URL"] = old
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,7 @@ E2E 문항 양식으로 만든 QuestionBank 가 기준 문진 스키마(DEPLOY_S
 시간 상한 사슬 (키오스크 60s > gateway 56s > survey 턴 50s > 추출 20s + 응답 25s, 값은 Caddyfile·survey.env·E2E 상수에서 읽는다, ADR 0051) :: python3 "$DEPLOY_ROOT/scripts/test_time_chain.py"
 E2E 시작 점검의 link 핀 대조 단계: lib.sh 뒤에 있고 기본 켜짐, 켠 경로를 실제로 실행(맞으면 통과, 어긋나면 멈춤, 끄면 건너뜀), VENV 없는 환경에서도 돈다 (ADR 0046) :: bash "$DEPLOY_ROOT/scripts/test-link-pins-step.sh"
 E2E 응답 필드 비교 상수가 계약·문진 스키마(4.1.0)의 열거 안에 있다 (SessionState.state, StaffSessionView.status 출처 추적 + 같은 이름 열거 일반 검사, AST) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_enum_constants.py"
-compose 재시작 정책 (상시 서비스 11개 restart: unless-stopped, job-* 5개는 restart 없음·profiles; 재시작 동작 자체는 Docker 의 몫이라 시험하지 않는다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_restart_policy.py"
+compose 재시작 정책 (상시 서비스 13개 restart: unless-stopped, job-* 5개는 restart 없음·profiles; 재시작 동작 자체는 Docker 의 몫이라 시험하지 않는다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_restart_policy.py"
 E2E 의 synthetic-data 실행 설정(sd_config)이 계약 SyntheticJobConfigRun 을 통과한다 (R7: 만드는 쪽 검증) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_sd_config.py"
 기기 설정(kiosk-add-device.sh)이 쓰기 전에 계약 DeviceConfig 로 검증된다 (R7; 어기면 파일 없음·토큰 값 비출력) :: bash "$DEPLOY_ROOT/scripts/test-kiosk-device-config.sh"
 publish-image.sh 의 PublishResult 가 내보내기 전에 계약으로 검증된다 (R7; 위반이면 표준 출력 비움·성공이면 종료 70) :: bash "$DEPLOY_ROOT/scripts/test-publish-result-contract.sh"
@@ -58,3 +58,4 @@ E2E 문진표 시나리오의 요청 모양이 계약 3.4.0·문진 스키마 4.
 비밀 파일 640 + 그룹을 uid 10001 컨테이너가 group_add 로 읽는다 (대조군: group_add 없이는 못 읽는다, 모든 서비스·잡에 group_add, L02·ADR 0054) :: bash "$DEPLOY_ROOT/scripts/test-secret-group-read.sh"
 ops-feedback DB 계정 분리 배선 (서버·잡은 앱 접속 문자열과 verify 만, 소유자 접속 문자열은 migrate 서비스만, migrate 먼저, L08·ADR 0055) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_ops_db_roles_wiring.py"
 게이트웨이가 X-Openit-User 와 함께 X-Openit-Roles 를 붙이고 지운다, QA_USER_ROLES 삭제 (계약 CONVENTIONS 6절 3.4.0) :: python3 "$DEPLOY_ROOT/scripts/test_gateway_roles_header.py"
+IdP(Keycloak·oauth2-proxy) 배선 정적 시험 (realm 그룹=계약 역할 8개, 자가 등록·이벤트 365일, 클라이언트 설정, 비밀은 *_FILE, 호스트 포트 없음, 위조 헤더 삭제, master realm 닫힘, U82·ADR 0057) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_idp_wiring.py"
