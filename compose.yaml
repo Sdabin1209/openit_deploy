@@ -32,6 +32,7 @@ x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공�
   pids_limit: 64
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
   configs: [{source: tls-sidecar, target: /etc/caddy/Caddyfile}]
+  group_add: *secretgid   # L02(ADR 0054): 설정 파일도 640 + 이 그룹으로 읽는다
   healthcheck: {test: ["CMD", "nc", "-z", "127.0.0.1", "443"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}
 
 x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증서 볼륨(/home/step 에 마운트해 소유자 상속)에 쓴다
@@ -47,6 +48,7 @@ x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증�
   cpus: 0.25
   pids_limit: 64
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+  group_add: *secretgid
   networks: [pki]
   healthcheck: {test: ["CMD", "test", "-s", "/home/step/tls.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
   depends_on:
