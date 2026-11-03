@@ -4,7 +4,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
-UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"); [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금에 없다"
+UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금에 없다"
 P="deploy-selftest-$$"; T=$(mktemp -d); rc=0
 cleanup() { "$DOCKER" rm -f "$P-leak" "$P-clean" "$P-dsnenv" >/dev/null 2>&1; rm -rf "$T"; }; trap cleanup EXIT
 mkdir -p "$T/s/tokens"; python3 -c 'import secrets;print(secrets.token_hex(24))' > "$T/s/tokens/sample-token"; chmod 644 "$T/s/tokens/sample-token"

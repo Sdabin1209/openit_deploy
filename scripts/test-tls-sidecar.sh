@@ -6,7 +6,7 @@
 # (5) 사이드카는 비루트·읽기 전용·cap_drop ALL·추가 capability 없음. 실패하면 정리하기 전에 컨테이너 로그를 남긴다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
-LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}
+LOCK=$DEPLOY_ROOT/locks/images.lock   # 왜: 밖에서 온 DEPLOY_LOCK(E2E 임시 잠금 등)을 읽지 않고 시험이 입력을 스스로 정한다
 CA_IMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$LOCK"); SC_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "$LOCK"); UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK")
 [ -n "$CA_IMG" ] && [ -n "$SC_IMG" ] && [ -n "$UTIL" ] || { echo "잠금 파일에 STEP_CA_IMAGE/GATEWAY_IMAGE/UTIL_IMAGE 가 없다"; exit 1; }
 ID=tlssc-$$; NET=$ID-net; NETC=$ID-netc; T=$(mktemp -d); chmod 755 "$T"; FAILS=0; NAME=svc-under-test

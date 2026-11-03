@@ -17,7 +17,7 @@ trap 'rc=$?; if [ $rc -ne 0 ]; then for s in data app; do docker ps -a --filter 
 freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
 PGP=$(freeport); SCP=$(freeport); RGP=$(freeport)   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1); [ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
-LOCK="$T/images.lock"; cp locks/images.lock "$LOCK"
+LOCK="$T/images.lock"; cp locks/images.lock "$LOCK"; export DEPLOY_LOCK="$LOCK"   # 왜: 잠금 파일을 시험이 스스로 정한다(밖에서 내보낸 DEPLOY_LOCK 이 있으면 그 파일을 읽어 플레이북이 실패했다, E2E 사전 점검에서 확인)
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK"); PGIMG=$(sed -n 's/^POSTGRES_IMAGE=//p' "$LOCK"); CAIMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$LOCK")
 # 비밀: PostgreSQL 비밀(gen-secrets --db-only)과 step-ca 비밀번호. 값은 출력하지 않는다
 mkdir -p "$T/secrets"; DEPLOY_NO_DOCKER=1 bash scripts/gen-secrets.sh --db-only "$T/secrets" >/dev/null
@@ -68,7 +68,7 @@ YML
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose "$T/compose.subset.yaml" >/dev/null || bad "인벤토리 점검"
 ok "인벤토리 점검 통과 (step-ca·postgres 는 data 서버, release-gate 는 app 서버)"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home" UTIL_IMAGE="$UTIL"
-timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || bad "플레이북 실패"
+timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -40 "$T/run1.log" >&2; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
 A=deploy-$ID-app; D=deploy-$ID-data
 grep -a "토큰 볼륨에 쓰기" -A3 "$T/run1.log" | grep -aq "changed: .*$ID-app" || bad "토큰 전달 단계가 app 서버에서 돌지 않았다"; ok "(1) 토큰 전달 단계가 실제로 돌았다"

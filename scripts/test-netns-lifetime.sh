@@ -7,7 +7,7 @@
 # 실패하면 정리하기 전에 컨테이너 로그를 남긴다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
-LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}
+LOCK=$DEPLOY_ROOT/locks/images.lock   # 왜: 밖에서 온 DEPLOY_LOCK 을 읽지 않고 시험이 입력을 스스로 정한다
 CA_IMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$LOCK"); SC_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "$LOCK"); UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK"); PAUSE=$(sed -n 's/^PAUSE_IMAGE=//p' "$LOCK")
 [ -n "$CA_IMG" ] && [ -n "$SC_IMG" ] && [ -n "$UTIL" ] && [ -n "$PAUSE" ] || { echo "잠금 파일에 STEP_CA_IMAGE/GATEWAY_IMAGE/UTIL_IMAGE/PAUSE_IMAGE 가 없다"; exit 1; }
 ID=nsl-$$; NET=$ID-net; T=$(mktemp -d); chmod 755 "$T"; FAILS=0
