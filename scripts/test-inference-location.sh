@@ -150,13 +150,14 @@ chk "추론 토큰으로 GET /v1/releases (목록)는 열리지 않는다(사람
 echo "== 3. 음성 확인"
 # (ㄱ) 사람 세션: E2E 단계 5u·test-idp-smoke.sh 와 같은 OIDC 로그인 도우미(scripts/e2e_sandbox.py oidc_login: Keycloak 로그인 -> _openit_session 쿠키)로 승인자 계정 세션을 만든다
 bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$P" >/dev/null 2>&1 || bail "시험 사용자(Keycloak)를 만들지 못했다"
-HCOOKIE=$(DEPLOY_ROOT="$DEPLOY_ROOT" "$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GW" "$CA" "$MS_HOST" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" <<'PY'
+HCOOKIE=$(DEPLOY_ROOT="$DEPLOY_ROOT" "$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GW" "$CA" "$MS_HOST" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" "$GWPORT" <<'PY'
 import os, socket, sys
 sys.path.insert(0, os.path.join(os.environ["DEPLOY_ROOT"], "scripts"))
 import e2e_sandbox as SB
-base, ca, addr, pwf = sys.argv[1:5]
+base, ca, addr, pwf, gwport = sys.argv[1:6]
 _orig = socket.getaddrinfo
-socket.getaddrinfo = lambda h, *a, **k: _orig(addr if h == "host.docker.internal" else h, *a, **k)   # 시험 호스트가 이 이름을 풀지 못해도 게시 주소로 간다(curl --resolve 와 같다)
+# 시험 호스트가 이 이름을 풀지 못해도 게시 주소로 간다(curl --resolve 와 같다). Keycloak 이 돌려보내는 공개 주소는 사이트 이름의 포트(8443)라서 Docker 가 배정한 게시 포트로 바꿔 준다
+socket.getaddrinfo = lambda h, p, *a, **k: _orig(addr, int(gwport) if str(p) == "8443" else p, *a, **k) if h == "host.docker.internal" else _orig(h, p, *a, **k)
 jar = SB.oidc_login(base, "trainer-e2e", open(pwf).read().strip(), ca=ca)
 print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session")))
 PY
