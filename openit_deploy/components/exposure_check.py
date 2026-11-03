@@ -85,6 +85,7 @@ def collect(caddy_text, roles):
             for l in lines:
                 if l["t"] and l["t"][0] == "path": m["paths"] += l["t"][1:]
                 if l["t"] and l["t"][0] == "method": m["methods"] += l["t"][1:]
+                if l["t"] and l["t"][0] == "header" and len(l["t"]) > 2 and l["t"][1] == "Authorization" and l["t"][2].startswith("Bearer"): m["bearer"] = True   # 기계 토큰 입구: Authorization: Bearer <고정 비밀> 일 때만 열린다
             matchers[n["t"][0]] = m
     proxies, locals_, denied = [], [], []
     order = [0]
@@ -114,7 +115,8 @@ def collect(caddy_text, roles):
                 if ctx["paths"] is not None and not a:   # 매처 없는 안쪽 handle: 403 거절 자리
                     walk(n["c"], ctx); continue
                 m = lookup(a)
-                walk(n["c"], dict(ctx, paths=m["paths"], methods=m["methods"], auth=ctx["auth"], roles=[]))
+                # 역할 블록 안쪽의 매처 handle(예: @role_clinician 안의 @clinicianpush)은 바깥 역할을 그대로 이어받는다. 이어받지 않으면 역할이 비어 라벨과 어긋나 보인다
+                walk(n["c"], dict(ctx, paths=m["paths"], methods=m["methods"], auth="machine-token" if m.get("bearer") else ctx["auth"], roles=list(ctx["roles"])))
             elif k == "reverse_proxy":
                 host = t[1].split(":")[0]; port = t[1].split(":")[1] if ":" in t[1] else ""
                 e = {"host": host, "port": port, "paths": ctx["paths"] or ["/*"], "methods": ctx["methods"], "auth": ctx["auth"] or "none", "roles": sorted(set(ctx["roles"])),
@@ -153,7 +155,7 @@ def collect(caddy_text, roles):
         t = n["t"]
         # 추론 서버 기계 토큰 경로(@inferencemachine/@inferencedenied, ADR 0049)는 건너뛴다: 계약 Exposure 의 auth.kind(device-token, account, none, denied)에 기계 토큰이 없어 라벨로 선언할 수 없다.
         # 그래서 라벨 대조 밖이다(대조하지 않는다는 뜻이지 통과라는 뜻이 아니다). 이 경로의 시험은 scripts/test-inference-location.sh, 라벨 어휘 요청은 docs/change-requests/CR-D440-exposure-machine-token.md
-        if t and t[0] == "handle" and t[1:2] and t[1] in ("@inferencemachine", "@inferencedenied", "@registrymachine", "@registrydenied"): continue   # U69 게시 입구도 같은 종류(machine-token)
+        if t and t[0] == "handle" and t[1:2] and t[1] in ("@inferencedenied", "@registrydenied"): continue   # 거부 응답(401)은 라벨 어휘에 없다(계약 3.4.0 의 machine-token 입구는 아래 handle 이 라벨과 대조된다)   # U69 게시 입구도 같은 종류(machine-token)
         if t and t[0] in ("handle", "handle_path", "redir") and not (t[1:2] and t[1].startswith("@csrf")):
             walk([n], {"paths": None, "methods": [], "auth": None, "roles": []})
     hs = [dict(e, kind="proxy") for e in merge(proxies)] + [dict(x, kind="respond") for x in locals_ + denied]
@@ -165,13 +167,24 @@ def covers(q, p):
     return q == p or fnmatch.fnmatchcase(p, q)
 
 
-def first_match(handlers, p, m):
-    """Caddy 의 handle 은 소스 순서대로 처음 맞는 하나만 실행한다. m == ANY 는 메서드 제한이 없는 핸들러만 모든 메서드를 덮는다."""
+def first_match(handlers, p, m, kind=None, roles=()):
+    """Caddy 의 handle 은 소스 순서대로 처음 맞는 하나만 실행한다. m == ANY 는 메서드 제한이 없는 핸들러만 모든 메서드를 덮는다.
+    같은 경로·메서드에 요청자별로 갈리는 입구가 여럿일 수 있다(기계 토큰 입구 / 사람 역할 블록 여럿): 라벨의 한 줄은 그 줄이 말하는 입구와 비교한다.
+      kind == machine-token: 기계 토큰 입구(Authorization: Bearer 매처) 중 처음 것. 그 밖의 kind: 기계 토큰 입구는 건너뛴다.
+      kind == account 이고 roles 가 있으면: 경로를 덮는 사람 인증 핸들러 중 역할이 겹치는 처음 것(없으면 처음 것: 어긋남을 보고하려고). 역할 블록이 둘(예: staff / clinician)이어도 각자 자기 줄과 비교된다(D9a)."""
+    cands = []
     for h in handlers:
         if not any(covers(q, p) for q in h["paths"]): continue
         if h["methods"] and (m == ANY or m not in h["methods"]): continue
-        return h
-    return None
+        if kind == "machine-token":
+            if h.get("auth") == "machine-token": return h
+            continue
+        if h.get("auth") == "machine-token": continue
+        cands.append(h)
+    if kind == "account" and roles:
+        for h in cands:
+            if h["kind"] == "proxy" and h["auth"] == "account" and set(h["roles"]) & set(roles): return h
+    return cands[0] if cands else None
 
 
 def merge(proxies):
@@ -192,7 +205,7 @@ def compare(svc, label, handlers, hosts, oci):
         ms = r.get("methods") or ([ "GET", "POST", "PUT", "PATCH", "DELETE" ] if kind == "denied" else [ANY])   # 거부는 어느 메서드로든 상류에 닿으면 어긋남
         for p in r["paths"]:
             for m in ms:
-                h = first_match(handlers, p, m)
+                h = first_match(handlers, p, m, kind, r["auth"].get("roles", []))
                 tag = f"{svc} {m if m != ANY else '*'} {p}"
                 is_mine = h is not None and h["kind"] == "proxy" and h["host"] in mine_hosts
                 if kind == "denied":
@@ -211,7 +224,7 @@ def compare(svc, label, handlers, hosts, oci):
                     if h["timeouts"].get(tk) != tv: diffs.append(f"{tag}: 시간 제한 {tk} 라벨 {tv}ms / Caddyfile {h['timeouts'].get(tk)}")
                 if bool(r.get("streaming")) != bool(h.get("streaming")): diffs.append(f"{tag}: streaming 라벨 {bool(r.get('streaming'))} / Caddyfile {bool(h.get('streaming'))}")
     for h in handlers:
-        if h["kind"] == "proxy" and h["host"] in mine_hosts and id(h) not in used:
+        if h["kind"] == "proxy" and h["host"] in mine_hosts and id(h) not in used and h.get("auth") != "machine-token":
             diffs.append(f"{svc} {','.join(h['methods']) or '*'} {','.join(h['paths'])}: Caddyfile 은 노출하는데 라벨 선언이 이 핸들러에 닿는 경로가 없다")
     # 포트·사용자: 이미지 OCI 설정에서 읽는다(계약 3.0 에서 StaticImageInterface 는 없어졌다)
     ports = {x.split("/")[0] for x in oci.get("exposed_ports", [])}

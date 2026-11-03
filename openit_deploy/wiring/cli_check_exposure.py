@@ -15,7 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 def main(argv) -> int:
     ap = argparse.ArgumentParser(); ap.add_argument("--inspect", required=True); ap.add_argument("--caddyfile", default=str(ROOT / "config/Caddyfile"))
     ap.add_argument("--known", default=str(ROOT / "config/exposure-known-diffs.json")); ap.add_argument("--hosts", default=str(ROOT / "config/exposure-hosts.json"))
-    ap.add_argument("--roles", default="staff operator release-approver reviewer author clinical-reviewer")
+    ap.add_argument("--roles", default="staff operator release-approver reviewer author clinical-reviewer clinician admin")
     a = ap.parse_args(argv)
     from boundary_contracts import validator
     kp = pathlib.Path(a.known)

@@ -67,5 +67,51 @@ class T(unittest.TestCase):
         self.assertTrue(any("ExposedPorts" in d for d in run(oci={"exposed_ports": ["9090/tcp"], "user": "10001"})))
 
 
+ROLES2 = ROLES + ["clinician", "admin"]
+TOS = {"dial": 1000, "response_header": 55000}
+PUSH_STAFF = {"paths": ["/v1/staff/push-config"], "methods": ["GET"], "auth": {"kind": "account", "roles": ["staff"]}, "upstream_token": "survey-api-staff", "user_header": "set", "streaming": True, "timeouts_ms": {**TOS, "read": 3600000}}
+PUSH_CLIN = {"paths": ["/v1/staff/push-config"], "methods": ["GET"], "auth": {"kind": "account", "roles": ["clinician"]}, "upstream_token": "survey-result-reader", "user_header": "set", "timeouts_ms": TOS}
+
+
+def run_survey(routes):
+    h = C.collect(CADDY, ROLES2)
+    return [d for d in C.compare("survey-service", {"service": "survey-service", "routes": routes}, h, HOSTS, OCI) if "push-config" in d]
+
+
+class TwoRoleBlocks(unittest.TestCase):
+    """D9a: 같은 경로·메서드에 사람 역할 블록이 둘(staff 블록, clinician 전용 블록)이면 라벨의 두 줄이 각자 자기 블록과 비교된다(예전에는 첫 블록만 읽어 clinician 줄이 어긋나 보였다)."""
+    def test_staff_and_clinician_lines_both_match(self):
+        self.assertEqual(run_survey([PUSH_STAFF, PUSH_CLIN]), [])
+
+    def test_clinician_line_with_wrong_token_is_caught(self):
+        bad = dict(PUSH_CLIN, upstream_token="survey-api-staff")
+        self.assertTrue(any("상류 토큰" in d for d in run_survey([PUSH_STAFF, bad])))
+
+    def test_clinician_line_with_wrong_streaming_is_caught(self):
+        bad = dict(PUSH_CLIN, streaming=True)
+        self.assertTrue(any("streaming" in d for d in run_survey([PUSH_STAFF, bad])))
+
+    def test_only_the_staff_line_leaves_the_clinician_block_undeclared(self):
+        self.assertTrue(any("라벨 선언이 이 핸들러에 닿는 경로가 없다" in d for d in run_survey([PUSH_STAFF])))
+
+    def test_clinician_block_inherits_the_outer_role(self):
+        hs = [h for h in C.collect(CADDY, ROLES2) if h.get("kind") == "proxy" and "/v1/staff/push-config" in h["paths"]]
+        self.assertEqual(sorted(sorted(h["roles"]) for h in hs), [["clinician"]])
+
+
+class MachineToken(unittest.TestCase):
+    """계약 3.4.0 의 auth.kind machine-token: Authorization: Bearer 고정 비밀 매처의 입구는 라벨의 machine-token 줄과, 같은 경로의 사람 줄은 사람 블록과 각자 비교된다."""
+    MACH = {"paths": ["/v1/active-pointer", "/v1/releases/*"], "methods": ["GET"], "auth": {"kind": "machine-token"}, "upstream_token": "gate-read-model-serving", "user_header": "strip", "streaming": True}
+
+    def test_machine_line_matches_and_operator_line_still_matches(self):
+        label = copy.deepcopy(GATE); label["routes"] = [r for r in label["routes"] if r["auth"]["kind"] != "denied" or r["paths"] == ["/v1/submissions"]] + [self.MACH]
+        d = [x for x in run(label) if "active-pointer" in x or "/v1/releases" in x]
+        self.assertEqual(d, [])
+
+    def test_machine_line_with_wrong_token_is_caught(self):
+        label = copy.deepcopy(GATE); label["routes"] = [r for r in label["routes"] if r["auth"]["kind"] != "denied" or r["paths"] == ["/v1/submissions"]] + [dict(self.MACH, upstream_token="gate-read-operator")]
+        self.assertTrue(any("상류 토큰" in x and "release-gate" in x for x in run(label)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

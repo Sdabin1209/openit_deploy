@@ -1,5 +1,10 @@
 # 변경 이력
 
+## wo-450 D9a: check-exposure 가 한 경로의 여러 입구를 각자 라벨 줄과 비교
+- E2E 자체 점검에서 check-exposure 가 FAIL: (1) 같은 경로·메서드에 역할 블록이 둘(staff, clinician 전용)이면 첫 블록만 읽어 clinician 줄이 어긋나 보였다 -> 라벨 줄의 auth.kind·roles 에 맞는 입구와 비교한다(역할이 겹치는 첫 사람 블록, machine-token 줄은 Authorization: Bearer 매처 입구). 역할 블록 안쪽의 매처 handle 은 바깥 역할을 이어받는다. (2) 진입의 기본 역할 목록에 clinician·admin 이 없어 clinician 블록이 역할 없음으로 읽혔다. (3) 계약 3.4.0 의 machine-token 라벨(release-gate 추론 서버 읽기, model-registry 게시)이 대조 밖이었다 -> 대조에 넣고 `exposure-hosts.json` 에 model-registry 를 더했다.
+- Caddyfile 을 라벨에 맞췄다: 결과 읽기·확인 표시 프록시 응답 헤더 상한 60s -> 55s(survey-service 선언), 추론 서버 번들 입구 `flush_interval -1`(release-gate 선언 streaming true).
+- 예외 파일: admin-console `/admin/*` 줄은 라벨이 clinician 을 더해 문구가 바뀌어 새 문구로 갱신(Caddyfile 은 /admin/* 을 인증된 어떤 계정에게든 연다 - 헤드/admin-console 결정 대기), model-registry 선언의 user_header 누락 한 줄을 이유와 함께 추가(선언 쪽이 고쳐야 한다). push 경로는 예외 없이 해결했다. 시험 `test_check_exposure.py` 에 "한 경로 두 역할 블록"·machine-token 7건.
+
 ## wo-450 D8b: link 핀 대조는 빌드한 커밋 기준
 - `check-link-pins.sh`(`check_link_pins.py`)가 영역 main 잠금 파일을 읽어, 영역 브랜치 HEAD 로 빌드한 이미지와 다른 핀(main 의 v0.4.3)을 보고 7개 영역에서 실패했다. 이제 빌드 기록 `build/images.env`(환경 `LINK_PINS_IMAGES_ENV`)의 revision(빌드한 커밋)의 잠금 파일을 `git show <revision>:<파일>` 로 읽고, 어느 커밋을 읽었는지 출력한다. 기록이 없는 영역은 예전처럼 main(없으면 HEAD)이며 "빌드 기록 없음"으로 표시한다. 기록의 커밋이 리포에 없을 때도 main 으로 돌아가되 통과로 속이지 않는다. 시험은 `test-link-pins-step.sh` 4건 추가(main 과 빌드 커밋의 핀이 다른 가짜 리포). main 을 읽는 다른 점검은 찾지 못했다(`verify_area.py` 의 main 은 바뀐 파일 비교 기준이라 해당 없음).
 

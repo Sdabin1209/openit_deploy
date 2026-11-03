@@ -300,6 +300,7 @@ http://:8080 {
 	handle @inferencemachine {
 		reverse_proxy release-gate:8080 {
 			import proxy_limits 180s
+			flush_interval -1   # 번들(tar)은 버퍼링 없이 흘린다: release-gate 노출 선언의 streaming true
 			header_up Authorization "Bearer {file./run/secrets/gate-read-model-serving}"
 			header_up -X-Openit-User
 			header_up -X-Openit-Roles
@@ -436,7 +437,7 @@ http://:8080 {
 		import authenticate
 		handle @role_clinician {
 			reverse_proxy survey-service:8080 {
-				import proxy_limits 60s
+				import proxy_limits 55s   # 라벨(survey-service 노출 선언) response_header 55000ms
 				header_up Authorization "Bearer {file./run/secrets/survey-result-reader}"
 				header_up X-Openit-User "{http.request.header.X-Auth-Request-Preferred-Username}"
 				header_up X-Openit-Roles "{http.request.header.X-Auth-Request-Groups}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
@@ -456,7 +457,7 @@ http://:8080 {
 		}
 		handle @role_clinician {
 			reverse_proxy survey-service:8080 {
-				import proxy_limits 60s
+				import proxy_limits 55s   # 라벨(survey-service 노출 선언) response_header 55000ms
 				header_up Authorization "Bearer {file./run/secrets/survey-result-reader}"
 				header_up X-Openit-User "{http.request.header.X-Auth-Request-Preferred-Username}"
 				header_up X-Openit-Roles "{http.request.header.X-Auth-Request-Groups}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
