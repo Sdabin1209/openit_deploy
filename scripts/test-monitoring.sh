@@ -10,12 +10,12 @@ P="$DEPLOY_ROOT/config/prometheus"; rc=0; n=0
 ok(){ echo "  ok   $*"; n=$((n+1)); }; no(){ echo "  FAIL $*"; rc=1; }
 pt(){ "$DOCKER" run --rm -v "$P:/p:ro" --entrypoint promtool "$PROM" "$@"; }
 # promtool 은 prometheus.yml 의 rule_files 경로(/etc/prometheus/...)를 컨테이너 안에서 본다: 같은 경로로 마운트해 점검한다
-"$DOCKER" run --rm -v "$P/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$P/rules:/etc/prometheus/rules:ro" -v "$P/external-targets.yml:/etc/prometheus/external-targets.yml:ro" --entrypoint promtool "$PROM" check config /etc/prometheus/prometheus.yml >/dev/null 2>&1 && ok "promtool check config" || no "promtool check config"
+"$DOCKER" run --rm -v "$P/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$P/rules:/etc/prometheus/rules:ro" -v "$P/external-targets.yml:/etc/prometheus/external-targets.yml:ro" -v "$P/local-inference-targets.yml:/etc/prometheus/inference-targets.yml:ro" -v "$P/local-inference-metrics-targets.yml:/etc/prometheus/inference-metrics-targets.yml:ro" --entrypoint promtool "$PROM" check config /etc/prometheus/prometheus.yml >/dev/null 2>&1 && ok "promtool check config" || no "promtool check config"
 pt check rules /p/rules/openit.yml >/dev/null 2>&1 && ok "promtool check rules" || no "promtool check rules"
-out=$(pt test rules /p/rules/openit_test.yml 2>&1) && ok "promtool test rules(경보 경계: 디스크 80/90, 탐침, 판정 루프 1/3회·인증·900초, 잡 실패·2배+60초)" || { no "promtool test rules"; echo "$out" | tail -8; }
+out=$(pt test rules /p/rules/openit_test.yml 2>&1) && ok "promtool test rules(경보 경계: 디스크 80/90, 탐침, 판정 루프 1/3회·인증·900초, 잡 실패·2배+60초, 환자 턴 p95 2초·모델 호출 합 1.5초·next_item 덮어쓰기·수집 대상 down)" || { no "promtool test rules"; echo "$out" | tail -8; }
 # 변이 시험: 임계값을 바꾼 규칙 사본은 같은 test 에 실패해야 한다(시험이 경계를 실제로 잡는다는 증거)
 M=$(mktemp -d); trap 'rm -rf "$M"; [ -z "${PROJ:-}" ] || dc_mon down -v --remove-orphans >/dev/null 2>&1; [ -z "${FS:-}" ] || rm -rf "$FS"' EXIT
-sed 's/>= 80 and/>= 85 and/; s/> 2 \* openit_job_interval_seconds + 60/> 3 * openit_job_interval_seconds + 60/; s/>= 3$/>= 4/' "$P/rules/openit.yml" > "$M/openit.yml"; cp "$P/rules/openit_test.yml" "$M/"
+sed 's/>= 80 and/>= 85 and/; s/> 2 \* openit_job_interval_seconds + 60/> 3 * openit_job_interval_seconds + 60/; s/>= 3$/>= 4/; s/_bucket\[5m\]))) > 2$/_bucket[5m]))) > 9/' "$P/rules/openit.yml" > "$M/openit.yml"; cp "$P/rules/openit_test.yml" "$M/"
 "$DOCKER" run --rm -v "$M:/m:ro" --entrypoint promtool "$PROM" test rules /m/openit_test.yml >/dev/null 2>&1 && no "변이한 규칙이 시험을 통과한다(시험이 경계를 못 잡는다)" || ok "변이 시험: 임계값을 바꾼 규칙은 test rules 가 거부한다"
 "$DOCKER" run --rm -v "$P/alertmanager.yml:/a.yml:ro" --entrypoint amtool "$AM" check-config /a.yml >/dev/null 2>&1 && ok "amtool check-config" || no "amtool check-config"
 "$DOCKER" run --rm -v "$P/blackbox.yml:/b.yml:ro" "$BB" --config.check --config.file=/b.yml >/dev/null 2>&1 && ok "blackbox --config.check" || no "blackbox --config.check"
@@ -39,6 +39,8 @@ w(){ waitfor 50 x bash -c "$(declare -f q); PP=$PP; r=\$(q '$1'); [ \"\$r\" = '$
 w 'probe_success{instance="http://gateway:8080/healthz"}' 1 >/dev/null && ok "탐침: gateway /healthz 성공" || no "탐침 gateway /healthz"
 w 'probe_success{instance="http://release-gate:8080/readyz"}' 1 >/dev/null && ok "탐침: release-gate /readyz 성공" || no "탐침 release-gate /readyz"
 w 'probe_success{instance="http://model-serving:8080/readyz"}' 1 >/dev/null && ok "탐침: model-serving /readyz 성공" || no "탐침 model-serving /readyz"
+w 'up{job="survey-service-metrics"}' 1 >/dev/null && ok "수집: survey-service /metrics (monitoring 네트워크)" || no "survey-service /metrics 수집"
+w 'up{job="model-serving-metrics"}' 1 >/dev/null && ok "수집: model-serving /metrics (monitoring 네트워크)" || no "model-serving /metrics 수집"
 w 'openit_gate_judging_consecutive_failures' 0 >/dev/null && ok "json_exporter: 판정 루프 연속 실패 0 을 지표로 읽는다" || no "json_exporter 지표"
 w 'openit_gate_judging_upstream_auth_failed' 0 >/dev/null && ok "json_exporter: upstream_auth_failed(false)를 0 으로 읽는다" || no "json_exporter 불리언"
 [ -n "$(waitfor 30 x bash -c "$(declare -f q); PP=$PP; q 'max(node_filesystem_size_bytes)'")" ] && ok "node_exporter: 디스크 지표" || no "node_exporter 디스크 지표"

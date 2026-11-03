@@ -32,6 +32,13 @@ scrape_configs:
     params: {module: [http_2xx]}
     file_sd_configs: [{files: [/etc/prometheus/inference-targets.yml]}]
     relabel_configs: *blackbox_relabel
+  # 소요 시간 지표(U71, 계약 METRICS.md "운영 소요 시간 지표"): 내부망 GET /metrics(인증 없음, gateway 에는 denied). 두 서비스가 monitoring 네트워크에 붙어 있어서 읽는다(ADR 0053).
+  - job_name: survey-service-metrics
+    metrics_path: /metrics
+    static_configs: [{targets: ['survey-service:8080']}]
+  - job_name: model-serving-metrics   # 외부 추론 모드는 제품 안에 model-serving 이 없어 빈 목록(PROMETHEUS_INFERENCE_METRICS_TARGETS)
+    metrics_path: /metrics
+    file_sd_configs: [{files: [/etc/prometheus/inference-metrics-targets.yml]}]
   - job_name: probe-external  # 서버 밖에서 보는 공개 주소(사용자 결정 뒤에 채운다). 기본은 빈 목록
     metrics_path: /probe
     params: {module: [http_2xx]}

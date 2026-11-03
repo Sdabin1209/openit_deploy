@@ -88,3 +88,64 @@ tests:
         alertname: JobStale
         exp_alerts:
           - {exp_labels: {severity: critical, job_name: c}, exp_annotations: {summary: "주기 잡 c 의 마지막 성공이 주기의 2배를 넘었다"}}
+  - name: 소요 시간 경보(U71)
+    interval: 1m
+    input_series:
+      # 환자 턴: slow 는 모든 턴이 2초 초과(le 2 에 0건), fast 는 모두 1초 이하
+      - {series: 'openit_turn_duration_seconds_bucket{instance="slow",le="1"}', values: '0+0x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{instance="slow",le="2"}', values: '0+0x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{instance="slow",le="5"}', values: '0+60x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{instance="slow",le="+Inf"}', values: '0+60x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{instance="fast",le="1"}', values: '0+60x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{instance="fast",le="2"}', values: '0+60x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{instance="fast",le="5"}', values: '0+60x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{instance="fast",le="+Inf"}', values: '0+60x30'}
+      # 모델 호출: extract 와 respond 가 각각 0.75초 구간(le 0.5 에 0건, le 1 에 전부) -> p95 합 > 1.5 가 아니라 약 1.9
+      - {series: 'openit_model_call_duration_seconds_bucket{instance="m",op="extract",le="0.5"}', values: '0+0x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{instance="m",op="extract",le="1"}', values: '0+60x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{instance="m",op="extract",le="+Inf"}', values: '0+60x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{instance="m",op="respond",le="0.5"}', values: '0+0x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{instance="m",op="respond",le="1"}', values: '0+60x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{instance="m",op="respond",le="+Inf"}', values: '0+60x30'}
+      - {series: 'openit_next_item_overridden_total{instance="up",op="extract"}', values: '0+1x30'}
+      - {series: 'openit_next_item_overridden_total{instance="flat",op="extract"}', values: '5x30'}
+      - {series: 'up{job="survey-service-metrics",instance="s"}', values: '0x30'}
+      - {series: 'up{job="model-serving-metrics",instance="m"}', values: '1x30'}
+    alert_rule_test:
+      - eval_time: 5m          # 조건이 막 참이 됐다: for 5m 이 차기 전에는 울리지 않는다
+        alertname: PatientTurnP95OverSLO
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PatientTurnP95OverSLO
+        exp_alerts:
+          - {exp_labels: {severity: warning}, exp_annotations: {summary: "환자 턴 소요 p95 가 4.7s (목표 2초)"}}
+      - eval_time: 15m         # fast 만 있으면 울리지 않는다는 것은 아래 별도 시험(경계)에서 본다
+        alertname: ModelCallP95OverTarget
+        exp_alerts:
+          - {exp_labels: {severity: warning}, exp_annotations: {summary: "모델 호출 p95 합(extract+respond)이 1.95s (목표 1.5초)"}}
+      - eval_time: 15m
+        alertname: NextItemOverriddenIncreasing
+        exp_alerts:
+          - {exp_labels: {severity: warning}, exp_annotations: {summary: "next_item 덮어쓰기가 최근 1시간에 15회 늘었다 (모델이 낸 다음 문항을 서버가 바꿨다)"}}
+      - eval_time: 2m
+        alertname: MetricsTargetDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: MetricsTargetDown
+        exp_alerts:
+          - {exp_labels: {severity: warning, job: survey-service-metrics, instance: s}, exp_annotations: {summary: "survey-service-metrics 의 /metrics 를 읽지 못한다 (monitoring 네트워크, ADR 0053)"}}
+  - name: 소요 시간 경보 경계(U71) - 빠른 환자 턴과 합이 1.5초 이하인 모델 호출은 울리지 않는다
+    interval: 1m
+    input_series:
+      - {series: 'openit_turn_duration_seconds_bucket{le="1"}', values: '0+60x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{le="2"}', values: '0+60x30'}
+      - {series: 'openit_turn_duration_seconds_bucket{le="+Inf"}', values: '0+60x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{op="extract",le="0.5"}', values: '0+60x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{op="extract",le="+Inf"}', values: '0+60x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{op="respond",le="0.5"}', values: '0+60x30'}
+      - {series: 'openit_model_call_duration_seconds_bucket{op="respond",le="+Inf"}', values: '0+60x30'}
+      - {series: 'openit_next_item_overridden_total{op="extract"}', values: '7x30'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: PatientTurnP95OverSLO, exp_alerts: []}
+      - {eval_time: 20m, alertname: ModelCallP95OverTarget, exp_alerts: []}
+      - {eval_time: 20m, alertname: NextItemOverriddenIncreasing, exp_alerts: []}

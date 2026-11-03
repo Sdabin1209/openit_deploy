@@ -1,5 +1,10 @@
 # 변경 이력
 
+## wo-450 D2 (U71): 소요 시간 지표 수집과 경보 (ADR 0053)
+- `compose.yaml` 에 `monitoring` 네트워크, survey-service·model-serving 이 붙는다(겹침 파일은 서비스를 건드리지 않는다). Prometheus 수집 작업 `survey-service-metrics`, `model-serving-metrics`(외부 추론 모드는 빈 목록). gateway 는 `/metrics` 를 열지 않는다.
+- 경보: 환자 턴 p95 > 2초 5분, 모델 호출 p95 합 > 1.5초, next_item 덮어쓰기 1시간 증가, 수집 대상 down. `promtool test rules` 경계 시험과 변이 시험, 동적 수집 시험 추가.
+- 기준표: model-runtime v0.11.13, 문진 스키마 survey-schema-v4.1.0.
+
 ## wo-450 D1 (U92): 기준표 계약 v3.4.0·link v0.4.6, clinician 푸시 경로
 - `DEPLOY_BC_TAG` v3.4.0, `DEPLOY_LINK_TAG` v0.4.6. 게이트웨이: clinician 역할에 `/v1/staff/push-config`, `/v1/staff/push-subscriptions`, `.../unsubscribe` 를 허용(나머지 직원 API 는 staff 전용 그대로). 상류에는 staff 서비스 토큰과 `X-Openit-User` 를 붙인다(서비스가 clinician 별도 토큰을 받는지는 확인하지 못했다). `test-gateway-auth.sh` 에 줄 추가.
 - ops-feedback 보존: `failed_raw_days: 30` 명시(L19 사용자 결정 2026-11-03). 게이트웨이 clinician 푸시 매처는 최상위에 둔다(check_exposure 구문 분석기가 최상위 매처만 읽는다).

@@ -260,7 +260,7 @@ IPORT=$(port_of "$INF-model-serving-1" 8080)
 export INFERENCE_TOKEN_FILE="$W/inference-token"
 # 운영 모드 overlay(compose.external-inference.yaml)를 이 스크립트의 환경에 둔다: 이후 모든 dc/up.sh/rollback.sh 호출이 같은 제품 구성을 본다(INFERENCE_URL, COMPOSE_EXTRA 를 내보낸다)
 external_inference_setup "http://host.docker.internal:$IPORT"
-export PROMETHEUS_INFERENCE_TARGETS=no-local-inference-targets.yml   # 외부 추론 모드: 제품 안에 model-serving 이 없으니 감시 스택이 그 탐침 대상을 갖지 않는다(config/prometheus/prometheus.yml 주석)
+export PROMETHEUS_INFERENCE_METRICS_TARGETS=no-local-inference-targets.yml; export PROMETHEUS_INFERENCE_TARGETS=no-local-inference-targets.yml   # 외부 추론 모드: 제품 안에 model-serving 이 없으니 감시 스택이 그 탐침 대상을 갖지 않는다(config/prometheus/prometheus.yml 주석)
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
 abort_if_failed

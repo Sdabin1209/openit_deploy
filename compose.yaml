@@ -25,6 +25,7 @@ x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 c
 networks:
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
   serving:    # 문진 서비스 런타임 경로: survey-service <-> 수집 API, 릴리스 읽기
+  monitoring: # 지표 수집(U71, ADR 0053): survey-service·model-serving 의 /metrics 를 Prometheus 가 읽는 길 하나. 두 서비스와 감시 스택(compose.monitoring.yaml)만 붙는다. gateway 는 붙지 않는다(공개 노출 없음)
   ui:         # gateway <-> 정적 화면(kiosk-frontend, admin-console). internal: 정적 화면 컨테이너는 외부로 나가지 못한다
     internal: true
   authoring:  # 문항 저작
@@ -291,7 +292,7 @@ services:
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
     secrets: [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
-    networks: [edge, serving, db-survey]
+    networks: [edge, serving, db-survey, monitoring]
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -385,7 +386,7 @@ services:
     secrets: [model-runtime-tokens, gate-read-model-serving]
     volumes:
       - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다)
-    networks: [serving]
+    networks: [serving, monitoring]   # monitoring: /metrics 수집 전용(ADR 0053)
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]

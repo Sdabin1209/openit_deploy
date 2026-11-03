@@ -10,6 +10,9 @@ class H(http.server.BaseHTTPRequestHandler):
             if mode == "down": return self._send(503, {"status": "down"})
             f = 3 if mode == "fail3" else 0
             return self._send(503 if f else 200, {"status": "x", "judging": "enabled", "judging_loop": {"last_run_at": int(time.time()) - 5, "consecutive_failures": f, "last_error": None, "upstream_auth_failed": False}})
+        if self.path == "/metrics":
+            b = b"# TYPE openit_turn_duration_seconds histogram\nopenit_turn_duration_seconds_bucket{outcome=\"ok\",le=\"+Inf\"} 1\nopenit_turn_duration_seconds_count{outcome=\"ok\"} 1\nopenit_turn_duration_seconds_sum{outcome=\"ok\"} 0.5\n"
+            self.send_response(200); self.send_header("Content-Type", "text/plain; version=0.0.4"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b); return
         self._send(404, {})
     def _send(self, code, body):
         b = json.dumps(body).encode(); self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)

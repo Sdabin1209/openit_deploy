@@ -55,3 +55,25 @@ groups:
         for: 0m
         labels: {severity: critical}
         annotations: {summary: "주기 잡 {{ $labels.job_name }} 의 마지막 성공이 주기의 2배를 넘었다"}
+  - name: openit-latency                 # U71·D125: 목표(SLO) 경보. 요청을 끊는 값이 아니다(실패 판정 상한은 ADR 0051). 임계값은 계약 METRICS.md "운영 소요 시간 지표"의 목표, for 5m 은 시작값(측정 안 함)
+    rules:
+      - alert: PatientTurnP95OverSLO     # 환자 턴 p95 > 2.0초가 5분 이어짐(목표 2초, D125). 모든 outcome 을 센다(실패·정지 턴도 환자가 기다린 시간이다)
+        expr: histogram_quantile(0.95, sum by (le) (rate(openit_turn_duration_seconds_bucket[5m]))) > 2
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "환자 턴 소요 p95 가 {{ $value | humanizeDuration }} (목표 2초)"}
+      - alert: ModelCallP95OverTarget    # 모델 호출 합(extract+respond) p95 > 1.5초. 합의 p95 는 구할 수 없어 op 별 p95 의 합(상한 근사: 합의 p95 이상)으로 본다
+        expr: sum(histogram_quantile(0.95, sum by (le, op) (rate(openit_model_call_duration_seconds_bucket[5m])))) > 1.5
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "모델 호출 p95 합(extract+respond)이 {{ $value | humanizeDuration }} (목표 1.5초)"}
+      - alert: NextItemOverriddenIncreasing   # 모델이 낸 next_item 을 서버가 바꾼 횟수(ADR 0014 과도기 신호). 계약 목표는 '추세 관찰'이라 임계값이 없다: 1시간 동안 늘면 알린다(시작값, 측정 안 함)
+        expr: sum(increase(openit_next_item_overridden_total[1h])) > 0
+        for: 0m
+        labels: {severity: warning}
+        annotations: {summary: "next_item 덮어쓰기가 최근 1시간에 {{ $value }}회 늘었다 (모델이 낸 다음 문항을 서버가 바꿨다)"}
+      - alert: MetricsTargetDown          # 지표 수집 대상이 닿지 않으면 위 경보가 조용해질 수 있다
+        expr: up{job=~"survey-service-metrics|model-serving-metrics"} == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "{{ $labels.job }} 의 /metrics 를 읽지 못한다 (monitoring 네트워크, ADR 0053)"}

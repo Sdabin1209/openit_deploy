@@ -8,5 +8,6 @@ services:
       - ${FAKE_STATE_DIR:?}:/state:ro
     networks:
       serving: {aliases: [gateway, release-gate, model-serving]}
+      monitoring: {aliases: [survey-service, model-serving]}   # /metrics 수집 시험(compose.yaml 에서는 두 서비스가 monitoring 에 붙는다, ADR 0053)
 networks:
   serving:

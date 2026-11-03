@@ -1,7 +1,7 @@
 # 상태 감시 스택(ADR 0037): Prometheus + blackbox_exporter + json_exporter + node_exporter + Alertmanager.
 # 사용: COMPOSE_EXTRA=compose.monitoring.yaml scripts/up.sh deploy   (E2E 는 이 파일을 함께 올린다)
 # 이미지는 digest 로 고정한다(locks/images.lock, scripts/lock-third-party.sh). 호스트 포트는 127.0.0.1 에만 열고 Docker 가 배정한다(고정 포트 금지).
-# 네트워크: monitoring(전용) + serving(탐침이 gateway/release-gate/model-serving 에 닿아야 한다). 서비스 쪽 네트워크는 바꾸지 않는다.
+# 네트워크: monitoring(전용; survey-service·model-serving 이 compose.yaml 에서 이 이름의 네트워크에 붙어 /metrics 를 낸다, ADR 0053) + serving(탐침이 gateway/release-gate/model-serving 에 닿아야 한다).
 # 강화: 비root, 읽기 전용, cap_drop ALL, no-new-privileges, 로그 회전, 자원 한도(측정 안 함, 시작값).
 x-monlog: &monlog {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 x-monhard: &monhard
@@ -28,6 +28,7 @@ services:
       - ${CONFIG_DIR:-./config}/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ${CONFIG_DIR:-./config}/prometheus/external-targets.yml:/etc/prometheus/external-targets.yml:ro
       - ${CONFIG_DIR:-./config}/prometheus/${PROMETHEUS_INFERENCE_TARGETS:-local-inference-targets.yml}:/etc/prometheus/inference-targets.yml:ro   # 외부 추론 모드는 no-local-inference-targets.yml (prometheus.yml 주석)
+      - ${CONFIG_DIR:-./config}/prometheus/${PROMETHEUS_INFERENCE_METRICS_TARGETS:-local-inference-metrics-targets.yml}:/etc/prometheus/inference-metrics-targets.yml:ro   # 외부 추론 모드는 no-local-inference-targets.yml
       - ${CONFIG_DIR:-./config}/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     networks: [monitoring]

@@ -122,6 +122,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0048 gateway 상류 프록시 상한이 사슬 규칙을 지킨다(값은 0051이 대체)](docs/adr/0048-gateway-proxy-limits-follow-the-chain.md)
 - [0051 시간 상한은 실패 판정 상한이다: 목표와 분리, 키오스크 60s > gateway 56s > 턴 50s > 추출 20s + 응답 25s](docs/adr/0051-time-limits-are-failure-bounds-not-targets.md)
 - [0052 기기에 문진표를 배치하는 방식: 기기 설정 파일의 선택 칸 하나](docs/adr/0052-device-question-set-placement.md)
+- [0053 소요 시간 지표 수집: monitoring 네트워크 하나에 두 서비스만 붙인다](docs/adr/0053-metrics-scrape-network.md)
 - [0049 원격 추론 서버는 게이트웨이의 기계 토큰 경로로 release-gate 를 읽는다](docs/adr/0049-remote-inference-reads-release-gate-via-gateway.md)
 - [0050 E2E는 샌드박스로 돈다: 제품에는 시험용 문이 없다](docs/adr/0050-e2e-sandbox.md)
 - [0047(값은 0051이 대체) 시간 상한 사슬 값: 키오스크 12s > gateway 10.5s > survey 턴 9s > 추출 3s + 응답 5s](docs/adr/0047-time-chain-values.md)
