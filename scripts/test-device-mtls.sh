@@ -28,10 +28,10 @@ python3 - "$CF" <<'PY' && pass "survey-service 로 가는 reverse_proxy 모두 X
 import re, sys
 t = open(sys.argv[1], encoding="utf-8").read()
 blocks = [m.start() for m in re.finditer(r"reverse_proxy survey-service:8080 \{", t)]
-assert len(blocks) == 4, f"survey 프록시 {len(blocks)}개"
+assert len(blocks) >= 4, f"survey 프록시 {len(blocks)}개"   # 개수를 고정하지 않는다: 새 경로(clinician 결과·푸시 등)가 늘어도 모든 프록시가 같은 규칙을 지켜야 한다
 for b in blocks:
     body = t[b:t.index("\n\t\t}\n", b)] if "\n\t\t}\n" in t[b:] else t[b:b+900]
-    body = t[b:b+1200]
+    body = t[b:b+1500]
     assert "header_up -X-Openit-Dn" in body, "X-Openit-Dn 을 지우지 않는 프록시"
     assert ("header_up -X-Openit-Device" in body) or ('header_up X-Openit-Device "{re.devcn.1}"' in body), "기기 헤더 처리가 없는 프록시"
 assert 'request_header X-Openit-Dn "dn={http.request.tls.client.subject}"' in t
@@ -48,7 +48,7 @@ bash "$DEPLOY_ROOT/scripts/device-pki.sh" gateway-config >/dev/null 2>&1
 DEVICE_PKI_DIR="$T/pki2" bash "$DEPLOY_ROOT/scripts/device-pki.sh" init >/dev/null 2>&1; DEVICE_PKI_DIR="$T/pki2" bash "$DEPLOY_ROOT/scripts/device-pki.sh" issue rogue-1 >/dev/null 2>&1   # 신뢰하지 않는 다른 CA
 gwrun() { # gwrun <이름> <device-tls 조각> <CA 파일> [docker 인자...]: 게이트웨이를 임시 네트워크에서 띄운다
   local name=$1 tls=$2 ca=$3; shift 3
-  docker run -d --name "$name" --network $NET "$@" -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$S/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" \
+  docker run -d --name "$name" -e GATEWAY_HOST_NAMES --network $NET "$@" -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$S/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" \
     -v "$tls:/etc/caddy/device-tls.caddy:ro" -v "$ca:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null; }
 val() { docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$S/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1:/etc/caddy/device-tls.caddy:ro" -v "$2:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; }
 val "$DEPLOY_ROOT/config/device-tls.caddy" "$DEPLOY_ROOT/config/device-ca.pem" && pass "Caddyfile 검증 통과(기본: 인증서 검증 꺼짐, 빈 조각)" || fail "Caddyfile 검증(기본)"

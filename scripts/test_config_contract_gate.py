@@ -10,6 +10,7 @@ from openit_deploy.wiring import cli_check_config_contracts as G
 
 def rendered():
     env = dict(os.environ)
+    env.setdefault("GATEWAY_HOST_NAMES", '"localhost", "127.0.0.1"')   # lib.sh 가 GATEWAY_HOSTS 에서 만드는 값(L20). 자리표시 값 x 는 GatewayEnv 패턴 위반이다
     for v in re.findall(r"\$\{([A-Za-z0-9_]+):\?", (ROOT / "compose.yaml").read_text(encoding="utf-8")): env.setdefault(v, "x")
     r = subprocess.run(["docker", "compose", "--project-directory", str(ROOT), "-f", str(ROOT / "compose.yaml"), "--profile", "jobs", "config", "--format", "json"], capture_output=True, text=True, env=env)
     assert r.returncode == 0, f"docker compose config 를 못 돌렸다(건너뛰지 않고 실패로 센다): {r.stderr[-200:]}"

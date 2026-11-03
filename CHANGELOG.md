@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 D4 (L20): CSRF 허용 출처를 GATEWAY_HOSTS 에서 생성 (ADR 0056)
+- `lib.sh` 의 `gateway_host_names` → `GATEWAY_HOST_NAMES`(compose → gateway) → Caddyfile `@csrf` 가 Host 호스트 이름 목록과 Origin == https://<Host> 를 함께 요구. `GatewayEnv` 스키마에 변수 추가.
+- 회귀 시험(test-gateway-auth.sh): 다른 Origin·다른 포트·접두 변형 403, `//`·`/v1//`·`%2f`·`%2e%2e`·대소문자·청크 본문 경로 우회 403, 목록 밖 Host 는 핸들러에 닿지 않음. `test-device-mtls.sh` 의 survey 프록시 개수 고정(4)이 이미 어긋나 있어 개수 고정을 풀었다.
+
 ## wo-450 L08: ops-feedback DB 계정 분리 배선 (ADR 0055)
 - 앱 계정 `ops_log_app`/`ops_failure_app`(DML만)을 PostgreSQL 초기화가 만들고(`PG_APP_ACCOUNTS`), `gen-secrets.sh` 가 앱 암호·접속 문자열(`db-ops-*-app-*`)을 만든다. 서버·잡은 앱 접속 문자열과 `OPS_DB_SCHEMA=verify`, 소유자 접속 문자열은 새 일회성 서비스 `ops-feedback-migrate`(`admin migrate`)만. 서버·잡은 migrate 성공 뒤에 뜬다.
 - 시험: `test-postgres.sh`(82건, 앱 계정의 CREATE/ALTER/DROP/TRUNCATE 실패·기본 권한), `test_ops_db_roles_wiring.py`, `test_compose_restart_policy.py`(일회성 서비스 구분). 이미지로 migrate→서버 기동은 E2E 에서만 확인된다(돌리지 않음).

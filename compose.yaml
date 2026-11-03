@@ -255,6 +255,7 @@ services:
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
+      GATEWAY_HOST_NAMES: ${GATEWAY_HOST_NAMES:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다(L20, ADR 0056)}   # CSRF 허용 호스트 이름 목록. 직접 정하지 않는다
     volumes:
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
     tmpfs: ["/tmp", "/config:uid=10001,gid=10001"]

@@ -70,6 +70,18 @@ gpu_record_valid() {
   printf '%s\n' "$rec"
 }
 # 이미지 이름은 영역 이름과 같다. 로컬 레지스트리 안의 저장소 이름은 openit/<영역>.
+# CSRF 방어가 허용하는 호스트 이름(L20, ADR 0056): GATEWAY_HOSTS("호스트:포트, ...")에서 포트를 뗀 이름을 Caddyfile 식에 그대로 넣을 따옴표 목록으로 만든다. 직접 정하지 않는다(인증서 이름과 같은 한 곳에서 나온다)
+# 이름 규칙은 계약 밖 deploy 내부 스키마 schemas/GatewayEnv 의 GATEWAY_HOSTS 패턴과 같다. 어기면 따옴표·식을 깨뜨릴 수 있어 여기서 멈춘다
+gateway_host_names() {
+  local h out="" list=${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
+  for h in ${list//,/ }; do
+    h=${h%:*}; [[ "$h" =~ ^[A-Za-z0-9.-]+$ ]] || die "GATEWAY_HOSTS 의 호스트 이름 규칙 위반(영문·숫자·.·- 만): '$h'"
+    out+="${out:+, }\"$h\""
+  done
+  [ -n "$out" ] || die "GATEWAY_HOSTS 가 비었다"
+  echo "$out"
+}
+export GATEWAY_HOST_NAMES="$(gateway_host_names)"   # 직접 compose 를 부르는 스크립트(down 등)용 기본값. dc 는 부를 때마다 다시 계산한다(E2E 가 GATEWAY_HOSTS 를 source 뒤에 바꾼다)
 dc() { # dc <project> <compose args...>
   local project=$1; shift
   local files=(-f "$DEPLOY_ROOT/compose.yaml")
@@ -80,7 +92,7 @@ dc() { # dc <project> <compose args...>
   [ -f "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}" ] && envs+=(--env-file "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}")
   [ -f "$DEPLOY_ROOT/.env" ] && envs+=(--env-file "$DEPLOY_ROOT/.env")
   # 잠금 파일이 digest의 유일한 출처다: 셸에 남은 같은 이름의 변수가 --env-file 을 이기지 못하게 지운다
-  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u DEPLOY_REGISTRY \
+  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u DEPLOY_REGISTRY "GATEWAY_HOST_NAMES=$(gateway_host_names)" \
     "$DOCKER" compose -p "$project" --project-directory "$DEPLOY_ROOT" "${files[@]}" "${envs[@]}" "$@"
 }
 # 외부 추론 서버 모드(D72): external_inference_setup <URL>. INFERENCE_URL / INFERENCE_TOKEN_FILE 을 내보내고 COMPOSE_EXTRA 에 override 를 붙인다.
