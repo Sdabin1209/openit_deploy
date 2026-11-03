@@ -1,0 +1,6 @@
+# GATEWAY_TLS_MODE=files: 설치처가 가진 인증서·키 파일(조직 PKI 또는 공인 인증서)을 쓴다. 경로는 호스트 경로 GATEWAY_TLS_CERT_FILE / GATEWAY_TLS_KEY_FILE 이고 compose 가 아래 고정 경로에 마운트한다(키는 비밀 파일, D84).
+(gateway_tls) {
+	tls /etc/openit/gateway-tls/server.crt /run/secrets/gateway-tls-key {
+		import device_client_auth
+	}
+}

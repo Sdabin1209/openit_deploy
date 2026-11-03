@@ -18,6 +18,8 @@ import /etc/caddy/devices.caddy
 # 키오스크 기기 인증(2.3.0, D113, ADR 0040): 게이트웨이가 클라이언트 인증서를 검증하고 주체 CN 을 X-Openit-Device 로 서비스에 넘긴다. 신뢰할 CA 한 개는 파일 설정이다(비밀 아님):
 # /etc/caddy/device-tls.caddy 가 (device_client_auth) 를 정의한다. 기본 파일은 비어 있어(검증 꺼짐) 기기 토큰(2.x 호환)만 쓴다. 켜는 법: config/device-tls.mtls.caddy.example, docs/runbook.md 9-2.
 import /etc/caddy/device-tls.caddy
+# 공개 입구 인증서 출처(ADR 0060): GATEWAY_TLS_MODE 가 internal(기본)·files·acme 중 하나. 파일 하나가 (gateway_tls) 를 정의한다.
+import /etc/caddy/gateway-tls/{$GATEWAY_TLS_MODE:internal}.caddy
 # 사람이 쓰는 화면(승인·운영·검토·저작)과 정적 화면의 상류 상한(FAULT_POLICY 4·6, D125): 환자 경로(연결 1s + 헤더 55s, 키오스크 대기 60s 안)와 달리 키오스크의 60초 한도가 없다.
 # 화면이 무한정 매달리지 않게 상한을 둔다. 연결 1s(같은 서버의 컨테이너라 거의 즉시, 느리면 장애), 응답 헤더는 인자로 받는다: release-gate 180s(측정 최악 승인 128초 위의 여유, D120 계기), question-authoring 120s(측정 최악 자료 올리기 62초 위의 여유), ops-feedback 60s(프록시 표준 60초, 측정 최악 11초), 정적 화면 10s(정적 파일).
 # 사슬 규칙(바깥이 안쪽보다 길다): 서버 전체 마감(170/110/55초) < 이 상한(연결+헤더 181/121/61초) < 화면 대기(admin-console 190/130/70초) — scripts/test_time_chain.py, ADR 0051(ADR 0048 대체), CONVENTIONS 시간표 D125. 재시도 없음. 초과하면 아래 handle_errors 가 503/504 UPSTREAM_UNAVAILABLE 을 준다.
@@ -54,10 +56,7 @@ http://:8080 {
 }
 # HTTPS 사이트(컨테이너 8443). 사이트 이름 목록은 GATEWAY_HOSTS(기본 localhost, 127.0.0.1). 운영에서는 병원 내부 도메인을 적는다(예: kiosk.hospital.local:8443).
 {$GATEWAY_HOSTS:localhost:8443, 127.0.0.1:8443} {
-	tls {
-		issuer internal
-		import device_client_auth
-	}
+	import gateway_tls   # 인증서 출처는 GATEWAY_TLS_MODE(internal|files|acme)가 고른다: config/gateway-tls/<모드>.caddy. 이 파일을 손으로 고치지 않는다
 	import role_matchers
 	import kiosk_devices
 	# 기기 ID = 검증된 클라이언트 인증서 주체(RFC 2253 문자열, 예: CN=kiosk-1,O=...)의 CN. 형식 ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ 를 만족할 때만 기기로 본다(아니면 기기 인증 실패).

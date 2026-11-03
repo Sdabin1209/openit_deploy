@@ -90,6 +90,14 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   pg-data:        # postgres: 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 볼륨 복사가 아니라 scripts/pg-backup.sh(pg_dump)
 
 configs:
+  gateway-tls-internal:
+    file: ${CONFIG_DIR:-./config}/gateway-tls/internal.caddy
+  gateway-tls-files:
+    file: ${CONFIG_DIR:-./config}/gateway-tls/files.caddy
+  gateway-tls-acme:
+    file: ${CONFIG_DIR:-./config}/gateway-tls/acme.caddy
+  gateway-tls-cert:   # 공개 인증서(비밀 아님)
+    file: ${GATEWAY_TLS_CERT_FILE:-./config/gateway-tls/unused.pem}
   tls-sidecar:
     file: ${CONFIG_DIR:-./config}/tls-sidecar.caddy
   gateway-caddyfile:
@@ -109,6 +117,8 @@ configs:
 # PostgreSQL: postgres-password(슈퍼유저)와 db-<이름>-password(계정 암호)는 postgres 서비스만 마운트한다(초기화 스크립트가 읽는다).
 #   db-<이름>-dsn(접속 문자열)은 소유 서비스가 영역이 PostgreSQL로 바뀔 때 마운트한다(이름 규칙은 docs/RUN.md 4-1-1).
 secrets:
+  gateway-tls-key:     # mode=files 일 때 인증서 키(비밀 파일, D84). 아니면 빈 파일
+    file: ${GATEWAY_TLS_KEY_FILE:-./config/gateway-tls/unused.pem}
   step-ca-password:     # step-ca 가 루트·중간 키를 암호화하는 비밀번호(gen-secrets.sh 가 1회 만든다)
     file: ${SECRETS_DIR:-./secrets}/tokens/step-ca-password
   postgres-password:
@@ -422,7 +432,11 @@ services:
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
       - {source: gateway-device-tls, target: /etc/caddy/device-tls.caddy}
       - {source: gateway-device-ca, target: /etc/caddy/device-ca.pem}
-    secrets: [gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
+      - {source: gateway-tls-internal, target: /etc/caddy/gateway-tls/internal.caddy}
+      - {source: gateway-tls-files, target: /etc/caddy/gateway-tls/files.caddy}
+      - {source: gateway-tls-acme, target: /etc/caddy/gateway-tls/acme.caddy}
+      - {source: gateway-tls-cert, target: /etc/openit/gateway-tls/server.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
+    secrets: [gateway-tls-key, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
@@ -434,6 +448,9 @@ services:
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
+      GATEWAY_TLS_MODE: ${GATEWAY_TLS_MODE:-internal}   # 공개 입구 인증서 출처: internal(기본)|files|acme (ADR 0060)
+      GATEWAY_ACME_EMAIL: ${GATEWAY_ACME_EMAIL:-internal@invalid.example}
+      GATEWAY_ACME_DIRECTORY: ${GATEWAY_ACME_DIRECTORY:-https://acme-v02.api.letsencrypt.org/directory}
       GATEWAY_HOST_NAMES: ${GATEWAY_HOST_NAMES:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다(L20, ADR 0056)}   # CSRF 허용 호스트 이름 목록. 직접 정하지 않는다
     volumes:
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh

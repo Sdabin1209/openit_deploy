@@ -1,0 +1,8 @@
+# GATEWAY_TLS_MODE=internal (기본): 게이트웨이 자체 내부 인증기관(Caddy `issuer internal`)이 사이트 이름 인증서를 발급한다. 루트는 scripts/export-gateway-ca.sh 로 꺼내 기기·직원 PC에 신뢰시킨다.
+# 왜 step-ca 가 아닌가: 기본 사이트 이름(localhost, 127.0.0.1)과 설치처의 사람용 이름은 step-ca 가 ACME 로 소유를 검증할 수 있는 이름이 아니다(ADR 0060). step-ca 로 받으려면 mode=acme 와 GATEWAY_ACME_DIRECTORY 를 쓴다.
+(gateway_tls) {
+	tls {
+		issuer internal
+		import device_client_auth
+	}
+}

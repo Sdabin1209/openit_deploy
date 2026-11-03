@@ -5,10 +5,11 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$HERE/lib.sh"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; cd "$T"   # 옛 gen-secrets 가 모르는 인자를 폴더 이름으로 만들어도 임시 폴더 안에서만
+PKI=$T/pki; mkdir -p "$PKI"; gateway_test_pki "$PKI" x || exit 1   # ADR 0060: Caddyfile 검증에 루트 인증서 파일이 필요하다
 N=0; F=0
 ok() { local name=$1; shift; N=$((N+1)); if out=$("$@" 2>&1); then echo "  PASS $name"; else echo "  FAIL $name"; printf '%s\n' "$out" | tail -3 | cut -c1-220 | sed 's/^/       /'; F=$((F+1)); fi; }
 GW=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-val() { docker run --rm -e GATEWAY_HOST_NAMES -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$1/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile; }
+val() { docker run --rm $(gateway_test_mounts "$PKI") -e GATEWAY_HOST_NAMES -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$DEPLOY_ROOT/config/device-tls.caddy:/etc/caddy/device-tls.caddy:ro" -v "$DEPLOY_ROOT/config/device-ca.pem:/etc/caddy/device-ca.pem:ro" -v "$1/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile; }
 
 P=$T/prod; F2=$T/fixt
 bash "$HERE/gen-secrets.sh" "$P" >/dev/null 2>&1

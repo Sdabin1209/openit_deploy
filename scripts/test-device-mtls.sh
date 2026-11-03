@@ -7,6 +7,7 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1; source "$(dirname "$0")/lib.sh"
 STATIC_ONLY=0; [ "${1:-}" = --static ] && STATIC_ONLY=1
 T=$(mktemp -d); chmod 755 "$T"; ID=$$; N=0; F=0
+PKI=$T/pki; mkdir -p "$PKI"; gateway_test_pki "$PKI" x || exit 1   # ADR 0060
 GW=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 NET=devmtls-net-$ID; CE=devmtls-echo-$ID; CG=devmtls-gw-$ID
 cleanup() { docker rm -f $CG $CE >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; rm -rf "$T"; }
@@ -48,9 +49,9 @@ bash "$DEPLOY_ROOT/scripts/device-pki.sh" gateway-config >/dev/null 2>&1
 DEVICE_PKI_DIR="$T/pki2" bash "$DEPLOY_ROOT/scripts/device-pki.sh" init >/dev/null 2>&1; DEVICE_PKI_DIR="$T/pki2" bash "$DEPLOY_ROOT/scripts/device-pki.sh" issue rogue-1 >/dev/null 2>&1   # 신뢰하지 않는 다른 CA
 gwrun() { # gwrun <이름> <device-tls 조각> <CA 파일> [docker 인자...]: 게이트웨이를 임시 네트워크에서 띄운다
   local name=$1 tls=$2 ca=$3; shift 3
-  docker run -d --name "$name" -e GATEWAY_HOST_NAMES --network $NET "$@" -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" \
+  docker run -d --name "$name" $(gateway_test_mounts "$PKI") -e GATEWAY_HOST_NAMES --network $NET "$@" -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" \
     -v "$tls:/etc/caddy/device-tls.caddy:ro" -v "$ca:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null; }
-val() { docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1:/etc/caddy/device-tls.caddy:ro" -v "$2:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; }
+val() { docker run --rm $(gateway_test_mounts "$PKI") -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1:/etc/caddy/device-tls.caddy:ro" -v "$2:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; }
 val "$DEPLOY_ROOT/config/device-tls.caddy" "$DEPLOY_ROOT/config/device-ca.pem" && pass "Caddyfile 검증 통과(기본: 인증서 검증 꺼짐, 빈 조각)" || fail "Caddyfile 검증(기본)"
 val "$T/pki/device-tls.caddy" "$T/pki/device-ca.pem" && pass "Caddyfile 검증 통과(인증서 검증 켜짐)" || fail "Caddyfile 검증(켜짐)"
 docker network create $NET >/dev/null

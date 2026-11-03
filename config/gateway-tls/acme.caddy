@@ -1,0 +1,9 @@
+# GATEWAY_TLS_MODE=acme: ACME(RFC 8555)로 GATEWAY_ACME_DOMAIN 인증서를 자동 발급·갱신한다. 기본 공급자는 Caddy 기본(공인), GATEWAY_ACME_DIRECTORY 를 주면 그 서버(예: deploy step-ca)다. GATEWAY_HOSTS 는 <도메인>:<포트> 여야 한다.
+(gateway_tls) {
+	tls {$GATEWAY_ACME_EMAIL:internal@invalid.example} {
+		issuer acme {
+			dir {$GATEWAY_ACME_DIRECTORY:https://acme-v02.api.letsencrypt.org/directory}
+		}
+		import device_client_auth
+	}
+}
