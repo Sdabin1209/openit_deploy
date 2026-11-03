@@ -26,7 +26,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT="$REGP" REGISTRY_HOST_BIND="${LOC_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
 export SECRETS_DIR="$W/secrets" GATEWAY_PORT= GATEWAY_TLS_PORT=
 # 왜 시험 호스트 이름을 넣는가: 추론 서버는 https://host.docker.internal:<포트> 로 부르고, 게이트웨이 인증서는 사이트 이름(GATEWAY_HOSTS)에 든 이름으로만 발급된다. 검증을 끄지 않는다
-export GATEWAY_HOSTS="host.docker.internal:8443, localhost:8443, 127.0.0.1:8443"
+export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"   # 첫 이름이 사람 화면의 공개 주소(Keycloak 발급자·로그인 쿠키)다: 시험 호스트가 풀 수 있는 localhost 를 앞에 둔다. 컨테이너 쪽 호출자는 host.docker.internal 로 부른다
 
 cleanup() {
   echo "== 정리 ($P, $INF, $REGP, state/loc-test)"
@@ -86,6 +86,17 @@ done
 [ -n "$SCP" ] || bail "게시할 수 있는 빈 포트를 찾지 못했다"
 export STEP_CA_PORT=$SCP STEP_CA_DNS_NAMES=host.docker.internal COMPOSE_EXTRA="${COMPOSE_EXTRA:-} $DEPLOY_ROOT/compose.step-ca-publish.yaml"
 mkdir -p "$W/pki"
+GWP=""
+for _try in 1 2 3 4 5 6 7 8; do
+  _p=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+  if "$DOCKER" run --rm --network none -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then GWP=$_p; break; fi
+done
+[ -n "$GWP" ] || bail "게이트웨이에 게시할 수 있는 빈 포트를 찾지 못했다"
+export GATEWAY_TLS_PORT=$GWP
+# 사람 인증(U82, ADR 0057): Keycloak 의 발급자와 oauth2-proxy 의 콜백은 밖에서 보이는 주소(첫 호스트 이름 + 밖에 보이는 포트)로 정해진다. 호스트 포트를 시험이 먼저 정하므로 그 포트를 밖에 보이는 포트로 준다
+export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT
+# 한 줄의 export 안에서는 $(...) 가 앞의 대입보다 먼저 풀린다(e2e.sh 3차 E2E 와 같은 결함). 그래서 따로 쓴다
+export GATEWAY_PUBLIC_URL="$(gateway_public_url)"; export GATEWAY_HOST_NAMES="$(gateway_host_names)"
 OK=0
 for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   [ -n "$BIND" ] || continue
@@ -150,14 +161,11 @@ chk "추론 토큰으로 GET /v1/releases (목록)는 열리지 않는다(사람
 echo "== 3. 음성 확인"
 # (ㄱ) 사람 세션: E2E 단계 5u·test-idp-smoke.sh 와 같은 OIDC 로그인 도우미(scripts/e2e_sandbox.py oidc_login: Keycloak 로그인 -> _openit_session 쿠키)로 승인자 계정 세션을 만든다
 bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$P" >/dev/null 2>&1 || bail "시험 사용자(Keycloak)를 만들지 못했다"
-HCOOKIE=$(DEPLOY_ROOT="$DEPLOY_ROOT" "$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GW" "$CA" "$MS_HOST" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" "$GWPORT" <<'PY'
+HCOOKIE=$(DEPLOY_ROOT="$DEPLOY_ROOT" "$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GATEWAY_PUBLIC_URL" "$CA" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" <<'PY'
 import os, socket, sys
 sys.path.insert(0, os.path.join(os.environ["DEPLOY_ROOT"], "scripts"))
 import e2e_sandbox as SB
-base, ca, addr, pwf, gwport = sys.argv[1:6]
-_orig = socket.getaddrinfo
-# 시험 호스트가 이 이름을 풀지 못해도 게시 주소로 간다(curl --resolve 와 같다). Keycloak 이 돌려보내는 공개 주소는 사이트 이름의 포트(8443)라서 Docker 가 배정한 게시 포트로 바꿔 준다
-socket.getaddrinfo = lambda h, p, *a, **k: _orig(addr, int(gwport) if str(p) == "8443" else p, *a, **k) if h == "host.docker.internal" else _orig(h, p, *a, **k)
+base, ca, pwf = sys.argv[1:4]
 jar = SB.oidc_login(base, "trainer-e2e", open(pwf).read().strip(), ca=ca)
 print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session")))
 PY
