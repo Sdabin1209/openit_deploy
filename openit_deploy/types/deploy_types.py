@@ -49,16 +49,6 @@ class AreasDoc(TypedDict):
     areas: List[Area]
 
 
-class CaddyfileDemoRequest(TypedDict):
-    caddyfile: str
-
-
-class CaddyfileDemoResult(TypedDict):
-    status: Literal['OK', 'BLOCK_NOT_UNIQUE']
-    found: int
-    demo_caddyfile: NotRequired[str]
-
-
 class Document(TypedDict):
     label: str
     schema_: str

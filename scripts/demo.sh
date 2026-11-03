@@ -64,8 +64,8 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   elif [ -f "$W/mimic-flow" ]; then MIMIC_FLOW=$(sed -n 1p "$W/mimic-flow"); else MIMIC_FLOW="$DEPLOY_ROOT/test/fake-model/question_flow.json"; fi
   export DEMO_MIMIC_FLOW_FILE="$MIMIC_FLOW"
   # 키오스크 기기 설정(데모 전용): 기기 산출물과 /config.json 을 내는 gateway 설정 사본의 경로. 파일은 up 이 만든다(demo_kiosk_prepare)
-  export DEMO_KIOSK_DEVICE=e2e DEMO_CADDYFILE="$W/Caddyfile.demo" DEMO_KIOSK_CONFIG="$W/secrets/kiosk-config/e2e.json"
-  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml $DEPLOY_ROOT/demo/compose.demo-kiosk.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
+  export DEMO_KIOSK_DEVICE=e2e   # 데모 기기 ID. 기기 토큰은 제품 경로 그대로(kiosk-add-device.sh, 게이트웨이 기기 토큰 목록). 데모만의 게이트웨이 설정은 없다(U75)
+  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT= GATEWAY_TLS_PORT=
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
   # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 vllm 백엔드를 정한다(모방 백엔드 overlay 는 붙이지 않는다). 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
 
@@ -76,7 +76,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     export DEMO_LLM_PROFILE="/app/profiles/$LLM_PROFILE_NAME.json"
     set_llm_image
     # 이미지는 파일로 고른다(compose.llm.local.yaml = 로컬 태그). 중첩 기본값 한 파일로는 안쪽 필수 변수가 먼저 평가되어 실패한다
-    COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml $DEPLOY_ROOT/demo/compose.demo-kiosk.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
+    COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
   fi
   # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
   if [ -n "$EXT" ]; then external_inference_setup "$EXT"; printf '%s\n%s\n' "$EXT" "$INFERENCE_TOKEN_FILE" > "$W/external-inference"
@@ -84,15 +84,13 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     EXT=$(sed -n 1p "$W/external-inference"); export INFERENCE_TOKEN_FILE; INFERENCE_TOKEN_FILE=$(sed -n 2p "$W/external-inference"); external_inference_setup "$EXT"
   fi
 }
-demo_kiosk_prepare() { # 데모 때만 키오스크가 /config.json 으로 기기 설정을 받게 준비한다. 토큰 값은 읽지도 출력하지도 않는다
-  # 1) 기존 도구가 기기 산출물을 만든다(secrets/kiosk-config/<ID>.json, 기기 토큰은 gen-secrets.sh 가 만든 시험 기기 e2e 것)
-  SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" >/dev/null 2>&1 || die "기기 산출물 생성 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
-  [ -s "$DEMO_KIOSK_CONFIG" ] || die "기기 산출물이 없다: $DEMO_KIOSK_CONFIG"
-  # 왜 644: 컨테이너 사용자(node)가 읽어야 한다. 600 이면 호스트 사용자와 uid 가 같을 때만 우연히 읽힌다. 폴더가 700 이고 이 비밀 폴더는 데모 전용이다(docs/adr/0022-secret-file-permissions.md 와 같은 규칙)
-  chmod 644 "$DEMO_KIOSK_CONFIG"
-  # 2) gateway 설정 사본: /config.json 404 블록 하나만 kiosk-frontend 로 넘긴다. 운영 config/Caddyfile 은 그대로다
-  "$DEPLOY_PY" -I "$DEPLOY_ROOT/scripts/demo_caddyfile.py" "$DEPLOY_ROOT/config/Caddyfile" "$DEMO_CADDYFILE" || die "Caddyfile 에서 /config.json 404 블록을 찾지 못했다 (config/Caddyfile 이 바뀌었다: scripts/demo_caddyfile.py 를 맞춘다)"
-  chmod 644 "$DEMO_CADDYFILE"   # gateway 컨테이너(uid 10001)가 configs 로 읽는다. 비밀 값은 없다(토큰은 {file./run/secrets/...} 로 읽는다)
+demo_kiosk_prepare() { # 제품 경로 그대로: 기기 토큰을 만들고 게이트웨이 목록에 넣는다(scripts/kiosk-add-device.sh). 토큰 값은 출력하지 않는다
+  SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" >/dev/null 2>&1 || die "기기 토큰 생성 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
+  [ -s "$SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE" ] || die "기기 토큰 파일이 없다: $SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE"
+}
+demo_kiosk_url() { # 키오스크 시작 주소(계약 KioskStartFragment: #device=<기기 토큰>)를 600 파일에만 쓴다. 터미널·로그에는 토큰을 내지 않는다(U75: 데모 전용 /config.json 분기 제거)
+  local gw=$1 host=$2 f="$W/kiosk-url.txt"
+  ( umask 077; printf 'https://%s:%s/#device=%s\n' "$host" "$gw" "$(tr -d '\n' < "$SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE")" > "$f" ); echo "$f"
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
@@ -122,7 +120,7 @@ guide() {
  !! 이 데이터는 시험용 대체(가짜 모델, 시험용 승인자)입니다. 실제 모델·실제 승인이 아닙니다. !!
 
  주소 (Docker가 배정한 포트): https://$host:$gw
-   키오스크 화면      https://$host:$gw/
+   키오스크 화면      주소는 $(demo_kiosk_url "$gw" "$host") 에 있다(기기 토큰이 URL 조각 #device= 에 들어 있어 터미널에 출력하지 않는다. cat 해서 브라우저에 붙여 넣는다)
    직원 콘솔          https://$host:$gw/staff/      계정 staff-e2e (역할 staff)
    승인·실패 사례 검토 https://$host:$gw/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
  (HTTPS: 내부 CA 가 발급한 인증서라 브라우저가 경고한다. 루트 인증서는 $W/gateway-ca.crt 이고 신뢰시키려면 docs/runbook.md TLS 절. 시험용이다. 원격 서버면: ssh -L $gw:127.0.0.1:$gw <서버>  로 터널을 열고 https://127.0.0.1:$gw 로 본다)
@@ -133,8 +131,7 @@ guide() {
    trainer-e2e      $W/secrets/tokens/account-trainer-e2e-password
    reviewer-e2e     $W/secrets/tokens/account-reviewer-e2e-password
    예: cat $W/secrets/tokens/account-staff-e2e-password
- 키오스크 기기 설정(D85 F절·D88/U8): 데모 때만 gateway 가 /config.json 으로 기기 설정을 내므로 키오스크 주소가 #device= 없이 열린다 (기기 ID e2e, 산출물 $DEMO_KIOSK_CONFIG, 토큰 값은 출력하지 않는다).
-   이 데모 주소에 닿는 누구나 /config.json 으로 이 시험 토큰을 읽는다: DEMO_BIND 를 127.0.0.1 밖으로 열면 그 범위 안에서 노출된다(운영 구성은 /config.json 을 404 로 막는다).
+ 키오스크 기기 인증(D85 F절·D88/U8): 제품 기본 경로(게이트웨이 기기 토큰 목록 + 시작 URL 조각 #device=)를 그대로 쓴다. 데모 전용 게이트웨이 설정은 없다(U75). mTLS 를 켠 운영에서는 기기 인증서로 대신한다(config/device-tls.mtls.caddy.example).
  모델 서빙: LoRA-A/LoRA-B 자리만 모방 백엔드(MODEL_RUNTIME_BACKEND=mimic, 시험 전용). 흐름 파일: $DEMO_MIMIC_FLOW_FILE (--mimic-flow-file 로 바꾼다). 나머지는 진짜 코드다.
 
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )

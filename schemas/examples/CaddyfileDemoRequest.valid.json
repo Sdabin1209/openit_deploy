@@ -1,1 +1,0 @@
-{"caddyfile": "example.test {\n\thandle /config.json {\n\t\trespond \"not found\" 404\n\t}\n}\n"}
