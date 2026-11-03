@@ -67,7 +67,7 @@ BRIDGE_GW=$("$DOCKER" network inspect bridge --format '{{(index .IPAM.Config 0).
 PLACEHOLDER="https://host.docker.internal:1"   # 서버가 뜨기 전 자리표시 주소(아무 포트도 열지 않는다). 서버가 뜬 뒤 실제 주소로 바꿔 survey-service 만 다시 만든다
 # 컨테이너(서버·호출자와 같은 위치)에서 host.docker.internal 로 닿는지. 인자: URL [CA 파일]
 reach() {
-  "$DOCKER" run --rm --name "$P-probe" --add-host host.docker.internal:host-gateway ${2:+-v "$2:/ca.crt:ro" -e SSL_CERT_FILE=/ca.crt} "$UTIL" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=5)" "$1" >/dev/null 2>&1
+  "$DOCKER" run --rm --name "$P-probe" --add-host host.docker.internal:host-gateway ${2:+-v "$2:/ca.crt:ro" -e SSL_CERT_FILE=/ca.crt} "$UTIL" python -c "import sys,json,urllib.request;b=urllib.request.urlopen(sys.argv[1],timeout=5).read().decode(); assert b.strip().startswith('ok') or json.loads(b).get('status')=='ok', b[:80]" "$1" >/dev/null 2>&1
 }
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   # 이 변수들은 "다른 호스트" 쪽 compose 의 환경이다(제품 쪽에는 없다). fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험 전용 표시, model-runtime ADR 0009)

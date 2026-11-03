@@ -42,6 +42,9 @@ for i in $(seq 1 40); do docker exec $ID-sc nc -z 127.0.0.1 443 2>/dev/null && b
 ok "인증서 컨테이너가 토큰으로 서비스 이름 인증서를 받았다 (ACME 도전 없음)" bash -c 'docker exec $1 test -s /home/step/tls.crt && ! docker logs $2 2>&1 | grep -qi "acme"' _ $ID-cert $ID-sc
 CLIENT='import urllib.request,sys;print(urllib.request.urlopen("https://'$NAME'/",timeout=5).read().decode())'
 ok "step-ca 루트를 아는 호출자(SSL_CERT_FILE)는 https 로 앱 응답을 받는다" bash -c '[ "$(docker run --rm --network $1 -e SSL_CERT_FILE=/pki/root_ca.crt -v $2:/pki:ro "$3" python -c "$4")" = hello-from-app ]' _ $NET $ID-root "$UTIL" "$CLIENT"
+# 4b) 모르는 Host 는 421 (맞는 사이트가 없을 때 Caddy 가 본문 없는 200 을 돌려줘 상태 코드만 보는 점검이 헛통과했다, 4차 E2E)
+MISDIR='import http.client,ssl,sys;c=http.client.HTTPSConnection("'$NAME'",context=ssl.create_default_context(),timeout=5);c.request("GET","/",headers={"Host":"unknown.invalid"});r=c.getresponse();print(r.status)'
+ok "모르는 Host 는 421 Misdirected Request 로 거절된다(빈 200 이 아니다)" bash -c '[ "$(docker run --rm --network $1 -e SSL_CERT_FILE=/pki/root_ca.crt -v $2:/pki:ro "$3" python -c "$4")" = 421 ]' _ $NET $ID-root "$UTIL" "$MISDIR"
 # 5) 검증 실패 거부
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/x.key" -out "$T/other_root.crt" -subj "/CN=other-root" -days 1 >/dev/null 2>&1; chmod 644 "$T/other_root.crt"
 ok "다른 루트만 아는 호출자는 검증 실패로 거부된다" bash -c '! docker run --rm --network $1 -e SSL_CERT_FILE=/pki/other_root.crt -v $2:/pki:ro "$3" python -c "$4"' _ $NET "$T" "$UTIL" "$CLIENT"

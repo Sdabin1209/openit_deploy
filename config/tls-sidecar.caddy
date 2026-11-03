@@ -15,3 +15,8 @@ https://{$TLS_NAME}, https://{$TLS_ALT_NAME:localhost} {
 	tls /certs/tls.crt /certs/tls.key
 	reverse_proxy {$TLS_UPSTREAM:127.0.0.1:8080}
 }
+# 위 이름이 아닌 Host/SNI 는 421 Misdirected Request(RFC 9110 15.5.20)로 거절한다. 맞는 사이트가 없을 때 Caddy 는 본문 없는 200 을 돌려줘 상태 코드만 보는 점검이 헛통과했다(4차 E2E)
+https:// {
+	tls /certs/tls.crt /certs/tls.key
+	respond "misdirected request" 421
+}

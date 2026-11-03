@@ -329,8 +329,8 @@ tls_checks() { # HTTPS 필수(D88/U5): 평문은 /healthz 만 답하고 나머�
   local r; r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://127.0.0.1:$PGW/v1/sessions"); echo "$r" | grep -q '^308 https://' || { echo "평문 요청이 https 로 308 이동하지 않는다: $r"; return 1; }
   [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PGW/staff/")" = 308 ] || { echo "평문 /staff/ 가 308 이 아니다"; return 1; }
   curl -s "http://127.0.0.1:$PGW/healthz" | grep -q '^ok' || { echo "평문 /healthz 가 ok 가 아니다"; return 1; }
-  curl -s -o /dev/null "https://127.0.0.1:$PGWS/healthz" 2>/dev/null && { echo "시험용 CA 없이 https 가 검증을 통과했다(자체 서명 인증서를 신뢰하는 환경?)"; return 1; }
-  local h; h=$($GWCURL -s -D - -o /dev/null "https://127.0.0.1:$PGWS/healthz") || { echo "시험용 CA 로 https 접속 실패"; return 1; }
+  curl -s -o /dev/null "https://127.0.0.1:$PGWS/healthz" 2>/dev/null && { echo "시험용 CA 없이 https 가 검증을 통과했다(자체 서명 인증서를 신뢰하는 환경?)"; return 1; }   # status-code-ok: TLS 신뢰 점검(검증 실패를 보는 시험이라 본문은 무관)
+  local h; h=$($GWCURL -s -D - -o /dev/null "https://127.0.0.1:$PGWS/healthz") || { echo "시험용 CA 로 https 접속 실패"; return 1; }   # status-code-ok: TLS 신뢰 점검(응답 머리글만 본다)
   echo "$h" | grep -qi '^strict-transport-security: max-age=31536000' || { echo "HSTS 헤더가 없다"; return 1; }
   echo "$h" | grep -qi '^x-content-type-options: nosniff' || { echo "X-Content-Type-Options 가 없다"; return 1; }
   echo "$h" | grep -qi '^x-frame-options: DENY' || { echo "X-Frame-Options 가 없다"; return 1; }
@@ -344,8 +344,8 @@ chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정
 # 인증 없는 요청의 응답 기대값은 test/gateway-oidc/unauth-expectations.txt 한 곳(scripts/test-gateway-auth.sh 와 같은 파일): 화면 302(/oauth2/start), 사람 API 401, 닫힌 면 404, 기기 경로 401(D85, U82)
 chk "gateway: 인증 없는 요청의 응답이 기대표와 같다 (화면 302 /oauth2/start, 사람 API 401, 닫힌 면 404, 기기 경로 401: test/gateway-oidc/unauth-expectations.txt, test-gateway-auth.sh 와 같은 스크립트)" bash "$DEPLOY_ROOT/scripts/check-unauth-expectations.sh" "https://127.0.0.1:$PGWS" --cacert "$W/gateway-ca.crt"
 chk "사람 화면 주소(GATEWAY_PUBLIC_URL)가 게이트웨이 HTTPS 호스트 포트와 같다 (Keycloak 발급자·로그인 쿠키가 이 주소에 묶인다, U82)" bash -c "[ \"\$GATEWAY_PUBLIC_URL\" = \"https://localhost:$PGWS\" ]"
-reach() { "$DOCKER" exec "$(cn "$1")" python -c "import urllib.request;urllib.request.urlopen('https://$2/healthz',timeout=3)" >/dev/null 2>&1; }   # 서비스는 TLS 사이드카(443)로만 받는다(ADR 0060). 컨테이너의 SSL_CERT_FILE 이 step-ca 루트를 가리킨다
-reachu() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=10)" "$2" >/dev/null 2>&1; }   # 10초: 호스트를 거치는 경로(host.docker.internal)는 Docker Desktop 프록시라 부하 때 3초를 넘겼다(4차 실행)   # reachu <출발 서비스> <URL>
+reach() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request;b=urllib.request.urlopen('https://$2/healthz',timeout=3).read().decode(); assert b.strip().startswith('ok') or json.loads(b).get('status')=='ok', b[:80]" >/dev/null 2>&1; }   # 서비스는 TLS 사이드카(443)로만 받는다(ADR 0060). 컨테이너의 SSL_CERT_FILE 이 step-ca 루트를 가리킨다
+reachu() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request;b=urllib.request.urlopen(sys.argv[1],timeout=10).read().decode(); assert b.strip().startswith('ok') or json.loads(b).get('status')=='ok', b[:80]" "$2" >/dev/null 2>&1; }   # 10초: 호스트를 거치는 경로(host.docker.internal)는 Docker Desktop 프록시라 부하 때 3초를 넘겼다(4차 실행)   # reachu <출발 서비스> <URL>
 blockedu() { ! reachu "$@"; }
 blocked() { ! reach "$@"; }
 net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원이 정확히 그 컨테이너들이다

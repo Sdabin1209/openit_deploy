@@ -59,7 +59,7 @@ docker run -d --name $CE --network $NET --network-alias survey-service -v "$DEPL
 printf '{\n\tadmin off\n\tskip_install_trust\n\tauto_https off\n}\nhttps://:443 {\n\ttls /pki/leaf.crt /pki/leaf.key\n\treverse_proxy 127.0.0.1:8080\n}\n' > "$PKI/front.caddy"
 docker run -d --name $CE-tls --network container:$CE -v "$PKI/front.caddy:/etc/caddy/Caddyfile:ro" -v "$PKI:/pki:ro" "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null   # 게이트웨이는 상류를 https 로 부른다(ADR 0060)
 gwrun $CG "$T/pki/device-tls.caddy" "$T/pki/device-ca.pem"
-P=""; for i in $(seq 1 40); do P=$(docker port $CG 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$P" ] && curl -sk -o /dev/null -m 2 --resolve "localhost:$P:127.0.0.1" "https://localhost:$P/healthz" && break; sleep 0.5; done
+P=""; for i in $(seq 1 40); do P=$(docker port $CG 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$P" ] && curl -sk -o /dev/null -m 2 --resolve "localhost:$P:127.0.0.1" "https://localhost:$P/healthz" && break; sleep 0.5; done   # port-wait: 게이트웨이 포트가 열릴 때까지만 기다린다
 [ -n "$P" ] || { echo "게이트웨이가 뜨지 않았다"; docker logs $CG 2>&1 | tail -5; exit 1; }
 # 이름으로 붙는다: 클라이언트 인증을 쓰는 사이트에서 Caddy 는 Host 와 TLS SNI 가 같기를 요구한다(strict_sni_host, 421). IP 로 붙으면 SNI 가 없어 421 이다
 cv() { curl -sk -m 8 --resolve "localhost:$P:127.0.0.1" -D "$T/h.out" -o "$T/b.out" -w '%{http_code}' "$@"; }

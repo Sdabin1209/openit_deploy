@@ -214,7 +214,7 @@ if [ -n "$INF_URL" ]; then
   if ! command -v curl >/dev/null 2>&1; then fail "curl 이 없어 추론 서버 도달을 확인하지 못했다" "curl 설치"
   else
     HINT="주소·포트가 맞는지, 서버가 떠 있는지(서버 호스트에서 docker compose -p deploy-inference ps), 방화벽·보안 그룹이 호출자 -> 서버 포트를 허용하는지, 서버의 INFERENCE_BIND 가 외부에서 닿는 주소인지 확인"
-    hc=$(curl -s -o /dev/null -m 6 -w '%{http_code}' "$INF_URL/healthz" 2>/dev/null || true)
+    hc=$(curl -s -m 6 -w '\n%{http_code}' "$INF_URL/healthz" 2>/dev/null | tr -d '\r' | awk 'NR==1{b=$0} END{ if ($0=="200" && (b ~ /"status": *"ok"/ || b ~ /^ok/)) print 200; else print $0 }' || true)   # 상태 코드만이 아니라 본문의 status 도 본다(빈 본문 200 이 헛통과했다)
     if [ "$hc" = 200 ]; then ok "추론 서버 /healthz 200"; else fail "추론 서버 /healthz 에 닿지 못했다 (응답 ${hc:-없음})" "$HINT"; fi
     if [ "$hc" = 200 ]; then
       rc=$(curl -s -o /dev/null -m 6 -w '%{http_code}' "$INF_URL/readyz" 2>/dev/null || true)
