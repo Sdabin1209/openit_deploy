@@ -288,6 +288,8 @@ issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 �
   "$DOCKER" run --rm -v "${PROJECT}_pki-root:/r:ro" "$UTIL_REF" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || return 1
   "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --san host.docker.internal --san localhost --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$STEP_CA_PORT" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; return 1; }
   chmod 644 "$W/tls.ott" "$W/pki/root_ca.crt"
+  # 시험 프로세스(호스트)의 신뢰 묶음: 게이트웨이 CA(제품 입구)와 step-ca 루트(추론 서버 사이드카). 두 곳을 부르므로 둘 다 믿는다(검증을 끄지 않는다)
+  cat "$W/gateway-ca.crt" "$W/pki/root_ca.crt" > "$W/trust.crt"; chmod 644 "$W/trust.crt"
 }
 chk "추론 서버용 일회용 TLS 토큰 발급 (step-ca 게시 포트로, 지휘 쪽 자격)" issue_tls_token
 abort_if_failed
@@ -406,7 +408,7 @@ if [ "$UPONLY" = 1 ]; then
   sect ""; finish; [ "$FAILS" = 0 ]; exit $?
 fi
 STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
-SSL_CERT_FILE="$W/pki/root_ca.crt" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-$WORKSPACE/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
+"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-$WORKSPACE/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/trust.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 # 단계별 상태(steps.json)를 항목 상태표에 올린다: '단계 N' 이름으로 뒤 항목이 선행으로 쓴다. 단계 안의 SKIP 은 SKIP 개수에 더한다
 if [ -f "$W/work/steps.json" ]; then
@@ -477,7 +479,7 @@ PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 복구 뒤 게이트웨이를 �
 PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
 NEED+=("복구 후 서비스 기동")
 chk_dep "단계 1~8" "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
-  SSL_CERT_FILE="$W/pki/root_ca.crt" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
+  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
 
 fi
 if has_s9 rollback; then
