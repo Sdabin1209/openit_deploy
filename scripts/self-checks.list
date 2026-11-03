@@ -96,3 +96,4 @@ R1.4 배치 무관: 서버별 override 의 호출 설정 이름·경로·서비�
 앱 서비스에 네트워크 키(networks·ports·extra_hosts…)를 두지 않는다: 겹쳐쓰기 파일 포함, <서비스>-net 에 둔다 (ADR 0060) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_overlay_netns_keys.py"
 단독 시험은 깨끗한 환경에서 돈다 (E2E 사전 점검 env -i, 밖에서 온 DEPLOY_LOCK 등을 읽지 않는다) :: python3 "$DEPLOY_ROOT/scripts/test_selfcheck_clean_env.py"
 배치·내보내기 운영 규칙 (R10.12 호스트 키 확인·배치 한 번에 하나, R1.5 내보내는 파일 SHA-256 대조, 정적) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_placement_ops.py"
+로컬 미러 git 설정(S14)이 git insteadOf 로 원격 주소를 로컬 리포로 푼다 :: python3 "$DEPLOY_ROOT/scripts/test_local_mirrors.py"
