@@ -460,6 +460,7 @@ services:
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
+    environment: {KIOSK_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -472,6 +473,7 @@ services:
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
+    environment: {ADMIN_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md

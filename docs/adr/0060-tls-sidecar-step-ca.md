@@ -34,7 +34,7 @@
 - `GATEWAY_TLS_MODE=internal` 은 step-ca 가 아니라 게이트웨이 내부 인증기관이다: 기본 사이트 이름(localhost, 127.0.0.1)과 사람용 이름을 step-ca 가 ACME 로 검증할 수 없다. step-ca 로 받으려면 `acme` + `GATEWAY_ACME_DIRECTORY`.
 
 ## 추가 결정 (같은 U99, 후속)
-- **앱은 loopback 에 바인드한다.** 사이드카는 앱과 같은 네임스페이스라, 앱이 0.0.0.0 이면 다른 컨테이너가 앱 포트로 평문을 보낼 수 있다. 계약 v3.4.2 의 `*_HOST`(SURVEY_HOST, GATE_HOST, OPS_HOST, QA_HOST, MODEL_RUNTIME_HOST, MODEL_REGISTRY_HOST, DATASET_STORE_HOST)=127.0.0.1, Keycloak `KC_HTTP_HOST`, oauth2-proxy `--http-address` 로 막는다. 정적 시험 `test_sidecar_loopback.py`, 단독 시험에서 다른 컨테이너의 앱 포트 연결 거부를 본다. kiosk-frontend·admin-console 은 이미지 안 Caddyfile 이 주소를 정해 deploy 가 바꿀 수 없다(영역에 변경 요청, 시험의 KNOWN_GAP).
+- **앱은 loopback 에 바인드한다.** 사이드카는 앱과 같은 네임스페이스라, 앱이 0.0.0.0 이면 다른 컨테이너가 앱 포트로 평문을 보낼 수 있다. 계약 v3.4.2 의 `*_HOST`(SURVEY_HOST, GATE_HOST, OPS_HOST, QA_HOST, MODEL_RUNTIME_HOST, MODEL_REGISTRY_HOST, DATASET_STORE_HOST)=127.0.0.1, Keycloak `KC_HTTP_HOST`, oauth2-proxy `--http-address` 로 막는다. 정적 시험 `test_sidecar_loopback.py`, 단독 시험에서 다른 컨테이너의 앱 포트 연결 거부를 본다. kiosk-frontend(`KIOSK_HOST`)·admin-console(`ADMIN_HOST`)은 계약 v3.4.3 부터 같은 방식이다.
 - **사이드카·step-ca 는 추가 capability 가 없다.** 포트 8443 으로는 ACME 검증(80/443 으로만 온다)을 받을 수 없어, 앱 네임스페이스의 sysctl `net.ipv4.ip_unprivileged_port_start=0` 으로 443 을 열고, 파일 권한이 붙은 바이너리는 /tmp 사본으로 실행한다(측정함).
 - **감시는 게이트웨이를 https 로 프로브한다.** 게이트웨이 사이트 목록에 `GATEWAY_PROBE_SITE`(기본 gateway:8443)를 더하고, `gateway-root` 일회성 잡이 게이트웨이 루트(내부 CA, 또는 GATEWAY_TLS_ROOT_FILE)를 공개 볼륨으로 복사해 blackbox 가 ca_file 로 쓴다.
 - **백업 저장소는 `rest:https://` 만 받는다**(restic `RESTIC_CACERT` = `BACKUP_CACERT_FILE`).
