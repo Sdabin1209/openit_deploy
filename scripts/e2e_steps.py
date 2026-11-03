@@ -39,7 +39,7 @@ def status_www(status, headers):   # (상태, WWW-Authenticate 첫 토큰). head
     return status, (h.get("www-authenticate") or "").split(" ")[0].rstrip(",")
 
 def assert_401_bearer(what, status, headers):
-    """인증 없는 호출의 기대: 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS 6절, RFC 9110 15.5.2·RFC 6750 3절). 403 이나 머리글 없는 401, Basic 안내는 거부한다.
+    """인증 없는 호출의 기대: 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS 6절, RFC 9110 15.5.2·RFC 6750 3절). 403 이나 머리글 없는 401, 다른 인증 방식(Basic 등) 안내는 거부한다.
     샌드박스(D123)에서는 요청을 호출자가 게이트웨이(SB.gw_request) 또는 컨테이너 안에서 하고, 이 함수는 그 결과만 판정한다."""
     st, scheme = status_www(status, headers)
     assert st == 401 and scheme == "Bearer", f"{what}: 401 + WWW-Authenticate: Bearer 여야 한다 (실제 {st}, {scheme or '머리글 없음'})"
@@ -687,7 +687,7 @@ def reject_via_gateway(sid):
     c2, body2, hd2 = gw_text("/admin/", ADMIN()); assert c2 == 200 and "app.js" in body2, (c2, body2[:100])
     assert gw_text("/admin/app.js", ADMIN())[0] == 200
     STATE["admin_gateway"] = {"approver": ap_["approver_id"], "report_hash": rh}; save()
-    rec("4g", "REAL", f"승인 화면 경로를 게이트웨이 경유로 한 번 탔다: 인증 없이 /admin/·/v1/submissions 401, 기본 인증(시험 계정 {ADMIN()[0]}) 뒤 목록(AWAITING_APPROVAL)·제출 조회·review-report(X-Openit-Report-Hash 헤더 통과, Cache-Control no-store 유지)·POST /v1/approvals(헤더 해시 사용) 201, 승인 기록의 approver_id가 인증 계정으로 찍힘(클라이언트가 보낸 X-Openit-User·본문 approver_id는 무시), /v1/activate·rollback·POST submissions·releases 는 게이트웨이에서 404. 화면 렌더링은 BLOCKED")
+    rec("4g", "REAL", f"승인 화면 경로를 게이트웨이 경유로 한 번 탔다: 인증 없이 /admin/·/v1/submissions 401, OIDC 로그인(시험 사용자 {ADMIN()[0]}) 뒤 목록(AWAITING_APPROVAL)·제출 조회·review-report(X-Openit-Report-Hash 헤더 통과, Cache-Control no-store 유지)·POST /v1/approvals(헤더 해시 사용) 201, 승인 기록의 approver_id가 인증 계정으로 찍힘(클라이언트가 보낸 X-Openit-User·본문 approver_id는 무시), /v1/activate·rollback·POST submissions·releases 는 게이트웨이에서 404. 화면 렌더링은 BLOCKED")
     rec("4x", "BLOCKED", "승인 화면(/admin/)의 브라우저 렌더링·조작은 E2E에서 볼 수 없다. /config.json 은 절대 경로라 /admin/ 아래에서는 kiosk-frontend로 가서 404가 된다(화면은 없는 것으로 처리하므로 영향 없음, admin-console CR-003 후보)")
     return ap_
 
@@ -1137,7 +1137,7 @@ GW_DIAL_PROXY_S = 1.0        # 사람용 프록시(proxy_limits) 연결 상한 d
 GW_READYZ_CAP_S = 3.0        # gateway /readyz 프록시 = 연결 1s + 응답 헤더 2s (Caddyfile)
 GW_HDR_GATE_S, GW_HDR_OPS_S = 180.0, 60.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, D125: 측정 최악 승인 128초·프록시 표준 60초 위의 여유)
 DOCKER_DNS_FAIL_S = 3.0      # 멈춘 컨테이너 이름을 Docker 내부 DNS가 해석하지 못하는 지연. 근거: 설정 없는 Caddy가 이름 해석 실패 502를 3.0s 뒤에 냈다(docs/E2E.md 관찰, 한 환경에서 측정)
-BASIC_AUTH_S = 2.0           # gateway 기본 인증(bcrypt) 확인 시간의 여유. 관찰: 이 PC 약 0.9s(검토 목록 pause 가 설정 10s 에 10.87s). 근거 기록 없음 이상의 일반화는 하지 않는다
+BASIC_AUTH_S = 2.0           # gateway 사람 인증 확인 시간의 여유(예전 basic_auth bcrypt 확인에서 정한 값을 forward_auth 왕복에도 그대로 둔다: 더 짧아져 여유가 늘 뿐이다). 관찰: 이 PC 약 0.9s(검토 목록 pause 가 설정 10s 에 10.87s). 근거 기록 없음 이상의 일반화는 하지 않는다
 CLIENT_EXTRA_S = 2.0         # 호스트 클라이언트가 gateway 응답을 더 늦게 받는 정도. 관찰: gpu-dev(Docker Desktop 4.50) +0.5~1.9s, 이 PC 0 (docs/E2E.md 5w 계측)
 # 연결 거부(상류 stop)가 걸리는 시간의 상한 = dial + Docker DNS 실패 지연 + 여유. 응답 헤더 상한(release-gate 180s)까지 매달리지 않고 그보다 충분히 짧게 끝나야 한다.
 # 관찰값: 이 PC 2.7~3.8s, gpu-dev 4.6s. 한 환경의 측정이 아니라 위 설정·관찰에서 도출하되 헤더 상한의 절반 아래(90s)로 둔다.
@@ -1351,7 +1351,7 @@ def _c2_qa_read(method, *args, **kw):
 @step('5a', repos=('question-authoring', 'admin-console') + _GW, deps=(),
       why='step5a 는 STATE 를 읽지 않는다. 그러나 앞 단계가 만든 저자 계정·문항 상태에 의존하는지는 코드를 읽어 확정하지 못했다')
 def step5a():
-    title("5a", "저자 경로(question-authoring)를 gateway 기본 인증 뒤에서: 자료 등록·확인(author), 임상 근거 승인(clinical-reviewer), 자기 승인 403, 본문 상한 (D88/U9)")
+    title("5a", "저자 경로(question-authoring)를 gateway OIDC 로그인 뒤에서: 자료 등록·확인(author), 임상 근거 승인(clinical-reviewer), 자기 승인 403, 본문 상한 (D88/U9)")
     qset = f"qs-{RID}-gwauthor"; form = form_for(qset, (ROOT / "test/fixtures/question-form-v2.txt").read_text()).encode()
     up = f"/v1/materials?question_set_id={qset}&filename=gw.txt"
     assert gw_bytes("POST", up, form, "text/plain")[0] == 401, "인증 없이 저자 경로가 열려 있다"
@@ -1627,7 +1627,7 @@ def step5f():
     c2 = _c2_in("survey-service", "GET", "/v1/staff/alerts", _c2_kdev())[0]; assert c2 == 403, f"키오스크 토큰으로 직원 API가 열림 {c2}"
     c3 = _c2_gw("GET", "/v1/staff/alerts", token=TOK("survey-api-kiosk"))[0]; assert c3 == 401, ("Bearer 는 사람 계정 경로의 자격이 아니다: 401 (계약 6절)", c3)   # 클라이언트가 보낸 Authorization은 게이트웨이가 바꾸지 못한 채 인증 없이 거부된다
     c, pg = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
-    rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 기본 인증 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
+    rec("5c", "REAL", f"권한 분리: 인증 없는 키오스크 쪽 호출은 게이트웨이에서 {c1}(직원 API는 로그인 필요), survey에 키오스크 토큰으로 직접 부르면 403, 기본 인증 뒤에는 staff 토큰이 붙어 목록 200(StaffAlertPage 스키마). 인증 없는 호출이 403이 아니라 401인 것은 브라우저가 인증 창을 띄우게 하려는 선택이다")
     # (d) 위험 감지: 모든 발화 턴의 원문에 규칙을 먼저 적용한다(D88 U1·U2). 규칙은 E2E 가 SURVEY_RISK_RULES_FILE 로 넣은 시험용 파일(계약 SurveyRiskRulesFile)이다. 알림은 모델 추출·쓰기 확정과 무관하게 먼저 나간다
     # (옛 검사 '임시 기본 목록(PROVISIONAL_DEFAULT) 켜짐'은 규칙 파일을 주입하면 성립하지 않아 뺐다. /readyz 의 source·provisional 값은 규칙 파일일 때의 모양을 deploy 가 알지 못해 단정하지 않는다)
     c, rz = _c2_ready(); sas = rz.get("staff_alert_source") or {}

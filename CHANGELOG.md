@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 D7b·D7d
+- D7b: `docker compose up --wait` 는 정상 종료(0)한 일회성 서비스(restart no + 의존 서비스 `service_completed_successfully`)를 성공으로 본다. 이미 종료된 상태의 두 번째 up 도 성공, 일회성 서비스가 1 로 끝나면 up 이 실패한다(docker compose 2.40.3, 이 PC). 제품 이미지 없이 작은 compose 로 재현: `scripts/test-compose-oneshot-wait.sh`. ops-feedback-migrate 구성은 바꾸지 않았다.
+- D7d: Basic 전제 정리. 기계 경로(`@inferencedenied`)의 사람 표지를 `Authorization: Basic*` 에서 OIDC 세션 쿠키(`_openit_session`)로 바꿨다: 쿠키도 기계 토큰도 없으면 401 + Bearer, 사람 세션이 `/v1/releases/*` 로 오면 404(아래 `/v1/*`), 기계 토큰이면 상류에 model-serving 읽기 토큰. 시험은 `test-gateway-auth.sh`. 주석·문서의 Basic/기본 인증 표현을 OIDC 로 고쳤다(남은 Basic 은 restic rest-server 와 도구 이름 `BASIC_AUTH_S`(시간 여유 상수)뿐).
+
 ## wo-450 D7a: clinician 전용 계정의 푸시 요청 상류 토큰
 - survey-service 는 push 경로에서 topics `results` 를 result-reader 토큰 요청에만 허용한다(staff 토큰이면 403). clinician 전용 계정의 푸시 요청에 `survey-result-reader` 를 붙이도록 고쳤다. staff 도 가진 계정은 staff 블록이 먼저 잡아 staff 토큰과 `X-Openit-Roles` 를 넘긴다(어느 토큰으로 어느 topics 를 받을지는 서비스가 `X-Openit-Roles` 로 판단하는 쪽이 계약에 맞다: survey-service 몫). 시험은 `test-gateway-auth.sh` 의 상류 토큰 단언 5건(시험 사용자 `both-e2e` 추가).
 

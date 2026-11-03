@@ -197,6 +197,18 @@ chk401 "기기 토큰 없음 GET /v1/question-sets (I10 문진표 목록은 세�
 chk401 "틀린 기기 토큰 GET /v1/question-sets" Bearer bearer:0000000000000000000000000000000000000000000000000000000000000000 GET /v1/question-sets
 chkpass "유효한 기기 토큰 GET /v1/question-sets" bearer:"$DEVTOK" GET /v1/question-sets
 chkpass "유효한 기기 토큰 GET /v1/question-sets?question_set_id=x (쿼리가 막히지 않는다)" bearer:"$DEVTOK" GET "/v1/question-sets?question_set_id=x"
+# 기계 경로(추론 서버의 릴리스 읽기, D72): 기계 토큰만 연다. 사람 OIDC 세션은 이 경로의 자격이 아니다(D7d: 예전 `not header Authorization Basic*` 조건을 세션 쿠키 기준으로 바꿨다)
+INFTOK=$(tr -d '\r\n' < "$T/tokens/gateway-inference-token")
+chk401 "기계 경로 /v1/releases/r1/bundle: 쿠키도 토큰도 없으면 401 + Bearer" Bearer - GET /v1/releases/r1/bundle
+chk401 "기계 경로: 틀린 기계 토큰은 401 + Bearer" Bearer bearer:0000 GET /v1/releases/r1/bundle
+chk401 "기계 경로 /v1/active-pointer: 자격이 없으면 401 + Bearer(운영자 블록)" Bearer - GET /v1/active-pointer
+chkup "기계 경로: 맞는 기계 토큰이면 상류에는 model-serving 읽기 토큰으로 바꿔 붙는다" gate-read-model-serving bearer:"$INFTOK" GET /v1/releases/r1/bundle
+chkup "기계 경로 /v1/active-pointer: 기계 토큰이면 같은 읽기 토큰" gate-read-model-serving bearer:"$INFTOK" GET /v1/active-pointer
+AN=$((AN+2))
+c=$(call "trainer-e2e; _openit_session=x" GET /v1/releases/r1/bundle)   # 쿠키 머리글 값에 진짜 세션 쿠키 이름도 싣는다(가짜 인증은 fakeauth 만 읽는다)
+[ "$c" = 404 ] && echo "  PASS 사람 OIDC 세션(승인자)이 기계 경로 /v1/releases/* 로 오면 404(401 도 통과도 아니다)" || { echo "  FAIL 사람 세션의 기계 경로 -> $c (기대 404)"; FAILS=$((FAILS+1)); }
+c=$(call operator-e2e GET /v1/active-pointer); [ "$c" = 200 ] && echo "  PASS 사람 operator 세션의 /v1/active-pointer 는 운영자 블록으로 간다(200)" || { echo "  FAIL operator active-pointer -> $c"; FAILS=$((FAILS+1)); }
+chk403 "사람 staff 세션의 /v1/active-pointer 는 403(operator 아님)" staff-e2e GET /v1/active-pointer
 # 사람 인증 경로(U82): /oauth2/* 는 oauth2-proxy 로, /auth/* 는 Keycloak 으로. /oauth2/auth 와 Keycloak master realm 은 밖에 닫는다
 AN=$((AN+4))
 c=$(call - GET /oauth2/start); [ "$c" = 200 ] && echo "  PASS /oauth2/* 는 인증 없이 oauth2-proxy 로 간다(가짜 상류가 200)" || { echo "  FAIL /oauth2/start -> $c"; FAILS=$((FAILS+1)); }

@@ -38,7 +38,7 @@ E2E 는 제품에 시험용 문을 내지 않는다. 제품은 `compose.yaml`(+ 
 
 | 접근 | 무엇 | 함수 |
 | --- | --- | --- |
-| (a) 게이트웨이 호스트 포트 | HTTPS, 게이트웨이 CA 만 신뢰. 사람 계정(Basic), 기기 토큰, 추론 기계 토큰 | `gw_url`, `gw_request`, `gw_client` |
+| (a) 게이트웨이 호스트 포트 | HTTPS, 게이트웨이 CA 만 신뢰. 사람 계정(OIDC 로그인 세션 쿠키), 기기 토큰, 추론 기계 토큰 | `gw_url`, `gw_request`, `gw_client` |
 | (b) 제품 네트워크 안 | `docker compose -p <P> exec / logs / run --rm <job-*>` | `exec_in`, `exec_py`, `readyz`, `psql`, `logs`, `run_job` |
 | (c) 다른 호스트 역할 | `compose.inference.yaml` 을 별도 프로젝트 `<P>-inf` 로 띄운 추론 서버(가짜 백엔드는 그 쪽 env 만) | `inference_url` |
 

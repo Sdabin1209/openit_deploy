@@ -278,7 +278,7 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 
 ### 9-4. 저자 경로(question-authoring)를 gateway로 여는 구성 (D88/U9)
 
-- 경로: `POST /v1/materials`, `/v1/drafts`, `/v1/drafts/*`, `POST /v1/reviews`. 개별 계정 인증(Basic) 뒤에서 역할 `author` 또는 `clinical-reviewer`만 통과하고(없으면 401, 다른 역할은 403), gateway가 서비스 토큰(`qa-gateway-token`, 서비스의 `QA_GATEWAY_TOKENS`)과 인증된 계정 ID(`X-Openit-User`)를 붙인다. 클라이언트가 보낸 `Authorization`·`X-Openit-User`는 덮어쓴다. 이웃 읽기 면(I1 `/v1/question-sets*`)은 열지 않는다.
+- 경로: `POST /v1/materials`, `/v1/drafts`, `/v1/drafts/*`, `POST /v1/reviews`. OIDC 로그인(Keycloak) 뒤에서 역할 `author` 또는 `clinical-reviewer`만 통과하고(없으면 401, 다른 역할은 403), gateway가 서비스 토큰(`qa-gateway-token`, 서비스의 `QA_GATEWAY_TOKENS`)과 인증된 계정 ID(`X-Openit-User`)를 붙인다. 클라이언트가 보낸 `Authorization`·`X-Openit-User`는 덮어쓴다. 이웃 읽기 면(I1 `/v1/question-sets*`)은 열지 않는다.
 - 역할은 한 곳이다(3.4.0): Keycloak 그룹이 정본이고 게이트웨이가 인증 뒤 `X-Openit-Roles` 로 서비스에 전달한다(서비스에 사용자→역할 표는 없다, `QA_USER_ROLES` 삭제). 시험 사용자(`author-e2e`, `clinical-e2e`)는 시험 환경의 Keycloak 에만 있다.
 - 4-eyes는 서비스가 강제한다: 저자의 확인은 `clinical_basis_approved=false`이고 임상 근거 승인은 저자와 다른 `clinical-reviewer`가 `POST /v1/reviews`로 해야 `reviewed_only`에 나타난다(자기 승인 403).
 - 본문 상한은 사이트 기본 8MiB(자료 업로드). 응답 헤더 대기는 release-gate 180초(`proxy_limits`, ADR 0051).

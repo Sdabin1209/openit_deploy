@@ -100,7 +100,7 @@
 
 ### 한 일
 - `kiosk-frontend`(키오스크+직원 콘솔 정적 이미지) 빌드·compose 추가(`KIOSK_FRONTEND_DIGEST`), 계약 기본 태그 v1.3.2, survey 이미지 `io.openit.langgraph` 라벨(잠금 파일의 langgraph 버전을 빌드 인자로, E2E가 unknown 여부 검사).
-- 게이트웨이(`config/Caddyfile`): `/v1/sessions…`에 kiosk 토큰, `/v1/staff/*`·`/v1/sessions/*/intervention`·`/staff/*`는 기본 인증 뒤에만(staff 토큰), SSE 버퍼링 끔·읽기 제한 1시간, 접근 로그에 본문 없음. 인증 없는 직원 API 호출은 401(브라우저 인증 창용), survey에 키오스크 토큰으로 직접 부르면 403.
+- 게이트웨이(`config/Caddyfile`): `/v1/sessions…`에 kiosk 토큰, `/v1/staff/*`·`/v1/sessions/*/intervention`·`/staff/*`는 OIDC 로그인 뒤에만(staff 토큰), SSE 버퍼링 끔·읽기 제한 1시간, 접근 로그에 본문 없음. 인증 없는 직원 API 호출은 401(브라우저 인증 창용), survey에 키오스크 토큰으로 직접 부르면 403.
 - `locks/images.lock` 갱신(이 실행의 값, 이미지 7개: survey f52a8e0, qa f631b7d, ops 3ed586a, gate 135fbf7, model-registry e93e6b6, model-serving 0a87bb1, kiosk-frontend 13ee06b).
 - `e2e.sh`가 구간별 소요 시간(구간 끝에 `(소요 Ns)`, 요약에 표)을, `e2e_steps.py`가 단계 1~8별 소요 시간을 출력한다.
 
