@@ -136,7 +136,7 @@ def collect(caddy_text, roles):
                         if ct[:1] == ["flush_interval"]: e["streaming"] = True
                         scan(c["c"])
                 scan(n["c"])
-                if e["auth"] == "account" and not e["roles"]: e["roles"] = []
+                if e["auth"] == "account" and not e["roles"]: e["auth"] = "authenticated"   # 인증은 하지만 역할 매처 없이 연다 = 계약 3.4.0 의 auth.kind authenticated(로그인한 계정이면 역할과 무관)
                 proxies.append(e)
             elif k == "respond":
                 code = t[-1]

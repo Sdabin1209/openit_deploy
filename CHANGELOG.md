@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-450 D9b: check-exposure 가 authenticated 를 해석, 예외 0
+- 계약 v3.4.0(392d9b9)의 `Exposure.auth.kind` `authenticated`(로그인한 계정이면 역할과 무관)를 지원한다: 인증은 보지만 역할 매처가 없는 입구(`/admin/*`)는 authenticated 로 읽는다. 영역 선언 수정 셋(admin-console 0585b99, survey-service 99c4055, model-lab a751f0e)을 반영해 `config/exposure-known-diffs.json` 을 비웠다(예외 0). 시험 `test_check_exposure.py` 에 authenticated 3건.
+
 ## wo-450 D9a: check-exposure 가 한 경로의 여러 입구를 각자 라벨 줄과 비교
 - E2E 자체 점검에서 check-exposure 가 FAIL: (1) 같은 경로·메서드에 역할 블록이 둘(staff, clinician 전용)이면 첫 블록만 읽어 clinician 줄이 어긋나 보였다 -> 라벨 줄의 auth.kind·roles 에 맞는 입구와 비교한다(역할이 겹치는 첫 사람 블록, machine-token 줄은 Authorization: Bearer 매처 입구). 역할 블록 안쪽의 매처 handle 은 바깥 역할을 이어받는다. (2) 진입의 기본 역할 목록에 clinician·admin 이 없어 clinician 블록이 역할 없음으로 읽혔다. (3) 계약 3.4.0 의 machine-token 라벨(release-gate 추론 서버 읽기, model-registry 게시)이 대조 밖이었다 -> 대조에 넣고 `exposure-hosts.json` 에 model-registry 를 더했다.
 - Caddyfile 을 라벨에 맞췄다: 결과 읽기·확인 표시 프록시 응답 헤더 상한 60s -> 55s(survey-service 선언), 추론 서버 번들 입구 `flush_interval -1`(release-gate 선언 streaming true).

@@ -1,5 +1,1 @@
-{
-  "admin-console GET /admin/*: 역할 라벨 ['clinician', 'operator', 'release-approver', 'reviewer'] / Caddyfile []": "Caddyfile 은 /admin/* 화면을 인증된 어떤 계정에게든 연다(화면은 데이터가 없고 API 는 역할로 막힌다, Caddyfile 주석 '화면은 어느 역할이든 열린다'). 라벨은 세 역할만 적었다. 어느 쪽이 맞는지는 헤드/admin-console 이 정한다(라벨을 모든 역할로 고치거나 Caddyfile 에 역할 제한을 둔다). 정해지면 이 줄을 지운다",
-  "survey-service GET /healthz: 라벨은 노출한다고 선언했는데 Caddyfile 은 게이트웨이가 직접 응답한다(200)": "게이트웨이의 /healthz 는 상류와 무관한 정적 200 이다(Caddyfile 주석, FAULT_POLICY 5). survey-service 의 /healthz 는 밖에 닿지 않는다. 라벨의 /healthz 항목을 지우거나 의미를 정해야 한다(survey-service 변경 요청 후보). 정해지면 이 줄을 지운다",
-  "model-registry POST /v1/packages: 사용자 헤더 라벨 None / Caddyfile strip": "model-registry(model-lab) 이미지의 노출 선언이 이 machine-token 줄에 user_header 를 적지 않았다. Caddyfile 은 X-Openit-User 를 지운다(기계 입구라 사용자가 없다, 다른 machine-token 줄들은 strip 으로 선언). 선언 쪽(model-lab)이 user_header strip 을 적으면 이 줄을 지운다. deploy 는 선언을 고치지 않는다."
-}
+{}

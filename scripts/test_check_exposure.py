@@ -113,5 +113,26 @@ class MachineToken(unittest.TestCase):
         self.assertTrue(any("상류 토큰" in x and "release-gate" in x for x in run(label)))
 
 
+class Authenticated(unittest.TestCase):
+    """계약 3.4.0 의 auth.kind authenticated: 로그인한 계정이면 역할과 무관하게 연다. Caddyfile 의 /admin/*(인증만 보고 역할 매처 없음)과 같다."""
+    ADMIN = {"paths": ["/admin/*"], "methods": ["GET"], "auth": {"kind": "authenticated"}, "user_header": "strip", "timeouts_ms": {"dial": 1000, "response_header": 10000}}
+
+    def run_admin(self, route):
+        h = C.collect(CADDY, ROLES + ["clinician", "admin"])
+        return [d for d in C.compare("admin-console", {"service": "admin-console", "routes": [route]}, h, HOSTS, OCI) if "/admin/" in d]
+
+    def test_authenticated_label_matches_the_open_admin_screen(self):
+        self.assertEqual(self.run_admin(self.ADMIN), [])
+
+    def test_role_restricted_label_is_a_diff_against_an_open_screen(self):
+        d = self.run_admin(dict(self.ADMIN, auth={"kind": "account", "roles": ["operator"]}))
+        self.assertTrue(any("인증 종류 라벨 account / Caddyfile authenticated" in x for x in d), d)
+
+    def test_authenticated_label_against_a_role_block_is_a_diff(self):
+        h = C.collect(CADDY, ROLES + ["clinician", "admin"])
+        d = C.compare("release-gate", {"service": "release-gate", "routes": [{"paths": ["/v1/approvals"], "methods": ["POST"], "auth": {"kind": "authenticated"}, "upstream_token": "gate-write-release-approver", "user_header": "set", "timeouts_ms": TO}]}, h, HOSTS, OCI)
+        self.assertTrue(any("인증 종류 라벨 authenticated / Caddyfile account" in x for x in d), d)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
