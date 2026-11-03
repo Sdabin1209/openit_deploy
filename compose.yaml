@@ -86,6 +86,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-password
   db-ops-failure-password:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-password
+  db-ops-log-app-password:      # L08: 앱 계정(DML만) 암호는 postgres 초기화만 읽는다
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-app-password
+  db-ops-failure-app-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-app-password
   db-gate-password:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-password
   db-survey-dsn:
@@ -94,8 +98,12 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-qa-dsn
   db-ops-log-dsn:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-dsn
-  db-ops-failure-dsn:
+  db-ops-failure-dsn:           # 소유자 계정(스키마를 만든다). ops-feedback-migrate 만 쓴다(L08)
     file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-dsn
+  db-ops-log-app-dsn:           # 앱 계정(DML만). 서버·잡이 쓴다(L08)
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-app-dsn
+  db-ops-failure-app-dsn:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-app-dsn
   db-gate-dsn:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-dsn
   qa-gateway-token:
@@ -182,7 +190,7 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
       POSTGRES_INITDB_ARGS: "--data-checksums"
-    secrets: [postgres-password, db-survey-password, db-qa-password, db-ops-log-password, db-ops-failure-password, db-gate-password]
+    secrets: [postgres-password, db-survey-password, db-qa-password, db-ops-log-password, db-ops-failure-password, db-ops-log-app-password, db-ops-failure-app-password, db-gate-password]
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
@@ -328,6 +336,27 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
+  ops-feedback-migrate:   # L08(ADR 0055): 스키마를 만드는 일회성 서비스. 소유자 계정 접속 문자열 파일만 받는다. 서버·잡은 이것이 성공한 뒤에 뜬다. 상시 서비스도 주기 잡도 아니다(restart 없음, 기본 기동에 포함)
+    restart: "no"
+    mem_limit: ${OPS_FEEDBACK_MIGRATE_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${OPS_FEEDBACK_MIGRATE_CPUS:-0.5}
+    pids_limit: ${OPS_FEEDBACK_MIGRATE_PIDS_LIMIT:-128}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
+    command: ["python", "-m", "ops_feedback.admin", "migrate"]
+    environment:
+      OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn           # 소유자 계정(DDL)
+      OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn
+    secrets: [db-ops-log-dsn, db-ops-failure-dsn]
+    networks: [db-ops]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    logging: *joblog
+    group_add: *secretgid
+    depends_on:
+      postgres: {condition: service_healthy}
+
   ops-feedback-ingest:
     <<: *hardening
     mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -340,13 +369,14 @@ services:
       OPS_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
       OPS_READ_TOKENS_FILE: /run/secrets/ops-read-tokens
       OPS_REVIEW_TOKENS_FILE: /run/secrets/ops-review-tokens
-      OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn           # 원본 Trace 로그(PostgreSQL, D85)
-      OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn   # 실패 사례(PostgreSQL)
-    secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-dsn, db-ops-failure-dsn]
+      OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-app-dsn           # 원본 Trace 로그(PostgreSQL, D85). 앱 계정(DML만, L08)
+      OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn   # 실패 사례(PostgreSQL). 앱 계정
+    secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-app-dsn, db-ops-failure-app-dsn]
     tmpfs: ["/tmp", "/data"]
     networks: [serving, logs, authoring, db-ops]
     depends_on:
       postgres: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
+      ops-feedback-migrate: {condition: service_completed_successfully}   # L08: 스키마는 소유자 계정의 migrate 가 먼저 만든다. 서버는 verify 만 한다
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -440,9 +470,12 @@ services:
       OPS_DEID_SALT_FILE: /run/secrets/deid-salt
       OPS_GATE_READ_TOKEN_FILE: /run/secrets/gate-read-ops-feedback
       OPS_GATE_WRITE_TOKEN_FILE: /run/secrets/gate-write-ops-feedback
-      OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn
-      OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn
-    secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback, db-ops-log-dsn, db-ops-failure-dsn]
+      OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-app-dsn           # 앱 계정(DML만, L08)
+      OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn
+      OPS_DB_SCHEMA: verify   # L08: 잡도 스키마를 만들지 않는다(apply 는 시작 거부). 계약 OpsFeedbackServerEnv 기본값과 같다
+    secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback, db-ops-log-app-dsn, db-ops-failure-app-dsn]
+    depends_on:
+      ops-feedback-migrate: {condition: service_completed_successfully}
     volumes:
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
     networks: [logs, release, db-ops]

@@ -21,7 +21,7 @@ fp() { sql "$1" "$1" "SELECT md5(string_agg(id::text || v, ',' ORDER BY id)) || 
 
 export P DOCKER SECRETS_DIR PG_DBS; export -f pg_container C pw sql fp
 echo "== 비밀 생성 (--db-only)"
-ok "gen-secrets.sh --db-only" bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --db-only "$SECRETS_DIR"
+ok "gen-secrets.sh --db-only (소유자와 앱 계정 비밀)" bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --db-only "$SECRETS_DIR"
 ok "DSN 파일이 규칙대로 (survey/qa/ops_log/ops_failure/gate)" bash -c 'for a in survey qa ops_log ops_failure gate; do n=${a//_/-}; f="$1/tokens/db-$n-dsn"; [[ "$(cat $f)" == "postgresql://$a:$(cat $1/tokens/db-$n-password)@postgres:5432/$a" ]] || exit 1; [ "$(stat -c %a $f)" = 640 ]; done' _ "$SECRETS_DIR"
 echo "== 기동·초기화"
 dc "$P" config --format json > "$W/cfg.json" 2>"$W/cfg.err"; ok "compose 해석: 호스트 포트 없음, 환경 변수에 암호 없음, 네트워크 db-* 넷만" python3 -I -c 'import json,sys;s=json.load(open(sys.argv[1]))["services"]["postgres"];assert not s.get("ports");assert sorted(s["networks"])==["db-gate","db-ops","db-qa","db-survey"];assert all("PASSWORD" not in k or k.endswith("_FILE") for k in s["environment"])' "$W/cfg.json"
@@ -38,6 +38,18 @@ for a in $PG_DBS; do
   ok "$a 계정이 슈퍼유저·DB생성·역할생성 권한 없음" bash -c "[ \"\$(sql $a $a \"SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication FROM pg_roles WHERE rolname=current_user\")\" = f ]"
   no "$a 계정이 postgres 데이터베이스에 접속 못 함" sql "$a" postgres "SELECT 1"
   for b in $PG_DBS; do [ "$a" = "$b" ] || no "$a 계정이 $b 데이터베이스에 접속 못 함" sql "$a" "$b" "SELECT 1"; done
+done
+echo "== 앱 계정(L08): DML만, 스키마 변경 불가"
+for a in $PG_APP_DBS; do
+  app=${a}_app
+  ok "$app 앱 계정이 소유자가 만든 표를 읽고 쓴다(DML)" sql "$app" "$a" "INSERT INTO items VALUES (-1, 'app'); UPDATE items SET v='app2' WHERE id=-1; SELECT count(*) FROM items; DELETE FROM items WHERE id=-1"
+  no "$app 앱 계정은 표를 만들 수 없다(CREATE)" sql "$app" "$a" "CREATE TABLE app_made(x int)"
+  no "$app 앱 계정은 표를 바꿀 수 없다(ALTER)" sql "$app" "$a" "ALTER TABLE items ADD COLUMN z int"
+  no "$app 앱 계정은 표를 지울 수 없다(DROP)" sql "$app" "$a" "DROP TABLE items"
+  no "$app 앱 계정은 표를 비울 수 없다(TRUNCATE)" sql "$app" "$a" "TRUNCATE items"
+  ok "$app 앱 계정이 슈퍼유저·DB생성·역할생성 권한 없음" bash -c "[ \"\$(sql $app $a \"SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication FROM pg_roles WHERE rolname=current_user\")\" = f ]"
+  ok "소유자가 나중에 만든 표·시퀀스에도 앱 권한이 자동으로 붙는다(ALTER DEFAULT PRIVILEGES)" bash -c "sql $a $a 'CREATE TABLE later(id serial PRIMARY KEY, v text)' && sql $app $a \"INSERT INTO later(v) VALUES ('x'); SELECT count(*) FROM later\" && sql $a $a 'DROP TABLE later'"
+  no "$app 앱 계정이 다른 데이터베이스에 접속 못 함" sql "$app" survey "SELECT 1"
 done
 no "틀린 암호로는 접속 못 함" bash -c "'$DOCKER' exec -e PGPASSWORD=wrong '$(C)' psql -h 127.0.0.1 -U survey -d survey -Atqc 'SELECT 1'"
 echo "== 서버 설정: 로그에 SQL 값이 남지 않음, 연결 상한, pg_hba"

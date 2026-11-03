@@ -33,6 +33,11 @@ gen_db() {
     n=${a//_/-}; tok "db-$n-password" >/dev/null
     putlist "db-$n-dsn" "postgresql://$a:$(cat "$D/tokens/db-$n-password")@postgres:5432/$a"
   done
+  # L08: 스키마를 만드는 소유자 계정(위 db-$n-*, admin migrate 잡만 쓴다)과 DML만 가진 앱 계정(<이름>_app, 서버·잡이 쓴다)을 나눈다. 앱 계정 비밀은 db-$n-app-*
+  for a in $PG_APP_DBS; do
+    n=${a//_/-}; tok "db-$n-app-password" >/dev/null
+    putlist "db-$n-app-dsn" "postgresql://${a}_app:$(cat "$D/tokens/db-$n-app-password")@postgres:5432/$a"
+  done
 }
 gen_db
 [ "$ONLY_DB" = 0 ] || { echo "PostgreSQL 비밀 위치: $D/tokens (리포지토리에 커밋하지 않는다)"; exit 0; }

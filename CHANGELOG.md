@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 L08: ops-feedback DB 계정 분리 배선 (ADR 0055)
+- 앱 계정 `ops_log_app`/`ops_failure_app`(DML만)을 PostgreSQL 초기화가 만들고(`PG_APP_ACCOUNTS`), `gen-secrets.sh` 가 앱 암호·접속 문자열(`db-ops-*-app-*`)을 만든다. 서버·잡은 앱 접속 문자열과 `OPS_DB_SCHEMA=verify`, 소유자 접속 문자열은 새 일회성 서비스 `ops-feedback-migrate`(`admin migrate`)만. 서버·잡은 migrate 성공 뒤에 뜬다.
+- 시험: `test-postgres.sh`(82건, 앱 계정의 CREATE/ALTER/DROP/TRUNCATE 실패·기본 권한), `test_ops_db_roles_wiring.py`, `test_compose_restart_policy.py`(일회성 서비스 구분). 이미지로 migrate→서버 기동은 E2E 에서만 확인된다(돌리지 않음).
+
 ## wo-450 D3 (L02): 비밀 파일 640 + group_add (ADR 0054)
 - 컨테이너가 읽는 비밀은 640 + 그룹 `SECRETS_GID`(기본 `id -g`), 모든 서비스·잡에 `group_add`. 추론 서버 호스트로 옮기는 세 파일만 644. `gen-secrets.sh`·`restore-secrets.sh`·게이트웨이 설정 쓰기가 모드와 그룹을 맞추고 `check-secret-perms.sh` 가 어긋남을 잡는다.
 - 시험: `test-secret-perms.sh`(14건), 새 `test-secret-group-read.sh`(uid 10001 컨테이너가 group_add 로 읽고 없으면 못 읽는다, 모든 서비스에 group_add). 전체 서비스 기동은 E2E 에서만 확인된다(돌리지 않음).

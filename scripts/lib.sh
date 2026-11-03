@@ -145,6 +145,7 @@ PY
 pg_container() {
   "$DOCKER" ps -q --filter "label=com.docker.compose.project=$1" --filter "label=com.docker.compose.service=postgres" --filter status=running | head -1 | tr -d '\r'
 }
+PG_APP_DBS="ops_log ops_failure"   # 앱 계정(<이름>_app, DML만, L08)을 따로 두는 데이터베이스: 소유자 계정은 스키마를 만드는 admin migrate 전용
 PG_DBS="survey qa ops_log ops_failure gate"   # 데이터베이스 = 계정 이름(config/postgres/initdb/10-roles.sh 의 기본값과 같다)
 
 # 비밀 파일 모드(docs/adr/0022-secret-file-permissions.md, 0054). compose 의 파일 secrets/configs 는 호스트 소유자·그룹·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않는다.

@@ -86,8 +86,9 @@ bash scripts/demo.sh reset                       # down 후 up
 |---|---|---|---|---|
 | survey-service | `SURVEY_DATABASE_URL` | `db-survey-dsn` | `survey` | 세션, outbox, 알림 |
 | question-authoring | `QA_DATABASE_URL` | `db-qa-dsn` | `qa` | 문항 |
-| ops-feedback | `OPS_LOG_DATABASE_URL` | `db-ops-log-dsn` | `ops_log` | 원본 Trace 로그 |
-| ops-feedback | `OPS_FAILURE_DATABASE_URL` | `db-ops-failure-dsn` | `ops_failure` | 실패 사례 |
+| ops-feedback 서버·잡 | `OPS_LOG_DATABASE_URL` | `db-ops-log-app-dsn` (계정 `ops_log_app`, DML만) | `ops_log` | 원본 Trace 로그 |
+| ops-feedback 서버·잡 | `OPS_FAILURE_DATABASE_URL` | `db-ops-failure-app-dsn` (계정 `ops_failure_app`, DML만) | `ops_failure` | 실패 사례 |
+| ops-feedback `ops-feedback-migrate` | 같은 두 변수 | `db-ops-log-dsn`, `db-ops-failure-dsn` (소유자 계정, 스키마를 만든다) | `ops_log`, `ops_failure` | L08, [adr/0055](adr/0055-ops-feedback-db-owner-and-app-accounts.md) |
 | release-gate | `GATE_DATABASE_URL` | `db-gate-dsn` | `gate` | 릴리스 레지스트리 |
 
 암호 파일은 `db-<이름>-password`(이름의 `_`는 `-`), 슈퍼유저 암호는 `postgres-password`다. 암호 파일은 `postgres` 서비스만 마운트하고(초기화 스크립트가 읽는다), DSN 파일은 소유 서비스만 마운트한다. 호스트 이름 `postgres`는 compose의 서비스 이름이고 `db-*` 네트워크(internal, 호스트 포트 없음)에서만 닿는다. `gen-secrets.sh`가 위 파일을 만든다(모드 644, 폴더 700, 값은 출력하지 않는다). `bash scripts/gen-secrets.sh --db-only [폴더]`는 이 비밀만 만든다(caddy 이미지 불필요). 암호를 바꾸면 DSN도 다시 쓰이고, 이어 `bash scripts/pg-roles.sh sync`가 서버의 계정 암호를 바꾼다.

@@ -8,12 +8,13 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVICES = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
 JOBS = {n: s for n, s in SERVICES.items() if n.startswith("job-")}
-ALWAYS = {n: s for n, s in SERVICES.items() if not n.startswith("job-")}
+ONESHOT = {n: s for n, s in SERVICES.items() if n.endswith("-migrate")}   # L08: 스키마 일회성 서비스(상시도 주기 잡도 아님): restart "no", 기본 기동에 포함
+ALWAYS = {n: s for n, s in SERVICES.items() if not n.startswith("job-") and n not in ONESHOT}
 
 
 class RestartPolicy(unittest.TestCase):
     def test_counts(self):
-        self.assertEqual((len(ALWAYS), len(JOBS)), (11, 5), f"서비스 구성이 바뀌었다: 상시 {sorted(ALWAYS)} / 잡 {sorted(JOBS)} (정책을 확인하고 이 시험의 개수를 고친다)")
+        self.assertEqual((len(ALWAYS), len(JOBS), len(ONESHOT)), (11, 5, 1), f"서비스 구성이 바뀌었다: 상시 {sorted(ALWAYS)} / 잡 {sorted(JOBS)} (정책을 확인하고 이 시험의 개수를 고친다)")
 
     def test_always_on_services_restart_unless_stopped(self):
         bad = {n: s.get("restart") for n, s in ALWAYS.items() if s.get("restart") != "unless-stopped"}
@@ -22,6 +23,10 @@ class RestartPolicy(unittest.TestCase):
     def test_jobs_have_no_restart_and_are_profile_gated(self):
         self.assertEqual({n: s["restart"] for n, s in JOBS.items() if "restart" in s}, {}, "주기 잡에는 restart 가 없다")
         self.assertEqual([n for n, s in JOBS.items() if not s.get("profiles")], [], "잡은 profiles 로 기본 기동에서 빠진다(스케줄러가 run 으로 돌린다)")
+
+    def test_oneshot_migrate_runs_once_and_is_not_profile_gated(self):
+        bad = {n: (s.get("restart"), s.get("profiles")) for n, s in ONESHOT.items() if s.get("restart") != "no" or s.get("profiles")}
+        self.assertEqual(bad, {}, "일회성 migrate 는 restart: no 이고 profiles 가 없다(서버가 service_completed_successfully 로 기다린다)")
 
 
 if __name__ == "__main__":
