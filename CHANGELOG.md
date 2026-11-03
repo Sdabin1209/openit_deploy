@@ -1,5 +1,10 @@
 # 변경 이력
 
+## wo-450 D10-5: publish 가 사용자 Docker 자격증명 도우미에 기대지 않는다
+- 원인: `docker push` 는 ~/.docker/config.json 의 credsStore(WSL 의 Windows 도우미)를 먼저 불러 레지스트리 자격을 찾고, 응답이 없으면 "error getting credentials … accept4 failed 110" 으로 죽는다. 로컬 레지스트리에는 인증이 없다. (헤드의 127.0.0.1 `-p` 임시 레지스트리 "connection refused"는 다른 현상이다: Docker Desktop 엔진은 호스트 루프백 게시 포트에 닿지 못해 시험은 0.0.0.0 바인드를 쓴다 — compose.registry.yaml 머리말.)
+- 고침: push 한 번에만 빈 `DOCKER_CONFIG`(공식 환경 변수)를 쓴다. 사용자 설정을 읽거나 고치라고 요구하지 않는다. 인증 레지스트리는 `PUBLISH_DOCKER_CONFIG`. 시험 `test-publish.sh` 가 죽은 도우미 설정을 만들어 재현하고 자체 점검 목록에 있다.
+- check-compose: 로컬 빌드 이름 `openit-*`(Keycloak optimized image)는 digest 검사에서 제외하고 그 기반 digest 는 잠금에서 검사한다.
+
 ## wo-450 D10-7·8: Keycloak optimized image, 세션 시간 근거
 - (7) 기동 실패 원인: Dockerfile 의 `kc.sh build --cache=local` (`--cache` 는 런타임 옵션이라 build 가 거부). 고침과 함께 읽기 전용 루트 + tmpfs 로 `test-idp-smoke` 통과, check-containers 의 Keycloak 예외 삭제. kcadm 설정은 `--config /tmp/kcadm.config`. ADR 0058.
 - (8) 쿠키 절대 만료 12h -> 8h(OWASP 세션 관리, 업무일), 갱신 5m(Keycloak 액세스 토큰 기본 수명). ADR 0058.

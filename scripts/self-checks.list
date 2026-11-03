@@ -65,3 +65,4 @@ compose 일회성 서비스(restart no + service_completed_successfully)는 up -
 비밀이 컨테이너 환경 변수로 들어가는 구성을 정적으로 잡는다 (compose environment 의 비밀 이름은 *_FILE, 엔트리포인트 셸의 export 금지; 3차 E2E Keycloak 래퍼, D84) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_no_secret_in_environment.py"
 e2e.sh: 단계 1~8 산출물을 읽는 항목은 chk_dep "단계 1~8" (선행 실패가 FAIL 로 번지지 않는다, 3차 E2E) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_sh_deps.py"
 일회성 관리 잡의 환경·비밀이 서버와 같고 계약 Env 검사가 잡도 본다 (12-Factor XII, 3차 E2E 정리 잡 거부) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_job_env_matches_server.py"
+publish 의 push 는 사용자 Docker 설정의 자격증명 도우미가 죽어 있어도 된다 (3차 E2E error getting credentials 재현·수정; 임시 레지스트리를 띄우는 시험이라 느리다) :: bash "$DEPLOY_ROOT/scripts/test-publish.sh"

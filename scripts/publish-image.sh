@@ -86,7 +86,14 @@ CT=${PUBLISH_CONNECT_TIMEOUT:-3}; PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; HEAD_T=${
 REF="$REG/openit/$SVC:build-$TAGREV"
 "$DOCKER" tag "$IMG" "$REF"
 curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "http://$REG/v2/" 2>/dev/null || { echo "거부: 레지스트리가 응답하지 않는다(${PROBE_T}초): $REG" >&2; exit 4; }
-prc=0; out=$(timeout "$PUSH_T" "$DOCKER" push "$REF" 2>&1) || prc=$?
+# 왜 빈 DOCKER_CONFIG 인가: 로컬 레지스트리는 인증이 없는데, docker push 는 사용자 ~/.docker/config.json 의 credsStore(WSL 에서는 Windows 의 docker-credential-desktop.exe)를 먼저 불러 레지스트리 자격을 찾는다.
+#  그 도우미가 응답하지 않으면 push 가 "error getting credentials ... accept4 failed 110" 으로 죽는다(3차 E2E). 표준 방법은 DOCKER_CONFIG(도커 공식 환경 변수)로 설정 폴더를 바꾸는 것이다: push 한 번에만 빈 설정을 쓰므로 사용자 Docker 설정을 읽거나 고치라고 요구하지 않는다.
+#  엔드포인트가 기본(소켓)이 아닌 사용자 컨텍스트면 그 주소를 DOCKER_HOST 로 넘긴다(컨텍스트 정보는 설정 폴더에 있어서 빈 폴더에서는 사라진다). 인증이 필요한 레지스트리에는 PUBLISH_DOCKER_CONFIG 로 설정 폴더를 준다.
+PCFG="${PUBLISH_DOCKER_CONFIG:-}"
+if [ -z "$PCFG" ]; then PCFG=$(mktemp -d); echo '{}' > "$PCFG/config.json"; PCFG_TMP=$PCFG   # 지우기는 push 직후(EXIT 트랩은 PublishResult 출력이 쓰고 있어 덮어쓰지 않는다)
+  CTXH=$("$DOCKER" context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null | tr -d '\r' || true); [ -z "$CTXH" ] || [ -n "${DOCKER_HOST:-}" ] || export DOCKER_HOST="$CTXH"; fi
+prc=0; out=$(DOCKER_CONFIG="$PCFG" timeout "$PUSH_T" "$DOCKER" push "$REF" 2>&1) || prc=$?
+[ -z "${PCFG_TMP:-}" ] || rm -rf "$PCFG_TMP"
 [ $prc != 124 ] || { echo "$out" | tail -3 >&2; echo "거부: push 시간 초과(${PUSH_T}초, timeout 종료 코드 124): $REF (PUBLISH_PUSH_TIMEOUT 로 바꿀 수 있다)" >&2; exit 4; }
 [ $prc = 0 ] || { echo "$out" | tail -3 >&2; echo "거부: push 실패(종료 코드 $prc): $REF" >&2; exit 4; }
 DIGEST=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
