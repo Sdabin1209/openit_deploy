@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import subprocess
 
 from openit_deploy.components import setup_env_record, setup_env_status
 from openit_deploy.wiring.call import call
@@ -11,7 +12,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def store() -> pathlib.Path:
-    return pathlib.Path(os.environ.get("SETUP_ENV_DIR") or ROOT / "state" / "setup-env")
+    # 작업 트리(git worktree)에는 state/ 가 없다(영역 환경 준비는 본 리포에서 한 번 한다): 본 리포의 보고를 읽는다. 왜: 작업 트리에서 돌린 점검이 '보고 없음'으로 SKIP 되어 본 리포와 다른 결과가 나왔다
+    if os.environ.get("SETUP_ENV_DIR"): return pathlib.Path(os.environ["SETUP_ENV_DIR"])
+    local = ROOT / "state" / "setup-env"
+    if not local.is_dir() and (ROOT / ".git").is_file():
+        try:
+            common = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, check=True).stdout.strip()
+            return pathlib.Path(common).parent / "state" / "setup-env"
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return local
 
 
 def load(area: str):

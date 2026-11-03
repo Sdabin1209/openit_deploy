@@ -2,6 +2,8 @@
 # deploy 스크립트 공통. source 해서 쓴다.
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(cd "$DEPLOY_ROOT/.." && pwd)"
+# 작업 트리(git worktree, deploy/build/wt-*)에서는 부모가 deploy/build 라 이웃 영역이 없다: 본 리포(git 공통 폴더의 부모)의 부모를 워크스페이스로 쓴다
+[ -f "$DEPLOY_ROOT/.git" ] && { _c=$(git -C "$DEPLOY_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && WORKSPACE="$(cd "$_c/../.." && pwd)"; }; unset _c
 VENV="$DEPLOY_ROOT/.venv"
 # 컴포넌트를 부르는 진입점(scripts/*.py)은 입력·출력을 스키마로 검증하므로 jsonschema 가 있는 deploy .venv 의 파이썬이 필요하다(ADR 0045). 작업 트리(git worktree)에서는 본 리포의 .venv 를 쓴다. 없으면 python3 (jsonschema 가 없으면 진입점이 이유를 내고 실패한다: 검증을 건너뛰지 않는다)
 DEPLOY_PY="$VENV/bin/python"
