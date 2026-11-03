@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R2.3·R5.1 정적: 게이트웨이 자신의 /healthz·/readyz 응답은 평문 "ok" 가 아니라 JSON HealthStatus(status) 본문이다. config/Caddyfile 에서 읽는다.
+"""R2.3·R5.1 정적: 게이트웨이 자신의 /healthz·/readyz 응답은 평문 "ok" 가 아니라 JSON 본문이다(R5.1 개정: 서비스의 Readyz 스키마가 계약에 없는 게이트웨이는 비어 있지 않은 JSON 객체. `{"status":"ok"}`/`{"status":"not-ready"}`). config/Caddyfile 에서 읽는다.
 읽는 쪽(감시 blackbox, E2E)도 본문의 status 를 보는지 함께 본다. 사용: python3 scripts/test_gateway_health_body.py"""
 import pathlib, re, unittest
 

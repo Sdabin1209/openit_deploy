@@ -1,7 +1,6 @@
-# 변경 요청: `HealthStatus` 스키마가 계약 패키지에 정의돼 있지 않다 (deploy → 헤드)
+# 변경 요청 처리 결과: `HealthStatus` 스키마 (deploy → 헤드)
 
-RUNTIME.md R2.3·R5.1 은 `/healthz`·`/readyz` 본문이 `HealthStatus` 를 따르고 확인하는 쪽이 **본문의 `status`** 를 본다고 정한다. 그러나 boundary-contracts v3.4.3 패키지(`load_schema('HealthStatus')`)와 문서(CONVENTIONS, HTTP.md)에는 `HealthStatus` 정의가 없다(검색: RUNTIME.md 의 두 줄뿐).
+해소됨. 헤드가 RUNTIME.md R5.1·R2.3 을 고쳤다: 서비스의 준비 확인 스키마가 계약에 있으면(`SurveyReadyz`·`GateReadyz`·`OpsFeedbackReadyz`) 본문이 그 스키마를 통과해야 하고, 없으면 비어 있지 않은 JSON 객체여야 한다.
+게이트웨이 자신의 `/readyz` 는 비어 있지 않은 JSON 객체다. 없는 `HealthStatus` 를 요구하지 않는다. 공통 스키마는 헤드 OPEN_GAPS U101 로 분리됐다.
 
-지금 서비스마다 본문이 다르다: 앱 `/healthz` 는 `{"status": "ok"}`, survey-service `/readyz` 는 `{"ready": true, "problems": [...]}`(status 필드 없음). deploy 는 게이트웨이 자신의 응답을 `{"status":"ok"}` / `{"status":"not-ready"}` 로 정했다(config/Caddyfile, 시험 scripts/test_gateway_health_body.py).
-
-요청: `HealthStatus` 스키마(필수 `status` 열거, `ready`·`problems` 등 선택 필드)를 계약에 정의하고, `/readyz` 가 있는 서비스(survey-service 등)가 `status` 를 내게 한다. 그때까지 deploy 의 읽는 쪽은 `/healthz` 만 `status` 를 판정하고 `/readyz` 는 서비스별 형식(`ready`)을 임시로 받는다.
+deploy 의 대응: `config/Caddyfile` 의 게이트웨이 응답 `{"status":"ok"}`·`{"status":"not-ready"}`, `scripts/e2e.sh readyz_check`(스키마 또는 비어 있지 않은 객체), `scripts/test_gateway_health_body.py`, `scripts/test_health_checks_read_body.py`.

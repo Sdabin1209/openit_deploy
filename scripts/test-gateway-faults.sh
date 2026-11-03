@@ -44,26 +44,11 @@ chk "R3.5 Content-Length 가 8MiB 초과: 413 + {\"code\":\"PAYLOAD_TOO_LARGE\"}
 c=$(head -c 9437184 /dev/zero | curl -sk -m 60 -o "$T/b" -D "$T/h" -w '%{http_code}' -X POST -H "Authorization: Bearer $DEVTOK" -H 'Content-Type: text/plain' -H 'Transfer-Encoding: chunked' --data-binary @- "$URL")
 chk "R3.5 전송 중(chunked)에 8MiB 초과: 413 (503 아님)" bash -c '[ "$1" = 413 ]' _ "$c"
 # ---- R3.6: 요청 줄·헤더가 너무 큼 -> 414·431 ----
-big_req() { # big_req <header|uri>: 1.3MB 헤더 또는 요청 줄을 파이썬 소켓으로 보내(셸 인자 길이 한도 때문) 응답 상태 코드를 낸다
-  python3 - "$1" "$CP" "$DEVTOK" <<'PY'
-import socket, ssl, sys
-kind, port, tok = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-junk = "a" * 1300000
-line = "POST /v1/sessions%s HTTP/1.1" % (("?q=" + junk) if kind == "uri" else "")
-extra = "X-Big: %s\r\n" % junk if kind == "header" else ""
-req = ("%s\r\nHost: localhost\r\nAuthorization: Bearer %s\r\n%sContent-Length: 0\r\nConnection: close\r\n\r\n" % (line, tok, extra)).encode()
-ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
-s = ctx.wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=30), server_hostname="localhost")
-try:
-    s.sendall(req); data = b""
-    while b"\r\n" not in data:
-        d = s.recv(4096)
-        if not d: break
-        data += d
-    print(data.split(b"\r\n")[0].decode().split(" ")[1] if data else "연결끊김")
-except (ssl.SSLError, ConnectionError, OSError):
-    print("연결끊김")
-PY
+big_req() { # big_req <header|uri>: 1.3MB 헤더 또는 요청 줄을 curl 설정 파일(-K)·헤더 파일(-H @)로 보낸다(셸 인자 길이 한도 때문) -> 상태 코드
+  local junk; junk=$(head -c 1300000 /dev/zero | tr '\0' a)
+  if [ "$1" = header ]; then printf 'X-Big: %s\n' "$junk" > "$T/bigh"; printf 'url = "%s"\nheader = "@%s"\n' "$URL" "$T/bigh" > "$T/bigk"
+  else printf 'url = "%s?q=%s"\n' "$URL" "$junk" > "$T/bigk"; fi
+  curl -sk -m 30 -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DEVTOK" -K "$T/bigk" 2>/dev/null || true
 }
 c=$(big_req header); chk "R3.6 헤더 1.3MB: 431 (503·200 아님, 현재 값 $c)" bash -c '[ "$1" = 431 ]' _ "$c"
 c=$(big_req uri); chk "R3.6 요청 줄(URI) 1.3MB: 414 또는 431 (현재 값 $c)" bash -c '[ "$1" = 414 ] || [ "$1" = 431 ]' _ "$c"

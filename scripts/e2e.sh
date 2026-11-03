@@ -318,7 +318,18 @@ except Exception: sys.exit('본문이 JSON 이 아니다: '+b[:60])
 st=d.get('status')
 ok = (st=='ok') if st is not None else (d.get('ready') is True)
 sys.exit(0 if ok else 'status/ready 가 정상이 아니다: '+b[:80])"; }
-health_check() { local o; o=$("$@") || return 1; printf '%s' "$o" | health_body_ok; }   # health_check inpy <서비스> <경로>
+health_check() { local o; o=$("$@") || return 1; printf '%s' "$o" | health_body_ok; }
+# /readyz 본문(R5.1, 계약 개정): 그 서비스의 준비 확인 스키마가 계약에 있으면(SurveyReadyz·GateReadyz·OpsFeedbackReadyz) 통과해야 하고, 없으면 비어 있지 않은 JSON 객체여야 한다. ready 가 있으면 참이어야 한다
+readyz_check() { local sch o; case "$1" in survey-service) sch=SurveyReadyz;; release-gate) sch=GateReadyz;; ops-feedback-ingest) sch=OpsFeedbackReadyz;; *) sch=-;; esac
+  o=$(inpy "$1" /readyz) || return 1
+  printf '%s' "$o" | "$VENV/bin/python" -W ignore -c "import sys,json
+from boundary_contracts import validator
+d=json.loads(sys.stdin.read()); sch=sys.argv[1]
+if not isinstance(d,dict) or not d: sys.exit('본문이 비어 있지 않은 JSON 객체가 아니다')
+if sch!='-':
+    e=[x.message for x in validator(sch).iter_errors(d)]
+    if e: sys.exit(sch+' 위반: '+e[0][:100])
+if d.get('ready') is False or d.get('status') not in (None,'ok'): sys.exit('준비되지 않았다: '+json.dumps(d)[:80])" "$sch"; }   # health_check inpy <서비스> <경로>
 no_doors() { local bad; bad=$("$DOCKER" ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | tr -d '\r' | grep -- '->' | grep -v "^${PROJECT}-gateway-1 " | grep -v "^${PROJECT}-step-ca-1 "); [ -z "$bad" ] || { echo "gateway 밖에서 호스트 포트를 게시한 제품 컨테이너: $bad"; return 1; }; echo "호스트 포트를 게시한 제품 컨테이너는 gateway 뿐이다 (시험용 문 0)"; }
 chk "샌드박스: 제품에 시험용 문이 없다 (호스트 포트는 gateway 뿐, 실행 중 컨테이너 기준)" no_doors
 chk "샌드박스: 제품 compose 정적 점검 (시험용 포트·가짜 백엔드·compose.test.yaml 없음)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_no_test_doors.py"
@@ -326,7 +337,7 @@ for n in gateway question-authoring release-gate ops-feedback-ingest model-regis
   if [ "$n" = gateway ]; then chk "/healthz $n (본문 status=ok)" health_check getj "$PGW" /healthz; else chk "/healthz $n (중계를 거쳐, 본문 status=ok)" health_check inpy "$n" /healthz; fi
   [ "$n" = survey-service ] && continue
   [ "$n" = gateway ] && continue   # gateway /readyz 는 survey-service 를 반영한다(아래에서 따로)
-  chk "/readyz $n (중계를 거쳐, 본문 status/ready)" health_check inpy "$n" /readyz
+  chk "/readyz $n (중계를 거쳐, 계약 Readyz 스키마 또는 비어 있지 않은 JSON 객체)" readyz_check "$n"
 done
 chk "/healthz model-serving (추론 서버, 별도 프로젝트, https, 본문 status=ok)" health_check getinf /healthz
 chk "/readyz model-serving (추론 서버, 별도 프로젝트, https, 본문 status/ready)" health_check getinf /readyz
