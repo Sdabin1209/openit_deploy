@@ -48,9 +48,9 @@ bash "$DEPLOY_ROOT/scripts/device-pki.sh" gateway-config >/dev/null 2>&1
 DEVICE_PKI_DIR="$T/pki2" bash "$DEPLOY_ROOT/scripts/device-pki.sh" init >/dev/null 2>&1; DEVICE_PKI_DIR="$T/pki2" bash "$DEPLOY_ROOT/scripts/device-pki.sh" issue rogue-1 >/dev/null 2>&1   # 신뢰하지 않는 다른 CA
 gwrun() { # gwrun <이름> <device-tls 조각> <CA 파일> [docker 인자...]: 게이트웨이를 임시 네트워크에서 띄운다
   local name=$1 tls=$2 ca=$3; shift 3
-  docker run -d --name "$name" -e GATEWAY_HOST_NAMES --network $NET "$@" -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$S/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" \
+  docker run -d --name "$name" -e GATEWAY_HOST_NAMES --network $NET "$@" -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" \
     -v "$tls:/etc/caddy/device-tls.caddy:ro" -v "$ca:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" -p 127.0.0.1::8443 "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null; }
-val() { docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$S/gateway-accounts.caddy:/etc/caddy/accounts.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1:/etc/caddy/device-tls.caddy:ro" -v "$2:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; }
+val() { docker run --rm -v "$DEPLOY_ROOT/config/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$DEPLOY_ROOT/config/gateway-auth.caddy:/etc/caddy/auth.caddy:ro" -v "$S/gateway-devices.caddy:/etc/caddy/devices.caddy:ro" -v "$1:/etc/caddy/device-tls.caddy:ro" -v "$2:/etc/caddy/device-ca.pem:ro" -v "$S/tokens:/run/secrets:ro" "$GW" caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; }
 val "$DEPLOY_ROOT/config/device-tls.caddy" "$DEPLOY_ROOT/config/device-ca.pem" && pass "Caddyfile 검증 통과(기본: 인증서 검증 꺼짐, 빈 조각)" || fail "Caddyfile 검증(기본)"
 val "$T/pki/device-tls.caddy" "$T/pki/device-ca.pem" && pass "Caddyfile 검증 통과(인증서 검증 켜짐)" || fail "Caddyfile 검증(켜짐)"
 docker network create $NET >/dev/null
@@ -71,7 +71,7 @@ c=$(cv -H "X-Openit-Device: attacker" -X POST "$U/v1/sessions")
 [ "$c" = 401 ] && pass "인증서 없이 위조 헤더만 보내도 401" || fail "무인증서 위조 헤더 (코드 $c)"
 curl -sk -m 8 --resolve "localhost:$P:127.0.0.1" --cert "$T/pki2/rogue-1.crt" --key "$T/pki2/rogue-1.key" -o /dev/null "$U/v1/sessions" -X POST; rc=$?
 [ "$rc" != 0 ] && pass "신뢰하지 않는 CA 의 인증서는 TLS 에서 거부된다(curl 종료 $rc)" || fail "다른 CA 인증서가 받아들여졌다"
-c=$(cv "$U/staff/"); [ "$c" = 401 ] && grep -qi '^www-authenticate: basic' "$T/h.out" && pass "직원 경로는 인증서 없이도 열려 계정 인증(Basic 401)을 요구한다" || fail "직원 경로 (코드 $c)"
+c=$(cv "$U/staff/"); { [ "$c" = 503 ] || [ "$c" = 302 ]; } && pass "직원 경로는 기기 인증서와 무관하게 사람 인증(OIDC)을 요구한다(이 시험에는 oauth2-proxy 가 없어 닫힌다: $c)" || fail "직원 경로 (코드 $c)"
 TOK=$(cat "$S/tokens/kiosk-device-e2e")
 c=$(cv -H "Authorization: Bearer $TOK" -H "X-Openit-Device: attacker" -X POST "$U/v1/sessions"); dev=$(python3 -c 'import json;print(json.load(open("'$T'/b.out")).get("x-openit-device","<없음>"))' 2>/dev/null)
 [ "$c" = 200 ] && [ "$dev" = "<없음>" ] && pass "2.x 기기 토큰 경로: 위조 X-Openit-Device 는 지워지고 서비스에 전달되지 않는다" || fail "토큰 경로 위조 헤더 (코드 $c, 헤더 '$dev')"

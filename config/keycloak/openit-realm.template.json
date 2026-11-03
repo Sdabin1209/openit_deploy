@@ -1,0 +1,72 @@
+{
+  "realm": "openit",
+  "displayName": "openit 문진 시스템",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "verifyEmail": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "eventsEnabled": true,
+  "eventsExpiration": 31536000,
+  "enabledEventTypes": ["LOGIN", "LOGIN_ERROR", "LOGOUT", "LOGOUT_ERROR", "REGISTER", "REGISTER_ERROR", "UPDATE_PASSWORD", "UPDATE_PASSWORD_ERROR", "CODE_TO_TOKEN_ERROR", "REFRESH_TOKEN_ERROR", "REMOVE_TOTP", "UPDATE_TOTP"],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": false,
+  "groups": [
+    {"name": "staff"},
+    {"name": "operator"},
+    {"name": "release-approver"},
+    {"name": "reviewer"},
+    {"name": "author"},
+    {"name": "clinical-reviewer"},
+    {"name": "clinician"},
+    {"name": "admin", "clientRoles": {"realm-management": ["manage-users", "query-users", "view-users", "query-groups", "view-events", "view-realm"]}}
+  ],
+  "clients": [
+    {
+      "clientId": "openit-gateway",
+      "name": "openit gateway (oauth2-proxy)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${OPENIT_GATEWAY_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": "__REDIRECT_URIS__",
+      "webOrigins": ["+"],
+      "attributes": {
+        "post.logout.redirect.uris": "__POST_LOGOUT_URIS__",
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {"claim.name": "groups", "full.path": "false", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true", "introspection.token.claim": "true"}
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "openit-admin",
+      "enabled": true,
+      "email": "openit-admin@localhost.invalid",
+      "emailVerified": true,
+      "firstName": "Initial",
+      "lastName": "Admin",
+      "credentials": [{"type": "password", "value": "${OPENIT_INITIAL_ADMIN_PASSWORD}", "temporary": true}],
+      "groups": ["admin"]
+    }
+  ]
+}

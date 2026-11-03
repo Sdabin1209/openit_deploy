@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import base64
 import json
 import json as _json   # gw_request 의 인자 이름 json 이 모듈을 가리므로 별칭을 둔다(시그니처가 고정이다)
 import os
@@ -18,6 +17,7 @@ import pathlib
 import ssl
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
@@ -75,20 +75,104 @@ def _docker_port(container_or_none: Optional[str], service: str, cport: str) -> 
     return line[0].rsplit(":", 1)[1] if r.returncode == 0 and line else None
 
 
-def gw_url(refresh: bool = False) -> str:
-    """게이트웨이 HTTPS 주소 https://127.0.0.1:<배정 포트>. 포트는 캐시하고 refresh=True 로 다시 묻는다."""
+def gw_url(refresh: bool = False, human: bool = False) -> str:
+    """게이트웨이 HTTPS 주소. 기본은 https://127.0.0.1:<배정 포트>(기기·기계 토큰 호출). 사람 계정(OIDC 로그인)은 human=True: 밖에서 보이는 주소 GATEWAY_PUBLIC_URL(첫 GATEWAY_HOSTS 이름 + 밖에 보이는 포트)을 쓴다.
+    왜: 로그인 쿠키와 Keycloak 의 허용 리다이렉트는 그 이름에만 묶인다(U82, ADR 0057). 포트는 캐시하고 refresh=True 로 다시 묻는다."""
     if refresh or "_gw_port" not in _C:
         p = _docker_port(None, "gateway", "8443")
         if not p:
             raise RuntimeError("게이트웨이 TLS 호스트 포트를 읽지 못했다(docker port)")
         _C["_gw_port"] = p
+    if human:
+        pub = os.environ.get("GATEWAY_PUBLIC_URL", "")
+        if not pub:
+            raise RuntimeError("GATEWAY_PUBLIC_URL 이 없다: scripts/lib.sh 를 source 한 셸(e2e.sh·demo.sh)에서 돌려야 한다")
+        return pub
     return f"https://127.0.0.1:{_C['_gw_port']}"
 
 
-def _basic(account: str) -> str:
-    # 왜 파일: 계정 암호는 비밀 폴더의 파일(tokens/account-<id>-password)에서만 읽는다(D84). 값은 헤더 만들 때만 메모리에 있다
-    pw = (_need("secrets") / "tokens" / f"account-{account}-password").read_text().strip()
-    return "Basic " + base64.b64encode(f"{account}:{pw}".encode()).decode()
+def _test_password(account: str) -> str:
+    # 왜 파일: 시험 사용자의 암호는 비밀 폴더의 파일(tokens/idp-test-<id>-password, gen-secrets --test-fixtures)에서만 읽는다(D84). 값은 로그인 요청 본문에만 쓴다
+    return (_need("secrets") / "tokens" / f"idp-test-{account}-password").read_text().strip()
+
+
+def _cookies_of(headers) -> dict:
+    out = {}
+    for h in headers.get_all("Set-Cookie") or []:
+        nv = h.split(";", 1)[0]
+        if "=" in nv:
+            k, v = nv.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def oidc_login(base: str, username: str, password: str, *, ca: str, rd: str = "/") -> dict:
+    """브라우저가 하는 OIDC 로그인(인가 코드 흐름)을 따라 한다: GET /oauth2/start -> Keycloak 로그인 화면 -> 양식 POST -> /oauth2/callback -> 세션 쿠키.
+    반환: 쿠키 dict(oauth2-proxy 세션). 실패(잘못된 암호, 가입 승인 대기 아님의 오류 등)는 RuntimeError(암호는 싣지 않는다)."""
+    import html as _html
+    import re as _re
+    ctx = ssl.create_default_context(cafile=str(ca))
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect, urllib.request.HTTPSHandler(context=ctx))
+    jar: dict = {}
+
+    def req(method, url, data=None, headers=None):
+        h = dict(headers or {})
+        if jar:
+            h["Cookie"] = "; ".join(f"{k}={v}" for k, v in jar.items())
+        r = urllib.request.Request(url, data=data, method=method, headers=h)
+        try:
+            with op.open(r, timeout=30) as resp:
+                jar.update(_cookies_of(resp.headers)); return resp.status, dict(resp.headers), resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            jar.update(_cookies_of(e.headers)); return e.code, dict(e.headers), e.read().decode("utf-8", "replace")
+
+    url = base + "/oauth2/start?rd=" + urllib.parse.quote(rd, safe="")
+    page = None
+    for _ in range(12):   # 리다이렉트를 최대 12번 따라간다(시작 -> Keycloak -> 콜백 -> rd)
+        st, hd, body = req("GET", url)
+        loc = hd.get("Location") or hd.get("location")
+        if st in (301, 302, 303, 307, 308) and loc:
+            url = urllib.parse.urljoin(url, loc)
+            if "/oauth2/callback" in url and "_openit_session" in jar:
+                break
+            continue
+        page = body
+        break
+    if page is None:
+        # 콜백까지 따라갔거나 세션이 이미 있다
+        if "_openit_session" in jar:
+            return jar
+        raise RuntimeError("로그인 화면에 닿지 못했다")
+    m = _re.search(r'<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"', page) or _re.search(r'<form[^>]*action="([^"]+)"[^>]*id="kc-form-login"', page)
+    if not m:
+        raise RuntimeError("Keycloak 로그인 양식을 찾지 못했다")
+    action = _html.unescape(m.group(1))
+    form = urllib.parse.urlencode({"username": username, "password": password, "credentialId": ""}).encode()
+    st, hd, body = req("POST", urllib.parse.urljoin(url, action), data=form, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    for _ in range(12):
+        loc = hd.get("Location") or hd.get("location")
+        if st in (301, 302, 303, 307, 308) and loc:
+            nxt = urllib.parse.urljoin(url, loc)
+            st, hd, body = req("GET", nxt)
+            url = nxt
+            continue
+        break
+    if "_openit_session" not in jar:
+        raise RuntimeError(f"로그인 실패(사용자 {username}): 마지막 응답 {st}")
+    return jar
+
+
+def session_cookie(account: str) -> str:
+    """시험 사용자 account 의 oauth2-proxy 세션 쿠키 머리글 값. 사용자마다 한 번 로그인하고 캐시한다(만료·거부되면 다시: forget_session)."""
+    cache = _C.setdefault("_sessions", {})
+    if account not in cache:
+        jar = oidc_login(gw_url(human=True), account, _test_password(account), ca=str(_need("gw_ca")))
+        cache[account] = "; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session"))
+    return cache[account]
+
+
+def forget_session(account: str) -> None:
+    _C.setdefault("_sessions", {}).pop(account, None)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -115,13 +199,13 @@ def gw_request(method: str, path: str, *, account: Optional[str] = None, token: 
     if account and token:
         raise ValueError("account 와 token 은 함께 쓸 수 없다(Authorization 하나)")
     if account:
-        h["Authorization"] = _basic(account)
+        h["Cookie"] = session_cookie(account)   # 사람 계정은 OIDC 로그인 세션 쿠키(U82). 기기·기계 토큰은 Authorization: Bearer
     elif token:
         h["Authorization"] = "Bearer " + token
     op = _opener()
     last: Optional[BaseException] = None
     for attempt in (0, 1):
-        req = urllib.request.Request(gw_url(refresh=attempt == 1) + path, data=body, method=method, headers=h)
+        req = urllib.request.Request(gw_url(refresh=attempt == 1, human=bool(account)) + path, data=body, method=method, headers=h)
         try:
             with op.open(req, timeout=timeout) as r:
                 return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
@@ -136,11 +220,11 @@ def gw_client(cls, *, account: Optional[str] = None, token: Optional[str] = None
     """boundary_contracts 클라이언트 cls 를 게이트웨이 주소로 만든다. HTTPS 검증은 init 이 둔 SSL_CERT_FILE(게이트웨이 CA)로 한다."""
     if account and token:
         raise ValueError("account 와 token 은 함께 쓸 수 없다")
-    c = cls(gw_url(), token, **({"user": user} if user is not None else {}))
+    c = cls(gw_url(human=bool(account)), token, **({"user": user} if user is not None else {}))
     if account:
-        # 왜 _headers: 클라이언트는 Bearer 토큰만 받는다. 사람 계정은 게이트웨이의 Basic 인증이라 하위 클래스가 더하는 고정 헤더(_headers, 클라이언트가 문서화한 확장점)에
+        # 왜 _headers: 클라이언트는 Bearer 토큰만 받는다. 사람 계정은 게이트웨이의 OIDC 세션 쿠키라 하위 클래스가 더하는 고정 헤더(_headers, 클라이언트가 문서화한 확장점)에
         # 싣는다. 토큰이 없으면 클라이언트가 Authorization 을 덮어쓰지 않는다. 클라이언트 코드를 복사하거나 고치지 않는다.
-        c._headers["Authorization"] = _basic(account)
+        c._headers["Cookie"] = session_cookie(account)
     return c
 
 

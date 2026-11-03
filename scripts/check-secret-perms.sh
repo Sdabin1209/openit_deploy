@@ -10,7 +10,7 @@ D=${1:-${SECRETS_DIR:-$DEPLOY_ROOT/secrets}}
 bad=0
 for d in "$D" "$D/tokens"; do [ -d "$d" ] || continue
   m=$(stat -c %a "$d"); [ "$m" = 700 ] || { echo "FAIL 폴더 모드 $m (700 이어야 한다): ${d#$D}/ (해결: chmod 700 $d)"; bad=$((bad+1)); }; done
-for f in "$D"/tokens/* "$D"/gateway-accounts.caddy "$D"/gateway-devices.caddy; do [ -f "$f" ] || continue
+for f in "$D"/tokens/* "$D"/gateway-devices.caddy; do [ -f "$f" ] || continue
   n=$(basename "$f"); m=$(stat -c %a "$f"); want=$(secret_mode "$n")
   case "$n" in gateway-*.caddy) want=640;; esac   # compose configs 로 컨테이너(caddy)가 읽는다
   if (( 8#$m & 8#022 )); then echo "FAIL $n 모드 $m: 그룹·기타 쓰기 비트가 있다"; bad=$((bad+1))

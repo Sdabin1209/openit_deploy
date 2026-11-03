@@ -40,6 +40,10 @@ networks:
   # postgres 는 아래 넷에 모두 붙는다(여러 네트워크 가입은 compose 에서 정상). 서비스끼리의 길은 serving/authoring/release 만 열어 준다.
   datasets:   # dataset-store(I2) 전용. internal: 호스트로 열지 않고 게이트웨이도 붙지 않는다(키오스크·직원 경로에서 닿지 않는다). docs/adr/0032-dataset-store-boundary.md
     internal: true
+  auth:       # 사람 인증(U82): gateway <-> oauth2-proxy <-> keycloak. 호스트로 열지 않는다
+    internal: true
+  db-keycloak:   # keycloak <-> postgres 만
+    internal: true
   db-survey:
     internal: true
   db-qa:
@@ -61,8 +65,8 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
 configs:
   gateway-caddyfile:
     file: ${CONFIG_DIR:-./config}/Caddyfile
-  gateway-accounts:
-    file: ${SECRETS_DIR:-./secrets}/gateway-accounts.caddy   # 개별 계정 인증 블록(해시)과 계정 -> 역할(staff, operator, release-approver, reviewer) 매핑(비밀, D85 E절)
+  gateway-auth:
+    file: ${CONFIG_DIR:-./config}/gateway-auth.caddy   # 개별 계정 인증 블록(해시)과 계정 -> 역할(staff, operator, release-approver, reviewer) 매핑(비밀, D85 E절)
   gateway-device-tls:
     file: ${DEVICE_TLS_CONF:-./config/device-tls.caddy}   # 클라이언트 인증서 검증 조각(기본은 꺼짐, ADR 0040)
   gateway-device-ca:
@@ -92,6 +96,16 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-app-password
   db-gate-password:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-password
+  db-keycloak-password:          # Keycloak 의 데이터베이스 계정 암호(U82). keycloak 서비스가 쓴다(postgres 초기화도 읽는다)
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-keycloak-password
+  keycloak-bootstrap-admin-password:   # master realm 의 임시 부트스트랩 관리자(KC_BOOTSTRAP_ADMIN_*). 운영에서는 realm openit 의 admin 그룹 계정을 쓴다
+    file: ${SECRETS_DIR:-./secrets}/tokens/keycloak-bootstrap-admin-password
+  openit-initial-admin-password:      # realm openit 의 초기 admin 계정(openit-admin) 임시 비밀번호. 첫 로그인에서 바꾸게 한다
+    file: ${SECRETS_DIR:-./secrets}/tokens/openit-initial-admin-password
+  oauth2-proxy-client-secret:         # Keycloak 클라이언트 openit-gateway 의 비밀(Keycloak 이 realm 가져올 때, oauth2-proxy 가 토큰 교환 때 읽는다)
+    file: ${SECRETS_DIR:-./secrets}/tokens/oauth2-proxy-client-secret
+  oauth2-proxy-cookie-secret:         # oauth2-proxy 세션 쿠키 암호화 키(32자)
+    file: ${SECRETS_DIR:-./secrets}/tokens/oauth2-proxy-cookie-secret
   db-survey-dsn:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-dsn
   db-qa-dsn:
@@ -190,12 +204,12 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
       POSTGRES_INITDB_ARGS: "--data-checksums"
-    secrets: [postgres-password, db-survey-password, db-qa-password, db-ops-log-password, db-ops-failure-password, db-ops-log-app-password, db-ops-failure-app-password, db-gate-password]
+    secrets: [postgres-password, db-survey-password, db-qa-password, db-ops-log-password, db-ops-failure-password, db-ops-log-app-password, db-ops-failure-app-password, db-gate-password, db-keycloak-password]
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
     tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-survey, db-qa, db-ops, db-gate]
+    networks: [db-survey, db-qa, db-ops, db-gate, db-keycloak]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
     # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
     #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
@@ -240,7 +254,7 @@ services:
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
     configs:
       - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
-      - {source: gateway-accounts, target: /etc/caddy/accounts.caddy}
+      - {source: gateway-auth, target: /etc/caddy/auth.caddy}
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
       - {source: gateway-device-tls, target: /etc/caddy/device-tls.caddy}
       - {source: gateway-device-ca, target: /etc/caddy/device-ca.pem}
@@ -252,6 +266,7 @@ services:
       admin-console: {condition: service_healthy}
       release-gate: {condition: service_healthy}
       ops-feedback-ingest: {condition: service_healthy}
+      oauth2-proxy: {condition: service_started}   # 사람 인증(forward_auth). 준비 전에 오는 요청은 503(UPSTREAM_UNAVAILABLE)
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
@@ -262,7 +277,7 @@ services:
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_TLS_PORT-8443}:8443"  # HTTPS (D88/U5)
-    networks: [edge, ui, serving, authoring, release]   # release: 학습 서버의 패키지 게시 입구(U69, model-registry). ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
+    networks: [edge, ui, serving, authoring, release, auth]   # release: 학습 서버의 패키지 게시 입구(U69, model-registry). ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
@@ -336,6 +351,88 @@ services:
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+
+  keycloak:   # 사람 계정 IdP(U82, head ADR 0014, deploy ADR 0057). 읽기 전용 루트를 쓰지 않는다: 시작 때 Quarkus 가 /opt/keycloak/lib/quarkus 에 다시 빌드한 결과를 쓴다(그 밖의 강화는 같다)
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    tmpfs: ["/tmp"]
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    group_add: *secretgid
+    mem_limit: ${KEYCLOAK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${KEYCLOAK_CPUS:-1.0}
+    pids_limit: ${KEYCLOAK_PIDS_LIMIT:-512}
+    image: ${KEYCLOAK_IMAGE:?locks/images.lock}
+    entrypoint: ["/bin/bash", "/opt/keycloak-deploy/entrypoint.sh"]
+    command: ["start", "--import-realm"]
+    environment:   # 비밀 아님. 비밀은 *_FILE 경로이고 래퍼가 읽는다
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD_FILE: /run/secrets/db-keycloak-password
+      KC_BOOTSTRAP_ADMIN_USERNAME: kcadmin
+      KC_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/keycloak-bootstrap-admin-password
+      OPENIT_GATEWAY_CLIENT_SECRET_FILE: /run/secrets/oauth2-proxy-client-secret
+      OPENIT_INITIAL_ADMIN_PASSWORD_FILE: /run/secrets/openit-initial-admin-password
+      KC_HTTP_ENABLED: "true"          # TLS 는 gateway 가 끝낸다(내부망 auth 안에서만 평문)
+      KC_HTTP_RELATIVE_PATH: /auth     # 계약 밖 deploy 규약: gateway 가 /auth/* 를 Keycloak 으로 보낸다
+      KC_HOSTNAME: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다}/auth   # 밖에 보이는 주소(토큰의 iss). 뒷길(oauth2-proxy -> keycloak)은 요청 주소를 쓴다
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_CACHE: local                  # 단일 서버: 클러스터 캐시(Infinispan 포트)를 켜지 않는다
+      KC_LOG: console
+    secrets: [db-keycloak-password, keycloak-bootstrap-admin-password, oauth2-proxy-client-secret, openit-initial-admin-password]
+    volumes:
+      - ./config/keycloak/entrypoint.sh:/opt/keycloak-deploy/entrypoint.sh:ro
+      - ${KEYCLOAK_REALM_FILE:-./state/keycloak/openit-realm.json}:/opt/keycloak/data/import/openit-realm.json:ro   # scripts/gen-keycloak-realm.sh 가 GATEWAY_HOSTS 로 만든다(비밀 없음)
+    networks: [auth, db-keycloak]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:   # 관리 포트(9000)의 /auth/health/ready. 이미지에 curl 이 없어 bash 의 /dev/tcp 로 요청한다
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s   # 첫 기동은 시작 때 다시 빌드·realm 가져오기를 한다(측정 전, 시작값)
+
+  oauth2-proxy:   # OIDC 클라이언트(U82). 인증 결과를 쿠키 세션으로 갖고 gateway 의 forward_auth(/oauth2/auth)에 답한다. 이미지에 셸이 없어 healthcheck 를 두지 않는다
+    <<: *hardening
+    mem_limit: ${OAUTH2_PROXY_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: ${OAUTH2_PROXY_CPUS:-0.5}
+    pids_limit: ${OAUTH2_PROXY_PIDS_LIMIT:-128}
+    image: ${OAUTH2_PROXY_IMAGE:?locks/images.lock}
+    environment:   # 비밀 아님(비밀은 *_FILE). 밖에서 보이는 주소는 GATEWAY_PUBLIC_URL(첫 GATEWAY_HOSTS 이름 + 밖에 보이는 포트)이고 사람 화면은 이 이름으로 쓴다(ADR 0057)
+      OAUTH2_PROXY_PROVIDER: oidc   # keycloak-oidc 가 아니다: 그 공급자는 realm 역할을 `role:<이름>` 그룹으로 섞어 넣어(default-roles-openit 등) 그룹이 비지 않고 X-Openit-Roles 에 잡음이 들어간다(스모크 시험이 잡았다)
+      OAUTH2_PROXY_CLIENT_ID: openit-gateway
+      OAUTH2_PROXY_CLIENT_SECRET_FILE: /run/secrets/oauth2-proxy-client-secret
+      OAUTH2_PROXY_COOKIE_SECRET_FILE: /run/secrets/oauth2-proxy-cookie-secret
+      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"   # 발급자(iss)는 밖에 보이는 주소이고 서버끼리는 내부 주소로 부른다: 주소를 직접 준다
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit
+      OAUTH2_PROXY_LOGIN_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit/protocol/openid-connect/auth
+      OAUTH2_PROXY_REDEEM_URL: http://keycloak:8080/auth/realms/openit/protocol/openid-connect/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://keycloak:8080/auth/realms/openit/protocol/openid-connect/certs
+      OAUTH2_PROXY_REDIRECT_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/oauth2/callback
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_UPSTREAMS: static://202
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: groups
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL: "true"   # 이메일 발송 설정이 없어 가입 이메일을 검증하지 않는다(가입 승인은 admin 이 한다)
+      OAUTH2_PROXY_SCOPE: openid profile email
+      OAUTH2_PROXY_CODE_CHALLENGE_METHOD: S256
+      OAUTH2_PROXY_COOKIE_NAME: _openit_session
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
+      OAUTH2_PROXY_COOKIE_EXPIRE: 12h     # 시작값(측정·결정 전): 하루 근무 안에서 다시 로그인
+      OAUTH2_PROXY_COOKIE_REFRESH: 5m     # 그룹(역할) 변경·계정 정지가 이 간격 안에 반영되게 Keycloak 에 다시 묻는다. 시작값(측정 전)
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_AUTH_LOGGING: "true"
+    secrets: [oauth2-proxy-client-secret, oauth2-proxy-cookie-secret]
+    networks: [auth]
+    depends_on:
+      keycloak: {condition: service_healthy}
 
   ops-feedback-migrate:   # L08(ADR 0055): 스키마를 만드는 일회성 서비스. 소유자 계정 접속 문자열 파일만 받는다. 서버·잡은 이것이 성공한 뒤에 뜬다. 상시 서비스도 주기 잡도 아니다(restart 없음, 기본 기동에 포함)
     restart: "no"

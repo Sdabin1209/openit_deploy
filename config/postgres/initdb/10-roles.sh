@@ -9,7 +9,7 @@
 #       암호는 /run/secrets/db-<이름>-app-password.
 # 환경: PG_APP_ACCOUNTS, PG_ROLE_CONN_LIMIT(계정별 연결 상한, 기본 20), PG_INIT_ACCOUNTS(공백으로 나눈 이름, 기본 survey qa ops_log ops_failure gate), PG_INIT_SECRETS_DIR(기본 /run/secrets), POSTGRES_USER(기본 postgres)
 set -Eeuo pipefail
-ACCOUNTS=${PG_INIT_ACCOUNTS:-"survey qa ops_log ops_failure gate"}
+ACCOUNTS=${PG_INIT_ACCOUNTS:-"survey qa ops_log ops_failure gate keycloak"}
 SDIR=${PG_INIT_SECRETS_DIR:-/run/secrets}
 # 계정별 동시 연결 상한: 한 서비스의 연결 폭주가 다른 서비스를 막지 않게 한다. 값은 측정 안 함(시작값, docs/adr/0024-postgres-logging-and-limits.md). PG_ROLE_CONN_LIMIT 로 바꾼다.
 LIMIT=${PG_ROLE_CONN_LIMIT:-20}
