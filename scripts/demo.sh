@@ -70,9 +70,10 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
   # 사람 인증(U82, ADR 0057): Keycloak 발급자·oauth2-proxy 콜백이 밖에서 보이는 주소(첫 GATEWAY_HOSTS 이름 localhost + 밖에 보이는 포트)로 정해지므로 HTTPS 호스트 포트를 미리 정하고 기록해 둔다(이후 명령이 같은 값을 쓴다)
   if [ -s "$W/gw-tls-port" ]; then GATEWAY_TLS_PORT=$(cat "$W/gw-tls-port")
-  else UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"); GATEWAY_TLS_PORT=""
+  else UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); GATEWAY_TLS_PORT=""   # 왜 상시 잠금인가: DEPLOY_LOCK($W/images.lock)은 이 시점에 아직 없어 이미지 이름이 비고, 포트 고르기가 조용히 실패해 사람 화면 주소가 8443 으로 굳었다(4차 데모: 단계 1 연결 거부)
     for _t in 1 2 3 4 5 6 7 8; do _p=$(free_port); "$DOCKER" run --rm -p "127.0.0.1:$_p:1" "$UTIL_REF" true >/dev/null 2>&1 && { GATEWAY_TLS_PORT=$_p; break; }; done
-    [ -z "$GATEWAY_TLS_PORT" ] || { mkdir -p "$W"; echo "$GATEWAY_TLS_PORT" > "$W/gw-tls-port"; }
+    [ -n "$GATEWAY_TLS_PORT" ] || die "게이트웨이 HTTPS 호스트 포트를 고르지 못했다(Docker 가 127.0.0.1 게시 포트를 못 연다?). 기본 8443 으로 넘어가지 않는다"
+    mkdir -p "$W"; echo "$GATEWAY_TLS_PORT" > "$W/gw-tls-port"
   fi
   export GATEWAY_TLS_PORT GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT; export GATEWAY_PUBLIC_URL="$(gateway_public_url)" GATEWAY_HOST_NAMES="$(gateway_host_names)"
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
