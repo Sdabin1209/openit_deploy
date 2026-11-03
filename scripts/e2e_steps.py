@@ -1663,7 +1663,8 @@ def trace_env(release_id, n):
     t["orchestrator_output"] = {"turn_kind": None, "session_info_created": None, "log_entry": None, "dispatch_called": False,
         "turn_failure_signal": {"session_id": f"s-{RID}", "write_committed": "NOT_COMMITTED", "staff_alert": "NONE"}, "intervention_result": None}
     e = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "release_id": release_id, "runtime_contract_version": 1,
-         "session_id": f"s-{RID}", "turn_id": f"t-{RID}-{n}", "sent_at": "2026-10-15T00:00:00Z", "trace": t}
+         "session_id": f"s-{RID}", "turn_id": f"t-{RID}-{n}", "sent_at": "2026-10-15T00:00:00Z", "trace": t,
+         "question_set_id": QS}   # 3.3.0: 릴리스가 문진표 여럿이면 어느 문진표의 턴인지 봉투가 말해야 사례에 question_set 이 붙는다(없으면 NO_QUESTION_SET 로 신호에서 빠진다, 4차 E2E 단계 7)
     validate("TraceEnvelope", e); validate_survey("TurnTrace", t); return e
 
 # ---- 단계 6 이후의 제품 접근 도우미 (wo-444). 드라이버가 제품에 닿는 길은 e2e_sandbox(SB)의 셋뿐이다:
