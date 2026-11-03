@@ -54,6 +54,14 @@ def check(S):
     readers = [n for n, sv in S.items() if any((x if isinstance(x, str) else x.get("source")) == "backup-store-htpasswd" for x in sv.get("secrets", []))]
     if readers != ["backup-store"]:
         errs.append(f"htpasswd 를 읽는 서비스가 저장소뿐이 아니다: {readers}")
+    cmd = bs.get("command") or []
+    if "--append-only" in cmd or "--private-repos" not in cmd:
+        errs.append("백업 저장소는 append-only 가 아니고 --private-repos(자격의 사용자 이름 = 자기 경로)여야 한다(영역 백업 잡이 forget --prune 으로 보존을 지킨다)")
+    for sv in ("survey-service", "question-authoring", "ops-feedback-ingest", "release-gate"):
+        if S.get(f"{sv}-gw", {}).get("user") is not None:
+            errs.append(f"{sv}-gw: 이미지가 선언한 사용자를 deploy 가 바꾸지 않는다")
+        if str(S.get(f"{sv}-cert", {}).get("user")) != "101:101":
+            errs.append(f"{sv}-cert: 키 파일 소유자가 영역 게이트웨이 이미지 사용자(101)여야 한다")
     return errs
 
 
@@ -65,6 +73,14 @@ class T(unittest.TestCase):
         m = copy.deepcopy(S0)
         m["job-qa-backup" if False else "job-question-authoring-backup"]["secrets"] = [x if "backup-qa" not in x else x.replace("backup-qa", "backup-survey") for x in m["job-question-authoring-backup"]["secrets"]]
         self.assertTrue(check(m), "일부러 qa 잡에 survey 자격을 줬는데 못 잡았다")
+
+    def test_mutation_append_only_is_caught(self):
+        m = copy.deepcopy(S0); m["backup-store"]["command"] = list(m["backup-store"]["command"]) + ["--append-only"]
+        self.assertTrue(check(m))
+
+    def test_mutation_gateway_user_override_is_caught(self):
+        m = copy.deepcopy(S0); m["survey-service-gw"]["user"] = "1000:1000"
+        self.assertTrue(check(m))
 
     def test_mutation_shared_network_is_caught(self):
         m = copy.deepcopy(S0)
