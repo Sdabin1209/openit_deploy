@@ -86,6 +86,8 @@ ok "(6) 대조: 앱이 공간을 소유하면 앱 재시작 뒤 사이드카와 
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/other.key" -out "$T/other_root.crt" -subj "/CN=other-root" -days 1 >/dev/null 2>&1; chmod 644 "$T/other_root.crt"
 sed 's#/pki/root_ca.crt#/other/other_root.crt#' "$T/gw.caddy" > "$T/gw2.caddy"
 docker run -d --name $ID-gw2 --network $NET --user 1000:1000 --cap-drop ALL --read-only --tmpfs /tmp:exec --tmpfs /data:uid=1000,gid=1000 -v "$T/gw2.caddy:/etc/caddy/Caddyfile:ro" -v "$T/other_root.crt:/other/other_root.crt:ro" --entrypoint sh "$SC_IMG" -c 'cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile' >/dev/null; sleep 3
-ok "(7) R3.8 서비스 인증서가 신뢰 묶음 밖의 루트면 게이트웨이는 503 + Retry-After 2 + application/json + {\"code\":\"UPSTREAM_UNAVAILABLE\"}" bash -c 'o=$(docker exec $1 wget -S -q -O - http://127.0.0.1:8081/ 2>&1); echo "$o" | grep -q "HTTP/1.1 503" && echo "$o" | grep -qi "Retry-After: 2" && echo "$o" | grep -qi "Content-Type: application/json" && echo "$o" | grep -q "\"code\":\"UPSTREAM_UNAVAILABLE\""' _ $ID-gw2   # 게이트웨이 컨테이너 안 loopback 으로 호출한다
+# 왜 sleep 3: busybox nc 는 입력이 끝나면 곧바로 닫혀 응답을 못 읽는다. 응답을 읽을 때까지 입력을 열어 둔다(준비 대기가 아니다)
+O7=$( { printf 'GET / HTTP/1.0\r\n\r\n'; sleep 3; } | docker exec -i $ID-gw2 nc 127.0.0.1 8081 2>&1)   # 게이트웨이 컨테이너 안 loopback 으로 호출한다(원시 응답: 상태 줄 + 머리글 + 본문)
+ok "(7) R3.8 서비스 인증서가 신뢰 묶음 밖의 루트면 게이트웨이는 503 + Retry-After 2 + application/json + {\"code\":\"UPSTREAM_UNAVAILABLE\"}" bash -c 'echo "$1" | grep -q "^HTTP/1.[01] 503" && echo "$1" | grep -qi "^Retry-After: 2" && echo "$1" | grep -qi "^Content-Type: application/json" && echo "$1" | grep -q "{\"code\":\"UPSTREAM_UNAVAILABLE\"}"' _ "$O7"
 [ "$FAILS" = 0 ] && echo "통과: 네트워크 공간 수명 단독 시험" || echo "실패: $FAILS건"
 exit $FAILS
