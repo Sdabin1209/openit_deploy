@@ -37,8 +37,8 @@ v=$(waitfor 40 probe curl -s "http://127.0.0.1:$PP/-/ready") && ok "Prometheus r
 [ "$(curl -s --max-time 5 "http://127.0.0.1:$AP/-/healthy" -o /dev/null -w '%{http_code}')" = 200 ] && ok "Alertmanager healthy" || no "Alertmanager"
 w(){ waitfor 50 x bash -c "$(declare -f q); PP=$PP; r=\$(q '$1'); [ \"\$r\" = '$2' ] && echo \$r"; }
 w 'probe_success{instance="http://gateway:8080/healthz"}' 1 >/dev/null && ok "탐침: gateway /healthz 성공" || no "탐침 gateway /healthz"
-w 'probe_success{instance="http://release-gate:8080/readyz"}' 1 >/dev/null && ok "탐침: release-gate /readyz 성공" || no "탐침 release-gate /readyz"
-w 'probe_success{instance="http://model-serving:8080/readyz"}' 1 >/dev/null && ok "탐침: model-serving /readyz 성공" || no "탐침 model-serving /readyz"
+w 'probe_success{instance="https://release-gate/readyz"}' 1 >/dev/null && ok "탐침: release-gate /readyz 성공" || no "탐침 release-gate /readyz"
+w 'probe_success{instance="https://model-serving/readyz"}' 1 >/dev/null && ok "탐침: model-serving /readyz 성공" || no "탐침 model-serving /readyz"
 w 'up{job="survey-service-metrics"}' 1 >/dev/null && ok "수집: survey-service /metrics (monitoring 네트워크)" || no "survey-service /metrics 수집"
 w 'up{job="model-serving-metrics"}' 1 >/dev/null && ok "수집: model-serving /metrics (monitoring 네트워크)" || no "model-serving /metrics 수집"
 w 'openit_gate_judging_consecutive_failures' 0 >/dev/null && ok "json_exporter: 판정 루프 연속 실패 0 을 지표로 읽는다" || no "json_exporter 지표"

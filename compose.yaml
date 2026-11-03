@@ -248,11 +248,8 @@ services:
     pids_limit: 128
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
-    environment:   # 비밀 값 없음(비밀번호는 파일)
-      DOCKER_STEPCA_INIT_NAME: OpenIt
-      DOCKER_STEPCA_INIT_DNS_NAMES: step-ca
-      DOCKER_STEPCA_INIT_ACME: "true"   # ACME 공급자(RFC 8555) 활성
-      DOCKER_STEPCA_INIT_PASSWORD_FILE: /run/secrets/step-ca-password
+    cap_add: ["NET_BIND_SERVICE"]   # step-ca 바이너리에 파일 권한이 있어 cap_drop ALL 이면 실행이 거부된다(측정함: Operation not permitted; gateway 와 같은 사정). 실제로는 9000 을 연다
+    entrypoint: ["sh", "-c", "test -f /home/step/config/ca.json || step ca init --name OpenIt --dns step-ca --address :9000 --provisioner admin --acme --password-file /run/secrets/step-ca-password --provisioner-password-file /run/secrets/step-ca-password >/dev/null 2>&1; exec step-ca /home/step/config/ca.json --password-file /run/secrets/step-ca-password"]   # 왜 공식 entrypoint 의 DOCKER_STEPCA_INIT_* 를 쓰지 않나: 그 경로는 CA 관리 비밀번호를 컨테이너 로그에 찍는다(비밀은 로그 금지, D84). 같은 step ca init 을 출력 없이 1회 실행한다
     secrets: [step-ca-password]
     volumes: [pki-ca:/home/step]
     networks: [pki]

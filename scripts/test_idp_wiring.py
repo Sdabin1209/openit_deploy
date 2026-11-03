@@ -78,7 +78,7 @@ class Compose(unittest.TestCase):
     def test_oauth2_proxy_urls_and_groups(self):
         e = S["oauth2-proxy"]["environment"]
         self.assertEqual(e["OAUTH2_PROXY_OIDC_GROUPS_CLAIM"], "groups"); self.assertEqual(e["OAUTH2_PROXY_SET_XAUTHREQUEST"], "true")
-        self.assertTrue(e["OAUTH2_PROXY_REDEEM_URL"].startswith("http://keycloak:8080/auth/")); self.assertTrue(e["OAUTH2_PROXY_OIDC_JWKS_URL"].startswith("http://keycloak:8080/auth/"))
+        self.assertTrue(e["OAUTH2_PROXY_REDEEM_URL"].startswith("https://keycloak/auth/")); self.assertTrue(e["OAUTH2_PROXY_OIDC_JWKS_URL"].startswith("https://keycloak/auth/"))
         self.assertTrue(S["keycloak"]["environment"]["KC_HOSTNAME"].endswith("/auth")); self.assertEqual(S["keycloak"]["environment"]["KC_HTTP_RELATIVE_PATH"], "/auth")
 
     def test_keycloak_gets_secrets_from_files_not_environment(self):
