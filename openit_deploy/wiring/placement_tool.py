@@ -268,7 +268,9 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     # 내부 전용 네트워크에만 붙은 서비스가 게시되면 일반 네트워크를 더한다(internal 네트워크는 호스트 포트를 열지 못한다)
     nets = compose.get("networks") or {}
     addnet = set()
-    for n in published:
+    # 다른 서버를 부르는 서비스도 같다: internal 네트워크에만 붙어 있으면 호스트 밖으로 나가지 못한다(예: pki 망의 <서비스>-cert 가 다른 서버의 step-ca 에 닿으려면)
+    callers = {n for n in local if call_targets(p, compose, n, host, owner)}
+    for n in sorted(published | callers):
         sn = compose["services"][n].get("networks") or []
         sn = list(sn) if not isinstance(sn, dict) else list(sn)
         if sn and all((nets.get(x) or {}).get("internal") for x in sn):
