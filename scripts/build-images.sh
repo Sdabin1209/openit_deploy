@@ -111,7 +111,10 @@ mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/
 d="$DEPLOY_ROOT/build/hostsrc-$BC"; rm -rf "$d"; mkdir -p "$d"; cp -a "$DEP/boundary/." "$d/"
 mkdir -p "$DEPLOY_ROOT/build/hostwheels/$BC"; "$PIP" wheel -q --no-deps --no-build-isolation -w "$DEPLOY_ROOT/build/hostwheels/$BC" "$d" >/dev/null 2>&1 || die "계약 $BC 의 호스트 wheel 을 만들지 못했다"
 mkdir -p "$DEPLOY_ROOT/build/hostwheels/survey-schema"; "$PIP" wheel -q --no-deps --no-build-isolation -w "$DEPLOY_ROOT/build/hostwheels/survey-schema" "$DEP/survey_schema/schema" >/dev/null 2>&1 || die "문진 스키마 호스트 wheel 을 만들지 못했다(E2E 검증기용)"
-"$PIP" install -q --force-reinstall --no-deps "$DEPLOY_ROOT"/build/hostwheels/"$BC"/boundary_contracts-*.whl >/dev/null 2>&1 || die "deploy venv 에 계약 $BC 를 설치하지 못했다"
+# 빌드 단계는 deploy .venv 를 바꾸지 않는다(12-Factor V: 빌드·릴리스·실행 분리. 설치는 scripts/prepare-host.sh 몫). 예전엔 여기서 pip --force-reinstall 해서, 같은 venv 를 쓰는 다른 실행(E2E 단계, 자체 점검)이 도중에 "No module named boundary_contracts" 로 깨졌다(4차 E2E).
+# 판이 다르면 고칠 방법을 말하고 멈춘다. (같은 버전 번호로 태그만 다시 찍은 경우는 prepare-host.sh 가 --force-reinstall 로 맞춘다)
+have=$("$PY" -c 'import importlib.metadata as m;print(m.version("boundary-contracts"))' 2>/dev/null || echo 없음)
+[ "v$have" = "$BC" ] || die "deploy .venv 의 계약 판이 $have 이다(기준표 $BC): bash scripts/prepare-host.sh"
 
 for svc in $SERVICES; do want "$svc" && build_one "$svc"; done
 

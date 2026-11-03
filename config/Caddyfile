@@ -87,6 +87,14 @@ http://:8080 {
 	# 브라우저만 이 헤더를 보내므로 curl·서비스 간 호출·E2E 에는 영향이 없다. 키오스크 앱은 같은 출처(gateway 가 낸 화면)라 통과한다. 헤더가 없는 요청은 막지 않는다(브라우저 밖 클라이언트).
 	# L20(ADR 0056): 허용 출처는 GATEWAY_HOSTS 에서 만든다. 요청 Host 의 호스트 이름이 GATEWAY_HOST_NAMES(lib.sh 가 GATEWAY_HOSTS 에서 포트를 떼어 만든 목록) 안에 있어야 하고, Origin 은 정확히 https://<Host 의 host:port> 여야 한다.
 	# 포트는 목록에서 고정하지 않는다: 밖에 게시된 포트가 컨테이너 포트(8443)와 다를 수 있고(데모·E2E 는 Docker 배정 포트) 브라우저가 보내는 Host 의 포트가 실제 출처의 포트이기 때문이다. 다른 포트의 같은 호스트(다른 출처)는 Origin 과 Host 가 달라 막힌다.
+	# 본문이 상한(8MiB)을 넘는다고 Content-Length 가 알리면 상류로 보내기 전에 413 으로 거절한다. request_body max_size 만으로는 상류가 TLS 사이드카일 때 본문을 읽다 끊긴 오류가 413 이 아니라
+	# 502 로 올라와 아래 handle_errors 가 503 UPSTREAM_UNAVAILABLE 로 바꿨다(4차 E2E 5a: 8MiB 초과 본문이 503). Content-Length 가 없는(chunked) 요청은 request_body 가 계속 막는다.
+	@toolarge expression `{http.request.header.Content-Length} != "" && int({http.request.header.Content-Length}) > 8388608`
+	handle @toolarge {
+		header Content-Type application/json
+		header Cache-Control no-store
+		respond `{"code":"PAYLOAD_TOO_LARGE"}` 413
+	}
 	@csrf expression `{http.request.method} in ["POST", "PUT", "PATCH", "DELETE"] && (({http.request.header.Sec-Fetch-Site} != "" && !({http.request.header.Sec-Fetch-Site} in ["same-origin", "none"])) || ({http.request.header.Origin} != "" && (!({http.request.host} in [{$GATEWAY_HOST_NAMES}]) || {http.request.header.Origin} != "https://" + {http.request.hostport})))`
 	handle @csrf {
 		respond "forbidden: 교차 출처 요청은 허용하지 않는다" 403

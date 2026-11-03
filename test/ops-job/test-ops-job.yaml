@@ -36,4 +36,4 @@ retention:                  # D88/U4 최소 보존 잠정 기본값(병원 규�
   metrics_days: 365         # 지표 스냅샷·롤백 요청·영수증
 release_reader:
   factory: "boundary_contracts.clients:HttpReleaseReader"
-  args: {base_url: "http://release-gate:8080", token: {env: OPS_GATE_READ_TOKEN}}
+  args: {base_url: "https://release-gate", token: {env: OPS_GATE_READ_TOKEN}}
