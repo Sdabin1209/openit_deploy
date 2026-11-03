@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 사람이 화면을 직접 눌러 볼 수 있는 데모 환경. 상시 구성(`deploy` 프로젝트)과 따로, 같은 서버에서 함께 돌 수 있다.
-#   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>] [--mimic-flow-file <파일>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다. 모델 서빙은 모방 백엔드(MODEL_RUNTIME_BACKEND=mimic), 키오스크는 /config.json 으로 기기 설정을 받는다(#device= 없이 열린다)
+#   scripts/demo.sh up [--stop-before-approval] [--rebuild] [--external-inference <URL>] [--mimic-flow-file <파일>] [--question-set <문진표 ID>]   데모 구성을 띄우고 시험용 릴리스를 만들어 활성화한다. 모델 서빙은 모방 백엔드(MODEL_RUNTIME_BACKEND=mimic), 키오스크는 /config.json 으로 기기 설정을 받는다(#device= 없이 열린다)
 #   scripts/demo.sh up --llm [--profile gpu-12g] [--yes-large]  실제 LLM(GPU, Qwen3-1.7B(프로파일 gpu-12g, 파이프라인 데모) + 학습하지 않은 중립 LoRA = 시험용 대체)으로 응답하는 데모
 #   scripts/demo.sh up --llm --profile rtx4090-24g --adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE   중립 LoRA 대신 학습 서버에서 가져온 진짜 어댑터를 얹는다(docs/GPU_HOLE.md H2)
 #   scripts/demo.sh check-secrets                              데모 스택(state/demo/secrets)의 비밀 노출 점검(up 끝에도 자동으로 돈다)
@@ -17,7 +17,7 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1   # 사용법·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
 source "$(dirname "$0")/lib.sh"
 CMD=${1:-}; shift || true
-STOP=0; REBUILD=0; EXT=""; LLM=0; REBUILD_GPU=0; YES_LARGE=0; LLM_PROFILE_NAME=""; AD_A=""; AD_B=""; PR_A=""; PR_B=""; PURGE_CACHE=0; PURGE_YES=0; MIMIC_FLOW=""
+STOP=0; REBUILD=0; EXT=""; LLM=0; REBUILD_GPU=0; YES_LARGE=0; LLM_PROFILE_NAME=""; AD_A=""; AD_B=""; PR_A=""; PR_B=""; PURGE_CACHE=0; PURGE_YES=0; MIMIC_FLOW=""; DEMO_QS="${DEMO_QUESTION_SET:-}"
 while [ $# -gt 0 ]; do case "$1" in
   --stop-before-approval) STOP=1; shift;; --rebuild) REBUILD=1; shift;;
   --external-inference) [ $# -ge 2 ] || die "--external-inference 에는 URL이 필요하다"; EXT=$2; shift 2;;
@@ -25,6 +25,8 @@ while [ $# -gt 0 ]; do case "$1" in
   --purge-cache) PURGE_CACHE=1; shift;; --yes-purge-"${HF_CACHE_VOLUME:-deploy-llm-hf-cache}") PURGE_YES=1; shift;;
   --mimic-flow-file) [ $# -ge 2 ] || die "--mimic-flow-file 에는 파일이 필요하다"; MIMIC_FLOW=$2; shift 2;;
   --mimic-flow-file=*) MIMIC_FLOW=${1#*=}; shift;;
+  --question-set) [ $# -ge 2 ] || die "--question-set 에는 문진표 ID 가 필요하다 (예: health-screening)"; DEMO_QS=$2; shift 2;;
+  --question-set=*) DEMO_QS=${1#*=}; shift;;
   --llm) LLM=1; shift;; --rebuild-gpu) REBUILD_GPU=1; shift;; --yes-large) YES_LARGE=1; shift;;
   --profile) [ $# -ge 2 ] || die "--profile 에는 이름이 필요하다 (예: gpu-12g)"; LLM_PROFILE_NAME=$2; shift 2;;
   --profile=*) LLM_PROFILE_NAME=${1#*=}; shift;;
@@ -85,12 +87,13 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   fi
 }
 demo_kiosk_prepare() { # 제품 경로 그대로: 기기 토큰을 만들고 게이트웨이 목록에 넣는다(scripts/kiosk-add-device.sh). 토큰 값은 출력하지 않는다
-  SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" >/dev/null 2>&1 || die "기기 토큰 생성 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
+  SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" ${DEMO_QS:+--question-set "$DEMO_QS"} >/dev/null 2>&1 || die "기기 토큰 생성 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
   [ -s "$SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE" ] || die "기기 토큰 파일이 없다: $SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE"
 }
 demo_kiosk_url() { # 키오스크 시작 주소(계약 KioskStartFragment: #device=<기기 토큰>)를 600 파일에만 쓴다. 터미널·로그에는 토큰을 내지 않는다(U75: 데모 전용 /config.json 분기 제거)
   local gw=$1 host=$2 f="$W/kiosk-url.txt"
-  ( umask 077; printf 'https://%s:%s/#device=%s\n' "$host" "$gw" "$(tr -d '\n' < "$SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE")" > "$f" ); echo "$f"
+  # 문진표 ID(--question-set)를 주면 조각에 question_set_id 를 붙인다(계약 KioskStartFragment, 조각이 기기 설정보다 먼저). 안 주면 활성 문진표가 둘이므로 키오스크 첫 화면에서 고른다
+  ( umask 077; printf 'https://%s:%s/#device=%s%s\n' "$host" "$gw" "$(tr -d '\n' < "$SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE")" "${DEMO_QS:+&question_set_id=$DEMO_QS}" > "$f" ); echo "$f"
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
@@ -321,7 +324,7 @@ case "$CMD" in
     if [ $PURGE_CACHE = 1 ]; then hf_cache_purge $PURGE_YES; else hf_cache_report; fi ;;
   reset)
     "$0" down || true
-    exec "$0" up $( [ $STOP = 1 ] && echo --stop-before-approval ) $( [ $LLM = 1 ] && echo --llm ) $( [ -n "$LLM_PROFILE_NAME" ] && echo --profile "$LLM_PROFILE_NAME" ) $( [ $YES_LARGE = 1 ] && echo --yes-large ) $( [ $ATTACH = 1 ] && echo --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" ) $( [ -n "$MIMIC_FLOW" ] && echo --mimic-flow-file "$MIMIC_FLOW" ) ;;
+    exec "$0" up ${DEMO_QS:+--question-set "$DEMO_QS"} $( [ $STOP = 1 ] && echo --stop-before-approval ) $( [ $LLM = 1 ] && echo --llm ) $( [ -n "$LLM_PROFILE_NAME" ] && echo --profile "$LLM_PROFILE_NAME" ) $( [ $YES_LARGE = 1 ] && echo --yes-large ) $( [ $ATTACH = 1 ] && echo --adapter-a "$AD_A" --adapter-b "$AD_B" --prompt-a "$PR_A" --prompt-b "$PR_B" ) $( [ -n "$MIMIC_FLOW" ] && echo --mimic-flow-file "$MIMIC_FLOW" ) ;;
   ""|-h|--help|help) usage; [ -z "$CMD" ] && exit 2 || exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac

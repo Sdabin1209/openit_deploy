@@ -102,7 +102,7 @@ class T(unittest.TestCase):
         plan, _ = v.assemble(self.cfg, "kiosk-frontend", WS, changed=["app/x.ts"], stale=("kiosk-frontend",))
         self.assertEqual(plan[0][1], ["npm", "test"]); self.assertEqual(plan[0][2], WS / "kiosk-frontend")
         self.assertEqual(plan[2][1][-1], "kiosk-frontend"); self.assertIn("build-images.sh", plan[2][1][1])
-        self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5,5f,5d,5q,5w,5m,5r,5n,6,8,5g"])   # repos 에 kiosk-frontend 가 있는 단계(+deps 닫힘)
+        self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5,5f,5d,5q,5w,5m,5r,5k,5n,6,8,5g"])   # repos 에 kiosk-frontend 가 있는 단계(+deps 닫힘)
         plan, _ = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])
         self.assertIn("--fast", plan[-1][1]); self.assertEqual(plan[0][2], v.DEPLOY_ROOT)
         plan, notes = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])

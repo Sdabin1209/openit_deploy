@@ -355,7 +355,7 @@ http://:8080 {
 	# 키오스크 공개 API(PUBLIC_API.md, D85 F절): 기기 토큰(Authorization: Bearer, 기기마다 파일 하나)을 목록과 대조한 뒤에만 서비스 kiosk 토큰으로 바꿔 붙인다.
 	# 토큰이 없거나 틀리면 401. 클라이언트가 보낸 X-Openit-User 는 지운다. /v1/staff 는 위에서만 staff 토큰을 받는다.
 	# 위험 신호 입력(risk-source)과 결과 조회(result-reader)는 감지기·병원 시스템용 내부 면이다: 게이트웨이에 열지 않는다(D85). 키오스크 경로의 와일드카드가 삼키지 않게 먼저 닫는다.
-	# 저자 경로: 문항 자료 등록(POST /v1/materials), 초안 조회·편집·확인(/v1/drafts*), 임상 근거 승인(POST /v1/reviews). 읽기 면(I1: /v1/question-sets*)은 열지 않는다(이웃 서비스용).
+	# 저자 경로: 문항 자료 등록(POST /v1/materials), 초안 조회·편집·확인(/v1/drafts*), 임상 근거 승인(POST /v1/reviews). 읽기 면(I1: /v1/question-sets/{id}/…)은 열지 않는다(이웃 서비스용). 정확히 /v1/question-sets 는 키오스크 목록(I10)이라 @kioskapi 에서 기기 인증으로 연다.
 	# 개선 신호 읽기(GET /v1/signals, D88/U9 환류): 저자가 운영 환류를 읽는 유일한 사람 입구다. 2026-11-01 E2E 샌드박스 전환(D123)에서 이 입구가 없어 저자가 신호를 볼 수 없음이 드러나 열었다(U68). 읽기만 연다(쓰기 없음).
 	@qasignals {
 		method GET
@@ -434,7 +434,9 @@ http://:8080 {
 	handle @internalsurvey {
 		respond "not found" 404
 	}
-	@kioskapi path /v1/sessions /v1/sessions/*
+	# 활성 문진표 목록(I10 GET /v1/question-sets, 계약 3.3.0)은 세션과 같은 기기 인증 범위다: 정확히 이 경로만 연다. 쿼리(I4 ?question_set_id= 등)는 path 매처가 보지 않으므로 막히지 않는다.
+	# I1 읽기 면(/v1/question-sets/{id}/versions 등 하위 경로)은 여전히 아래 `handle /v1/*` 의 404 다(이웃 서비스용). 서비스 쪽은 GET 만 받는다(다른 메서드는 서비스가 405)
+	@kioskapi path /v1/sessions /v1/sessions/* /v1/question-sets
 	handle @kioskapi {
 		handle @device_cert {
 			# 인증서 기반 기기 인증(2.3.0): 신뢰 CA 가 발급한 인증서만 여기까지 온다(TLS 핸드셰이크에서 검증). 헤더는 위에서 지운 뒤 CN 으로 다시 붙인다

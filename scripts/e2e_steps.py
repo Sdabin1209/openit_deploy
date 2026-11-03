@@ -185,7 +185,15 @@ def wait_review_report(get_report, sid, label, timeout=60):
 # synthetic-data 잡은 dataset-store 이미지에서 이미지 라벨 io.openit.jobs(계약 JobsDeclaration)가 선언한 argv 로 돌린다(U43): 명령 조립은 scripts/sd_jobs.py.
 # 설정 스키마가 survey_schema_dir 를 필수로 요구하지만 위치는 이미지가 정한다(이미지 환경 변수가 우선: synthetic-data ADR 0019, 설정 생략은 CR-009). 값은 쓰이지 않는다
 SD_UNUSED_DIR = "image-env-takes-precedence"
-QS, QSU = f"qs-{RID}", f"qs-{RID}-unseen"
+# 문진표(계약 3.3.0): 저자가 문진표 둘을 올린다. 둘 다 question-authoring 리포의 forms/ 에 있는 제품 양식이다(wo-320). ID·제목은 양식이 정한다. 보지 못한 문진표(QSU)는 학습에 쓰이지 않는 평가용이라 실행 ID 로 만든다.
+QS, QSB, QSU = "health-screening", "health-screening-b", f"qs-{RID}-unseen"
+QS_TITLE, QSB_TITLE = "건강검진 문진표", "건강검진 문진표(순서 B)"
+QS_FIRST, QSB_FIRST = "Q1.D01", "Q3"   # 첫 문항: A 는 Q1.D01, B 는 Q3 블록이 먼저(순서는 문진표 자신의 order 에서 나온다)
+FORMS_DIR = pathlib.Path(os.environ.get("E2E_FORMS_DIR") or (ROOT.parent / "question-authoring" / "forms"))   # 양식 정본은 question-authoring 리포의 forms/ (읽기만)
+def read_form(name):
+    f = FORMS_DIR / name
+    assert f.is_file(), f"문진표 양식이 없다: {f} (question-authoring 리포의 forms/. 다른 위치면 E2E_FORMS_DIR)"
+    return f.read_text()
 
 def upload(set_id, text, fname):   # 샌드박스(D123): 저자 경로는 게이트웨이 저자·임상검수 계정으로. 구현은 단계 1 의 도우미 하나(_c1_upload)뿐이다(호출 시점에 풀린다)
     return _c1_upload(set_id, text, fname)
@@ -194,9 +202,11 @@ def upload(set_id, text, fname):   # 샌드박스(D123): 저자 경로는 게이
       why="step1 은 STATE 를 읽지 않고 게이트웨이(저자·임상 검수자 계정)로 문항 자료를 올리고 I1 읽기는 release-gate 컨테이너 안에서 한다(STATE['qs'],['qsu'] 를 씀). 실행 중 스택의 question-authoring 은 필요하다")
 def step1():
     title(1, "저자가 문항 자료를 올리고 미리보기를 확인한다 (question-authoring: 저자 경로는 게이트웨이 계정, I1 읽기는 release-gate 컨테이너 안)")
-    form = (ROOT / "test/fixtures/question-form-v2.txt").read_text()   # 학습 데이터셋 v2 의 문항 ID 31개(survey-service 의 QuestionFlow 와 같은 순서). 값은 모두 시험용
+    form = read_form("health-screening-v1.txt"); form_b = read_form("health-screening-short-order.txt")
+    form2 = form.replace("알려 주세요.", "말씀해 주세요.", 1); assert form2 != form, "문진표 A 의 둘째 버전을 만들 문구('알려 주세요.')가 양식에 없다: 이 문구를 바꾸는 것으로 버전 2 를 만든다"
     r1, raw1 = _c1_upload(QS, form, "form1.txt")
-    r2, _ = _c1_upload(QS, form.replace("시험 문항 Q1.D01입니다. 알려 주세요.", "시험 문항 Q1.D01입니다. 말씀해 주세요."), "form2.txt")
+    r2, _ = _c1_upload(QS, form2, "form2.txt")
+    rb, _ = _c1_upload(QSB, form_b, "form-b.txt")
     ru, _ = _c1_upload(QSU, form.replace("알려 주세요.", "들려 주세요."), "unseen.txt")
     c, e_, _ = _c1_gw("POST", "/v1/reviews", account=_C1_AUTHOR, body={"question_set": r1, "decision": "APPROVED", "clinical_basis_approved": True}); assert c == 403, ("저자가 자기 확인을 임상 승인했다(4-eyes)", c, e_)
     # 인증 없는 입구: 게이트웨이는 401, 서비스 자신은 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절, RFC 9110 15.5.2·RFC 6750 3절)
@@ -206,14 +216,15 @@ def step1():
     rtok = ("qa-read-tokens", "synthetic-data")   # 읽기 토큰은 question-authoring 컨테이너 안의 읽기 토큰 목록에서(서비스 자신의 역할 검사)
     assert _c1_in("question-authoring", "GET", "/v1/drafts", auth=rtok)[0] == 403, "읽기 토큰으로 저작 경로가 열리면 안 된다"
     assert _c1_in("question-authoring", "POST", "/v1/materials?question_set_id=x&filename=x.txt", auth=rtok, raw="x")[0] == 403
-    d = _c1_i1_read(QS, QSU)   # HTTP I1, 읽기 토큰(release-gate 역할)
+    d = _c1_i1_read(QS, QSU, QSB)   # HTTP I1, 읽기 토큰(release-gate 역할)
     vers = d["versions"]; assert [v["version"] for v in vers] == ["1", "2"], vers
     assert d["latest"]["version"] == "2"
     key = lambda v: v["id"] + "@" + v["version"]
-    for v in vers + [d["latest_u"]]:
+    for v in vers + [d["latest_u"], d["latest_b"]]:
         bank = d["banks"][key(v)]
         assert canonical.content_hash(bank) == v["content_hash"]; assert str(bank["version"]) == v["version"]
         validate_survey("QuestionBank", bank)
+        assert bank["question_set_id"] == v["id"], ("문진표 은행의 question_set_id 가 참조의 ID 와 다르다", bank["question_set_id"], v["id"])
         revs = d["reviews"][key(v)]; assert len(revs) == 2, ("저자 확인 + 검수자 승인 두 검수여야 한다", len(revs))
         for r_ in revs: validate("ReviewRecord", r_)
         assert revs[0]["clinical_basis_approved"] is False, "저자의 확인이 임상 근거를 승인했다(4-eyes 위반)"
@@ -221,7 +232,9 @@ def step1():
         assert rv["decision"] == "APPROVED" and rv["clinical_basis_approved"] is True and rv["question_set"] == v and rv["reviewer_id"] != revs[0]["reviewer_id"], rv
     assert d["reviews"][key(vers[0])][0]["ext"]["question-authoring"]["source"]["source_hash"] == "sha256:" + hashlib.sha256(raw1).hexdigest()
     cc = d["change"][key(vers[1])]; validate("ChangeClassification", cc); assert d["change"][key(vers[0])] is None
-    STATE["qs"] = [dict(v) for v in vers]; STATE["qsu"] = dict(d["latest_u"]); save()
+    assert d["banks"][key(vers[-1])]["title"] == QS_TITLE and d["banks"][key(d["latest_b"])]["title"] == QSB_TITLE, ("문진표 제목", d["banks"][key(vers[-1])]["title"], d["banks"][key(d["latest_b"])]["title"])
+    assert d["latest_b"]["id"] == QSB and d["latest_b"]["version"] == "1", d["latest_b"]
+    STATE["qs"] = [dict(v) for v in vers]; STATE["qsu"] = dict(d["latest_u"]); STATE["qsb"] = dict(d["latest_b"]); save()
     rec(1, "REAL", f"등록→미리보기→확인 x3(게이트웨이 저자 계정, 임상 근거 승인은 다른 검수자 계정), I1 읽기(release-gate 컨테이너 안, 읽기 토큰; 읽기 토큰은 저작 경로 403): QuestionBank 3건(해시·문진 스키마), ReviewRecord(clinical_basis_approved), ChangeClassification {cc['change_kinds']} {cc['affected_slots']}, 원본 해시 출처 일치")
 
 # ===================== 단계 1~5 의 접근 계층 (샌드박스, wo-442) =====================
@@ -318,9 +331,14 @@ def _c1_job(job, args=()):
     else: rc, o = 0, r
     return rc, (o.decode(errors="replace") if isinstance(o, bytes) else str(o or ""))
 
+# 계약 3.3.0: 후보의 문진표는 목록이다(subject.question_sets, 1개 이상). 이 E2E 의 릴리스는 문진표 둘(health-screening 버전 하나 + health-screening-b)을 함께 담는다.
+# 제출을 문진표 버전으로 구분하려고 키는 주 문진표(QS)의 버전을 쓴다. 보지 못한 문진표(QSU)의 후보는 문진표 하나짜리다.
+def _subj(v, a, b): return {"question_sets": [v, STATE["qsb"]], "lora_a": a, "lora_b": b}
+def _subj_u(a, b): return {"question_sets": [STATE["qsu"]], "lora_a": a, "lora_b": b}
+
 def _c1_decisions(subj):
     """I4 find_decisions(최신부터). survey-service 컨테이너 안에서 읽는다(운영에서 판정을 읽는 쪽)."""
-    return _c1_run("survey-service", _C1_RD + f"A = {_c1_lit(subj)}\nout([dict(d) for d in rd.find_decisions(question_set=A['question_set'], lora_a=A['lora_a'], lora_b=A['lora_b'])[0]])\n")
+    return _c1_run("survey-service", _C1_RD + f"A = {_c1_lit(subj)}\nout([dict(d) for d in rd.find_decisions(question_set=A['question_sets'][0], lora_a=A['lora_a'], lora_b=A['lora_b'])[0]])\n")
 
 def _c1_release(rid):
     """ReleaseManifest 를 읽고 번들을 받아 해시를 검증한다(클라이언트가 검증). survey-service 컨테이너 안(운영에서 번들을 받는 쪽)."""
@@ -346,13 +364,13 @@ def _c1_upload(set_id, text, fname):
     c, rv, _ = _c1_gw("POST", "/v1/reviews", account=_C1_CLINICAL, body={"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB: 스크립트가 검수자 역할을 대신한다)"}); assert c in (200, 201), ("임상 근거 승인 실패", c, rv)
     return ref, raw
 
-def _c1_i1_read(qs, qsu):
+def _c1_i1_read(qs, qsu, qsb):
     """I1 읽기(문항 세트 버전·본문·검수·변경 분류). 읽는 주체는 release-gate(읽기 토큰 qa-read-release-gate): 그 컨테이너 안에서 한다."""
-    return _c1_run("release-gate", f"A = {_c1_lit({'qs': qs, 'qsu': qsu})}\nfrom openit_link.clients import HttpQuestionReader\n"
+    return _c1_run("release-gate", f"A = {_c1_lit({'qs': qs, 'qsu': qsu, 'qsb': qsb})}\nfrom openit_link.clients import HttpQuestionReader\n"
         "rd = HttpQuestionReader('http://question-authoring:8080', tok('qa-read-release-gate'))\n"
-        "vers = [dict(v) for v in rd.list_versions(A['qs'])[0]]\nlatest = dict(rd.latest(A['qs'], reviewed_only=True))\nlatest_u = dict(rd.latest(A['qsu'], reviewed_only=True))\n"
-        "banks, revs, chg = {}, {}, {}\nfor v in vers + [latest_u]:\n    k = v['id'] + '@' + v['version']\n    banks[k] = rd.get_question_bank(v); revs[k] = [dict(r) for r in rd.get_reviews(v)]; c = rd.get_change(v); chg[k] = dict(c) if c is not None else None\n"
-        "out({'versions': vers, 'latest': latest, 'latest_u': latest_u, 'banks': banks, 'reviews': revs, 'change': chg})\n")
+        "vers = [dict(v) for v in rd.list_versions(A['qs'])[0]]\nlatest = dict(rd.latest(A['qs'], reviewed_only=True))\nlatest_u = dict(rd.latest(A['qsu'], reviewed_only=True))\nlatest_b = dict(rd.latest(A['qsb'], reviewed_only=True))\n"
+        "banks, revs, chg = {}, {}, {}\nfor v in vers + [latest_u, latest_b]:\n    k = v['id'] + '@' + v['version']\n    banks[k] = rd.get_question_bank(v); revs[k] = [dict(r) for r in rd.get_reviews(v)]; c = rd.get_change(v); chg[k] = dict(c) if c is not None else None\n"
+        "out({'versions': vers, 'latest': latest, 'latest_u': latest_u, 'latest_b': latest_b, 'banks': banks, 'reviews': revs, 'change': chg})\n")
 
 def _c1_pack(pk):
     """게시 대상(패키지 매니페스트, 평가 보고서, 어댑터 파일들)을 컨테이너에 실어 보낼 모양으로. 어댑터는 작은 파일 묶음이라 base64 로 코드에 싣는다."""
@@ -558,7 +576,7 @@ def make_packages():
     pk = {}
     for role in ("LORA_A", "LORA_B"):
         mf = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "package_id": f"pkg-{RID}-{role.lower().replace('_', '-')}", "version": "1", "role": role,
-              "created_at": "2026-10-15T00:00:00Z", "runtime_contract_version": 1,
+              "created_at": "2026-10-15T00:00:00Z", "runtime_contract_version": 2,
               "base_model": (gm[role]["base_model"] if a.llm_package else {"id": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "main"}),   # 실제 LLM 데모는 패키지(프로파일)의 기반 모델(gpu-12g = Qwen3-1.7B)
               "adapter_hash": d["adapter_hash"][role], "serving_config": d["cfgs"][role], "serving_config_hash": d["hashes"][role],
               "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "action_rules_version": ACTION_RULES_VERSION,
@@ -676,8 +694,8 @@ def step4():
     assert rc in (0, 75), f"collect 종료 {rc}: {collected_out[-500:]}"
     collected = collected_out.strip().splitlines()[-1] if collected_out.strip() else ""
     A, B = STATE["lora"]["LORA_A"], STATE["lora"]["LORA_B"]
-    subj = {v["version"]: {"question_set": v, "lora_a": A, "lora_b": B} for v in STATE["qs"]}
-    subj_u = {"question_set": STATE["qsu"], "lora_a": A, "lora_b": B}
+    subj = {v["version"]: _subj(v, A, B) for v in STATE["qs"]}
+    subj_u = _subj_u(A, B)
     # 접수: 운영에서는 수집기 잡이 한다(위 job). 같은 조합 접수가 멱등인지는 게이트 컨테이너 안에서 접수 면(operator 쓰기 토큰)을 두 번 불러 본다 -- 게이트웨이는 POST /v1/submissions 를 열지 않는다(수집기 전용)
     allsubj = {**subj, "u": subj_u}
     got = _c1_run("release-gate", f"A = {_c1_lit(allsubj)}\nfrom openit_link.clients import HttpGateService\n"
@@ -737,6 +755,9 @@ def step4():
     a2 = dict(decide_approval("ap", sid2, "APPROVE", reason="시험: 둘째 후보 검토함")); validate("GateApproval", a2)
     d2 = wait(lambda: next((d for d in _c1_decisions(subj["2"]) if d["result"] == "PASS"), None), 30, "둘째 PASS 판정"); validate("GateDecision", dict(d2))
     rid2 = d2.get("release_id"); rel2 = _c1_release(rid2); validate("ReleaseManifest", rel2)
+    for rel_, qv_ in ((rel1, STATE["qs"][0]), (rel2, STATE["qs"][-1])):   # 3.3.0: 릴리스는 제출한 문진표 목록 그대로(ID·버전·제목) 담는다
+        assert sorted((x["id"], str(x["version"])) for x in rel_["question_sets"]) == sorted([(QS, str(qv_["version"])), (QSB, str(STATE["qsb"]["version"]))]), ("릴리스의 문진표", rel_["question_sets"])
+        assert {x["id"]: x["title"] for x in rel_["question_sets"]} == {QS: QS_TITLE, QSB: QSB_TITLE}, rel_["question_sets"]
     STATE["containers_before_swap"] = container_ids(); save()   # 포인터 1 -> 2 활성화 직전(StartedAt, ID 만 읽는다)
     c_, ap2 = _c1_activate(rid2); assert c_ == 200, f"activate {rid2} 실패 {c_}: {str(ap2)[:200]}"; ap2 = dict(ap2); validate("ActivePointer", ap2); assert ap2["pointer_version"] > ap1["pointer_version"]
     cx, bx = _c1_activate(du.get("release_id") or "rel-none-x"); assert cx != 200 and isinstance(bx, dict) and bx.get("code") in ("NOT_FOUND", "FAILED_PRECONDITION"), ("PASS가 아닌 릴리스가 활성화됨", cx, str(bx)[:100])
@@ -851,8 +872,8 @@ def step5():
     r = wait(lambda: (lambda cr: cr[1] if cr[0] == 200 and cr[1].get("active_release") == new else None)(survey_ready()), 60, f"survey가 릴리스 {new} 적재")
     assert r["ready"] and not r["release_loader"]["rejections"], r
     sid = f"sess-{RID}-a"
-    assert _c1_in("survey-service", "POST", "/v1/sessions", body={"session_id": sid, "kind": "SESSION_START"})[0] == 401, "survey-service가 토큰 없는 요청을 받아들임"   # 서비스 자신의 인증(게이트웨이 뒤가 아니라 서비스 컨테이너 안)
-    c, st = kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, (c, st)
+    assert _c1_in("survey-service", "POST", "/v1/sessions", body={"session_id": sid, "kind": "SESSION_START", "question_set_id": QS})[0] == 401, "survey-service가 토큰 없는 요청을 받아들임"   # 서비스 자신의 인증(게이트웨이 뒤가 아니라 서비스 컨테이너 안)
+    c, st = kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS}); assert c == 200, (c, st)
     validate_survey("FrontendInput", st); assert st["response_text"], st
     c, t1 = public_turn(sid, "turn-1", "뇌졸중은 없고 약도 안 먹어요"); assert c == 200, (c, t1); validate_survey("FrontendInput", t1)
     c, t1b = public_turn(sid, "turn-1", "뇌졸중은 없고 약도 안 먹어요"); assert c == 200 and t1b == t1, "같은 turn_id 재시도가 같은 응답이 아니다"
@@ -870,7 +891,7 @@ def step5():
     v2chk = model_server_v2_check(new, ms_tok)
     fvc = fake_values_check(new, ms_tok)
     # 서비스를 거친 값 있는 턴: 가짜 A 가 매 턴 값(ANSWERED)을 내고, 서비스의 검증·저장을 통과해야 한다(실패 신호 없음, 추론 실패·형식 위반 증가 없음, Trace 전송)
-    sv = f"sess-{RID}-val"; assert kiosk("/v1/sessions", {"session_id": sv, "kind": "SESSION_START"})[0] == 200
+    sv = f"sess-{RID}-val"; assert kiosk("/v1/sessions", {"session_id": sv, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     rb = survey_ready()[1]; replies = []
     for i, text in enumerate(("네 있어요", "아니요 없어요", "네 있어요"), 1):
         c, rp = public_turn(sv, f"val-{i}", text); assert c == 200, (c, rp); validate_survey("FrontendInput", rp); replies.append(rp)
@@ -884,7 +905,7 @@ def step5():
         # 왜 stop/start 가 아니라 pause/unpause 인가: 추론 서버는 별도 프로젝트(다른 호스트 역할)이고 호스트 포트를 Docker 가 배정한다. 다시 띄우면 포트가 바뀌어 제품(survey-service)의 추론 서버 주소가
         # 어긋나 이후 모든 단계가 깨진다(운영의 추론 서버는 고정 주소). 그래서 연결 거부(stop) 경로는 이 구성에서 시험하지 못하고 무응답(pause) 경로만 본다. 연결 거부는 5m 이전 시험이 보던 경로였다.
         mname = MS_CONTAINER
-        sidc = f"sess-{RID}-c"; assert kiosk("/v1/sessions", {"session_id": sidc, "kind": "SESSION_START"})[0] == 200
+        sidc = f"sess-{RID}-c"; assert kiosk("/v1/sessions", {"session_id": sidc, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
         sh([a.docker, "pause", mname])
         try:
             cd_, rd_ = public_turn(sidc, "turn-down", "뇌졸중은 없고 약도 안 먹어요")
@@ -897,7 +918,7 @@ def step5():
         tries_up = []
         def recovered():
             sid_u = f"sess-{RID}-up{len(tries_up)}"
-            if kiosk("/v1/sessions", {"session_id": sid_u, "kind": "SESSION_START"})[0] != 200: tries_up.append(None); return None
+            if kiosk("/v1/sessions", {"session_id": sid_u, "kind": "SESSION_START", "question_set_id": QS})[0] != 200: tries_up.append(None); return None
             cu_, ru_ = public_turn(sid_u, "turn-up", "뇌졸중은 없고 약도 안 먹어요"); tries_up.append((cu_, ru_))
             kiosk(f"/v1/sessions/{sid_u}/end", {"session_id": sid_u, "kind": "SESSION_END"})
             return (cu_, ru_) if cu_ == 200 and not (isinstance(ru_, dict) and ru_.get("turn_failure_signal")) else None
@@ -908,7 +929,7 @@ def step5():
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
     # D85 F절: 기기 토큰 없음·틀린 토큰·서비스 kiosk 토큰을 기기 토큰으로 쓰기는 모두 401, 올바른 기기 토큰은 통과
     for lab, tk in (("토큰 없음", None), ("틀린 토큰", "0" * 48), ("서비스 kiosk 토큰", _c1_tok("survey-api-kiosk"))):
-        assert _c1_gw("POST", "/v1/sessions", token=tk, body={"session_id": f"sess-{RID}-nodev", "kind": "SESSION_START"})[0] == 401, f"기기 토큰 없이 키오스크 API가 열려 있다({lab})"
+        assert _c1_gw("POST", "/v1/sessions", token=tk, body={"session_id": f"sess-{RID}-nodev", "kind": "SESSION_START", "question_set_id": QS})[0] == 401, f"기기 토큰 없이 키오스크 API가 열려 있다({lab})"
     # D85 E절: 개별 계정과 역할. 직원 개입·직원 API는 staff 계정만(다른 역할 403), 운영자 경로는 operator 계정만(없으면 401, 다른 역할 403)
     assert gw_raw("GET", "/v1/staff/alerts", basic=OPERATOR())[0] == 403, "operator 계정이 직원 API를 부를 수 있다"
     assert gw_raw("GET", "/v1/staff/alerts", basic=ADMIN())[0] == 403, "승인자 계정이 직원 API를 부를 수 있다"
@@ -1031,7 +1052,7 @@ def step5c():
     (cv,) = o1["values"]; assert (cv["key"], cv["value"], cv["status"], cv["save"]) == ("Q1.D01.diagnosed", False, "CORRECTION", True), cv
     o2 = ext("Q1.D03", utt, {}); assert o2["action"] == "NEXT" and o2["values"][0]["status"] == "ANSWERED", ("at 가 다른 문항인데 CORRECT 가 나왔다", o2)
     # (2) 서비스 경유: Q1.D01 에 '네' -> 저장, 다음 턴에 정정 발화
-    sid = f"sess-{RID}-corr"; assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    sid = f"sess-{RID}-corr"; assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     rb = _c2_ready()[1]
     c, r1 = _c2_turn(sid, "cor-1", "네 있어요"); assert c == 200, (c, r1); validate_survey("FrontendInput", r1)
     v1 = {v["key"]: v for v in _c2_staff("GET", f"/v1/staff/sessions/{sid}")[1]["values"]}
@@ -1046,7 +1067,7 @@ def step5c():
     assert v2["Q1.D01.diagnosed"]["value"] is False and v2["Q1.D01.diagnosed"]["status"] == "CORRECTION", ("정정이 저장 값에 반영되지 않았다", v2["Q1.D01.diagnosed"])
     assert sv["status"] == "IN_PROGRESS", sv["status"]
     # (3) 대조: 같은 발화가 at 이 아닌 문항(Q1.D01)에서는 정정이 아니다
-    sid2 = f"sess-{RID}-corr-ctl"; assert _c2_kiosk("/v1/sessions", {"session_id": sid2, "kind": "SESSION_START"})[0] == 200
+    sid2 = f"sess-{RID}-corr-ctl"; assert _c2_kiosk("/v1/sessions", {"session_id": sid2, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     c, r3 = _c2_turn(sid2, "ctl-1", utt); assert c == 200, (c, r3)
     sv3 = _c2_staff("GET", f"/v1/staff/sessions/{sid2}")[1]; said3 = [t for t in sv3["turns"] if t["utterance"]]
     assert [t["action"] for t in said3] == ["NEXT"] and all(v["status"] == "ANSWERED" for v in sv3["values"]), ("at 밖의 발화가 정정으로 처리됨", said3, sv3["values"])
@@ -1075,7 +1096,7 @@ def step5o():
     EA.check_fake_extraction(ext("7일이요"), "Q8_1.days", 7, "Q8_2", "[7일: 최대 포함]")
     EA.check_fake_extraction(ext("없어요"), "Q8_1.days", 0, "Q9_1", "[0일: 최소 포함]")
     # (2) 서비스 경유: 문항 은행에 칸 규격이 있으면 서비스가 extract 에 fields 를 싣는다(U24). Q8_1 까지 가짜 A 가 값을 내는 발화로 진행한 뒤 '8일이요'
-    sid = f"sess-{RID}-range"; assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    sid = f"sess-{RID}-range"; assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     types = {k: v[0]["type"] for k, v in ff["slots"].items()}; answers = {}
     def skipped(item): return any(s["skip_item"] == item and s["slot"] in answers and type(answers[s["slot"]]) is type(s["value"]) and answers[s["slot"]] == s["value"] for s in ff["skips"])
     idx, turns = 0, 0
@@ -1152,7 +1173,7 @@ def step5q():
     if "pointers" not in STATE: rec("5q", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
     wait_gw_ready(300)
     svc = f"{a.project}-survey-service-1"; sid = f"sess-{RID}-outq"
-    assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     c, r1 = _c2_turn(sid, "q-1", "네 있어요"); assert c == 200, (c, r1)
     sh([a.docker, "stop", "-t", "3", svc]); obs = {}
     try:
@@ -1192,7 +1213,7 @@ def step5w():
     if "pointers" not in STATE: rec("5w", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
     wait_gw_ready(300)
     svc = f"{a.project}-survey-service-1"; sid = f"sess-{RID}-outw"
-    assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     sh([a.docker, "pause", svc]); obs = {}
     try:
         t_req = time.time(); c, b, h, el = gk_turn(sid, "w-1", "네 있어요", timeout=70); obs["turn"] = (c, round(el, 2))
@@ -1258,9 +1279,9 @@ def step5m():
     if "pointers" not in STATE: rec("5m", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
     wait_gw_ready(300)
     sid = f"sess-{RID}-outm"
-    assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[0] == 200
+    assert _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     c, r1 = _c2_turn(sid, "m-1", "네 있어요"); assert c == 200 and not r1.get("turn_failure_signal"), (c, r1)
-    sidr = f"sess-{RID}-outmr"; assert _c2_kiosk("/v1/sessions", {"session_id": sidr, "kind": "SESSION_START"})[0] == 200
+    sidr = f"sess-{RID}-outmr"; assert _c2_kiosk("/v1/sessions", {"session_id": sidr, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     phrase, _rules = risk_phrase()
     sh([a.docker, "pause", MS_CONTAINER])
     try:
@@ -1338,7 +1359,8 @@ def step5a():
     assert revs[-1]["clinical_basis_approved"] is True and revs[-1]["reviewer_id"] == _C2_CLINICAL, ("위조 헤더가 무시되고 인증 계정이 기록돼야 한다", revs[-1])
     assert dict(_c2_qa_read("latest", qset, reviewed_only=True))["version"] == ref["version"], "임상 승인 뒤 reviewed_only 에 나타나야 한다"
     # 이웃 읽기 면(I1)은 gateway 에 열지 않는다. 본문 상한 8MiB 초과는 413
-    assert _c2_raw("GET", "/v1/question-sets", basic=_C2_AUTHOR)[0] == 404, "I1 읽기 면이 gateway 에 열려 있다"
+    assert _c2_raw("GET", f"/v1/question-sets/{qset}/versions", basic=_C2_AUTHOR)[0] == 404, "I1 읽기 면이 gateway 에 열려 있다"
+    assert _c2_raw("GET", "/v1/question-sets", basic=_C2_AUTHOR)[0] == 401, "정확히 /v1/question-sets 는 키오스크 목록(I10)이라 사람 계정이 아니라 기기 토큰만 받는다"
     # Caddy 는 상한을 넘는 본문을 읽다가 413 으로 끊는다. 클라이언트가 아직 보내는 중이면 응답을 받기 전에 연결이 끊겨(SSL EOF·연결 재설정) 상태 코드를 못 읽기도 한다: 둘 다 '거부됨'으로 본다(정상 업로드가 아님)
     try: c9 = gw_bytes("POST", up, b"x" * (9 * 1024 * 1024), "text/plain", basic=_C2_AUTHOR)[0]
     except (urllib.error.URLError, ConnectionError, OSError) as e9: c9 = f"연결 끊김({type(e9).__name__})"
@@ -1355,8 +1377,8 @@ def step5d():
     sid = f"sess-{RID}-devA"; A, B = dev_tok("e2e-a"), dev_tok("e2e-b")
     def gk(tok, method, path, body=None):
         c, b, _h = _c2_gw(method, path, body, token=tok); return c, b
-    print("  진단: 기기별 /v1/sessions 응답 코드 " + ", ".join(f"{d}={gk(dev_tok(d), 'POST', '/v1/sessions', {'session_id': 'sess-diag-' + d, 'kind': 'SESSION_START'})[0]}" for d in ("e2e", "e2e-a", "e2e-b", "e2e-c")))
-    c, st = gk(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"}); assert c == 200, ("기기 A 세션 시작", c, st)
+    print("  진단: 기기별 /v1/sessions 응답 코드 " + ", ".join(f"{d}={gk(dev_tok(d), 'POST', '/v1/sessions', {'session_id': 'sess-diag-' + d, 'kind': 'SESSION_START', 'question_set_id': QS})[0]}" for d in ("e2e", "e2e-a", "e2e-b", "e2e-c")))
+    c, st = gk(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS}); assert c == 200, ("기기 A 세션 시작", c, st)
     c, r = gk(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "dA-1"}); assert c == 200, ("기기 A 발화", c, r)
     cs, _ = gk(A, "GET", f"/v1/sessions/{sid}/state"); assert cs in (200, 429), ("기기 A 상태 조회", cs)
     # 기기 B 는 같은 session_id 로 상태·발화·종료를 시도해도 세션에 접근하지 못한다(계약상 404, 존재를 드러내지 않는다)
@@ -1371,12 +1393,12 @@ def step5d():
     rz = _c2_ready()[1]; kt = rz.get("kiosk_tokens") or {}
     assert kt.get("shared_kiosk_token") is False and (kt.get("device_tokens") or 0) >= 2, ("/readyz 의 기기 토큰 상태", kt)
     # 폐기: 기기 c 를 remove --apply (gateway·survey 재시작) 하면 그 토큰은 거부된다
-    C = dev_tok("e2e-c"); c, _ = gk(C, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devC", "kind": "SESSION_START"}); assert c == 200, ("폐기 전 기기 C 는 정상이어야 한다", c)
+    C = dev_tok("e2e-c"); c, _ = gk(C, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devC", "kind": "SESSION_START", "question_set_id": QS}); assert c == 200, ("폐기 전 기기 C 는 정상이어야 한다", c)
     env = {"SECRETS_DIR": a.secrets, "DEPLOY_PROJECT": a.project}
     sh(["bash", str(ROOT / "scripts/kiosk-add-device.sh"), "remove", "e2e-c", "--apply"], env=env)
     wait_gw_ready(300)
-    cc, _ = gk(C, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devC2", "kind": "SESSION_START"}); assert cc == 401, ("폐기된 기기 토큰이 거부되지 않는다", cc)
-    c, _ = gk(A, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devA2", "kind": "SESSION_START"}); assert c == 200, "다른 기기는 폐기의 영향을 받지 않는다"
+    cc, _ = gk(C, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devC2", "kind": "SESSION_START", "question_set_id": QS}); assert cc == 401, ("폐기된 기기 토큰이 거부되지 않는다", cc)
+    c, _ = gk(A, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-devA2", "kind": "SESSION_START", "question_set_id": QS}); assert c == 200, "다른 기기는 폐기의 영향을 받지 않는다"
     # 폐기 뒤 시험이 쓰는 비밀 폴더에서 e2e-c 파일이 지워졌고 survey 표에서도 빠졌다
     assert "e2e-c=" not in (pathlib.Path(a.secrets) / "tokens" / "survey-kiosk-device-tokens").read_text(), "survey 기기 토큰 표에 폐기된 기기가 남았다"
     rec("5d", "REAL", "기기별 토큰: 기기 A 가 만든 세션에 기기 B 의 상태·발화·종료는 404/403 이고 세션은 바뀌지 않았다, 기기 A 는 계속 정상, /readyz kiosk_tokens.shared_kiosk_token=false(기기 토큰 표 사용), 기기 C 를 remove --apply 하자 그 토큰은 gateway 401 이고 survey 표에서도 빠졌다(gateway·survey 재시작). 못 보는 것: 폐기가 survey 에 반영되는 시점(재시작 필요, 재시작 전 gateway 가 먼저 막는다)")
@@ -1406,7 +1428,7 @@ def step5n():
     # (a) 위험 발화로 정지(단계 5f 의 방식: E2E 가 주입한 시험 규칙의 문구). 이 구성에는 직원 콘솔 구독자가 없어 전달은 DELIVERY_FAILED 로 끝나는 것이 정상이다(survey-service alerts.py 머리말). 구독자가 있으면 DELIVERED 일 수 있고 그래도 아래 호출은 OPEN 알림이 있으므로 성립한다
     sid = f"sess-{RID}-n"; phrase, _r = risk_phrase()
     A = dev_tok("e2e-a"); B = dev_tok("e2e-b")
-    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START"})[:2]; assert c == 200, ("POST /v1/sessions(기기 A 세션 시작)", c, st)
+    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS})[:2]; assert c == 200, ("POST /v1/sessions(기기 A 세션 시작)", c, st)
     c, rr, _h = tcall(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": f"저는 {phrase} 있어요", "turn_id": "n-1"}); assert c == 200, (c, rr)
     fs = rr.get("turn_failure_signal") or {}; first_status = fs.get("staff_alert")
     assert first_status in ("DELIVERED", "DELIVERY_FAILED"), ("위험 발화인데 직원 알림 신호가 없다", rr)
@@ -1455,7 +1477,7 @@ def step5n():
     if not isinstance(N, int) or N < 1:
         rec("5n-reask", "BLOCKED", f"되묻기 실효 한도(reask_limit.effective)가 없거나 null 이다(/readyz reask_limit={rl!r}): 활성 릴리스가 없거나 한도가 꺼져 있다. SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
     sid2 = f"sess-{RID}-n-reask"; utt = "되묻기시험 글쎄요"; FAKE = "(가짜 응답)"
-    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid2, "kind": "SESSION_START"})[:2]; assert c == 200, ("되묻기 세션 시작", c, st)
+    c, st = tcall(A, "POST", "/v1/sessions", {"session_id": sid2, "kind": "SESSION_START", "question_set_id": QS})[:2]; assert c == 200, ("되묻기 세션 시작", c, st)
     for i in range(1, N + 1):   # 한도까지는 정상 진행: 되묻는다(세션은 진행 중, 직원 알림 없음, 문장은 모델 응답)
         c, rr = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{i}"})[:2]
         assert c == 200 and not rr.get("turn_failure_signal") and FAKE in str(rr.get("response_text")), (f"{i}번째 되묻기 턴이 정상 진행이 아니다", c, str(rr)[:200])
@@ -1492,7 +1514,7 @@ def step5r():
     # 위험 신호 감지기와 병원의 결과 조회는 운영에서 제품 네트워크 안의 호출자다(게이트웨이에 열지 않는다, D85): survey-service 컨테이너 안에서 그 API 를 부른다
     svc_call = lambda m, pth, tk, bd=None: (lambda r: (r[0], _c2_dec(r[1])))(_c2_in("survey-service", m, pth, tk, bd))
     # (A) 기기 토큰으로 세션 시작(subject_ref), 발화 한 턴
-    c, st = _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "subject_ref": subj}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
+    c, st = _c2_kiosk("/v1/sessions", {"session_id": sid, "kind": "SESSION_START", "question_set_id": QS, "subject_ref": subj}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
     c, tr = _c2_turn(sid, "rk-1", utter); assert c == 200, (c, tr)
     # (D) 위험 신호: risk-source 토큰으로 서비스에 직접. 맞는 토큰이라도 다른 역할이면 403, 게이트웨이에는 열려 있지 않다
     sig = {"signal_id": f"sig-{RID}-1", "source": "e2e-detector", "code": "TEST_RISK", "severity": "RISK"}
@@ -1585,7 +1607,7 @@ def step5f():
     rec("5a", "REAL", "게이트웨이 경유 kiosk-frontend: /(키오스크 화면) 200, /staff/ 는 인증 없이·틀린 암호로 401, 기본 인증으로 200, /staff/sw.js 200, CSP 헤더, /v1 기타 경로 404")
     # (b) 브라우저가 부르는 순서를 HTTP로(토큰 없이 같은 출처): 세션 시작, 발화 2턴, state 조회, 종료
     sf = f"sess-{RID}-fe"
-    c, st = _c2_kiosk("/v1/sessions", {"session_id": sf, "kind": "SESSION_START"}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
+    c, st = _c2_kiosk("/v1/sessions", {"session_id": sf, "kind": "SESSION_START", "question_set_id": QS}); assert c == 200, (c, st); validate_survey("FrontendInput", st)
     for i, text in enumerate(("뇌졸중은 없고 약도 안 먹어요", "약도 안 먹어요"), 1):
         c, tr = _c2_turn(sf, f"fe-{i}", text); assert c == 200, (c, tr); validate_survey("FrontendInput", tr)
     c, state = _c2_state(sf); assert c == 200, (c, state); validate("SessionState", state)
@@ -1603,7 +1625,7 @@ def step5f():
     c, rz = _c2_ready(); sas = rz.get("staff_alert_source") or {}
     phrase, rule_ids = risk_phrase()
     assert sas.get("active") is True and sas.get("rule_count") == len(rule_ids), f"/readyz 의 staff_alert_source 가 '켜짐, 규칙 {len(rule_ids)}개'가 아니다: {sas}"
-    s0 = f"sess-{RID}-risk0"; assert _c2_kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START"})[0] == 200
+    s0 = f"sess-{RID}-risk0"; assert _c2_kiosk("/v1/sessions", {"session_id": s0, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
     c, ok_ = _c2_turn(s0, "rk0-1", "네 있어요"); assert c == 200 and not ok_.get("turn_failure_signal"), ("위험 문구가 없는 발화는 정상 진행해야 한다", c, ok_)
     c, stn = _c2_state(s0); validate("SessionState", stn); assert stn["state"] == "ACTIVE", ("위험 문구가 없는데 세션이 멈췄다", stn)
     c, pg0 = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert not [x for x in pg0["items"] if x["session_id"] == s0], "위험 문구가 없는데 알림이 있다"
@@ -1632,7 +1654,7 @@ def trace_env(release_id, n):
     STATE["extract_input"] = t["extract_input"]
     t["orchestrator_output"] = {"turn_kind": None, "session_info_created": None, "log_entry": None, "dispatch_called": False,
         "turn_failure_signal": {"session_id": f"s-{RID}", "write_committed": "NOT_COMMITTED", "staff_alert": "NONE"}, "intervention_result": None}
-    e = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "release_id": release_id, "runtime_contract_version": 1,
+    e = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "release_id": release_id, "runtime_contract_version": 2,
          "session_id": f"s-{RID}", "turn_id": f"t-{RID}-{n}", "sent_at": "2026-10-15T00:00:00Z", "trace": t}
     validate("TraceEnvelope", e); validate_survey("TurnTrace", t); return e
 
@@ -1725,7 +1747,7 @@ R = [st, b]''', path=path)
     return r[0], r[1]
 
 def _c3_decisions_for(subj):
-    q = urllib.parse.urlencode({f"{k}_{f}": subj[k2][f] for k, k2 in (("question_set", "question_set"), ("lora_a", "lora_a"), ("lora_b", "lora_b")) for f in ("id", "version")} | {"limit": "100"})
+    q = urllib.parse.urlencode({f"{k}_{f}": (subj[k2][0] if k2 == "question_sets" else subj[k2])[f] for k, k2 in (("question_set", "question_sets"), ("lora_a", "lora_a"), ("lora_b", "lora_b")) for f in ("id", "version")} | {"limit": "100"})
     c, b = _c3_gate_read("/v1/decisions?" + q); assert c == 200, ("판정 조회", c, str(b)[:200])
     return b["items"]
 
@@ -1962,7 +1984,7 @@ def step8():
     assert not r["release_loader"]["rejections"]
     # 공개 API: 롤백 뒤에도 서비스가 산다. 새 세션은 이전 릴리스로 시작된다(/readyz active_release), 롤백 전에 시작한 세션도 이어서 처리된다
     sidb = f"sess-{RID}-b"
-    c, st = kiosk("/v1/sessions", {"session_id": sidb, "kind": "SESSION_START"}); assert c == 200, (c, st)
+    c, st = kiosk("/v1/sessions", {"session_id": sidb, "kind": "SESSION_START", "question_set_id": QS}); assert c == 200, (c, st)
     c, tb = public_turn(sidb, "turn-1", "뇌졸중은 없어요"); assert c == 200, (c, tb)
     kiosk(f"/v1/sessions/{sidb}/end", {"session_id": sidb, "kind": "SESSION_END"})
     # 롤백 권한이 없는 역할(question-authoring 의 쓰기 토큰)은 거부된다: release-gate 컨테이너 안에서 그 서비스의 쓰기 토큰 목록의 다른 역할로 확인한다
@@ -1976,7 +1998,7 @@ def _c3_sub_for(subj):
     items, _ = _c3_gwc(HttpGateService, "approver").list_submissions(limit=100)
     for v in items:
         s = v.get("subject", {})
-        if all(ref(s.get(k, {"id": None, "version": None})) == ref(subj[k]) for k in ("question_set", "lora_a", "lora_b")): return dict(v)
+        if sorted(ref(x) for x in s.get("question_sets", [])) == sorted(ref(x) for x in subj["question_sets"]) and all(ref(s.get(k, {"id": None, "version": None})) == ref(subj[k]) for k in ("lora_a", "lora_b")): return dict(v)
     return None
 
 def _c3_report_of(sid):   # 승인 요청 보고서(자동 검사 전이면 409 -> None)
@@ -2021,8 +2043,8 @@ def demo4():
     rc, out, err = _c3_job("job-release-gate-collect")
     assert rc in (0, 75), f"collect 종료 {rc}: {(err + out)[-500:]}"
     A, B = STATE["lora"]["LORA_A"], STATE["lora"]["LORA_B"]
-    subj = {v["version"]: {"question_set": v, "lora_a": A, "lora_b": B} for v in STATE["qs"]}
-    subj_u = {"question_set": STATE["qsu"], "lora_a": A, "lora_b": B}
+    subj = {v["version"]: _subj(v, A, B) for v in STATE["qs"]}
+    subj_u = _subj_u(A, B)
     subs = {k: _c3_ensure_sub(sj) for k, sj in subj.items()}
     sub_u = _c3_ensure_sub(subj_u)
     for k, sub in list(subs.items()) + [("u", sub_u)]:
@@ -2048,7 +2070,7 @@ def demo_activate():
     title("demo_activate", "승인된 제출의 릴리스 활성화")
     rels = {}
     for k in sorted(v["version"] for v in STATE["qs"]):
-        sj = {"question_set": next(v for v in STATE["qs"] if v["version"] == k), "lora_a": STATE["lora"]["LORA_A"], "lora_b": STATE["lora"]["LORA_B"]}
+        sj = _subj(next(v for v in STATE["qs"] if v["version"] == k), STATE["lora"]["LORA_A"], STATE["lora"]["LORA_B"])
         d = next((x for x in _c3_decisions_for(sj) if x["result"] == "PASS"), None)
         if d: rels[k] = d.get("release_id")
     if not rels: rec("demo_activate", "BLOCKED", "승인된(PASS) 제출이 아직 없다. /admin/ 에서 승인한 뒤 다시 실행한다"); return
@@ -2067,8 +2089,8 @@ def diag():
         items, _ = _c3_gwc(HttpGateService, "approver").list_submissions(limit=100)
         print(f"-- release-gate 제출 {len(items)}건")
         for v in items:
-            subj = v.get("subject", {}); qs = subj.get("question_set", {}); la = subj.get("lora_a", {}); lb = subj.get("lora_b", {})
-            print(f"  [{v.get('status')}] {v['submission_id']} 문항 세트 {qs.get('id')}@{qs.get('version')} LoRA_A {la.get('id')}@{la.get('version')} LoRA_B {lb.get('id')}@{lb.get('version')} decision={v.get('decision_id')} release={v.get('release_id')}")
+            subj = v.get("subject", {}); qs = (subj.get("question_sets") or [{}])[0]; la = subj.get("lora_a", {}); lb = subj.get("lora_b", {})
+            print(f"  [{v.get('status')}] {v['submission_id']} 문진표 {[x.get('id') + '@' + str(x.get('version')) for x in subj.get('question_sets', [])]} LoRA_A {la.get('id')}@{la.get('version')} LoRA_B {lb.get('id')}@{lb.get('version')} decision={v.get('decision_id')} release={v.get('release_id')}")
             if v.get("decision_id"):
                 c, d = _c3_gate_read("/v1/decisions/" + v["decision_id"])
                 if c == 200: print("\n".join("      " + l for l in decision_text(d).splitlines()))
@@ -2132,7 +2154,7 @@ def demo_swap():
     print("  !! 승인자는 사람이 아니라 이 스크립트가 시험용 승인자 계정(release-approver)으로 대신한다(TEST-SUB) !!")
     before_ptr = dict(_c3_pointer() or {})
     pk = make_packages(); refs = publish_packages(pk)
-    subj = {"question_set": STATE["qs"][-1], "lora_a": refs["LORA_A"], "lora_b": refs["LORA_B"]}
+    subj = _subj(STATE["qs"][-1], refs["LORA_A"], refs["LORA_B"])
     snap = container_ids(); assert set(snap) == set(SWAP_SERVICES), f"컨테이너를 찾지 못했다: {sorted(set(SWAP_SERVICES) - set(snap))}"
     ms_before = sh([a.docker, "inspect", "-f", "{{.State.StartedAt}}", _c3_ms_container()], check=False).stdout.strip()
     rc, out, err = _c3_job("job-release-gate-collect")
@@ -2206,7 +2228,7 @@ def step5p():
     if has_release:
         # 환자 세션: 값이 하나 확정된 상태에서 DB 를 멈춘다. Trace 전송이 끝나기를 기다려 행 지문이 흔들리지 않게 한다
         rb0 = _c3_survey_ready()[1]
-        assert kiosk("/v1/sessions", {"session_id": sidp, "kind": "SESSION_START"})[0] == 200
+        assert kiosk("/v1/sessions", {"session_id": sidp, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
         c, _p1 = public_turn(sidp, "p-1", "네 있어요"); assert c == 200, (c, _p1)
         wait(lambda: _c3_survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
         time.sleep(3)
@@ -2466,7 +2488,78 @@ def step5L():
     rec("5L", "REAL", f"다른 호스트 역할 추론 서버 ready(release 도달), 게이트웨이 기계 토큰 경로: active-pointer 200·bundle 200, 승인자 계정 404, 무토큰 401, release-gate 호스트 게시 없음 (D72·D122·D123)")
 
 
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+def _kiosk_device_config(dev):
+    """키오스크 앱이 기기에서 읽는 /config.json 과 같은 파일(secrets/kiosk-config/<ID>.json, kiosk-add-device.sh 가 만든다)."""
+    return json.loads((pathlib.Path(a.secrets) / "kiosk-config" / f"{dev}.json").read_text())
+
+def _place_question_set(dev, qset):   # 운영자가 하는 일 그대로: kiosk-add-device.sh place <기기> <문진표 ID>|-  (ADR 0052)
+    sh(["bash", str(ROOT / "scripts/kiosk-add-device.sh"), "place", dev, qset], env={"SECRETS_DIR": a.secrets})
+
+@step('5k', repos=('survey-service', 'kiosk-frontend', 'question-authoring') + _GW, deps=('1', '4'),
+      why="STATE['qs'],['qsb'](step1)·['releases'],['pointers'](step4)를 읽는다. 기기 설정 파일(secrets/kiosk-config)과 kiosk-add-device.sh 가 입력이다. " + _P4)
+def step5k():
+    title("5k", "문진표 둘이 함께 활성: 기기 배치 문진표로 자동 시작, 배치 없는 기기는 목록에서 골라 시작, 결과에 문진표 ID·제목, 모르는 문진표는 400 (계약 3.3.0)")
+    if "pointers" not in STATE or "qsb" not in STATE: rec("5k", "BLOCKED", "활성 릴리스(단계 4)나 문진표 B(단계 1)가 없다"); return
+    new = STATE["releases"]["2"]
+    wait(lambda: (lambda cr: cr[0] == 200 and cr[1].get("active_release") == new)(_c2_ready()), 300, f"survey가 릴리스 {new} 적재", every=3)
+    rel = _c1_release(new); validate("ReleaseManifest", rel)
+    assert sorted(x["id"] for x in rel["question_sets"]) == sorted([QS, QSB]) and {x["id"]: x["title"] for x in rel["question_sets"]} == {QS: QS_TITLE, QSB: QSB_TITLE}, ("활성 릴리스의 문진표", rel["question_sets"])
+    # 기기 배치: A 는 health-screening, B 는 배치 없음(운영자 명령으로 쓴 기기 설정 파일을 키오스크 앱처럼 읽는다)
+    _place_question_set("e2e-a", QS); _place_question_set("e2e-b", "-")
+    cfg_a, cfg_b = _kiosk_device_config("e2e-a"), _kiosk_device_config("e2e-b")
+    validate("DeviceConfig", cfg_a); validate("DeviceConfig", cfg_b)
+    assert cfg_a.get("question_set_id") == QS and "question_set_id" not in cfg_b, (cfg_a.get("question_set_id"), "question_set_id" in cfg_b)
+    tA, tB = dev_tok("e2e-a"), dev_tok("e2e-b")
+    def dk(tok, method, path, body=None): c, b, _h = _c1_gw(method, path, token=tok, body=body); return c, b
+    def state_dk(tok, sid):   # 서버가 0.5초보다 잦은 상태 조회를 429 로 막는다(state_of 와 같은 이유)
+        for _ in range(8):
+            time.sleep(0.7); c, r = dk(tok, "GET", f"/v1/sessions/{sid}/state")
+            if c != 429: return c, r
+        return c, r
+    # 활성 문진표 목록(I10): 기기 토큰이 필요하다(세션과 같은 인증). 활성 릴리스의 문진표 둘이 ID·제목·버전과 함께 나온다
+    assert _c1_gw("GET", "/v1/question-sets")[0] == 401, "문진표 목록이 기기 토큰 없이 열려 있다"
+    c, lst = dk(tB, "GET", "/v1/question-sets"); assert c == 200, ("문진표 목록", c, str(lst)[:150])
+    _validate_if_known("QuestionSetList", lst)
+    items = {i["question_set_id"]: i for i in lst["items"]}
+    assert set(items) == {QS, QSB} and items[QS]["title"] == QS_TITLE and items[QSB]["title"] == QSB_TITLE and all(i.get("version") for i in items.values()), lst
+    # 문진표가 둘인데 고르지 않으면 400, 모르는 문진표 ID 도 400(INVALID_RECORD, details.reason UNKNOWN_QUESTION_SET)
+    c, b = dk(tB, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-kn0", "kind": "SESSION_START"}); assert c == 400, ("문진표 둘인데 고르지 않은 시작이 400이 아니다", c, str(b)[:150])
+    c, b = dk(tB, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-kn1", "kind": "SESSION_START", "question_set_id": "no-such-set"})
+    assert c == 400 and b.get("code") == "INVALID_RECORD" and (b.get("details") or {}).get("reason") == "UNKNOWN_QUESTION_SET", ("모르는 문진표로 시작", c, str(b)[:200])
+    assert state_dk(tB, f"sess-{RID}-kn1")[0] == 404, "거절된 시작이 세션을 만들었다"
+    # 두 세션: A 는 배치된 문진표로 자동 시작(고르는 화면 없음), B 는 목록에서 순서 B 를 골라 시작
+    sa, sb = f"sess-{RID}-ka", f"sess-{RID}-kb"
+    c, st_a = dk(tA, "POST", "/v1/sessions", {"session_id": sa, "kind": "SESSION_START", "question_set_id": cfg_a["question_set_id"]}); assert c == 200, ("A 시작", c, st_a); validate_survey("FrontendInput", st_a)
+    c, st_b = dk(tB, "POST", "/v1/sessions", {"session_id": sb, "kind": "SESSION_START", "question_set_id": QSB}); assert c == 200, ("B 시작", c, st_b); validate_survey("FrontendInput", st_b)
+    assert st_a["response_text"] != st_b["response_text"], "두 문진표의 첫 질문이 같다(순서 B 의 첫 문항은 Q3 라 달라야 한다)"
+    # 끝까지: 기존 턴 스크립트('네 있어요'/'아니요 없어요' 번갈아). 첫 답이 저장된 칸의 문항이 문진표의 첫 문항이다(순서는 문진표 자신에게서 나온다)
+    firsts = {}
+    for sid, tok, want in ((sa, tA, QS_FIRST), (sb, tB, QSB_FIRST)):
+        for i in range(1, 121):
+            c, r = dk(tok, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": ("네 있어요", "아니요 없어요")[i % 2], "turn_id": f"k-{i}"})
+            assert c == 200, (sid, i, c, str(r)[:150]); validate_survey("FrontendInput", r)
+            if i == 1:
+                vals = _c2_staff("GET", f"/v1/staff/sessions/{sid}")[1]["values"]
+                firsts[sid] = vals[0]["key"] if vals else None
+                assert firsts[sid] and firsts[sid].startswith(want), (f"첫 문항이 {want} 가 아니다", sid, [v["key"] for v in vals][:3])
+            cs, stt = state_dk(tok, sid)
+            if cs == 200 and stt["state"] == "ENDED": break
+        else:
+            raise AssertionError(f"120턴 안에 문진이 끝나지 않았다: {sid}")
+        c, en = dk(tok, "POST", f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"}); assert c == 200, ("종료", sid, c, str(en)[:100])
+    # 결과: 세션마다 문진표 ID·제목이 맞다(result-reader 와 clinician 이 같은 값을 본다), 의사 확인 표시(5r 과 같은 경로)
+    for sid, qid, title_ in ((sa, QS, QS_TITLE), (sb, QSB, QSB_TITLE)):
+        c, rs, _ = _c2_in_json("survey-service", "GET", f"/v1/results/{sid}", TOK("survey-result-reader")); assert c == 200, (sid, c, rs)
+        validate_survey("SessionResult", rs)
+        assert rs["question_set_id"] == qid and rs["question_set_title"] == title_ and rs["status"].startswith("ENDED"), (sid, rs["question_set_id"], rs["question_set_title"], rs["status"])
+        c, rc, _ = _c2_raw("GET", f"/v1/results/{sid}", basic=_C2_CLINICIAN); assert c == 200 and rc["question_set_id"] == qid and rc["question_set_title"] == title_, (sid, c, str(rc)[:150])
+        c, ak, _ = _c2_raw("POST", f"/v1/results/{sid}/ack", {}, basic=_C2_CLINICIAN); assert c == 200 and ak.get("acknowledged_by") == _C2_CLINICIAN, (sid, c, str(ak)[:150])
+        c, sv = _c2_staff("GET", f"/v1/staff/sessions/{sid}"); validate_survey("StaffSessionView", sv)
+        assert sv["question_set_id"] == qid and sv["question_set_title"] == title_, (sid, sv["question_set_id"], sv["question_set_title"])
+    rec("5k", "REAL", f"문진표 둘 활성(릴리스 {new}): 기기 A 배치 {QS} 로 자동 시작(첫 문항 {QS_FIRST}), 배치 없는 기기 B 는 GET /v1/question-sets 에 둘({QS}, {QSB})이 나오고 {QSB} 로 시작(첫 문항 {QSB_FIRST}), 고르지 않은 시작 400, 모르는 ID 400 INVALID_RECORD/UNKNOWN_QUESTION_SET, 두 세션 끝까지, 결과(result-reader·clinician·직원 조회)에 문진표 ID·제목 일치, clinician 확인 표시")
+
+
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5k", step5k), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []

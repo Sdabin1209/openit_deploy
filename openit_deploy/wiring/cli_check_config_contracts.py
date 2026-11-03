@@ -3,6 +3,7 @@
 GateJobConfig·GatePolicy 는 deploy 가 만들지 않는다(release-gate 잡은 환경 변수로 설정되고 정책 파일은 O11 확정 전이라 없다): 만드는 코드가 생기면 여기에 문서를 더한다. 종료 코드: 0 통과, 1 위반(위치만 출력, 값은 출력하지 않는다)."""
 import argparse
 import json
+import os
 import pathlib
 import sys
 
@@ -51,7 +52,18 @@ def make_validators(names):
     return out
 
 
-def build_documents(compose: dict) -> list:
+def device_config_documents(secrets_dir) -> list:
+    """기기 설정 산출물(secrets/kiosk-config/<ID>.json, kiosk-add-device.sh 가 만든다)을 계약 DeviceConfig 로 검증할 문서로 만든다(3.3.0: question_set_id 배치 칸 포함, ADR 0052). 라벨에는 기기 ID 만 쓴다(토큰 값은 위반 메시지에도 안 나온다: 위반은 위치와 규칙 이름뿐)."""
+    d = pathlib.Path(secrets_dir) / "kiosk-config"
+    out = []
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        try: doc = json.loads(f.read_text(encoding="utf-8"))
+        except ValueError: doc = "(JSON 이 아니다)"   # 값은 싣지 않는다. 문자열은 object 가 아니라 DeviceConfig 위반으로 센다
+        out.append({"label": f"kiosk-config/{f.name}", "schema": "DeviceConfig", "document": doc})
+    return out
+
+
+def build_documents(compose: dict, secrets_dir=None) -> list:
     docs = []
     for svc, (schema, wrap) in ENV_SERVICES.items():
         spec = (compose.get("services") or {}).get(svc)
@@ -60,6 +72,7 @@ def build_documents(compose: dict) -> list:
         docs.append({"label": svc, "schema": schema, "document": wrap(env)})
     for rel, schema in FILES.items():
         docs.append({"label": rel, "schema": schema, "document": (json.loads if rel.endswith(".json") else yaml.safe_load)((ROOT / rel).read_text(encoding="utf-8"))})
+    docs += device_config_documents(secrets_dir if secrets_dir is not None else os.environ.get("SECRETS_DIR") or ROOT / "secrets")
     return docs
 
 

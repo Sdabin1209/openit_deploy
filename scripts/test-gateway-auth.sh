@@ -101,6 +101,9 @@ chk403() { # chk403 <설명> <who> <메서드> <경로>
 chkpass() { # chkpass <설명> <who> <메서드> <경로>: 401/403 이 아니어야 한다(상류가 없어 503/504)
   local name=$1 code; shift; code=$(call "$@"); AN=$((AN+1))
   case "$code" in 401|403) echo "  FAIL $name -> $code (인증·권한이 맞는데 막혔다)"; FAILS=$((FAILS+1));; *) echo "  PASS $name -> $code (인증·인가 통과)";; esac; }
+chkproxied() { # chkproxied <설명> <who> <메서드> <경로>: 상류(survey-service)로 전달되어야 한다 = 이 시험에는 상류가 없어 503/504 (404 면 게이트웨이가 길을 닫은 것)
+  local name=$1 code; shift; code=$(call "$@"); AN=$((AN+1))
+  case "$code" in 503|504) echo "  PASS $name -> $code (인증 통과 후 상류로 전달)";; *) echo "  FAIL $name -> $code (기대 503/504: 상류 전달)"; FAILS=$((FAILS+1));; esac; }
 BASIC_PATHS="GET:/staff/ GET:/admin/ GET:/v1/staff/alerts POST:/v1/sessions/s1/intervention GET:/v1/submissions POST:/v1/approvals GET:/v1/active-pointer GET:/v1/releases POST:/v1/activate POST:/v1/rollback GET:/v1/cases POST:/v1/cases/c1/review POST:/v1/materials GET:/v1/drafts POST:/v1/reviews"
 for mp in $BASIC_PATHS; do chk401 "자격 없음 ${mp/:/ }" Basic - "${mp%%:*}" "${mp#*:}"; done
 chk401 "틀린 암호 GET /v1/staff/alerts" Basic raw:"Basic $(printf 'staff-e2e:wrong-password' | base64 -w0)" GET /v1/staff/alerts
@@ -132,6 +135,10 @@ chk401 "틀린 기기 토큰 POST /v1/sessions" Bearer bearer:000000000000000000
 chk401 "Basic 자격은 기기 경로에서 자격 없음(Bearer 를 안내)" Bearer staff-e2e POST /v1/sessions
 chk401 "기기 토큰 없음 GET /v1/sessions/s1" Bearer - GET /v1/sessions/s1
 chkpass "유효한 기기 토큰 POST /v1/sessions" bearer:"$DEVTOK" POST /v1/sessions
+chk401 "기기 토큰 없음 GET /v1/question-sets (I10 문진표 목록은 세션과 같은 기기 인증)" Bearer - GET /v1/question-sets
+chk401 "틀린 기기 토큰 GET /v1/question-sets" Bearer bearer:0000000000000000000000000000000000000000000000000000000000000000 GET /v1/question-sets
+chkproxied "유효한 기기 토큰 GET /v1/question-sets" bearer:"$DEVTOK" GET /v1/question-sets
+chkproxied "유효한 기기 토큰 GET /v1/question-sets?question_set_id=x (쿼리가 막히지 않는다)" bearer:"$DEVTOK" GET "/v1/question-sets?question_set_id=x"
 # 사람 계정이 없는 운영 기본 구성(gen-secrets.sh 기본): 사람 경로는 모두 401 이고 Basic 을 안내해야 한다(빈 basic_auth 블록 대신 만든 인증 블록)
 E=$T/empty; bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" "$E" >/dev/null 2>&1
 CE=gwauth-empty-$$; docker rm -f $CE >/dev/null 2>&1

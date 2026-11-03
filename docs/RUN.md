@@ -119,10 +119,20 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 - 위 operator 경로 네 개는 operator 계정 뒤에서만 열린다(읽기 둘은 게이트의 operator 읽기 토큰 `gate-read-operator`, 변경 둘은 쓰기 토큰 `gate-write-operator`. 두 토큰은 gen-secrets가 만들어 release-gate 목록의 역할 `operator`에 넣는다). 응답은 `Cache-Control: no-store`. `/v1/releases/*`(번들, I9)와 그 밖의 `/v1/*`는 404. release-gate가 헤더로 행위자를 기록하게 바뀌는 일은 그쪽 영역의 일이다.
 - **병원 IdP가 정해지면 이 블록만 교체한다.** `config/Caddyfile`은 `(authenticate)`(인증 블록)와 `(role_matchers)`(`@role_staff/@role_operator/@role_approver/@role_reviewer`)라는 이름만 안다. OIDC로 바꿀 때는 `secrets/gateway-accounts.caddy`의 `(authenticate)`를 OIDC 인증 조각으로 바꿔 인증 뒤 `{http.auth.user.id}`가 계정 ID가 되게 하고, 역할을 IdP 클레임에서 얻으면 `(role_matchers)`도 그에 맞게 바꾼다. `X-Openit-User` 규칙과 역할별 경로는 그대로다. (OIDC 모듈은 이 단계에서 넣지 않았다: 미검증.)
 
-**키오스크 기기 인증(F절).** 키오스크 API(`/v1/sessions`, `/v1/sessions/*`)는 `Authorization: Bearer <기기 토큰>`이 없거나 목록에 없으면 401이다. 통과하면 게이트웨이가 Authorization 을 바꾸지 않고 기기 토큰을 그대로 survey 에 넘긴다(기기 토큰은 서비스로 가지 않는다). 기기 토큰은 기기마다 파일 하나(`tokens/kiosk-device-<ID>`), `secrets/gateway-devices.caddy`가 그 목록이다. 기본으로 시험 기기 `e2e` 하나가 만들어진다.
+**키오스크 기기 인증(F절).** 키오스크 API(`/v1/sessions`, `/v1/sessions/*`, 문진표 목록 `GET /v1/question-sets`)는 `Authorization: Bearer <기기 토큰>`이 없거나 목록에 없으면 401이다. 통과하면 게이트웨이가 Authorization 을 바꾸지 않고 기기 토큰을 그대로 survey 에 넘긴다(기기 토큰은 서비스로 가지 않는다). 기기 토큰은 기기마다 파일 하나(`tokens/kiosk-device-<ID>`), `secrets/gateway-devices.caddy`가 그 목록이다. 기본으로 시험 기기 `e2e` 하나가 만들어진다.
 - 기기 추가: `bash scripts/kiosk-add-device.sh add <기기 ID> [--apply]`. 토큰 값은 출력하지 않고 파일 경로만 알린다. 기기에는 그 값을 기기 설정이나 시작 URL 조각(`#`)으로 한 번 전한다(URL 쿼리 금지).
 - 폐기: `kiosk-add-device.sh remove <ID> --apply`(또는 파일을 지우고 `sync`). **Caddy는 설정을 읽을 때 한 번 치환하므로 게이트웨이를 다시 시작해야 반영된다**(`--apply`가 `compose restart gateway`). 이 시험은 자체 시험(`scripts/test-gateway-auth.sh`)에서 목록 갱신까지 확인했고, 실행 중인 게이트웨이의 재시작 반영은 확인하지 못했다.
 - 키오스크 앱(kiosk-frontend)이 기기 토큰을 받아 보내는 구현은 그 영역의 일이다. 그 전에는 브라우저 데모의 키오스크 화면이 API를 부르지 못한다(401). 병원 내부망 제한은 배포 설정으로 병행한다.
+
+### 기기에 문진표 배치 (계약 3.3.0, ADR [0052](adr/0052-device-question-set-placement.md))
+
+문진표(문항 세트)는 여러 개가 함께 활성일 수 있고 세션마다 하나를 고른다. 기기에 문진표를 배치하면 그 기기는 첫 화면에서 고르지 않고 그 문진표로 바로 시작한다. 배치가 없는 기기는 활성 문진표가 둘 이상일 때 키오스크 첫 화면에서 고른다(목록은 `GET /v1/question-sets`).
+
+- 배치: `bash scripts/kiosk-add-device.sh add <기기 ID> --question-set <문진표 ID>`, 이미 있는 기기는 `place <기기 ID> <문진표 ID>`. 해제는 `place <기기 ID> -`. 기기 목록 파일(`config/kiosk-devices.conf`)은 둘째 칸에 문진표 ID 를 적어 `from-list` 로 한꺼번에 정한다.
+- 배치는 기기 설정 파일(`secrets/kiosk-config/<ID>.json`의 `question_set_id`, 계약 `DeviceConfig`) 한 곳에 있다. 쓰기 전에 `DeviceConfig` 로 검증하고, 기동 전 점검(`check_config_contracts.py`)도 이 폴더의 모든 파일을 같은 스키마로 검증한다. 토큰 회전·재추가는 배치를 지우지 않는다.
+- 배치를 바꾼 뒤에는 새 기기 설정 파일을 그 기기에 다시 전한다(`/config.json`). 게이트웨이·survey-service 재시작은 필요 없다: 서버는 배치를 모르고 키오스크가 세션 시작 본문에 `question_set_id` 를 싣는다.
+- 시작 URL 조각으로 한 번만 정할 수도 있다(`#device=…&question_set_id=…`, 조각이 기기 설정보다 먼저). 데모는 `scripts/demo.sh up --question-set <문진표 ID>` 로 같은 값을 `kiosk-url.txt` 에 넣는다.
+- 배치한 문진표가 활성 릴리스에 없으면 세션 시작이 400(`UNKNOWN_QUESTION_SET`)이다. 문진표를 새로 올리고 활성화하는 순서는 [E2E.md 문진표 시나리오](E2E.md)와 같다.
 
 **내부 호출 면은 게이트웨이에 열지 않는다(판단, D85).** 위험 신호 입력(`POST /v1/sessions/{id}/risk-signals`, 역할 risk-source)과 결과 조회(`GET /v1/results…`, 역할 result-reader)는 감지기·병원/의사 시스템이 부르는 기계 간 호출이다. 근거: (1) 게이트웨이는 사람(브라우저)과 키오스크 기기를 위한 입구이고 인증이 계정/기기 토큰이라 시스템 토큰과 맞지 않는다. (2) 결과 조회는 환자 식별 자료(`subject_ref`)를 주므로 입구를 넓힐수록 노출이 는다. (3) 위험 신호는 PAUSED_RISK로 세션을 멈추므로 키오스크 와일드카드(`/v1/sessions/*`)로 새면 안 된다: Caddyfile이 두 경로를 먼저 404로 닫는다. 토큰은 `secrets/tokens/survey-result-reader`, `survey-risk-source`(gen-secrets, survey-service에만 마운트)다. **남은 문제(결정 필요):** 지금 survey-service는 호스트 포트가 없고 `edge`·`serving`·`db` 네트워크에만 있어 도커 밖의 감지기·병원 시스템은 닿지 못한다(E2E는 시험 구성의 게시 포트로 직접 부른다). 병원 시스템 연동 방식이 정해지면 게이트웨이와 별도의 내부 입구(병원망 한정 리스너 + 시스템 토큰 통과, 또는 mTLS)를 두는 것을 권한다. 이 단계에서 만들지 않았다.
 
