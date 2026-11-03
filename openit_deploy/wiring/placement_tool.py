@@ -22,7 +22,7 @@ STAGES = [["step-ca"], ["postgres"], ["keycloak"],   # step-ca 가 먼저: 모�
           ["survey-service", "model-serving"],
           ["oauth2-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3
-CONTAINER_PORT = {"postgres": 5432, "step-ca": 9000}   # 나머지는 8080(이미지 규칙, HTTP.md)
+CONTAINER_PORT = {"postgres": 5432}   # 나머지는 8080(이미지 규칙, HTTP.md)
 STEP_CA_BOUND = ("pki-root", "pki-tokens")   # step-ca 서버에서만 돈다: pki-tokens 는 프로비저너 비밀(step-ca-password)을 읽고 pki-root 는 키가 든 pki-ca 볼륨을 읽는다. 둘 다 step-ca 서버 밖으로 나가지 않는다(ADR 0061)
 PUBLISH_NET = "placement-publish"      # 내부 전용 네트워크에만 붙은 서비스가 호스트 포트를 열 수 있게 더하는 일반 네트워크
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -160,8 +160,6 @@ def check(p, compose):
     for srv, d in p["servers"].items():
         if any(n in called for n in d["services"]) and not IP_RE.match(d["address"]):
             errs.append("서버 %s: 다른 서버가 이름을 이 서버로 돌리는 extra_hosts 는 IP 만 받는다(address 는 IP 여야 한다)" % srv)
-    if (p.get("ports") or {}).get("step-ca", 9000) != 9000:
-        errs.append("placement_ports 의 step-ca 는 9000 이어야 한다(인증서 발급 명령이 https://step-ca:9000 으로 고정이라 게시 포트가 같아야 한다)")
     for port in (p.get("ports") or {}):
         if port not in known:
             errs.append("ports: 서비스 '%s' 는 compose 서비스 목록에 없다" % port)
@@ -299,7 +297,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
                 lines.append("      - %s" % x)
         if n in published and not (compose["services"][n].get("ports")):
             lines.append("    ports:")
-            lines.append("      - \"%s:%d:%d\"" % (bind, ports[n], 443 if n in sidecared else CONTAINER_PORT.get(n, 8080)))   # 사이드카가 있는 서비스는 사이드카의 443 을 연다(앱 포트는 사이드카 뒤 loopback)
+            lines.append("      - \"%s:%d:%d\"" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else CONTAINER_PORT.get(n, 8080))   # step-ca 는 안팎 포트가 같다(STEP_CA_PORT, 인증서 발급 명령이 같은 값을 쓴다)))   # 사이드카가 있는 서비스는 사이드카의 443 을 연다(앱 포트는 사이드카 뒤 loopback)
     if addnet:
         lines += ["networks:", "  %s: {}" % PUBLISH_NET]
     if len(lines) == 2:
@@ -343,7 +341,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     stage_tokens = []
     for st in stages:
         stage_tokens.append(sorted(n[:-5] for n in st if n.endswith("-cert") and ca_host and ca_host != host))
-    plan = {"host": host, "oneshots": sorted(one & localset), "step_ca_host": ca_host, "stage_tokens": stage_tokens, "region": servers[host]["region"], "services": local, "stages": stages,
+    plan = {"host": host, "oneshots": sorted(one & localset), "step_ca_host": ca_host, "step_ca_port": ports.get("step-ca"), "stage_tokens": stage_tokens, "region": servers[host]["region"], "services": local, "stages": stages,
             "secrets": secrets, "configs": configs, "secret_files": sorted(set(files)), "generated_secret_files": generated,
             "published": {n: ports[n] for n in sorted(published)}}
     return "\n".join(lines) + "\n", plan
