@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # deploy 자체 점검을 한 번에 돌린다(커밋 전에 실행한다). 목록의 정본은 scripts/self-checks.list 한 곳이고 e2e.sh 도 같은 목록을 쓴다.
-# 사용: scripts/run-self-checks.sh [--print]     --print: 실행하지 않고 "설명<TAB>명령" 줄만 낸다(e2e.sh 가 읽는다)
+# 사용: scripts/run-self-checks.sh [--print] [--slow]     --print: 실행하지 않고 "설명<TAB>명령" 줄만 낸다(e2e.sh 가 읽는다; 느린 시험은 안 낸다)
+#   --slow: 기본 목록 뒤에 느린 시험 목록(scripts/self-checks-slow.list: 실제 시간을 기다리는 시험, 분 단위)도 돌린다. 완료를 말하기 전에 1회는 `--slow` 로 돌린다
 # 종료 코드: 0 전부 통과, 1 하나라도 실패(실패한 것의 이름과 출력 끝을 보인다), 2 목록을 읽지 못함.
 # 이 묶음에 없는 것(이유): publish·check-compose·check-versions·check-exposure 는 빌드한 이미지와 레지스트리가 있어야 의미가 있어 e2e.sh 의 준비 단계에서 직접 돈다.
 #   레지스트리·기동한 스택이 필요한 시험(test-publish, test-backup, test-monitoring 전체 등)도 이 목록에 없다. 전체 E2E(e2e.sh)는 이 묶음과 별개다.
@@ -9,10 +10,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_NO_DOCKER=1; source "$HERE/lib.sh"
 VENV=${VENV:-$DEPLOY_ROOT/.venv}; [ -x "$VENV/bin/python" ] || VENV=$(cd "$(git -C "$DEPLOY_ROOT" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)/.venv
-LIST="$HERE/self-checks.list"
+LIST="$HERE/self-checks.list"; SLOW_LIST="$HERE/self-checks-slow.list"; SLOW=0; case " $* " in *" --slow "*) SLOW=1;; esac; SLOW_ENTRIES=$SLOW
 [ -s "$LIST" ] || { echo "목록을 읽지 못했다: $LIST" >&2; exit 2; }
-entries() { grep -vE '^\s*(#|$)' "$LIST" | awk -F' :: ' '{d=$1; c=substr($0, length($1)+5); printf "%s\t%s\n", d, c}'; }
+entries() { cat "$LIST" $([ "${SLOW_ENTRIES:-0}" = 1 ] && echo "$SLOW_LIST") | grep -vE '^\s*(#|$)' | awk -F' :: ' '{d=$1; c=substr($0, length($1)+5); printf "%s\t%s\n", d, c}'; }
 if [ "${1:-}" = --print ]; then entries; exit 0; fi
+[ "$SLOW" = 1 ] && [ ! -s "$SLOW_LIST" ] && { echo "느린 시험 목록을 읽지 못했다: $SLOW_LIST" >&2; exit 2; }
 export DEPLOY_ROOT VENV
 FAILS=0; N=0; FAILED=()
 while IFS=$'\t' read -r d c; do
