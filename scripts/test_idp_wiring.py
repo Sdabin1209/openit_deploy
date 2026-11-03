@@ -40,15 +40,20 @@ class Realm(unittest.TestCase):
 
     def test_no_secret_values_or_test_users_in_template(self):
         s = (ROOT / "config/keycloak/openit-realm.template.json").read_text(encoding="utf-8")
-        self.assertIn("${OPENIT_GATEWAY_CLIENT_SECRET}", s); self.assertIn("${OPENIT_INITIAL_ADMIN_PASSWORD}", s)
+        self.assertIn("${OPENIT_GATEWAY_CLIENT_SECRET}", s); self.assertIn("${OPENIT_INITIAL_ADMIN_PASSWORD}", s)   # 템플릿에는 자리표시만. 값은 gen-keycloak-realm.sh 가 비밀 파일(keycloak-realm.json)에 채운다
         self.assertNotIn("-e2e", s)
 
     def test_generator_fills_uris_from_gateway_hosts(self):
         with tempfile.TemporaryDirectory() as d:
             out = pathlib.Path(d) / "r.json"
-            env = {"GATEWAY_HOSTS": "kiosk.hospital.local:8443, 10.0.0.5:8443", "GATEWAY_PUBLIC_TLS_PORT": "443", "PATH": "/usr/bin:/bin"}
+            sd = pathlib.Path(d) / "sec"; (sd / "tokens").mkdir(parents=True)
+            (sd / "tokens/oauth2-proxy-client-secret").write_text("client-secret-for-test"); (sd / "tokens/openit-initial-admin-password").write_text("initial-pw-for-test\n")
+            env = {"GATEWAY_HOSTS": "kiosk.hospital.local:8443, 10.0.0.5:8443", "GATEWAY_PUBLIC_TLS_PORT": "443", "PATH": "/usr/bin:/bin", "SECRETS_DIR": str(sd)}
             subprocess.run(["bash", str(ROOT / "scripts/gen-keycloak-realm.sh"), str(out)], check=True, capture_output=True, env=env)
-            c = json.loads(out.read_text(encoding="utf-8"))["clients"][0]
+            doc = json.loads(out.read_text(encoding="utf-8")); c = doc["clients"][0]
+            self.assertEqual(c["secret"], "client-secret-for-test"); self.assertEqual(doc["users"][0]["credentials"][0]["value"], "initial-pw-for-test")
+            self.assertNotIn("${", out.read_text(encoding="utf-8"))
+            self.assertEqual(oct(out.stat().st_mode & 0o777), "0o640", "값이 든 realm 파일은 비밀 파일이다(640)")
         self.assertEqual(sorted(c["redirectUris"]), sorted(["https://kiosk.hospital.local:8443/oauth2/callback", "https://kiosk.hospital.local/oauth2/callback", "https://10.0.0.5:8443/oauth2/callback", "https://10.0.0.5/oauth2/callback"]))
         self.assertEqual(set(c["attributes"]["post.logout.redirect.uris"].split("##")), {"https://kiosk.hospital.local:8443/", "https://kiosk.hospital.local/", "https://10.0.0.5:8443/", "https://10.0.0.5/"})
 
@@ -75,6 +80,15 @@ class Compose(unittest.TestCase):
         self.assertEqual(e["OAUTH2_PROXY_OIDC_GROUPS_CLAIM"], "groups"); self.assertEqual(e["OAUTH2_PROXY_SET_XAUTHREQUEST"], "true")
         self.assertTrue(e["OAUTH2_PROXY_REDEEM_URL"].startswith("http://keycloak:8080/auth/")); self.assertTrue(e["OAUTH2_PROXY_OIDC_JWKS_URL"].startswith("http://keycloak:8080/auth/"))
         self.assertTrue(S["keycloak"]["environment"]["KC_HOSTNAME"].endswith("/auth")); self.assertEqual(S["keycloak"]["environment"]["KC_HTTP_RELATIVE_PATH"], "/auth")
+
+    def test_keycloak_gets_secrets_from_files_not_environment(self):
+        k = S["keycloak"]
+        self.assertNotIn("entrypoint", k, "엔트리포인트 래퍼가 비밀을 환경 변수로 옮기면 /proc/1/environ 에 값이 남는다")
+        self.assertEqual(k["command"][0], "--config-file=/run/secrets/keycloak-secrets.conf", "--config-file 은 kc.sh 의 전역 옵션: start 앞")
+        for key in k["environment"]: self.assertNotRegex(key, r"PASSWORD|SECRET", f"keycloak.environment.{key}")
+        srcs = [x if isinstance(x, str) else x["source"] for x in k["secrets"]]
+        self.assertTrue({"keycloak-secrets.conf", "keycloak-realm.json"} <= set(srcs))
+        self.assertFalse((ROOT / "config/keycloak/entrypoint.sh").exists())
 
     def test_keycloak_db_account_exists(self):
         self.assertIn("db-keycloak-password", S["postgres"]["secrets"]); self.assertEqual(S["keycloak"]["environment"]["KC_DB_USERNAME"], "keycloak")

@@ -33,5 +33,5 @@ CFGJ=$(mktemp); CFGE=$(mktemp); trap 'rm -f "$CFGJ" "$CFGE"' EXIT
 dc "$P" config --format json > "$CFGJ" 2> "$CFGE" || { echo "docker compose config 실패:" >&2; tail -5 "$CFGE" >&2; die "compose 설정을 해석하지 못했다"; }
 "$DEPLOY_PY" -W ignore "$DEPLOY_ROOT/scripts/check_config_contracts.py" --compose-json "$CFGJ" || die "설정·환경이 계약을 어긴다: 기동하지 않는다(위 FAIL 의 서비스·위치를 고친다)"
 # Keycloak 의 realm 가져오기 파일(허용 리다이렉트 URI 가 GATEWAY_HOSTS 에서 나온다). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만들어 버리므로 기동 전에 만든다(ADR 0057)
-bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "${KEYCLOAK_REALM_FILE:-$DEPLOY_ROOT/state/keycloak/$P/openit-realm.json}" >/dev/null || die "Keycloak realm 파일을 만들지 못했다"
+bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "${SECRETS_DIR:-$DEPLOY_ROOT/secrets}/keycloak-realm.json" >/dev/null || die "Keycloak realm 파일을 만들지 못했다"
 dc "$P" up -d --wait "$@"

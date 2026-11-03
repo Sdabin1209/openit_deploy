@@ -94,9 +94,9 @@ export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
 export GATEWAY_HOST_NAMES="$(gateway_host_names)"   # 직접 compose 를 부르는 스크립트(down 등)용 기본값. dc 는 부를 때마다 다시 계산한다(E2E 가 GATEWAY_HOSTS 를 source 뒤에 바꾼다)
 dc() { # dc <project> <compose args...>
   local project=$1; shift
-  # Keycloak realm 가져오기 파일은 프로젝트마다 하나(프로젝트마다 GATEWAY_HOSTS 가 다를 수 있다). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만들어 버리므로 없으면 만든다(up.sh 는 매번 다시 만든다, ADR 0057)
-  local realm=${KEYCLOAK_REALM_FILE:-$DEPLOY_ROOT/state/keycloak/$project/openit-realm.json}
-  [ -f "$realm" ] || bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "$realm" >/dev/null
+  # Keycloak realm 가져오기 파일(비밀 값 포함)은 비밀 폴더에 있다(SECRETS_DIR/keycloak-realm.json). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만들어 버리므로, 비밀이 있고 파일이 없으면 만든다(up.sh 는 매번 다시 만든다, ADR 0057)
+  local sd=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
+  [ -f "$sd/keycloak-realm.json" ] || [ ! -s "$sd/tokens/oauth2-proxy-client-secret" ] || [ ! -s "$sd/tokens/openit-initial-admin-password" ] || bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "$sd/keycloak-realm.json" >/dev/null
   local files=(-f "$DEPLOY_ROOT/compose.yaml")
   if [ -n "${COMPOSE_EXTRA:-}" ]; then
     for f in $COMPOSE_EXTRA; do files+=(-f "$f"); done
@@ -105,7 +105,7 @@ dc() { # dc <project> <compose args...>
   [ -f "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}" ] && envs+=(--env-file "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}")
   [ -f "$DEPLOY_ROOT/.env" ] && envs+=(--env-file "$DEPLOY_ROOT/.env")
   # 잠금 파일이 digest의 유일한 출처다: 셸에 남은 같은 이름의 변수가 --env-file 을 이기지 못하게 지운다
-  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u DEPLOY_REGISTRY "GATEWAY_HOST_NAMES=$(gateway_host_names)" "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "KEYCLOAK_REALM_FILE=$realm" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
+  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u DEPLOY_REGISTRY "GATEWAY_HOST_NAMES=$(gateway_host_names)" "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
     "$DOCKER" compose -p "$project" --project-directory "$DEPLOY_ROOT" "${files[@]}" "${envs[@]}" "$@"
 }
 # 외부 추론 서버 모드(D72): external_inference_setup <URL>. INFERENCE_URL / INFERENCE_TOKEN_FILE 을 내보내고 COMPOSE_EXTRA 에 override 를 붙인다.

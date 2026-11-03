@@ -17,7 +17,7 @@ export GATEWAY_PUBLIC_URL=$(gateway_public_url) GATEWAY_HOST_NAMES=$(gateway_hos
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null 2>&1 || { echo "gen-secrets 실패"; exit 1; }
 V="${P}_gateway-data"; "$DOCKER" volume create --label "com.docker.compose.project=$P" --label "com.docker.compose.volume=gateway-data" "$V" >/dev/null
 "$DOCKER" run --rm --network none --user 0 --cap-drop ALL --cap-add CHOWN -v "$V:/data" "$UTIL" chown 10001:10001 /data >/dev/null
-bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "$DEPLOY_ROOT/state/keycloak/$P/openit-realm.json" >/dev/null
+bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "$SECRETS_DIR/keycloak-realm.json" >/dev/null
 FAILS=0; N=0
 ok() { N=$((N+1)); local n=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $n"; else echo "  FAIL $n :: $(echo "$out" | tail -2 | tr '\n' ' ' | cut -c1-220)"; FAILS=$((FAILS+1)); fi; }
 echo "== 기동 (postgres -> keycloak -> oauth2-proxy -> gateway)"
@@ -25,6 +25,7 @@ dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up1.log" 2>&1; ok "postgre
 dc "$P" up -d --wait --wait-timeout 300 --no-deps keycloak >"$W/up2.log" 2>&1; ok "keycloak healthy (realm openit 가져오기 포함)" bash -c "dc() { :; }; docker inspect --format '{{.State.Health.Status}}' ${P}-keycloak-1 | grep -q healthy"
 dc "$P" up -d --no-deps oauth2-proxy gateway >"$W/up3.log" 2>&1; ok "oauth2-proxy·gateway 기동" bash -c "docker inspect --format '{{.State.Running}}' ${P}-oauth2-proxy-1 ${P}-gateway-1 | grep -vc true | grep -q '^0$'"
 ok "keycloak 로그에 암호·비밀 값이 없다" bash -c "! docker logs ${P}-keycloak-1 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/db-keycloak-password)\" && ! docker logs ${P}-keycloak-1 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/oauth2-proxy-client-secret)\""
+ok "keycloak 프로세스의 /proc/1/environ 에도 비밀 값이 없다(설정 파일로 받는다, D84)" bash -c "! docker exec ${P}-keycloak-1 cat /proc/1/environ | tr '\\0' '\\n' | grep -qF \"\$(cat $SECRETS_DIR/tokens/db-keycloak-password)\""
 ok "keycloak·oauth2-proxy 컨테이너 환경 변수에 비밀 값이 없다(*_FILE 경로만)" bash -c "e=\$(docker inspect ${P}-keycloak-1 ${P}-oauth2-proxy-1 --format '{{range .Config.Env}}{{println .}}{{end}}'); ! grep -qF \"\$(cat $SECRETS_DIR/tokens/db-keycloak-password)\" <<<\"\$e\" && ! grep -qF \"\$(cat $SECRETS_DIR/tokens/oauth2-proxy-client-secret)\" <<<\"\$e\" && ! grep -qF \"\$(cat $SECRETS_DIR/tokens/oauth2-proxy-cookie-secret)\" <<<\"\$e\""
 bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$W/gateway-ca.crt" >/dev/null 2>&1 || { echo "gateway CA 를 가져오지 못했다"; exit 1; }
 ok "시험 사용자를 Keycloak 에 만든다(운영 입구: kcadm)" bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$P"

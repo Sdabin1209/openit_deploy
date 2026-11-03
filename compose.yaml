@@ -98,10 +98,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-password
   db-keycloak-password:          # Keycloak 의 데이터베이스 계정 암호(U82). keycloak 서비스가 쓴다(postgres 초기화도 읽는다)
     file: ${SECRETS_DIR:-./secrets}/tokens/db-keycloak-password
-  keycloak-bootstrap-admin-password:   # master realm 의 임시 부트스트랩 관리자(KC_BOOTSTRAP_ADMIN_*). 운영에서는 realm openit 의 admin 그룹 계정을 쓴다
-    file: ${SECRETS_DIR:-./secrets}/tokens/keycloak-bootstrap-admin-password
-  openit-initial-admin-password:      # realm openit 의 초기 admin 계정(openit-admin) 임시 비밀번호. 첫 로그인에서 바꾸게 한다
-    file: ${SECRETS_DIR:-./secrets}/tokens/openit-initial-admin-password
+  keycloak-secrets.conf:              # Keycloak --config-file: db-password, bootstrap-admin-password (원본 값은 tokens/db-keycloak-password, tokens/keycloak-bootstrap-admin-password)
+    file: ${SECRETS_DIR:-./secrets}/keycloak-secrets.conf
+  keycloak-realm.json:                # realm 가져오기 파일(비밀 값 포함: 클라이언트 비밀, 초기 admin 임시 비밀번호). 원본 값은 tokens/oauth2-proxy-client-secret, tokens/openit-initial-admin-password
+    file: ${SECRETS_DIR:-./secrets}/keycloak-realm.json
   oauth2-proxy-client-secret:         # Keycloak 클라이언트 openit-gateway 의 비밀(Keycloak 이 realm 가져올 때, oauth2-proxy 가 토큰 교환 때 읽는다)
     file: ${SECRETS_DIR:-./secrets}/tokens/oauth2-proxy-client-secret
   oauth2-proxy-cookie-secret:         # oauth2-proxy 세션 쿠키 암호화 키(32자)
@@ -308,7 +308,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
-    environment:   # 비밀은 파일 경로만(D84)
+    environment: &survey_env   # 비밀은 파일 경로만(D84)
       SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 2.x 호환(선택, 3.0.0에서 없어진다): 기기 토큰(Bearer)을 쓰는 기기만. 2.3.0 의 기기 인증은 게이트웨이가 붙이는 X-Openit-Device 이고 survey 는 헤더가 있으면 헤더를 쓴다(ADR 0040). 토큰 기기가 없으면 빈 파일이다
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
@@ -317,7 +317,7 @@ services:
       SURVEY_RESULT_READER_TOKEN_FILE: /run/secrets/survey-result-reader   # 결과 조회 API(result-reader 역할, 병원/의사 시스템용: 게이트웨이에 열지 않는다)
       SURVEY_RISK_SOURCE_TOKEN_FILE: /run/secrets/survey-risk-source       # 위험 신호 입력 API(risk-source 역할, 감지기용: 게이트웨이에 열지 않는다)
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
-    secrets: [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
+    secrets: &survey_secrets [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
     networks: [edge, serving, db-survey, monitoring]
     healthcheck:
@@ -337,13 +337,13 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
-    environment:
+    environment: &qa_env
       QA_AUTHOR_TOKENS_FILE: /run/secrets/qa-author-tokens
       QA_GATEWAY_TOKENS_FILE: /run/secrets/qa-gateway-tokens   # gateway 경유 저자 경로의 서비스 토큰(X-Openit-User 를 신뢰하는 유일한 토큰)
       QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
       QA_FAILURES_TOKEN_FILE: /run/secrets/ops-read-question-authoring
       QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
-    secrets: [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
+    secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
     tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
     networks: [authoring, release, db-qa]
     depends_on:
@@ -363,17 +363,12 @@ services:
     cpus: ${KEYCLOAK_CPUS:-1.0}
     pids_limit: ${KEYCLOAK_PIDS_LIMIT:-512}
     image: ${KEYCLOAK_IMAGE:?locks/images.lock}
-    entrypoint: ["/bin/bash", "/opt/keycloak-deploy/entrypoint.sh"]
-    command: ["start", "--import-realm"]
-    environment:   # 비밀 아님. 비밀은 *_FILE 경로이고 래퍼가 읽는다
+    command: ["--config-file=/run/secrets/keycloak-secrets.conf", "start", "--import-realm"]   # 비밀(db-password, bootstrap-admin-password)은 환경 변수가 아니라 설정 파일로 받는다: 프로세스 환경(/proc/1/environ)에도 값이 없다(D84, 3차 E2E check-secrets-hidden). --config-file 은 kc.sh 의 전역 옵션이라 start 앞에 온다(시험으로 확인)
+    environment:   # 비밀 아님
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD_FILE: /run/secrets/db-keycloak-password
       KC_BOOTSTRAP_ADMIN_USERNAME: kcadmin
-      KC_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/keycloak-bootstrap-admin-password
-      OPENIT_GATEWAY_CLIENT_SECRET_FILE: /run/secrets/oauth2-proxy-client-secret
-      OPENIT_INITIAL_ADMIN_PASSWORD_FILE: /run/secrets/openit-initial-admin-password
       KC_HTTP_ENABLED: "true"          # TLS 는 gateway 가 끝낸다(내부망 auth 안에서만 평문)
       KC_HTTP_RELATIVE_PATH: /auth     # 계약 밖 deploy 규약: gateway 가 /auth/* 를 Keycloak 으로 보낸다
       KC_HOSTNAME: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다}/auth   # 밖에 보이는 주소(토큰의 iss). 뒷길(oauth2-proxy -> keycloak)은 요청 주소를 쓴다
@@ -382,10 +377,9 @@ services:
       KC_HEALTH_ENABLED: "true"
       KC_CACHE: local                  # 단일 서버: 클러스터 캐시(Infinispan 포트)를 켜지 않는다
       KC_LOG: console
-    secrets: [db-keycloak-password, keycloak-bootstrap-admin-password, oauth2-proxy-client-secret, openit-initial-admin-password]
-    volumes:
-      - ./config/keycloak/entrypoint.sh:/opt/keycloak-deploy/entrypoint.sh:ro
-      - ${KEYCLOAK_REALM_FILE:-./state/keycloak/openit-realm.json}:/opt/keycloak/data/import/openit-realm.json:ro   # scripts/gen-keycloak-realm.sh 가 GATEWAY_HOSTS 로 만든다(비밀 없음)
+    secrets:
+      - keycloak-secrets.conf          # db-password, bootstrap-admin-password (scripts/gen-secrets.sh)
+      - {source: keycloak-realm.json, target: /opt/keycloak/data/import/openit-realm.json}   # realm 가져오기: 클라이언트 비밀·초기 admin 임시 비밀번호가 값으로 들어 있어 비밀 파일이다(scripts/gen-keycloak-realm.sh)
     networks: [auth, db-keycloak]
     depends_on:
       postgres: {condition: service_healthy}
@@ -487,13 +481,13 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
-    environment:
+    environment: &gate_env
       GATE_READ_TOKENS_FILE: /run/secrets/gate-read-tokens
       GATE_WRITE_TOKENS_FILE: /run/secrets/gate-write-tokens
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
       GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn   # 릴리스 레지스트리는 PostgreSQL(D85). 번들 파일(releases/)은 gate-data 볼륨 그대로
-    secrets: [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
+    secrets: &gate_secrets [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data]
     networks: [serving, release, db-gate]
     stop_grace_period: 40s   # release-gate 최악 종료 시간 하드 상한 35초(요청 소켓 30s 등, 근거 release-gate docs/adr/0008-timeouts.md, 측정 안 함) + 여유 5초 -> SIGKILL 전에 끝나게 한다. 값은 scripts/test_e2e_constants.py 가 35초와 대조한다
@@ -593,9 +587,8 @@ services:
     command: ["python", "-m", "survey_service", "purge"]
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env
-    environment:
-      SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn
-    secrets: [db-survey-dsn]
+    environment: *survey_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
+    secrets: *survey_secrets
     networks: [db-survey]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -613,9 +606,8 @@ services:
     command: ["python", "-m", "question_authoring", "purge"]
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env
-    environment:
-      QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn
-    secrets: [db-qa-dsn]
+    environment: *qa_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
+    secrets: *qa_secrets
     networks: [db-qa]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -633,9 +625,8 @@ services:
     command: ["python", "-m", "release_gate", "prune"]
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
-    environment:
-      GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn
-    secrets: [db-gate-dsn]
+    environment: *gate_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
+    secrets: *gate_secrets
     volumes: [gate-data:/data]
     networks: [db-gate]
     security_opt: ["no-new-privileges:true"]
@@ -654,11 +645,8 @@ services:
     command: ["python", "-m", "release_gate", "collect"]
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
-    environment:
-      GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
-      GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
-      GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn
-    secrets: [qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
+    environment: *gate_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
+    secrets: *gate_secrets
     volumes: [gate-data:/data]
     networks: [release, db-gate]
     security_opt: ["no-new-privileges:true"]

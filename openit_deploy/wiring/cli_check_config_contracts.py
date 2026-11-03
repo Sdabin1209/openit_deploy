@@ -22,6 +22,11 @@ ENV_SERVICES = {   # compose 서비스 -> (계약 스키마, 환경 문서로 �
     "model-registry": ("ModelRegistryEnv", lambda env: env),
     "dataset-store": ("DatasetStoreEnv", lambda env: env),
     "kiosk-frontend": ("KioskFrontendEnv", lambda env: env),
+    # 관리 잡(일회성 프로세스)도 서버와 같은 선언 스키마로 검증한다: 12-Factor XII, 잡은 서버와 같은 환경이다. 3차 E2E 에서 question-authoring 정리 잡이 토큰 anyOf 로 거부됐는데 서버만 검사해 E2E 에서야 드러났다
+    "job-survey-purge": ("SurveyServiceEnv", lambda env: env),
+    "job-question-authoring-purge": ("QuestionAuthoringEnv", lambda env: env),
+    "job-release-gate-prune": ("GateEnv", lambda env: env),
+    "job-release-gate-collect": ("GateEnv", lambda env: env),
     "gateway": ("GatewayEnv", lambda env: env),   # deploy 소유 컨테이너: 내부 스키마 schemas/GatewayEnv(L20). 계약에 같은 이름이 없다
 }
 FILES = {"config/ops-feedback-job.yaml": "OpsFeedbackJobConfig",

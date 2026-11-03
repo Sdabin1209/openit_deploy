@@ -1,5 +1,10 @@
 # 변경 이력
 
+## wo-450 D10-3·4·잡 환경: 비밀을 프로세스 환경에서 뺀다, 선행 실패 연쇄, 잡 환경 = 서버 환경
+- (3) Keycloak 은 비밀을 환경 변수가 아니라 `--config-file`(secrets/keycloak-secrets.conf: db-password, bootstrap-admin-password)과 비밀 파일 realm 가져오기(secrets/keycloak-realm.json, 640)로 받는다. 엔트리포인트 래퍼 삭제. 점검: `test_no_secret_in_environment.py`(compose environment 의 비밀 이름은 *_FILE, config 셸의 export 금지), `test-idp-smoke.sh`(keycloak /proc/1/environ 에 값 없음, 로그인 흐름 전부 통과).
+- (4) 복구 확인 FAIL 은 단계 1 실패(work/state.json 없음)의 연쇄였다. 그 항목을 `chk_dep "단계 1~8"` 로 바꾸고 `test_e2e_sh_deps.py` 로 같은 모양을 잡는다.
+- 정리 잡(survey purge, question-authoring purge, release-gate prune·collect)이 서버와 같은 environment·secrets 를 쓰도록 YAML 앵커로 묶었다(12-Factor XII). `check_config_contracts` 가 잡 서비스도 서버와 같은 Env 스키마로 검사한다. 시험 `test_job_env_matches_server.py`.
+
 ## wo-450 D10-1·2: E2E 의 인증 없는 응답 기대와 사람 화면 주소
 - (1) 게이트웨이 인증 없는 요청의 기대값(화면 302 → /oauth2/start, 사람 API 401, 닫힌 면 404, 기기 경로 401)을 `test/gateway-oidc/unauth-expectations.txt` 한 곳에 두고, 그 파일을 읽는 `scripts/check-unauth-expectations.sh` 를 E2E(진짜 게이트웨이)와 `test-gateway-auth.sh`(가짜 oauth2-proxy)가 같이 쓴다.
 - (2) 원인: `e2e.sh` 의 한 줄 `export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT GATEWAY_PUBLIC_URL="$(gateway_public_url)"` 에서 `$(…)` 가 앞의 대입보다 먼저 풀려 기본 포트 8443 이 들어갔다(`GATEWAY_PUBLIC_URL=https://localhost:8443`). 시험 도구(사람 로그인)가 그 주소로 연결해 단계 1·5a·5u 가 연결 거부로 죽었다. 고침: export 를 나누고, E2E 에 "사람 화면 주소 = 게이트웨이 HTTPS 호스트 포트" 점검을 더했다. E2E 밖 점검 `test-e2e-public-url.sh`(e2e.sh·demo.sh 의 그 블록을 꺼내 실행). 살려 둔 3차 스택에서 올바른 주소로 staff 200 / author 403 로그인을 확인했다.

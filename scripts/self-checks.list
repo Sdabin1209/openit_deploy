@@ -62,3 +62,6 @@ IdP(Keycloak·oauth2-proxy) 배선 정적 시험 (realm 그룹=계약 역할 8�
 compose 일회성 서비스(restart no + service_completed_successfully)는 up --wait 가 성공으로 본다, 실패(1)면 up 이 실패한다 (D7b, ops-feedback-migrate 와 같은 모양) :: bash "$DEPLOY_ROOT/scripts/test-compose-oneshot-wait.sh"
 임시 잠금(E2E)이 compose 가 요구하는 외부 이미지를 모두 옮기고 dc 가 셸 환경 덮어쓰기를 지운다 (D9c: KEYCLOAK_IMAGE·OAUTH2_PROXY_IMAGE 누락으로 E2E 기동이 막혔다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_lock_images.py"
 사람 화면 주소(GATEWAY_PUBLIC_URL)를 E2E·데모가 게시 포트로 내보낸다 (3차 E2E: 한 줄 export 안의 $(…) 순서 결함으로 8443 이 들어가 연결 거부) :: bash "$DEPLOY_ROOT/scripts/test-e2e-public-url.sh"
+비밀이 컨테이너 환경 변수로 들어가는 구성을 정적으로 잡는다 (compose environment 의 비밀 이름은 *_FILE, 엔트리포인트 셸의 export 금지; 3차 E2E Keycloak 래퍼, D84) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_no_secret_in_environment.py"
+e2e.sh: 단계 1~8 산출물을 읽는 항목은 chk_dep "단계 1~8" (선행 실패가 FAIL 로 번지지 않는다, 3차 E2E) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_sh_deps.py"
+일회성 관리 잡의 환경·비밀이 서버와 같고 계약 Env 검사가 잡도 본다 (12-Factor XII, 3차 E2E 정리 잡 거부) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_job_env_matches_server.py"

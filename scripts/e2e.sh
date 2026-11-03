@@ -460,7 +460,7 @@ chk "복구 후 서비스 기동" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 복구 뒤 게이트웨이를 다시 만들었으니 호스트 포트를 다시 읽는다
 PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
 NEED+=("복구 후 서비스 기동")
-chk "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
+chk_dep "단계 1~8" "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
   "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
 
 fi

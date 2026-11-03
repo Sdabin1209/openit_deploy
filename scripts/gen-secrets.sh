@@ -47,6 +47,9 @@ gen_idp() {
   [ -s "$D/tokens/oauth2-proxy-cookie-secret" ] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(16),end="")' > "$D/tokens/oauth2-proxy-cookie-secret" ); secret_fix "$D/tokens/oauth2-proxy-cookie-secret" oauth2-proxy-cookie-secret
 }
 gen_idp
+# Keycloak --config-file(비밀 파일): db-password 와 bootstrap-admin-password. 환경 변수로 넘기지 않는다(프로세스 환경에 값이 남는다, D84). 값이 바뀌면 다시 쓴다
+kc_conf="db-password=$(tr -d '\r\n' < "$D/tokens/db-keycloak-password")"$'\n'"bootstrap-admin-password=$(tr -d '\r\n' < "$D/tokens/keycloak-bootstrap-admin-password")"
+[ "$(cat "$D/keycloak-secrets.conf" 2>/dev/null)" = "$kc_conf" ] || ( umask 077; printf '%s\n' "$kc_conf" > "$D/keycloak-secrets.conf" ); secret_fix "$D/keycloak-secrets.conf" keycloak-secrets.conf; unset kc_conf
 [ "$ONLY_DB" = 0 ] || { echo "PostgreSQL 비밀 위치: $D/tokens (리포지토리에 커밋하지 않는다)"; exit 0; }
 
 # 서버가 받는 목록 값(역할=토큰,...): 값 하나짜리 파일로 만든다
