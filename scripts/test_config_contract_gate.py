@@ -29,7 +29,9 @@ class Gate(unittest.TestCase):
     def test_real_production_environment_passes(self):
         rc, out, err = run(rendered())
         self.assertEqual(rc, 0, err + out)
-        self.assertRegex(out, r"문서 [4-9]개", "검증한 문서 수가 너무 적다: 대상이 빠졌다")
+        want = len(G.ENV_SERVICES) + len(G.FILES)   # 서비스 환경 표(U73 이후 모든 서비스) + 배치 파일 표. 기기 설정(secrets/kiosk-config)은 비밀 폴더에 있는 만큼 더해진다
+        n = int(re.search(r"문서 (\d+)개", out).group(1))
+        self.assertGreaterEqual(n, want, f"검증한 문서 수가 표보다 적다: 대상이 빠졌다({n} < {want})")
 
     def test_violating_environment_fails_without_printing_values(self):
         c = rendered(); c["services"]["survey-service"]["environment"]["SURVEY_NOT_A_KEY"] = "SECRETVALUE123"
