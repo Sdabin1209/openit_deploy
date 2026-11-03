@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-450 D6a (U82 준비): X-Openit-Roles, QA_USER_ROLES 삭제
+- 게이트웨이가 인증 계정의 역할 목록을 `X-Openit-Roles`(계약 CONVENTIONS 6절 3.4.0)로 붙이고(`gateway-accounts.caddy` 의 `map` → `{user_roles}`) 클라이언트가 보낸 같은 헤더를 지운다. `config/question-authoring.env` 의 `QA_USER_ROLES` 삭제. 시험 `test_gateway_roles_header.py`. 이 단계는 basic_auth 의 계정 역할에서 붙이고, OIDC(D6b)에서는 같은 `{user_roles}` 를 oauth2-proxy 그룹에서 채운다.
+
 ## wo-450 D5 (U64): publish push 실패 사유 확인
 - 확인만 했고 코드는 바꾸지 않았다: `publish-image.sh`(docker 출력 끝 3줄 + 'push 실패(종료 코드 N)' + 종료 코드 4 + 마지막 줄 PublishResult)와 `publish-images.sh`(docker 출력 전체 + 'push 실패')는 이미 push 실패 사유를 남기고(wo-434), 가짜 push(거부하는 docker 래퍼)로 `test-publish.sh`·`test-images-env.sh` 가 이를 시험한다(둘 다 통과). 잠금은 실패 때 바뀌지 않는다.
 

@@ -32,12 +32,13 @@ import /etc/caddy/device-tls.caddy
 # 평문 포트(컨테이너 8080): 컨테이너 헬스체크와 서버 안 점검용 /healthz 만 평문으로 답하고, 나머지는 HTTPS 로 영구 이동(308: 메서드와 본문을 유지)시킨다.
 # GATEWAY_PUBLIC_TLS_PORT 는 밖에서 보이는 HTTPS 포트(운영 443, 기본 8443).
 # 저작 서비스 프록시(저자 경로, D88/U9): 사람 인증(개별 계정, 역할 author 또는 clinical-reviewer)을 마친 요청에만 gateway 서비스 토큰(QA_GATEWAY_TOKENS)과 인증된 사용자 ID(X-Openit-User)를 붙인다.
-# 클라이언트가 보낸 Authorization·X-Openit-User 는 덮어쓴다. 역할별 권한(저자 != 검수자)은 서비스가 QA_USER_ROLES 로 정한다. 본문 상한은 사이트 기본 8MiB(자료 업로드).
+# 클라이언트가 보낸 Authorization·X-Openit-User 는 덮어쓴다. 역할별 권한(저자 != 검수자)은 서비스가 X-Openit-Roles(게이트웨이가 계정 역할에서 붙인다)로 정한다. 본문 상한은 사이트 기본 8MiB(자료 업로드).
 (qa_proxy) {
 	reverse_proxy question-authoring:8080 {
 		import proxy_limits 120s
 		header_up Authorization "Bearer {file./run/secrets/qa-gateway-token}"
 		header_up X-Openit-User "{http.auth.user.id}"
+		header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 		header_down Cache-Control "no-store"
 	}
 }
@@ -102,6 +103,7 @@ http://:8080 {
 				header_up -X-Openit-Dn
 				header_up -X-Openit-Device   # 클라이언트가 보낸 기기 헤더는 항상 지운다(게이트웨이만 인증서에서 붙인다, 계약 PUBLIC_API F절)
 			header_up -X-Openit-User   # 공개 /readyz 에 클라이언트의 사용자 헤더·자격을 넘기지 않는다(점검 L1)
+			header_up -X-Openit-Roles
 			header_up -Authorization
 			lb_try_duration 0
 			transport http {
@@ -132,6 +134,7 @@ http://:8080 {
 				header_up -X-Openit-Device   # 클라이언트가 보낸 기기 헤더는 항상 지운다(게이트웨이만 인증서에서 붙인다, 계약 PUBLIC_API F절)
 				header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				flush_interval -1
 				lb_try_duration 0
 				transport http {
@@ -150,6 +153,7 @@ http://:8080 {
 					header_up -X-Openit-Device
 					header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
 					header_up X-Openit-User "{http.auth.user.id}"
+					header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 					lb_try_duration 0
 					transport http {
 						dial_timeout 1s
@@ -183,6 +187,7 @@ http://:8080 {
 				import proxy_limits 180s
 				header_up Authorization "Bearer {file./run/secrets/gate-read-release-approver}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_down Cache-Control "no-store"
 			}
 		}
@@ -200,6 +205,7 @@ http://:8080 {
 				import proxy_limits 180s
 				header_up Authorization "Bearer {file./run/secrets/gate-write-release-approver}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_down Cache-Control "no-store"
 			}
 		}
@@ -224,6 +230,7 @@ http://:8080 {
 				import proxy_limits 60s
 				header_up Authorization "Bearer {file./run/secrets/ops-read-reviewer}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_down Cache-Control "no-store"
 			}
 		}
@@ -243,6 +250,7 @@ http://:8080 {
 				import proxy_limits 60s
 				header_up Authorization "Bearer {file./run/secrets/ops-review-reviewer}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_down Cache-Control "no-store"
 			}
 		}
@@ -260,6 +268,7 @@ http://:8080 {
 				import proxy_limits 60s
 				header_up Authorization "Bearer {file./run/secrets/ops-review-reviewer}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_down Cache-Control "no-store"
 			}
 		}
@@ -273,6 +282,7 @@ http://:8080 {
 		import authenticate      # 화면은 어느 역할이든 열린다. API는 위에서 역할로 막힌다
 		reverse_proxy admin-console:8080 {
 			header_up -X-Openit-User   # 정적 화면에는 클라이언트의 사용자 헤더와 Basic 자격을 넘기지 않는다(점검 L1)
+			header_up -X-Openit-Roles
 			header_up -Authorization
 			import proxy_limits 10s
 		}
@@ -292,6 +302,7 @@ http://:8080 {
 			import proxy_limits 180s
 			header_up Authorization "Bearer {file./run/secrets/gate-read-model-serving}"
 			header_up -X-Openit-User
+			header_up -X-Openit-Roles
 			header_up -X-Openit-Dn
 			header_up -X-Openit-Device
 			header_down Cache-Control "no-store"
@@ -320,6 +331,7 @@ http://:8080 {
 			import proxy_limits 180s
 			header_up Authorization "Bearer {file./run/secrets/model-registry-write-model-lab}"
 			header_up -X-Openit-User
+			header_up -X-Openit-Roles
 			header_up -X-Openit-Dn
 			header_up -X-Openit-Device
 			header_down Cache-Control "no-store"
@@ -351,6 +363,7 @@ http://:8080 {
 				import proxy_limits 180s
 				header_up Authorization "Bearer {file./run/secrets/gate-read-operator}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_down Cache-Control "no-store"
 			}
 		}
@@ -368,6 +381,7 @@ http://:8080 {
 				import proxy_limits 180s
 				header_up Authorization "Bearer {file./run/secrets/gate-write-operator}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_down Cache-Control "no-store"
 			}
 		}
@@ -425,6 +439,7 @@ http://:8080 {
 				import proxy_limits 60s
 				header_up Authorization "Bearer {file./run/secrets/survey-result-reader}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_up -X-Openit-Dn
 				header_up -X-Openit-Device
 				header_down Cache-Control "no-store"
@@ -444,6 +459,7 @@ http://:8080 {
 				import proxy_limits 60s
 				header_up Authorization "Bearer {file./run/secrets/survey-result-reader}"
 				header_up X-Openit-User "{http.auth.user.id}"
+				header_up X-Openit-Roles "{user_roles}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 				header_up -X-Openit-Dn
 				header_up -X-Openit-Device
 				header_down Cache-Control "no-store"
@@ -467,6 +483,7 @@ http://:8080 {
 				header_up -X-Openit-Dn
 				header_up X-Openit-Device "{re.devcn.1}"
 				header_up -X-Openit-User
+				header_up -X-Openit-Roles
 				header_up -Authorization
 				lb_try_duration 0
 				transport http {
@@ -483,6 +500,7 @@ http://:8080 {
 				header_up -X-Openit-Dn
 				header_up -X-Openit-Device   # 클라이언트가 보낸 기기 헤더는 항상 지운다(게이트웨이만 인증서에서 붙인다, 계약 PUBLIC_API F절)
 				header_up -X-Openit-User   # Authorization 은 바꾸지 않는다: 검증한 기기 토큰이 그대로 survey 에 가서 survey 가 같은 기기 토큰 표로 세션 소유 기기를 확인한다(D88/U8)
+				header_up -X-Openit-Roles
 				lb_try_duration 0
 				transport http {
 					dial_timeout 1s
@@ -504,6 +522,7 @@ http://:8080 {
 		handle @role_staff {
 			reverse_proxy kiosk-frontend:8080 {
 			header_up -X-Openit-User
+			header_up -X-Openit-Roles
 			header_up -Authorization
 				transport http {
 					dial_timeout 2s
@@ -518,6 +537,7 @@ http://:8080 {
 	handle {
 		reverse_proxy kiosk-frontend:8080 {
 			header_up -X-Openit-User
+			header_up -X-Openit-Roles
 			header_up -Authorization
 			transport http {
 				dial_timeout 2s

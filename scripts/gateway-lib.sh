@@ -66,7 +66,11 @@ gw_write_accounts() {
     # 역할 부족 403 에 덮이고 WWW-Authenticate 도 없다(시험: test-gateway-auth.sh 계정 0개). 해시는 한 번 만든 뒤 버린 무작위 암호의 bcrypt 이다(`caddy hash-password`): 암호를 아는 사람이 없고 역할 매처도 모두 false.
     if [ -n "$body" ]; then printf '(authenticate) {\n\tbasic_auth {\n%s\t}\n}\n' "$body"
     else printf '(authenticate) {\n\tbasic_auth {\n\t\tno-accounts %s\n\t}\n}\n' '$2a$14$ThFaB0RPIv4Ii/aJyV6gh.W8lng/OIREUbKeN9IcdNx5hY6xdg5Im'; fi
-    printf '(role_matchers) {\n%s}\n' "$roles_body"; } > "$D/gateway-accounts.caddy"
+    printf '(role_matchers) {\n%s' "$roles_body"
+    # X-Openit-Roles(계약 CONVENTIONS 6절): 계정 -> 역할 쉼표 목록. 프록시가 {user_roles} 로 붙인다. 모르는 계정은 빈 목록(역할 매처가 모두 거짓이라 403)
+    printf '\tmap {http.auth.user.id} {user_roles} {\n\t\tdefault ""\n'
+    while read -r acc rs given; do [ -n "$acc" ] && printf '\t\t%s "%s"\n' "$acc" "$rs"; done <<<"$list"
+    printf '\t}\n}\n'; } > "$D/gateway-accounts.caddy"
   chmod 640 "$D/gateway-accounts.caddy"; chgrp "${SECRETS_GID:-$(id -g)}" "$D/gateway-accounts.caddy" 2>/dev/null || true
 }
 gw_devices() { ls "$1/tokens" 2>/dev/null | sed -n 's/^kiosk-device-\(.*\)$/\1/p'; }
