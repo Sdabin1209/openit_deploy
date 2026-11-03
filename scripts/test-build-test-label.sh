@@ -5,7 +5,7 @@
 # 근거: ImageLabels 는 io.openit.* 의 모르는 키만 거부하고 다른 접두사는 무시한다(스키마 propertyNames). 사용: bash scripts/test-build-test-label.sh (Docker 필요, 일회용 이미지)
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$HERE/lib.sh"
-export LABELS_PYTHON="${LABELS_PYTHON:-$DEPLOY_ROOT/.venv/bin/python}"; [ -x "$LABELS_PYTHON" ] || export LABELS_PYTHON=python3
+export LABELS_PYTHON="${LABELS_PYTHON:-$(deploy_py)}" || exit 1
 N=0; F=0; ok() { N=$((N+1)); local n=$1; shift; if "$@" >/dev/null 2>&1; then echo "  PASS $n"; else echo "  FAIL $n"; F=$((F+1)); fi; }
 no() { N=$((N+1)); local n=$1; shift; if "$@" >/dev/null 2>&1; then echo "  FAIL $n (성공하면 안 된다)"; F=$((F+1)); else echo "  PASS $n"; fi; }
 T=$(mktemp -d); IMG=deploy-labeltest-$$/x:1; trap '"$DOCKER" rmi -f $IMG $IMG-test2 >/dev/null 2>&1; rm -rf "$T"' EXIT

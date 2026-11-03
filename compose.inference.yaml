@@ -104,6 +104,7 @@ services:
     environment: {STEPPATH: /tmp}
     entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
     secrets: [tls-token]
+    extra_hosts: ["host.docker.internal:host-gateway"]   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험). 다른 서버면 배치 값이 step-ca 주소를 준다
     configs:
       - {source: pki-root, target: /etc/openit/pki/root_ca.crt}
     volumes: ["certs:/home/step"]

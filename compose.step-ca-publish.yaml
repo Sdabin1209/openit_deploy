@@ -1,0 +1,10 @@
+# step-ca 를 다른 서버·시험 배치의 인증서 컨테이너가 부를 수 있게 호스트에 게시한다(ADR 0060). 한 서버 배치에는 쓰지 않는다(COMPOSE_EXTRA 로 더한다).
+# 안팎 포트가 같아야 한다: 일회용 토큰의 audience 가 호스트:포트(CA 의 주소 포트)라 게시 포트가 다르면 step-ca 가 토큰을 거부한다(측정 대상: test-inference-location.sh).
+# STEP_CA_PORT 는 배치 값(placement_ports.step-ca)이고 시험은 빈 포트를 골라 준다(고정 포트 금지). 첫 기동 때 CA 주소로 굳으므로 이후 바꾸려면 pki-ca 볼륨을 다시 만든다.
+# STEP_CA_DNS_NAMES: 다른 서버가 step-ca 를 부르는 이름(인증서 SAN 과 토큰 audience). 호출자는 늘 https://step-ca:<포트> 또는 이 이름으로 부른다.
+services:
+  step-ca:
+    ports: ["${STEP_CA_BIND:-127.0.0.1}:${STEP_CA_PORT:?STEP_CA_PORT(게시할 포트)가 필요하다}:${STEP_CA_PORT}"]
+    networks: [pki, pki-pub]
+networks:
+  pki-pub:   # step-ca 의 게시 포트 전용(internal 이 아닌 망: internal 망은 호스트 포트를 못 연다)

@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-450 시스템 python3 대체 제거
+- 원인: `.venv` 가 없는 worktree 에서 lib.sh `validate_image_labels` 와 `test-build-test-label.sh` 가 시스템 python3 로 조용히 넘어가 계약 패키지가 없어 실패했다. lib.sh 의 `deploy_py` 가 "deploy .venv 가 없다: bash scripts/prepare-areas.sh" 로 멈춘다. 같은 대체(check-exposure, test-publish, prepare-areas, doctor, test-images-env)도 없앴고 정적 시험 `test_no_python_fallback.py` 가 막는다.
+
 ## wo-450 D10-E4: 잡 환경 = 서버 환경의 범위
 - 합친 compose(`dc config --format json`)에 `check_config_contracts` 를 실제로 돌려 통과했다(서버 + 정리 잡 4개 포함 11문서).
 - ops-feedback 의 `job-ops-feedback`(별도 프로그램 ops_feedback.job: 게이트 토큰·비식별 salt 필요)와 `ops-feedback-migrate`(소유자 계정 DSN, ADR 0055)는 서버와 일부러 다른 환경·비밀이다. 서버 앵커로 묶으면 서버에 없는 비밀을 서버에 주거나 소유자 DSN 을 서버에 줘 최소 권한이 깨진다. 12-Factor XII 는 "같은 앱의 관리 작업"에 해당하므로 정리 잡만 묶었다.

@@ -68,4 +68,7 @@ e2e.sh: 단계 1~8 산출물을 읽는 항목은 chk_dep "단계 1~8" (선행 �
 publish 의 push 는 사용자 Docker 설정의 자격증명 도우미가 죽어 있어도 된다 (3차 E2E error getting credentials 재현·수정; 임시 레지스트리를 띄우는 시험이라 느리다) :: bash "$DEPLOY_ROOT/scripts/test-publish.sh"
 평문 주소·인증서 검증 끄기 금지 (서비스 사이 http://<이름>:<포트> 없음, U99, ADR 0060) :: python3 "$DEPLOY_ROOT/scripts/test_no_plaintext_addresses.py"
 TLS 사이드카 단독 시험 (step-ca + 사이드카 + 앱, ACME 발급·https 호출·검증 실패 거부, Docker 필요, ADR 0060) :: bash "$DEPLOY_ROOT/scripts/test-tls-sidecar.sh"
+deploy .venv 가 없으면 시스템 python3 로 조용히 넘어가지 않고 고칠 방법을 말하며 멈춘다 (lib.sh deploy_py, TLS worktree 의 시험 빌드 라벨 FAIL) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_no_python_fallback.py"
+지원하는 모든 compose 조합이 config -q 를 통과하고 프로필로 꺼지는 서비스에 의존하는 서비스는 같은 프로필이다 (외부 추론 모드의 사이드카 잔존 사고) :: bash "$DEPLOY_ROOT/scripts/test-compose-combos.sh"
 앱 loopback 바인드 정적 시험 (사이드카를 둔 모든 앱, ADR 0060, 계약 v3.4.2) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_sidecar_loopback.py"
+E2E 저작 시나리오가 QA_REQUIRE_TWO_PERSON 구성(기본 false, L13)과 맞는다: false 에서 /v1/reviews 는 403 기대 (4차 데모 단계 1) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_two_person_scenario.py"

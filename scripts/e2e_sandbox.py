@@ -271,9 +271,9 @@ def logs(service: str, since: Optional[str] = None) -> str:
 
 # ---- (c) 다른 호스트 역할의 추론 서버 ----
 def inference_url() -> Optional[str]:
-    """별도 프로젝트로 띄운 추론 서버의 호스트 주소 http://127.0.0.1:<포트>. 없으면 None. 왜 docker port: 그 컨테이너가 자기 게시 포트를 Docker 에게서 배정받는다."""
+    """별도 프로젝트로 띄운 추론 서버의 호스트 주소 https://host.docker.internal:<포트>. 없으면 None. 왜 docker port: 그 컨테이너가 자기 게시 포트를 Docker 에게서 배정받는다."""
     ip = _C.get("inference_project")
     if not ip:
         return None
-    p = _docker_port(f"{ip}-model-serving-1", "model-serving", "8080")
-    return f"http://127.0.0.1:{p}" if p else None
+    p = _docker_port(f"{ip}-model-serving-1", "model-serving", "443")
+    return f"https://host.docker.internal:{p}" if p else None   # 서비스 TLS 사이드카(ADR 0060)가 받는 https. 인증서 이름이 host.docker.internal 이라 그 이름으로 부른다. 검증 루트는 호출 프로세스의 SSL_CERT_FILE(e2e.sh 가 step-ca 루트를 준다)
