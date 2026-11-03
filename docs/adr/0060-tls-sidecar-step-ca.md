@@ -33,5 +33,12 @@
 - 감수하는 것: 서비스당 컨테이너 하나 증가(자원 한도는 측정 안 함, 시작값 64m/0.25cpu). step-ca 루트 키 분실 = 전 인증서 재발급이므로 `pki-ca` 볼륨은 백업·사람 보관 대상이다. 앱 포트(8080)는 같은 Docker 네트워크 안에서 여전히 닿는다(앱이 0.0.0.0 에 바인드하므로 사이드카만으로 막지 못한다): 앱의 바인드 주소 설정이 필요하면 영역에 변경 요청을 낸다(미해결).
 - `GATEWAY_TLS_MODE=internal` 은 step-ca 가 아니라 게이트웨이 내부 인증기관이다: 기본 사이트 이름(localhost, 127.0.0.1)과 사람용 이름을 step-ca 가 ACME 로 검증할 수 없다. step-ca 로 받으려면 `acme` + `GATEWAY_ACME_DIRECTORY`.
 
+## 추가 결정 (같은 U99, 후속)
+- **앱은 loopback 에 바인드한다.** 사이드카는 앱과 같은 네임스페이스라, 앱이 0.0.0.0 이면 다른 컨테이너가 앱 포트로 평문을 보낼 수 있다. 계약 v3.4.2 의 `*_HOST`(SURVEY_HOST, GATE_HOST, OPS_HOST, QA_HOST, MODEL_RUNTIME_HOST, MODEL_REGISTRY_HOST, DATASET_STORE_HOST)=127.0.0.1, Keycloak `KC_HTTP_HOST`, oauth2-proxy `--http-address` 로 막는다. 정적 시험 `test_sidecar_loopback.py`, 단독 시험에서 다른 컨테이너의 앱 포트 연결 거부를 본다. kiosk-frontend·admin-console 은 이미지 안 Caddyfile 이 주소를 정해 deploy 가 바꿀 수 없다(영역에 변경 요청, 시험의 KNOWN_GAP).
+- **사이드카·step-ca 는 추가 capability 가 없다.** 포트 8443 으로는 ACME 검증(80/443 으로만 온다)을 받을 수 없어, 앱 네임스페이스의 sysctl `net.ipv4.ip_unprivileged_port_start=0` 으로 443 을 열고, 파일 권한이 붙은 바이너리는 /tmp 사본으로 실행한다(측정함).
+- **감시는 게이트웨이를 https 로 프로브한다.** 게이트웨이 사이트 목록에 `GATEWAY_PROBE_SITE`(기본 gateway:8443)를 더하고, `gateway-root` 일회성 잡이 게이트웨이 루트(내부 CA, 또는 GATEWAY_TLS_ROOT_FILE)를 공개 볼륨으로 복사해 blackbox 가 ca_file 로 쓴다.
+- **백업 저장소는 `rest:https://` 만 받는다**(restic `RESTIC_CACERT` = `BACKUP_CACERT_FILE`).
+- **미해결:** 다른 호스트의 추론 서버 사이드카는 ACME 로 인증서를 받는데 step-ca 가 그 이름의 80/443 으로 닿아야 한다. 호스트 포트를 Docker 가 임의 배정하는 시험 배치에서는 검증이 불가능하다. 원격 호스트용 발급(발급 토큰 방식 `step ca certificate` 등)은 정하지 못했다.
+
 ## 되돌리는 조건
 인증서 발급 실패가 반복되어 서비스 가용성을 해치거나, 앱이 직접 TLS 를 지원하게 되면 사이드카를 앱 내장 TLS 로 대체하는 새 ADR 이 이 ADR 을 대체한다.
