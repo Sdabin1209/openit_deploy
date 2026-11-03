@@ -1,0 +1,14 @@
+# 배치 정의(ADR 0060): 서버 이름·주소·지역·그 서버에 둘 서비스. 서버·지역이 바뀌면 이 파일만 고친다(스크립트·compose·이미지는 그대로).
+# 서비스 이름은 compose.yaml 의 서비스 이름과 같다. 한 서비스는 한 서버에만 둔다. 기반(postgres, step-ca, keycloak, gateway)은 어디엔가 놓아야 한다.
+# DB 접속 비밀(db-*-dsn)을 쓰는 서비스는 postgres 와 같은 서버에 둔다(DSN 의 호스트가 서비스 이름 postgres 다).
+# 확인: .venv/bin/python scripts/placement.py validate ansible/inventory.example.yml    실행: ansible-playbook -i <인벤토리> ansible/site.yml
+all:
+  vars:
+    placement_scheme: https        # 서버 사이 호출 스킴
+    placement_publish_bind: 0.0.0.0
+    # placement_ports: {release-gate: 19010}   # 선택: 서버 사이에서 불리는 서비스의 게시 포트(없으면 자동)
+  hosts:
+    core-1:
+      ansible_host: core-1.example.internal
+      placement_region: region-a
+      placement_services: [postgres, keycloak, oauth2-proxy, gateway, kiosk-frontend, admin-console, survey-service, question-authoring, ops-feedback-ingest, release-gate, model-serving, model-registry, dataset-store]

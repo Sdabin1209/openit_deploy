@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Placement",
+  "description": "배치 정의(ansible 인벤토리의 서버 목록)의 형식. deploy 내부 스키마(ADR 0034). 서비스 이름이 compose 와 일치하는지, 한 서비스가 한 서버에만 있는지, 기반 요소가 놓였는지는 scripts/placement.py 가 이 스키마 다음에 검사한다.",
+  "type": "object",
+  "required": ["servers"],
+  "additionalProperties": false,
+  "properties": {
+    "scheme": {"enum": ["http", "https"], "description": "서버 사이 호출의 스킴. 기본 https(모든 영역 사이 통신은 TLS)"},
+    "publish_bind": {"type": "string", "description": "다른 서버가 부르는 서비스의 호스트 포트를 열 주소. 기본 0.0.0.0"},
+    "ports": {
+      "type": "object",
+      "description": "서비스 이름 -> 호스트 게시 포트(다른 서버가 부르는 서비스만 쓴다). 없으면 base_port + compose 서비스 순서",
+      "additionalProperties": {"type": "integer", "minimum": 1024, "maximum": 65535}
+    },
+    "base_port": {"type": "integer", "minimum": 1024, "maximum": 65000},
+    "servers": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["address", "region", "services"],
+        "additionalProperties": false,
+        "properties": {
+          "address": {"type": "string", "pattern": "^[A-Za-z0-9.-]+$", "description": "다른 서버가 이 서버를 부르는 이름 또는 IP(인증서 이름과 같은 한 곳, TLS 규칙)"},
+          "region": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "services": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"}}
+        }
+      }
+    }
+  }
+}
