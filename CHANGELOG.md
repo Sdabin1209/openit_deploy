@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-450 D5 (U64): publish push 실패 사유 확인
+- 확인만 했고 코드는 바꾸지 않았다: `publish-image.sh`(docker 출력 끝 3줄 + 'push 실패(종료 코드 N)' + 종료 코드 4 + 마지막 줄 PublishResult)와 `publish-images.sh`(docker 출력 전체 + 'push 실패')는 이미 push 실패 사유를 남기고(wo-434), 가짜 push(거부하는 docker 래퍼)로 `test-publish.sh`·`test-images-env.sh` 가 이를 시험한다(둘 다 통과). 잠금은 실패 때 바뀌지 않는다.
+
 ## wo-450 D4 (L20): CSRF 허용 출처를 GATEWAY_HOSTS 에서 생성 (ADR 0056)
 - `lib.sh` 의 `gateway_host_names` → `GATEWAY_HOST_NAMES`(compose → gateway) → Caddyfile `@csrf` 가 Host 호스트 이름 목록과 Origin == https://<Host> 를 함께 요구. `GatewayEnv` 스키마에 변수 추가.
 - 회귀 시험(test-gateway-auth.sh): 다른 Origin·다른 포트·접두 변형 403, `//`·`/v1//`·`%2f`·`%2e%2e`·대소문자·청크 본문 경로 우회 403, 목록 밖 Host 는 핸들러에 닿지 않음. `test-device-mtls.sh` 의 survey 프록시 개수 고정(4)이 이미 어긋나 있어 개수 고정을 풀었다.
