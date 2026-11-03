@@ -70,9 +70,10 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
   # 사람 인증(U82, ADR 0057): Keycloak 발급자·oauth2-proxy 콜백이 밖에서 보이는 주소(첫 GATEWAY_HOSTS 이름 localhost + 밖에 보이는 포트)로 정해지므로 HTTPS 호스트 포트를 미리 정하고 기록해 둔다(이후 명령이 같은 값을 쓴다)
   if [ -s "$W/gw-tls-port" ]; then GATEWAY_TLS_PORT=$(cat "$W/gw-tls-port")
-  else UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"); GATEWAY_TLS_PORT=""
+  else UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); GATEWAY_TLS_PORT=""   # 왜 상시 잠금인가: DEPLOY_LOCK($W/images.lock)은 이 시점에 아직 없어 이미지 이름이 비고, 포트 고르기가 조용히 실패해 사람 화면 주소가 8443 으로 굳었다(4차 데모: 단계 1 연결 거부)
     for _t in 1 2 3 4 5 6 7 8; do _p=$(free_port); "$DOCKER" run --rm -p "127.0.0.1:$_p:1" "$UTIL_REF" true >/dev/null 2>&1 && { GATEWAY_TLS_PORT=$_p; break; }; done
-    [ -z "$GATEWAY_TLS_PORT" ] || { mkdir -p "$W"; echo "$GATEWAY_TLS_PORT" > "$W/gw-tls-port"; }
+    [ -n "$GATEWAY_TLS_PORT" ] || die "게이트웨이 HTTPS 호스트 포트를 고르지 못했다(Docker 가 127.0.0.1 게시 포트를 못 연다?). 기본 8443 으로 넘어가지 않는다"
+    mkdir -p "$W"; echo "$GATEWAY_TLS_PORT" > "$W/gw-tls-port"
   fi
   export GATEWAY_TLS_PORT GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT; export GATEWAY_PUBLIC_URL="$(gateway_public_url)" GATEWAY_HOST_NAMES="$(gateway_host_names)"
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
@@ -252,7 +253,7 @@ case "$CMD" in
       fi
       if hf_cache_exists; then echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 재사용 (모델을 다시 받지 않는다)"; else echo "== HF 캐시 볼륨 $HF_CACHE_VOLUME 생성 (프로젝트 밖 볼륨: down 해도 남는다)"; hf_cache_ensure; fi
     fi
-    grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+    grep -E '^[A-Z0-9_]+_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"   # 외부 이미지 줄 전부(목록으로 적으면 새 이미지가 빠진다)
     echo "== 임시 레지스트리와 digest 잠금(이 데모 전용)"
     bash "$DEPLOY_ROOT/scripts/registry.sh" up || die "레지스트리 기동 실패 (데몬이 닿지 못하면 DEMO_REGISTRY_BIND=0.0.0.0 으로 다시, 끝나면 down)"
     bash "$DEPLOY_ROOT/scripts/publish-images.sh" $( [ $LLM = 1 ] && echo $SERVICES ) || die "게시 실패"   # --llm: GPU 이미지는 게시하지 않는다(이름 지정으로 제외)

@@ -64,7 +64,7 @@ MR_W="model-lab=$(tok model-registry-write-model-lab)"
 DS_R=$(roles dataset-store read model-lab)                       # I2 읽기: 소비자 model-lab 하나(ADR 0032). 쓰기 토큰으로도 읽을 수 있어 synthetic-data 는 읽기 토큰이 필요 없다
 DS_W="synthetic-data=$(tok dataset-store-write-synthetic-data)"   # I2 쓰기: synthetic-data 하나(HTTP.md ## I2)
 QA_AUTHOR=$(tok qa-author-e2e)
-QA_REVIEWER=$(tok qa-reviewer-e2e)   # clinical-reviewer 역할(임상 근거 승인, 4-eyes: 저자와 다른 주체여야 한다, question-authoring D88/U9)
+QA_REVIEWER=$(tok qa-reviewer-e2e)   # clinical-reviewer 역할(임상 근거 승인, QA_REQUIRE_TWO_PERSON=true(2인 승인)일 때만 쓰인다: 저자와 다른 주체여야 한다. 기본 false(L13)에서는 검수 경로가 이 역할에 열리지 않는다)
 # survey-result-reader / survey-risk-source: survey-service 의 결과 조회(result-reader)·위험 신호 입력(risk-source) 역할 토큰(내부 호출용, 게이트웨이에 열지 않음)
 # 개별 토큰(compose.yaml 의 secrets 와 같은 이름). 클라이언트(역할)와 서버가 같은 파일 값을 쓴다
 for t in gate-read-survey-service ops-ingest-survey-service survey-api-kiosk survey-api-staff inference-survey-service qa-read-release-gate \

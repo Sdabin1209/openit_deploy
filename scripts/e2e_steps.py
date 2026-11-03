@@ -210,7 +210,6 @@ def step1():
     r2, _ = _c1_upload(QS, form2, "form2.txt")
     rb, _ = _c1_upload(QSB, form_b, "form-b.txt")
     ru, _ = _c1_upload(QSU, form.replace("현재 약물 치료 중이십니까?", "지금 약물 치료 중이십니까?"), "unseen.txt")
-    c, e_, _ = _c1_gw("POST", "/v1/reviews", account=_C1_AUTHOR, body={"question_set": r1, "decision": "APPROVED", "clinical_basis_approved": True}); assert c == 403, ("저자가 자기 확인을 임상 승인했다(4-eyes)", c, e_)
     # 인증 없는 입구: 게이트웨이는 401, 서비스 자신은 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절, RFC 9110 15.5.2·RFC 6750 3절)
     assert _c1_gw("GET", "/v1/drafts")[0] == 401, "인증 없이 게이트웨이 저작 경로가 열려 있다"
     c0, _, h0 = _c1_in("question-authoring", "GET", "/v1/drafts")
@@ -227,17 +226,16 @@ def step1():
         assert canonical.content_hash(bank) == v["content_hash"]; assert str(bank["version"]) == v["version"]
         validate_survey("QuestionBank", bank)
         assert bank["question_set_id"] == v["id"], ("문진표 은행의 question_set_id 가 참조의 ID 와 다르다", bank["question_set_id"], v["id"])
-        revs = d["reviews"][key(v)]; assert len(revs) == 2, ("저자 확인 + 검수자 승인 두 검수여야 한다", len(revs))
+        revs = d["reviews"][key(v)]; assert len(revs) == 1, ("1인 운영: 저자의 확정이 남긴 검수 하나여야 한다", len(revs))
         for r_ in revs: validate("ReviewRecord", r_)
-        assert revs[0]["clinical_basis_approved"] is False, "저자의 확인이 임상 근거를 승인했다(4-eyes 위반)"
         rv = revs[-1]
-        assert rv["decision"] == "APPROVED" and rv["clinical_basis_approved"] is True and rv["question_set"] == v and rv["reviewer_id"] != revs[0]["reviewer_id"], rv
+        assert rv["decision"] == "APPROVED" and rv["clinical_basis_approved"] is True and rv["question_set"] == v and rv["reviewer_id"] == "author-e2e", ("저자의 확정이 임상 근거 승인(clinical_basis_approved=true)을 함께 남겨야 한다", rv)
     assert d["reviews"][key(vers[0])][0]["ext"]["question-authoring"]["source"]["source_hash"] == "sha256:" + hashlib.sha256(raw1).hexdigest()
     cc = d["change"][key(vers[1])]; validate("ChangeClassification", cc); assert d["change"][key(vers[0])] is None
     assert d["banks"][key(vers[-1])]["title"] == QS_TITLE and d["banks"][key(d["latest_b"])]["title"] == QSB_TITLE, ("문진표 제목", d["banks"][key(vers[-1])]["title"], d["banks"][key(d["latest_b"])]["title"])
     assert d["latest_b"]["id"] == QSB and d["latest_b"]["version"] == "1", d["latest_b"]
     STATE["qs"] = [dict(v) for v in vers]; STATE["qsu"] = dict(d["latest_u"]); STATE["qsb"] = dict(d["latest_b"]); save()
-    rec(1, "REAL", f"등록→미리보기→확인 x3(게이트웨이 저자 계정, 임상 근거 승인은 다른 검수자 계정), I1 읽기(release-gate 컨테이너 안, 읽기 토큰; 읽기 토큰은 저작 경로 403): QuestionBank 3건(해시·문진 스키마), ReviewRecord(clinical_basis_approved), ChangeClassification {cc['change_kinds']} {cc['affected_slots']}, 원본 해시 출처 일치")
+    rec(1, "REAL", f"등록→미리보기→확인 x3(게이트웨이 저자 계정; 1인 운영이라 확정이 임상 근거 승인을 함께 남기고 검수 역할은 /v1/reviews 403), I1 읽기(release-gate 컨테이너 안, 읽기 토큰; 읽기 토큰은 저작 경로 403): QuestionBank 3건(해시·문진 스키마), ReviewRecord(clinical_basis_approved), ChangeClassification {cc['change_kinds']} {cc['affected_slots']}, 원본 해시 출처 일치")
 
 # ===================== 단계 1~5 의 접근 계층 (샌드박스, wo-442) =====================
 # 왜: E2E 는 제품 구성에 시험용 문(내부 서비스 호스트 포트)을 내고 그 문으로 들어가 "운영 입구만으로 되는가"를 증명하지 못했다.
@@ -246,7 +244,7 @@ def step1():
 # 뒤 단계가 같은 이름으로 부르므로 시그니처를 유지한 채 내용만 바꾼다.
 import base64, e2e_sandbox as SB
 
-_C1_AUTHOR, _C1_CLINICAL = "author-e2e", "clinical-e2e"            # 저자 / 임상 근거 검수자 계정(config/gateway-accounts.test.conf)
+_C1_AUTHOR, _C1_CLINICAL = "author-e2e", "clinical-e2e"            # 저자 / 임상 근거 검수자 계정(Keycloak 시험 사용자: test/gateway-oidc/accounts.test.conf 를 scripts/idp-test-users.sh 가 만든다)
 _C1_APPROVER, _C1_OPERATOR = "trainer-e2e", "operator-e2e"         # release-approver / operator 계정. 게이트웨이가 계정 ID 를 X-Openit-User 로 붙인다(행위자 기록)
 _C1_CODE = {400: "INVALID_RECORD", 401: "PERMISSION_DENIED", 403: "PERMISSION_DENIED", 404: "NOT_FOUND", 409: "CONFLICT"}
 _C1_RH = {}   # 제출 -> 처음 읽은 보고서 해시(결정 뒤에는 보고서 상태가 달라질 수 있어 같은 제출의 재전송·번복은 처음 값을 쓴다)
@@ -368,8 +366,9 @@ def _c1_upload(set_id, text, fname):
     c, d, _ = _c1_gw("POST", f"/v1/materials?question_set_id={set_id}&filename={fname}", account=_C1_AUTHOR, data=raw, headers={"Content-Type": "text/plain"}); assert c in (200, 201), f"자료 등록 {c} {d}"
     c, pv, _ = _c1_gw("GET", f"/v1/drafts/{d['draft_id']}/preview", account=_C1_AUTHOR); assert c == 200 and pv["ready_to_confirm"], pv
     c, ref, _ = _c1_gw("POST", f"/v1/drafts/{d['draft_id']}/confirm", account=_C1_AUTHOR, body={"preview_hash": pv["preview_hash"]}); assert c == 200, ref
-    # 4-eyes(question-authoring D88/U9): 저자의 확인은 clinical_basis_approved=false 이고, 임상 근거 승인은 clinical-reviewer 역할의 다른 주체가 덧붙여야 reviewed_only 에 나타난다
-    c, rv, _ = _c1_gw("POST", "/v1/reviews", account=_C1_CLINICAL, body={"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB: 스크립트가 검수자 역할을 대신한다)"}); assert c in (200, 201), ("임상 근거 승인 실패", c, rv)
+    # 1인 운영(QA_REQUIRE_TWO_PERSON=false, 사용자 결정 L13, 서비스 기본): 저자의 확정(confirm_finalize)이 clinical_basis_approved=true 를 함께 남긴다. 별도 임상 검수 호출은 없다
+    # 설계 확인: 이 모드에서 임상 검수 역할에는 검수 경로(/v1/reviews)가 열리지 않는다(access_policy: reviewer_ok 와 require_two_person 이 모두 참일 때만) -> 403
+    c, rv, _ = _c1_gw("POST", "/v1/reviews", account=_C1_CLINICAL, body={"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E: 1인 운영에서 검수 역할은 거부돼야 한다"}); assert c == 403 and rv.get("code") == "PERMISSION_DENIED", ("1인 운영에서 임상 검수 역할이 /v1/reviews 를 통과했다", c, rv)
     return ref, raw
 
 def _c1_i1_read(qs, qsu, qsb):
@@ -653,7 +652,7 @@ def step3():
 def decisions_for(gate_read, subj):   # gate_read 는 옛 인자(직접 클라이언트): 이제 판정은 survey-service 컨테이너 안에서 읽는다. 호출하는 뒤 단계의 시그니처를 유지한다
     return _c1_decisions(subj)
 
-ADMIN = lambda: (_C1_APPROVER, None)   # 개별 계정(config/gateway-accounts.test.conf, 시험 계정, D85 E절). (계정 ID, 암호): 암호는 접근 계층(e2e_sandbox)이 안다
+ADMIN = lambda: (_C1_APPROVER, None)   # 개별 계정(Keycloak 시험 사용자: test/gateway-oidc/accounts.test.conf 를 scripts/idp-test-users.sh 가 만든다, 시험 계정, D85 E절). (계정 ID, 암호): 암호는 접근 계층(e2e_sandbox)이 안다
 OPERATOR = lambda: (_C1_OPERATOR, None)   # 역할 operator: /v1/activate, /v1/rollback
 REVIEWER = lambda: ("reviewer-e2e", None)   # 실패 사례 검토 화면 계정(역할 reviewer)
 
@@ -1360,12 +1359,11 @@ def step5a():
     c, d, _ = gw_bytes("POST", up, form, "text/plain", basic=_C2_AUTHOR, headers={"X-Openit-User": "spoofed-user", "Authorization-X": "x"}); assert c in (200, 201), ("자료 등록", c, d)
     c, pv, _ = _c2_raw("GET", f"/v1/drafts/{d['draft_id']}/preview", basic=_C2_AUTHOR); assert c == 200 and pv["ready_to_confirm"], (c, pv)
     c, ref, _ = _c2_raw("POST", f"/v1/drafts/{d['draft_id']}/confirm", {"preview_hash": pv["preview_hash"]}, basic=_C2_AUTHOR); assert c == 200, ("확인", c, ref)
-    # 4-eyes: 저자는 자기 확인을 임상 승인하지 못하고, 검수자의 위조 X-Openit-User 는 무시되어 인증 계정이 기록된다
-    body = {"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E 시험용 임상 근거 승인(TEST-SUB)"}
-    c, e, _ = _c2_raw("POST", "/v1/reviews", body, basic=_C2_AUTHOR); assert c == 403, ("저자가 자기 확인을 임상 승인했다", c, e)
-    c, r_, _ = _c2_raw("POST", "/v1/reviews", body, basic=_C2_CLINICAL, headers={"X-Openit-User": _C2_AUTHOR}); assert c in (200, 201), ("임상 승인", c, r_)
-    revs = list(_c2_qa_read("get_reviews", ref)); assert len(revs) == 2, len(revs)
-    assert revs[-1]["clinical_basis_approved"] is True and revs[-1]["reviewer_id"] == _C2_CLINICAL, ("위조 헤더가 무시되고 인증 계정이 기록돼야 한다", revs[-1])
+    # 1인 운영(QA_REQUIRE_TWO_PERSON=false, L13): 저자의 확정이 임상 근거 승인을 함께 남기고, 임상 검수 역할은 /v1/reviews 403(설계). 위조 X-Openit-User 는 무시되어 인증 계정이 기록된다
+    body = {"question_set": ref, "decision": "APPROVED", "clinical_basis_approved": True, "reason": "E2E: 1인 운영에서 검수 역할은 거부돼야 한다"}
+    c, e, _ = _c2_raw("POST", "/v1/reviews", body, basic=_C2_CLINICAL, headers={"X-Openit-User": _C2_AUTHOR}); assert c == 403 and e.get("code") == "PERMISSION_DENIED", ("1인 운영에서 임상 검수 역할이 /v1/reviews 를 통과했다", c, e)
+    revs = list(_c2_qa_read("get_reviews", ref)); assert len(revs) == 1, len(revs)
+    assert revs[-1]["clinical_basis_approved"] is True and revs[-1]["reviewer_id"] == _C2_AUTHOR, ("저자의 확정이 임상 근거 승인을 남기고, 위조 헤더가 무시돼 인증 계정이 기록돼야 한다", revs[-1])
     assert dict(_c2_qa_read("latest", qset, reviewed_only=True))["version"] == ref["version"], "임상 승인 뒤 reviewed_only 에 나타나야 한다"
     # 이웃 읽기 면(I1)은 gateway 에 열지 않는다. 본문 상한 8MiB 초과는 413
     assert _c2_raw("GET", f"/v1/question-sets/{qset}/versions", basic=_C2_AUTHOR)[0] == 404, "I1 읽기 면이 gateway 에 열려 있다"
@@ -1670,7 +1668,7 @@ def trace_env(release_id, n):
 # ---- 단계 6 이후의 제품 접근 도우미 (wo-444). 드라이버가 제품에 닿는 길은 e2e_sandbox(SB)의 셋뿐이다:
 #   (a) 게이트웨이(사람 계정·기기·기계 토큰), (b) 제품 네트워크 안(compose exec/run), (c) 별도 호스트의 추론 서버. 내부 서비스의 호스트 포트는 없다.
 import e2e_sandbox as SB
-_C3_ACCT = {"approver": "trainer-e2e", "operator": "operator-e2e", "reviewer": "reviewer-e2e", "author": "author-e2e", "clinical": "clinical-e2e", "staff": "staff-e2e"}   # config/gateway-accounts.test.conf 의 시험 계정(역할 이름 -> 계정 ID)
+_C3_ACCT = {"approver": "trainer-e2e", "operator": "operator-e2e", "reviewer": "reviewer-e2e", "author": "author-e2e", "clinical": "clinical-e2e", "staff": "staff-e2e"}   # Keycloak 시험 사용자: test/gateway-oidc/accounts.test.conf 를 scripts/idp-test-users.sh 가 만든다 의 시험 계정(역할 이름 -> 계정 ID)
 _C3_SVC = {"qa": "question-authoring", "gate": "release-gate", "ops": "ops-feedback-ingest", "survey": "survey-service"}   # 단계가 쓰는 짧은 이름 -> compose 서비스
 
 def _c3_tok(name):   # 시험 비밀 폴더의 토큰 파일(값은 출력하지 않는다, D84)

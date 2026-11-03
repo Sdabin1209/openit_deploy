@@ -11,4 +11,6 @@ chk() { # chk <설명> <스크립트> <시작 패턴> <끝 패턴>
   if [ "$out" = "https://localhost:34567" ]; then echo "  PASS $name -> $out"; else echo "  FAIL $name -> '$out' (기대 https://localhost:34567)"; F=$((F+1)); fi; }
 chk "e2e.sh: 밖에 보이는 주소가 게시 포트를 담는다" e2e.sh '^export GATEWAY_PUBLIC_TLS_PORT=' '^export GATEWAY_PUBLIC_URL='
 chk "demo.sh: 밖에 보이는 주소가 게시 포트를 담는다" demo.sh 'export GATEWAY_TLS_PORT GATEWAY_PUBLIC_TLS_PORT=' ''
+# demo.sh: 포트 고르기에 쓰는 이미지 이름을 아직 없는 DEPLOY_LOCK 에서 읽으면 조용히 실패해 8443 으로 굳는다(4차 데모)
+if grep -q 'UTIL_REF=$(sed -n .s/^UTIL_IMAGE=//p. "$DEPLOY_ROOT/locks/images.lock")' "$HERE/demo.sh"; then echo "  PASS demo.sh: 포트 고르기 이미지는 상시 잠금에서 읽는다"; else echo "  FAIL demo.sh: 포트 고르기 이미지 출처"; F=$((F+1)); fi
 echo; [ $F = 0 ] && echo "통과: 사람 화면 주소 시험" || { echo "실패: $F건"; exit 1; }

@@ -35,7 +35,7 @@ else read -r -a TARGETS <<< "$ALL"; fi
 # 왜 한 번만 검증하나: 영역이 낸 값은 받는 쪽이 다시 검증하지 않는다(R7). 보고가 계약을 어기면 그 영역은 실패로 센다.
 setup_one() {
   local a=$1 out rc py=${SETUP_PY:-$DEPLOY_ROOT/.venv/bin/python}   # deploy 자신의 .venv 는 위에서 먼저 준비한다(계약 패키지가 거기 있다)
-  [ -x "$py" ] || py=python3
+  [ -x "$py" ] || die "deploy .venv 가 없다: 먼저 deploy 자신의 .venv 를 준비한다 (docs/SETUP.md)"
   rc=0; out=$(cd "$WORKSPACE/$a" && bash scripts/setup-env.sh) || rc=$?
   printf '%s\n' "$out" | sed '$d'
   printf '%s\n' "$out" | "$py" "$DEPLOY_ROOT/scripts/setup_env_report.py" record "$a" || { [ $rc = 0 ] && rc=70; }

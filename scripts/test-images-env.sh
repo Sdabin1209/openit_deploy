@@ -35,7 +35,7 @@ echo "Docker-Content-Digest: sha256:$(printf 'a%.0s' $(seq 64))"
 SH
 chmod +x "$T/docker" "$T/curl"; export FAKE_LOG="$T/log"
 # 라벨 검사기를 돌릴 파이썬(jsonschema 필요): 임시 사본에는 .venv 가 없으므로 원래 리포의 .venv 를 쓴다. 없으면 검사를 못 해 게시가 거부된다(의도)
-export LABELS_PYTHON="${LABELS_PYTHON:-$ROOT/.venv/bin/python}"; [ -x "$LABELS_PYTHON" ] || export LABELS_PYTHON=python3
+export LABELS_PYTHON="${LABELS_PYTHON:-$ROOT/.venv/bin/python}"; [ -x "$LABELS_PYTHON" ] || { echo "오류: deploy .venv 가 없다: bash scripts/prepare-areas.sh" >&2; exit 1; }
 BASE="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console"
 mkenv() { : > "$D/build/images.env"; for a in $BASE; do echo "$a deploy-build/$a:abc1234 abc1234" >> "$D/build/images.env"; done; [ -z "${1:-}" ] || echo "model-serving-gpu deploy-build/model-serving-gpu:$1 $1" >> "$D/build/images.env"; }
 HAVE_BASE=""; for a in $BASE; do HAVE_BASE="$HAVE_BASE deploy-build/$a:abc1234"; done

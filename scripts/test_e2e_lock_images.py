@@ -11,11 +11,13 @@ LOCK = (ROOT / "locks/images.lock").read_text(encoding="utf-8")
 class T(unittest.TestCase):
     def test_e2e_copies_every_third_party_image_compose_requires(self):
         e2e = (ROOT / "scripts/e2e.sh").read_text(encoding="utf-8")
-        m = re.search(r"grep -E '\^\(([A-Z_|0-9]+)\)_IMAGE=' \"\$DEPLOY_ROOT/locks/images.lock\" > \"\$DEPLOY_LOCK\"", e2e)
-        self.assertTrue(m, "e2e.sh 의 외부 이미지 복사 줄을 찾지 못했다")
-        copied = set(m.group(1).split("|"))
+        m = re.search(r"grep -E '\^\[A-Z0-9_\]\+_IMAGE=' \"\$DEPLOY_ROOT/locks/images.lock\" > \"\$DEPLOY_LOCK\"", e2e)
+        self.assertTrue(m, "e2e.sh 는 잠금의 외부 이미지 줄을 전부(`^[A-Z0-9_]+_IMAGE=`) 복사해야 한다: 손으로 적은 목록은 새 이미지(STEP_CA)가 빠졌다")
+        demo = (ROOT / "scripts/demo.sh").read_text(encoding="utf-8")
+        self.assertIn("grep -E '^[A-Z0-9_]+_IMAGE=' \"$DEPLOY_ROOT/locks/images.lock\" > \"$DEPLOY_LOCK\"", demo)
+        copied = {n for n in re.findall(r"^([A-Z0-9_]+)_IMAGE=", LOCK, re.M)}
         need = set()
-        for f in ("compose.yaml", "compose.monitoring.yaml", "compose.backup-target.yaml"):
+        for f in ("compose.yaml", "compose.monitoring.yaml", "compose.backup-target.yaml", "compose.registry.yaml", "compose.external-inference.yaml"):
             need |= set(re.findall(r"\$\{([A-Z0-9_]+)_IMAGE:\?", (ROOT / f).read_text(encoding="utf-8")))
         third = {n for n in need if re.search(rf"^{n}_IMAGE=", LOCK, re.M)}   # 잠금 파일에 고정 줄이 있는 외부 이미지(영역 이미지는 <NAME>_DIGEST 로 E2E 가 게시한다)
         self.assertEqual(sorted(third - copied), [], "compose 가 요구하는 외부 이미지가 E2E 임시 잠금에 복사되지 않는다")

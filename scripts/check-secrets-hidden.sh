@@ -46,6 +46,7 @@ for f in sorted(pathlib.Path(tokdir).iterdir()):
     v = f.read_text(errors="ignore").strip()
     parts = {v}
     for item in v.split(","):   # 목록 값: 역할=토큰 -> 토큰, 토큰:actor:역할 -> 토큰 (역할·actor 이름은 비밀이 아니다)
+        if "://" in item: continue   # 접속 문자열(DSN)은 통째가 비밀이다. 쿼리(?sslmode=verify-full&sslrootcert=...)를 = 로 쪼개면 비밀이 아닌 설정 조각이 비밀로 잡혀 환경 변수(KC_DB_URL)를 오탐한다(4차 데모, ADR 0060)
         parts.add(item.split("=", 1)[1] if "=" in item else item.split(":", 1)[0])
     for p in parts:
         p = p.strip()

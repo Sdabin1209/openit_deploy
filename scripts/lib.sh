@@ -11,7 +11,8 @@ VENV="$DEPLOY_ROOT/.venv"
 # 컴포넌트를 부르는 진입점(scripts/*.py)은 입력·출력을 스키마로 검증하므로 jsonschema 가 있는 deploy .venv 의 파이썬이 필요하다(ADR 0045). 작업 트리(git worktree)에서는 본 리포의 .venv 를 쓴다. 없으면 python3 (jsonschema 가 없으면 진입점이 이유를 내고 실패한다: 검증을 건너뛰지 않는다)
 DEPLOY_PY="$VENV/bin/python"
 if [ ! -x "$DEPLOY_PY" ]; then DEPLOY_COMMON_ROOT="$(cd "$(git -C "$DEPLOY_ROOT" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)"; DEPLOY_PY="$DEPLOY_COMMON_ROOT/.venv/bin/python"; fi
-[ -x "$DEPLOY_PY" ] || DEPLOY_PY=python3
+# 왜 시스템 python3 로 조용히 넘어가지 않는가: 거기엔 계약 패키지(boundary_contracts)가 없어 점검이 엉뚱한 이유로 실패한다(TLS worktree 에서 "시험 빌드 라벨" 점검이 그렇게 죽었다). 환경 문제는 코드로 숨기지 않고 고칠 방법을 말하며 멈춘다.
+deploy_py() { [ -x "$DEPLOY_PY" ] || { echo "오류: deploy .venv 가 없다: bash scripts/prepare-areas.sh (docs/SETUP.md)" >&2; exit 1; }; printf '%s\n' "$DEPLOY_PY"; }
 die() { echo "오류: $*" >&2; exit 1; }
 # 시험 전용: 롤백 시험처럼 '같은 소스인데 다른 digest 의 새 버전'이 필요할 때 이미지에 시험 라벨 하나(openit.test-build=<ID>)를 더한다. BUILD_TEST_ID 가 없으면 아무것도 하지 않는다.
 # 왜 revision 에 접미사를 붙이지 않는가: io.openit.revision 은 소스 커밋(hex)이어야 한다(영역 Dockerfile 의 형식 검사와 계약 ImageLabels 의 ^[0-9a-f]{7,40}$). revision 에 접미사(-test2)를 붙이던 예전 방식은 이 규칙과 충돌했다.
@@ -24,9 +25,9 @@ apply_test_label() { # apply_test_label <이미지 이름:태그>  -> 표준 출
 }
 # 이미지 라벨이 계약 ImageLabels 스키마를 따르는지 게시 전에 검사한다(스키마 정본은 계약 패키지의 ImageLabels: scripts/check_image_labels.py 가 패키지에서 읽는다, 사본 없음).
 # 사용: validate_image_labels <이미지> [표시 이름]  -> 0 통과, 1 어긋남(사유를 표준 출력에), 2 검사를 못 함(jsonschema 없음 등: 통과로 세지 않는다).
-# 왜 파이썬: 스키마(JSON Schema 2020-12) 검증을 셸로 다시 구현하지 않는다. 파이썬은 LABELS_PYTHON, 없으면 deploy .venv, 없으면 python3.
+# 왜 파이썬: 스키마(JSON Schema 2020-12) 검증을 셸로 다시 구현하지 않는다. 파이썬은 LABELS_PYTHON, 없으면 deploy .venv, 없으면 멈춘다(python3 로 넘어가지 않는다).
 validate_image_labels() {
-  local py=${LABELS_PYTHON:-$DEPLOY_ROOT/.venv/bin/python}; [ -x "$py" ] || py=python3
+  local py=${LABELS_PYTHON:-}; [ -n "$py" ] || py=$(deploy_py) || return 1
   "$DOCKER" image inspect "$1" --format '{{json .Config.Labels}}' | tr -d '\r' | "$py" -W ignore "$DEPLOY_ROOT/scripts/check_image_labels.py" --name "${2:-$1}"
 }
 # docker: 표준 `docker` CLI 하나와 설정된 데몬(DOCKER_HOST 또는 docker context) 하나의 경로만 쓴다. 다른 실행 파일은 환경 변수 DOCKER 로 지정한다.
@@ -114,7 +115,7 @@ dc() { # dc <project> <compose args...>
   [ -f "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}" ] && envs+=(--env-file "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}")
   [ -f "$DEPLOY_ROOT/.env" ] && envs+=(--env-file "$DEPLOY_ROOT/.env")
   # 잠금 파일이 digest의 유일한 출처다: 셸에 남은 같은 이름의 변수가 --env-file 을 이기지 못하게 지운다
-  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u STEP_CA_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u DEPLOY_REGISTRY "GATEWAY_HOST_NAMES=$(gateway_host_names)" "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
+  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u STEP_CA_IMAGE -u DEPLOY_REGISTRY "GATEWAY_HOST_NAMES=$(gateway_host_names)" "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
     "$DOCKER" compose -p "$project" --project-directory "$DEPLOY_ROOT" "${files[@]}" "${envs[@]}" "$@"
 }
 # 외부 추론 서버 모드(D72): external_inference_setup <URL>. INFERENCE_URL / INFERENCE_TOKEN_FILE 을 내보내고 COMPOSE_EXTRA 에 override 를 붙인다.

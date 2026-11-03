@@ -94,6 +94,7 @@ class Structure(unittest.TestCase):
             if re.search(r"(^|/)(tests?)/|(^|/)test_[^/]*\.py$|^scripts/test_", f): continue   # 시험
             if re.match(r"openit_deploy/(components|wiring|types)/", f) or f == "openit_deploy/__init__.py": continue
             if f.startswith("scripts/") and (f.split("/")[-1] in ACCEPTANCE): continue   # 수용 시험
+            if f.startswith("ansible/files/"): continue   # Ansible 이 지휘 기계에서 돌리는 플레이북 보조(모듈 하나의 파일 전달). 컴포넌트가 아니라 배치 도구의 일부(ADR 0061)
             if f.startswith("scripts/"): continue   # 진입점: 아래 test_entry_points_are_thin 이 얇은지 본다
             bad.append(f)
         self.assertEqual(bad, [], "components/·wiring/·types/·진입점 어디에도 속하지 않는 코드")
