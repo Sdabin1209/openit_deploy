@@ -7,20 +7,22 @@ x-stub: &stub
   volumes: ["${CONFIG_DIR:-./config}/stub.py:/stub.py:ro", "${CONFIG_DIR:-./config}/certs:/certs:ro"]
   healthcheck: {test: ["CMD", "python", "-c", "import urllib.request,ssl,os;urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/healthz',timeout=2,context=ssl._create_unverified_context())"], interval: 2s, timeout: 3s, retries: 15}
 secrets:
+  db-survey-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-password
   db-survey-dsn:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-dsn
 networks:
   db: {internal: true}
   inner: {internal: true}
 services:
-  postgres: {<<: *stub, networks: [db]}   # 내부 전용 네트워크: 게시하려면 배치가 일반 네트워크를 더해야 한다
-  keycloak: {<<: *stub, depends_on: {postgres: {condition: service_healthy}}}
+  survey-db: {<<: *stub, networks: [db], secrets: [db-survey-password]}   # 내부 전용 네트워크: 게시하려면 배치가 일반 네트워크를 더해야 한다
+  keycloak: {<<: *stub, depends_on: {survey-db: {condition: service_healthy}}}
   gateway: {<<: *stub}
   survey-service:
     <<: *stub
     env_file: ["${CONFIG_DIR:-./config}/survey.env"]
     secrets: [db-survey-dsn]
-    depends_on: {postgres: {condition: service_healthy}, release-gate: {condition: service_healthy}}
+    depends_on: {survey-db: {condition: service_healthy}, release-gate: {condition: service_healthy}}
   release-gate:
     <<: *stub
     env_file: ["${CONFIG_DIR:-./config}/release-gate.env"]

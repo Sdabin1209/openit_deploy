@@ -154,6 +154,18 @@ class GatewayEnv(TypedDict):
     GATEWAY_PROBE_SITE: NotRequired[str]
 
 
+class GatewayExposureRequest(TypedDict):
+    service: str
+    labels: Dict[str, str]
+    declaration_errors: NotRequired[List[str]]
+
+
+class GatewayExposureResult(TypedDict):
+    status: Literal['OK', 'NO_EXPOSURE_LABEL', 'INVALID_EXPOSURE']
+    exposure_json: NotRequired[str]
+    message: NotRequired[str]
+
+
 class ImageLabelCheckRequest(TypedDict):
     name: NotRequired[str]
     labels: Optional[Dict[str, Any]]

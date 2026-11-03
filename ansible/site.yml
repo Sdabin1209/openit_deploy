@@ -154,4 +154,5 @@
       ansible.builtin.file:
         path: "{{ playbook_dir }}/../build/placement.lock"
         state: absent
+      changed_when: false   # 왜: 잠금은 이 실행이 잡고 이 실행이 놓는 것이라 상태 변경이 아니다(멱등 점검 changed=0 에 세지 않는다)
       when: placement_no_lock is not defined

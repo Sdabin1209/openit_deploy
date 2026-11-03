@@ -15,9 +15,9 @@ source "$(dirname "$0")/backup-lib.sh"
 backup_load_config
 P=${DEPLOY_PROJECT:-deploy}
 DBS=${*:-$PG_DBS}
-for db in $DBS; do pg_service_of "$db" >/dev/null || die "알 수 없는 데이터베이스: $db"; c=$(pg_container "$P" "$(pg_service_of "$db")"); [ -n "$c" ] || die "프로젝트 $P 의 $(pg_service_of "$db") 컨테이너가 떠 있지 않다"; done   # 영역마다 자기 DB 컨테이너
+for db in $DBS; do svc=$(pg_service_of "$db") || continue; c=$(pg_container "$P" "$svc"); [ -n "$c" ] || die "프로젝트 $P 의 $svc 컨테이너가 떠 있지 않다"; done   # 영역마다 자기 DB 컨테이너. 이름을 모르는 데이터베이스는 거부하지 않고 그 덤프만 실패시킨다(다른 데이터베이스의 백업은 계속, 실패한 것의 스냅샷은 만들지 않는다)
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-VER=$("$DOCKER" exec "$(pg_container "$P" "$(pg_service_of "$(echo $DBS | cut -d' ' -f1)")")" psql -U postgres -d postgres -Atqc 'SHOW server_version' | tr -d '\r' | tr -d ' ,')
+VER=$("$DOCKER" exec "$(pg_container "$P" "$(pg_service_of "$(for d in $DBS; do pg_service_of "$d" >/dev/null && { echo $d; break; }; done)")")" psql -U postgres -d postgres -Atqc 'SHOW server_version' | tr -d '\r' | tr -d ' ,')
 for db in $DBS; do [[ "$db" =~ ^[a-z][a-z0-9_]*$ ]] || die "데이터베이스 이름이 규칙에 맞지 않는다: $db"; done
 exec 9>"$BACKUP_LOCK_FILE"; flock -n 9 || { echo "CRIT: 다른 백업이 같은 저장소로 진행 중이다($BACKUP_LOCK_FILE): 겹쳐 돌리지 않는다" >&2; exit 4; }
 backup_ensure_repo

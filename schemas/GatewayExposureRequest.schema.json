@@ -1,0 +1,32 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "GatewayExposureRequest.schema.json",
+ "title": "GatewayExposureRequest",
+ "type": "object",
+ "required": [
+  "service",
+  "labels"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "service": {
+   "type": "string",
+   "minLength": 1,
+   "description": "영역 서비스 이름"
+  },
+  "labels": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "그 서비스 이미지의 Config.Labels"
+  },
+  "declaration_errors": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "io.openit.exposure 값을 계약 Exposure validator 로 검증한 위반(wiring 이 채운다)"
+  }
+ }
+}

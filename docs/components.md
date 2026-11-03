@@ -38,6 +38,7 @@
 | image_label_check | `openit_deploy/components/image_label_check.py` | ImageLabelCheckRequest | ImageLabelCheckResult | 이미지 라벨이 계약 ImageLabels(와 jobs·exposure 안쪽 JSON)를 따르는지 판정한다 |
 | internal_file_check | `openit_deploy/components/internal_file_check.py` | InternalFileCheckRequest | InternalFileCheckResult | images.env·images.lock·verify-areas.yaml 을 deploy 내부 스키마로 검증한다 |
 | job_overlay | `openit_deploy/components/job_overlay.py` | JobOverlayRequest | JobOverlayResult | 이미지가 선언한 잡(io.openit.jobs)에서 compose 잡 서비스의 command 와 시간 한도를 만든다(S10) |
+| gateway_exposure | `openit_deploy/components/gateway_exposure.py` | GatewayExposureRequest | GatewayExposureResult | 영역 이미지의 Exposure 선언 라벨을 영역 게이트웨이에 마운트할 파일 내용으로 꺼낸다 |
 | job_command | `openit_deploy/components/job_command.py` | JobCommandRequest | JobCommandResult | 선택한 잡을 docker run 명령(argv)으로 조립한다 |
 | job_failure_text | `openit_deploy/components/job_failure_text.py` | JobFailureRequest | JobFailureResult | 잡 종료 코드와 stderr 마지막 줄을 한 줄 설명으로 바꾼다 |
 | job_select | `openit_deploy/components/job_select.py` | JobSelectRequest | JobSelectResult | 이미지 라벨의 잡 선언(io.openit.jobs)에서 이름이 맞는 잡 하나를 고른다 |

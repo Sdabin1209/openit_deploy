@@ -131,6 +131,8 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0060 영역 사이 통신은 TLS: 서비스 사이드카 + step-ca + PostgreSQL TLS](docs/adr/0060-tls-sidecar-step-ca.md)
 - [0061 여러 서버 배치: Ansible 인벤토리 + 플레이북](docs/adr/0061-ansible-placement.md)
 - [0062 사설 PKI 수명·교체와 공개 입구 timeouts](docs/adr/0062-pki-lifetimes-and-ingress-timeouts.md)
+- [0063 영역마다 자기 데이터베이스 컨테이너](docs/adr/0063-area-database-containers.md)
+- [0064 잡 정의는 이미지 라벨에서 만든다](docs/adr/0064-job-definitions-from-image-labels.md)
 - [0049 원격 추론 서버는 게이트웨이의 기계 토큰 경로로 release-gate 를 읽는다](docs/adr/0049-remote-inference-reads-release-gate-via-gateway.md)
 - [0050 E2E는 샌드박스로 돈다: 제품에는 시험용 문이 없다](docs/adr/0050-e2e-sandbox.md)
 - [0047(값은 0051이 대체) 시간 상한 사슬 값: 키오스크 12s > gateway 10.5s > survey 턴 9s > 추출 3s + 응답 5s](docs/adr/0047-time-chain-values.md)

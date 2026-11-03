@@ -101,7 +101,7 @@ try:
     socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=3); print('reachable')
 except Exception: print('blocked')" "$2" "$3"; }
 [ "$(PROBE ${D}_pki release-gate-db 5432)" = blocked ] && ok "(R6.2) 인증서 발급 망(pki)에서 release-gate-db 에 닿지 않는다" || bad "R6.2: pki 망에서 release-gate-db 에 닿는다"
-[ "$(PROBE ${D}_db-keycloak step-ca $SCP)" = blocked ] && ok "(R6.2) DB 망에서 step-ca 에 닿지 않는다" || bad "R6.2: DB 망에서 step-ca 에 닿는다"
+[ "$(PROBE ${D}_db-gate step-ca $SCP)" = blocked ] && ok "(R6.2) DB 망에서 step-ca 에 닿지 않는다" || bad "R6.2: DB 망에서 step-ca 에 닿는다"
 # R1.5·R1.7: compose 밖 호출자는 내보낸 루트 + hosts 표 + 서비스 토큰만으로 부른다(배포 내부 구조를 모른다). 기본 브리지의 새 컨테이너로 시험한다
 EXP="$T/export"; docker run --rm --network none -v ${D}_pki-root:/r:ro "$UTIL" cat /r/root_ca.crt > "$T/root.pem"
 "$PY" scripts/placement.py export "$T/inv.yml" --compose "$T/compose.subset.yaml" --out "$EXP" --root-ca "$T/root.pem" >/dev/null || bad "내보내기 실패"

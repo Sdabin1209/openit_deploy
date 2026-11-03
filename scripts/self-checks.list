@@ -99,3 +99,4 @@ R1.4 배치 무관: 서버별 override 의 호출 설정 이름·경로·서비�
 로컬 미러 git 설정(S14)이 git insteadOf 로 원격 주소를 로컬 리포로 푼다 :: python3 "$DEPLOY_ROOT/scripts/test_local_mirrors.py"
 잡 command·시간 한도는 이미지 라벨 io.openit.jobs 에서 온다(S10, R9.2·R9.3, compose 에 python -m 없음) :: python3 "$DEPLOY_ROOT/scripts/test_gen_jobs.py"
 OUT-FILE(루트 PEM·hosts 표·SHA256SUMS, R1.5·R1.7) 내보내기와 대조 :: bash "$DEPLOY_ROOT/scripts/test-out-files.sh"
+영역 게이트웨이 설정 입력(Exposure 라벨 -> exposure.json)이 계약대로 나가고 라벨이 없으면 거부된다 :: python3 "$DEPLOY_ROOT/scripts/test_gen_gateways.py"

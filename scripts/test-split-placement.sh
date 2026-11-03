@@ -35,7 +35,7 @@ chmod 644 "$T/config/certs/"*
 fi
 PORT_GATE=$(freeport); PORT_QA=$(freeport); PORT_PG=$(freeport)
 mkdir -p "$T/secrets/tokens" "$T/r" ; { echo 'UTIL_IMAGE=python:3.12-slim'; echo "SPLIT_SCHEME=$SCHEME"; [ -z "${SPLIT_IMAGE:-}" ] || echo "SPLIT_IMAGE=$SPLIT_IMAGE"; } > "$T/images.lock"   # 실제 이미지 참조는 잠금 파일(--env-file)로 준다
-printf 'postgresql://survey:x@survey-db:5432/survey\n' > "$T/secrets/tokens/db-survey-dsn"
+printf 'postgresql://survey:x@survey-db:5432/survey\n' > "$T/secrets/tokens/db-survey-dsn"; echo x > "$T/secrets/tokens/db-survey-password"
 # 서버 주소: 컨테이너에서 이 PC 를 부르는 이름(host-gateway). 서버가 바뀌어도 이 값만 인벤토리에서 바뀐다
 # 서버 주소는 IP 여야 한다(extra_hosts <서비스 이름>:<주소>). 이 PC 에서는 컨테이너가 호스트를 보는 docker 기본 브리지의 게이트웨이 주소
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1)   # Docker Desktop(WSL2): host.docker.internal 의 IP

@@ -1,0 +1,26 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "GatewayExposureResult.schema.json",
+ "title": "GatewayExposureResult",
+ "type": "object",
+ "required": [
+  "status"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "status": {
+   "enum": [
+    "OK",
+    "NO_EXPOSURE_LABEL",
+    "INVALID_EXPOSURE"
+   ]
+  },
+  "exposure_json": {
+   "type": "string",
+   "description": "영역 게이트웨이에 마운트할 /etc/openit/exposure.json 의 내용(라벨 값 그대로)"
+  },
+  "message": {
+   "type": "string"
+  }
+ }
+}

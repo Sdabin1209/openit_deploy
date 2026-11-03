@@ -20,7 +20,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
 import threading
-# 8080(서비스)과 5432(postgres 대역): 서비스마다 컨테이너 포트가 다르다(scripts/placement.py CONTAINER_PORT)
+# 8080(서비스)과 5432(영역 DB 대역): 서비스마다 컨테이너 포트가 다르다(openit_deploy/wiring/placement_tool.py container_port)
 for port in (5432, 8080):
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), H)
     if os.environ.get("STUB_SCHEME") == "https":   # 서비스 이름 = 인증서 이름. 사이드카 대신 대역이 직접 TLS 를 끝낸다
