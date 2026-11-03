@@ -27,7 +27,7 @@
   vars:
     ca_dir: "{{ hostvars[plan.step_ca_host].placement_remote_dir | default('/opt/openit-deploy') }}"
     ca_project: "{{ hostvars[plan.step_ca_host].placement_project | default('deploy') }}"
-  delegate_to: "{{ plan.step_ca_host }}"
+  delegate_to: "{{ plan.step_ca_host | default(inventory_hostname, true) }}"
   register: tokens
   no_log: true
   changed_when: false
