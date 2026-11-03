@@ -11,9 +11,8 @@
 #                        게이트웨이가 이 토큰을 확인하고 자기가 가진 release-gate 읽기 토큰으로 바꿔 붙인다(MODEL_RUNTIME_RELEASE_TOKEN 으로 전달)
 #   INFERENCE_PKI_ROOT_FILE  파일 경로. deploy step-ca 의 루트 인증서(공개, 비밀 아님; deploy 호스트의 pki-root 볼륨 root_ca.crt). 사이드카가 ACME 서버를 검증하는 데 쓴다(ADR 0060)
 #   INFERENCE_STEP_CA_URL        deploy step-ca 주소(https://<step-ca 주소>:9000). 이 서버 -> step-ca 경로만 있으면 된다(도전 없음)
-#   INFERENCE_TLS_TOKEN_FILE     파일 경로. 지휘 쪽이 `step ca token <INFERENCE_TLS_NAME>` 으로 발급한 일회용 토큰(5분)
+#   INFERENCE_TLS_TOKEN_FILE     파일 경로. 지휘 쪽이 `step ca token <INFERENCE_TLS_NAME>` 으로 발급한 일회용 토큰(5분). 인증서의 SAN 은 토큰이 정한다(step 은 --token 과 --san 을 함께 받지 않는다): 같은 호스트에서 localhost 로도 부르려면 토큰을 `--san <이름> --san localhost` 로 발급한다
 #   INFERENCE_STEP_IMAGE         step-ca 이미지(digest 참조, 잠금의 STEP_CA_IMAGE)
-#   INFERENCE_TLS_EXTRA_SAN  (선택) 인증서에 더할 이름 하나. 일회용 토큰도 같은 --san 으로 발급해야 한다. 같은 호스트에서 이 서버를 localhost 로 부르는 시험·점검용이다(TLS 이름 검증을 끄지 않고 이름을 더한다)
 #   INFERENCE_TLS_NAME   이 서버의 이름(호출자가 https://<이름> 으로 부르는 DNS 이름 = 인증서 이름)
 #   INFERENCE_SIDECAR_IMAGE  TLS 사이드카(Caddy 공식 이미지, digest 참조; deploy 잠금의 GATEWAY_IMAGE 와 같은 값)
 #   SECRETS_GID          토큰 파일들의 그룹 gid(제품 compose 와 같은 변수, scripts/lib.sh 의 기본값은 id -g). 파일은 640 이고 이 그룹이다
@@ -106,7 +105,7 @@ services:
     read_only: true
     tmpfs: ["/tmp"]
     environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" ${INFERENCE_TLS_EXTRA_SAN:+--san ${INFERENCE_TLS_NAME} --san ${INFERENCE_TLS_EXTRA_SAN}} --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
     secrets: [tls-token]
     extra_hosts: ["host.docker.internal:host-gateway"]   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험). 다른 서버면 배치 값이 step-ca 주소를 준다
     configs:
