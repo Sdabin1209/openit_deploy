@@ -54,7 +54,31 @@ gen_idp
 # Keycloak --config-file(비밀 파일): db-password 와 bootstrap-admin-password. 환경 변수로 넘기지 않는다(프로세스 환경에 값이 남는다, D84). 값이 바뀌면 다시 쓴다
 kc_conf="db-password=$(tr -d '\r\n' < "$D/tokens/db-keycloak-password")"$'\n'"bootstrap-admin-password=$(tr -d '\r\n' < "$D/tokens/keycloak-bootstrap-admin-password")"
 [ "$(cat "$D/keycloak-secrets.conf" 2>/dev/null)" = "$kc_conf" ] || ( umask 077; printf '%s\n' "$kc_conf" > "$D/keycloak-secrets.conf" ); secret_fix "$D/keycloak-secrets.conf" keycloak-secrets.conf; unset kc_conf
+# 영역 백업(RUNTIME R10.1, CommonEnv OPENIT_BACKUP_*): 영역마다 다른 자격(HTTP 기본 인증 "<사용자>:<암호>" 한 줄, RFC 7617)과 다른 저장소 암호. 저장소 경로도 영역마다 다르다(https://backup-store/<영역>/).
+# 한 영역의 자격으로 다른 영역의 저장소를 읽지 못하게 암호가 다르다. 저장소 쪽 htpasswd 는 이 자격들에서 만든다(아래, docker 가 있을 때)
+gen_backup() {
+  local a
+  for a in survey qa ops gate; do
+    [ -s "$D/tokens/backup-$a-credentials" ] || ( umask 077; printf '%s:%s\n' "$a" "$(python3 -c 'import secrets;print(secrets.token_hex(24),end="")')" > "$D/tokens/backup-$a-credentials" ); secret_fix "$D/tokens/backup-$a-credentials" "backup-$a-credentials"
+    tok "backup-$a-repo-password" >/dev/null
+  done
+}
+gen_backup
 [ "$ONLY_DB" = 0 ] || { echo "PostgreSQL 비밀 위치: $D/tokens (리포지토리에 커밋하지 않는다)"; exit 0; }
+# 백업 저장소(platform backup-store)의 htpasswd: 영역 자격에서 bcrypt(caddy hash-password)로 만든다. 자격이 바뀌면 다시 쓴다
+gen_backup_htpasswd() {
+  local a user pw line out="" img
+  [ -s "$D/tokens/backup-store-htpasswd" ] && [ "$(cut -d: -f1 "$D/tokens/backup-store-htpasswd" | tr '\n' ' ')" = "survey qa ops gate " ] && return 0   # 이미 있으면 그대로(bcrypt 는 매번 달라 값 비교가 안 된다; 자격이 바뀌면 이 파일을 지우고 다시 만든다)
+  img=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
+  for a in survey qa ops gate; do
+    user=$(cut -d: -f1 "$D/tokens/backup-$a-credentials"); pw=$(cut -d: -f2- "$D/tokens/backup-$a-credentials" | tr -d '\r\n')
+    line=$(printf '%s\n%s\n' "$pw" "$pw" | "$DOCKER" run --rm -i "$img" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n') || return 1
+    [ -n "$line" ] || return 1; out+="$user:$line"$'\n'
+  done
+  [ -s "$D/tokens/backup-store-htpasswd" ] && [ "$(cut -d: -f1 "$D/tokens/backup-store-htpasswd" | tr '\n' ' ')" = "survey qa ops gate " ] && return 0   # 이미 있으면 그대로(bcrypt 는 매번 달라 값 비교가 안 된다; 자격이 바뀌면 이 파일을 지우고 다시 만든다)
+  ( umask 077; printf '%s' "$out" > "$D/tokens/backup-store-htpasswd" ); secret_fix "$D/tokens/backup-store-htpasswd" backup-store-htpasswd
+}
+gen_backup_htpasswd || { echo "백업 저장소 htpasswd 를 만들지 못했다" >&2; exit 1; }
 
 # 서버가 받는 목록 값(역할=토큰,...): 값 하나짜리 파일로 만든다
 GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver operator)

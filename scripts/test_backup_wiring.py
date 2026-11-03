@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""정적 시험(RUNTIME R10.1, CommonEnv OPENIT_BACKUP_*): 영역 백업 잡 배선.
+(1) 영역마다 백업 잡이 영역 pod 안에서 돈다(영역 게이트웨이 loopback 출구). (2) OPENIT_BACKUP_URL 은 https 이고 영역마다 다른 경로다.
+(3) 자격·저장소 암호 비밀 이름이 영역마다 다르고 자기 영역의 잡만 마운트한다(다른 영역의 자격으로 남의 저장소에 못 간다). (4) 백업 저장소는 영역별 전용 망에만 붙고 영역끼리 같은 망을 쓰지 않는다.
+(5) 저장소의 htpasswd 는 저장소만 읽는다. 변이 확인: 자격 비밀을 두 영역이 공유하게 바꾸면 실패한다."""
+import copy, re, subprocess, sys, unittest
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parent.parent
+S0 = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
+AREAS = {"survey": ("job-survey-backup", "survey-service"), "qa": ("job-question-authoring-backup", "question-authoring"),
+         "ops": ("job-ops-feedback-backup", "ops-feedback-ingest"), "gate": ("job-release-gate-backup", "release-gate")}
+
+
+def check(S):
+    errs = []
+    creds = {}
+    for key, (job, pod) in AREAS.items():
+        j = S.get(job)
+        if not j:
+            errs.append(f"{job}: 백업 잡이 없다"); continue
+        if j.get("network_mode") != f"service:{pod}-net":
+            errs.append(f"{job}: 영역 pod({pod}-net) 안에서 돌지 않는다")
+        env = j.get("environment") or {}
+        if not str(env.get("OPENIT_BACKUP_URL", "")).startswith("https://backup-store/" + key + "/"):
+            errs.append(f"{job}: OPENIT_BACKUP_URL 이 https://backup-store/{key}/ 가 아니다")
+        if env.get("OPENIT_EGRESS_PROXY") != "http://127.0.0.1:3128":
+            errs.append(f"{job}: OPENIT_EGRESS_PROXY 가 loopback 출구가 아니다")
+        sec = [x if isinstance(x, str) else x.get("source") for x in j.get("secrets", [])]
+        mine = {x for x in sec if x.startswith("backup-")}
+        if mine != {f"backup-{key}-credentials", f"backup-{key}-repo-password"}:
+            errs.append(f"{job}: 자기 영역의 자격·저장소 암호만 받아야 한다: {sorted(mine)}")
+        for ev in ("OPENIT_BACKUP_CREDENTIALS_FILE", "OPENIT_BACKUP_REPO_PASSWORD_FILE"):
+            f = str(env.get(ev, ""))
+            if not f.startswith("/run/secrets/backup-" + key + "-"):
+                errs.append(f"{job}: {ev} 가 자기 영역 비밀이 아니다: {f}")
+        creds[key] = mine
+    allv = [v for m in creds.values() for v in m]
+    if len(allv) != len(set(allv)):
+        errs.append("영역끼리 자격·저장소 암호를 공유한다")
+    bs = S.get("backup-store") or {}
+    nets = set((bs.get("networks") or {}).keys())
+    if nets != {f"backup-{k}" for k in AREAS}:
+        errs.append(f"backup-store 의 망이 영역별 전용 망 4개가 아니다: {sorted(nets)}")
+    for key, (job, pod) in AREAS.items():
+        pn = set((S.get(f"{pod}-net", {}).get("networks") or {}).keys())
+        if f"backup-{key}" not in pn:
+            errs.append(f"{pod}-net 에 backup-{key} 망이 없다")
+        others = {f"backup-{k}" for k in AREAS if k != key}
+        if pn & others:
+            errs.append(f"{pod}-net 이 다른 영역의 백업 망을 쓴다")
+    readers = [n for n, sv in S.items() if any((x if isinstance(x, str) else x.get("source")) == "backup-store-htpasswd" for x in sv.get("secrets", []))]
+    if readers != ["backup-store"]:
+        errs.append(f"htpasswd 를 읽는 서비스가 저장소뿐이 아니다: {readers}")
+    return errs
+
+
+class T(unittest.TestCase):
+    def test_wiring_is_clean(self):
+        self.assertEqual(check(S0), [])
+
+    def test_mutation_shared_credentials_is_caught(self):
+        m = copy.deepcopy(S0)
+        m["job-qa-backup" if False else "job-question-authoring-backup"]["secrets"] = [x if "backup-qa" not in x else x.replace("backup-qa", "backup-survey") for x in m["job-question-authoring-backup"]["secrets"]]
+        self.assertTrue(check(m), "일부러 qa 잡에 survey 자격을 줬는데 못 잡았다")
+
+    def test_mutation_shared_network_is_caught(self):
+        m = copy.deepcopy(S0)
+        m["survey-service-net"]["networks"]["backup-qa"] = {}
+        self.assertTrue(check(m))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -23,7 +23,7 @@ x-common-env: &commonenv   # CommonEnv(계약): 모든 영역 컨테이너가 �
 
 x-area-gateway: &areagw   # 영역 게이트웨이(platform 이미지, ADR 0063): 영역마다 하나를 그 영역의 네트워크 공간(<서비스>-net)에 둔다. 들어오는 쪽 443(서비스 이름 인증서)과 나가는 쪽 loopback 3128(CONNECT, 허용 목록은 영역 Exposure.egress). 설정은 이미지가 시작할 때 마운트된 Exposure 선언에서 만든다(deploy 는 라벨을 파일로 건넬 뿐이다)
   image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/area-gateway@${AREA_GATEWAY_DIGEST:?locks/images.lock}
-  user: "101:101"
+  user: "1000:1000"   # 왜 1000(platform 기본은 101): <서비스>-cert(step 사용자, uid 1000)가 쓴 키 파일(0600)을 읽어야 한다. 이미지는 어떤 uid 로도 돈다(설정은 /tmp tmpfs)
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
@@ -107,6 +107,14 @@ networks:
     internal: true
   db-keycloak:   # keycloak <-> postgres 만
     internal: true
+  backup-survey:   # 백업 저장소 <-> survey-service 영역 pod 만(영역끼리 닿지 않는다)
+    internal: true
+  backup-qa:   # 백업 저장소 <-> question-authoring 영역 pod 만(영역끼리 닿지 않는다)
+    internal: true
+  backup-ops:   # 백업 저장소 <-> ops-feedback-ingest 영역 pod 만(영역끼리 닿지 않는다)
+    internal: true
+  backup-gate:   # 백업 저장소 <-> release-gate 영역 pod 만(영역끼리 닿지 않는다)
+    internal: true
   reload-survey-db:   # survey-db-reload <-> survey-db 만
     internal: true
   reload-question-authoring-db:   # question-authoring-db-reload <-> question-authoring-db 만
@@ -135,6 +143,8 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   gateway-data:   # gateway(Caddy)의 내부 CA 루트와 발급 인증서(/data/caddy/pki). 비밀키가 들어 있어 백업·유출에 주의
   pki-ca:         # step-ca: 루트·중간 키(암호화됨)와 DB. **비밀 키가 있다. 백업 대상(루트 키 분실 = 모든 인증서 재발급, 사람 보관: docs/runbook.md PKI 절)**
   pki-tokens:     # 일회용 토큰(OTT). 5분 안에 쓰이지 않으면 무효
+  certs-backup-store:
+  backup-store-data:   # 영역 백업 저장소(platform backup-store, append-only). 서버 밖 저장소로 바꿀 수 있다
   certs-survey-service:
   certs-question-authoring:
   certs-ops-feedback-ingest:
@@ -190,6 +200,24 @@ secrets:
     file: ${GATEWAY_TLS_KEY_FILE:-./config/gateway-tls/unused.pem}
   step-ca-password:     # step-ca 가 루트·중간 키를 암호화하는 비밀번호(gen-secrets.sh 가 1회 만든다)
     file: ${SECRETS_DIR:-./secrets}/tokens/step-ca-password
+  backup-survey-credentials:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-survey-credentials
+  backup-survey-repo-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-survey-repo-password
+  backup-qa-credentials:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-qa-credentials
+  backup-qa-repo-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-qa-repo-password
+  backup-ops-credentials:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-ops-credentials
+  backup-ops-repo-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-ops-repo-password
+  backup-gate-credentials:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-gate-credentials
+  backup-gate-repo-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-gate-repo-password
+  backup-store-htpasswd:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-store-htpasswd
   pg-superuser-survey:
     file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-survey
   pg-superuser-qa:
@@ -353,7 +381,7 @@ services:
     tmpfs: ["/tmp"]
     group_add: *secretgid
     environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "for n in survey-service question-authoring ops-feedback-ingest release-gate model-serving model-registry dataset-store admin-console kiosk-frontend keycloak oauth2-proxy survey-db question-authoring-db ops-feedback-db release-gate-db keycloak-db; do step ca token $$n --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt > /home/step/$$n.ott || exit 1; done; chmod 644 /home/step/*.ott"]
+    entrypoint: ["sh", "-c", "for n in survey-service question-authoring ops-feedback-ingest release-gate model-serving model-registry dataset-store admin-console kiosk-frontend keycloak oauth2-proxy backup-store survey-db question-authoring-db ops-feedback-db release-gate-db keycloak-db; do step ca token $$n --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt > /home/step/$$n.ott || exit 1; done; chmod 644 /home/step/*.ott"]
     secrets: [step-ca-password]
     volumes: ["pki-tokens:/home/step", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
@@ -1003,6 +1031,48 @@ services:
       start_period: 30s
       start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
 
+  backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate backup-store /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/backup-store.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /home/step/tls.key; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-backup-store:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  backup-store-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 저장소(uid 1000)가 못 쓴다
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    user: "0:0"
+    entrypoint: ["chown", "-R", "1000:1000", "/data"]
+    restart: "no"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    network_mode: none
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    volumes: ["backup-store-data:/data"]
+  backup-store:   # 영역 백업 저장소(platform backup-store 이미지, restic REST, append-only, TLS 443, HTTP 기본 인증): 영역마다 다른 자격·경로·저장소 암호(RUNTIME R10.1)
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/backup-store@${BACKUP_STORE_DIGEST:?locks/images.lock}
+    restart: unless-stopped
+    user: "1000:1000"   # 왜 1000: backup-store-cert(step 사용자)가 쓴 키 파일(0600)을 읽어야 한다
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 443 을 추가 capability 없이 연다
+    mem_limit: ${BACKUP_STORE_MEM_LIMIT:-256m}   # 측정 안 함(시작값)
+    cpus: 0.5
+    pids_limit: 128
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    group_add: *secretgid
+    command: ["--path", "/data", "--listen", ":443", "--append-only", "--htpasswd-file", "/run/secrets/backup-store-htpasswd", "--private-repos=false", "--tls", "--tls-cert", "/certs/tls.crt", "--tls-key", "/certs/tls.key"]
+    secrets: [backup-store-htpasswd]
+    volumes: ["backup-store-data:/data", "certs-backup-store:/certs:ro"]
+    networks:
+      backup-survey: {aliases: [backup-store]}
+      backup-qa: {aliases: [backup-store]}
+      backup-ops: {aliases: [backup-store]}
+      backup-gate: {aliases: [backup-store]}
+    depends_on:
+      backup-store-cert: {condition: service_healthy}
+      backup-store-perms: {condition: service_completed_successfully}
+
   gateway:
     <<: *hardening
     mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -1126,6 +1196,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      backup-survey: {aliases: [survey-service]}
       edge: {aliases: [survey-service]}
       serving: {aliases: [survey-service]}
       serving-ops: {aliases: [survey-service]}
@@ -1177,6 +1248,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      backup-qa: {aliases: [question-authoring]}
       authoring: {aliases: [question-authoring]}
       release-qa: {aliases: [question-authoring]}
       db-qa: {aliases: [question-authoring]}
@@ -1356,6 +1428,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      backup-ops: {aliases: [ops-feedback-ingest]}
       serving-ops: {aliases: [ops-feedback-ingest]}
       logs: {aliases: [ops-feedback-ingest]}
       authoring: {aliases: [ops-feedback-ingest]}
@@ -1403,6 +1476,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      backup-gate: {aliases: [release-gate]}
       serving: {aliases: [release-gate]}
       release-mr: {aliases: [release-gate]}
       release-qa: {aliases: [release-gate]}
@@ -1656,3 +1730,75 @@ services:
     logging: *joblog
     group_add: *secretgid
     tmpfs: ["/tmp"]
+
+  job-survey-backup:   # survey-service 영역의 백업 잡(RUNTIME R10.1): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
+    profiles: ["jobs"]
+    mem_limit: ${JOB_SURVEY_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-service@${SURVEY_SERVICE_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/survey/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-survey-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-survey-repo-password}
+    secrets: [db-survey-dsn, backup-survey-credentials, backup-survey-repo-password]
+    network_mode: "service:survey-service-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp", "/data"]
+
+  job-question-authoring-backup:   # question-authoring 영역의 백업 잡(RUNTIME R10.1): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
+    profiles: ["jobs"]
+    mem_limit: ${JOB_QUESTION_AUTHORING_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring@${QUESTION_AUTHORING_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/qa/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-qa-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-qa-repo-password}
+    secrets: [db-qa-dsn, backup-qa-credentials, backup-qa-repo-password]
+    network_mode: "service:question-authoring-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp", "/data"]
+
+  job-ops-feedback-backup:   # ops-feedback 영역의 백업 잡(RUNTIME R10.1): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
+    profiles: ["jobs"]
+    mem_limit: ${JOB_OPS_FEEDBACK_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn, OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/ops/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-ops-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-ops-repo-password}
+    secrets: [db-ops-log-dsn, db-ops-failure-dsn, backup-ops-credentials, backup-ops-repo-password]
+    network_mode: "service:ops-feedback-ingest-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp", "/data"]
+
+  job-release-gate-backup:   # release-gate 영역의 백업 잡(RUNTIME R10.1): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
+    profiles: ["jobs"]
+    mem_limit: ${JOB_RELEASE_GATE_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/gate/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gate-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gate-repo-password}
+    secrets: [db-gate-dsn, backup-gate-credentials, backup-gate-repo-password]
+    network_mode: "service:release-gate-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp", "/data"]

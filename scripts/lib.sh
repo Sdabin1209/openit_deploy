@@ -55,9 +55,9 @@ DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진
 # 사용: areas_list [--kind python,node,library,compose,docs] [--train] [--except 이름,이름]  -> 공백으로 이은 이름. 시험용 위치: AREAS_FILE
 areas_list() { "$DEPLOY_PY" -W ignore "$(dirname "${BASH_SOURCE[0]}")/areas.py" --file "${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}" "$@"; }
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름(영역 목록이 아니다: model-registry 는 model-lab 영역의 이미지)
-SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console area-gateway"
+SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console area-gateway backup-store"
 # 선택 이미지: 기본 빌드·게시 흐름에 들어가지 않는다(약 13GB). build-images.sh --gpu 로 만든다 (compose.llm.yaml)
-SERVICES_OPTIONAL="model-serving-gpu public-ingress monitoring backup-store step-ca"   # public-ingress·monitoring·backup-store·step-ca 는 platform 이미지다: 아직 compose 가 쓰지 않아 기본 빌드에 넣지 않는다(이름을 줄 때만)
+SERVICES_OPTIONAL="model-serving-gpu public-ingress monitoring step-ca"   # public-ingress·monitoring·backup-store·step-ca 는 platform 이미지다: 아직 compose 가 쓰지 않아 기본 빌드에 넣지 않는다(이름을 줄 때만)
 # 서비스 -> 소스 리포·variant 대응(U42, 한 곳). build-images.sh 가 이것으로 영역 리포를 고르고 계약 BuildImageRequest 의 variant 를 채운다. 서비스 목록과 같은 자리에 둔다
 service_repo() { case "$1" in area-gateway|public-ingress|monitoring|backup-store|step-ca) echo platform;; model-registry) echo model-lab;; dataset-store) echo synthetic-data;; model-serving|model-serving-gpu) echo model-runtime;; *) echo "$1";; esac; }
 service_variant() { case "$1" in model-serving-gpu) echo gpu;; public-ingress|monitoring|backup-store|step-ca) echo "$1";; *) echo "";; esac; }
