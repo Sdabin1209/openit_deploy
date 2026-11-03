@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-450 D8b: link 핀 대조는 빌드한 커밋 기준
+- `check-link-pins.sh`(`check_link_pins.py`)가 영역 main 잠금 파일을 읽어, 영역 브랜치 HEAD 로 빌드한 이미지와 다른 핀(main 의 v0.4.3)을 보고 7개 영역에서 실패했다. 이제 빌드 기록 `build/images.env`(환경 `LINK_PINS_IMAGES_ENV`)의 revision(빌드한 커밋)의 잠금 파일을 `git show <revision>:<파일>` 로 읽고, 어느 커밋을 읽었는지 출력한다. 기록이 없는 영역은 예전처럼 main(없으면 HEAD)이며 "빌드 기록 없음"으로 표시한다. 기록의 커밋이 리포에 없을 때도 main 으로 돌아가되 통과로 속이지 않는다. 시험은 `test-link-pins-step.sh` 4건 추가(main 과 빌드 커밋의 핀이 다른 가짜 리포). main 을 읽는 다른 점검은 찾지 못했다(`verify_area.py` 의 main 은 바뀐 파일 비교 기준이라 해당 없음).
+
 ## wo-450 D7c: 영역 시험 6곳 실패의 원인 (check-all --strict 규칙 8)
 - 원인 셋, 영역 코드는 고치지 않았다. (1) GitHub 에 로컬 태그(link v0.4.6, 계약 v3.4.0 등)가 없어 영역 시험의 `build-image.sh` 가 `pip install git+ssh://…@태그` 에서 실패: `insteadOf` 로 로컬 리포로 돌리면(ssh:// 와 git@github.com: 와 https:// 세 형식, 이름 `openit_<리포>` 와 `<리포>` 둘) model-lab·release-gate·survey-service·synthetic-data 가 통과했다. (2) deploy 결함: `scripts/lib.sh` 가 `HF_CACHE_VOLUME` 을 환경에 내보내(export) check-all 이 돌리는 model-runtime 의 run_session 시험이 ModelServingEnv 에 없는 변수라며 거부했다 -> export 를 없애고 `dc` 가 compose 에만 넘기며, check-all 진입(wiring)이 deploy 전용 변수를 영역 시험 전에 지운다. (3) 환경 낡음: 계약 태그 v3.4.0 이 다시 찍혀(d383b21 -> 5c6be96) model-runtime·ops-feedback 의 .venv 에 설치된 계약이 낡았다(`pip` 이 같은 버전이라 다시 설치하지 않는다) -> 두 .venv 에 `pip install --force-reinstall` 로 다시 설치. 결과: 규칙 8 PASS(12/13, 1은 설계 문서 영역).
 
