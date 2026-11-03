@@ -25,6 +25,7 @@ class H(http.server.BaseHTTPRequestHandler):
         elif mode == "err503": self._send(503, BOUNDARY("UNAVAILABLE", "서비스가 준비되지 않았다"), extra=[("Retry-After", "3"), ("X-Test-Custom", "v-503")])
         elif mode == "err413": self._send(413, BOUNDARY("INVALID_RECORD", "앱이 정한 상한 초과"), extra=[("X-Test-Custom", "v-413")])
         elif mode == "sleep": time.sleep(float(self.headers.get("X-Sleep", "80"))); self._send(200, b'{"late":true}')
+        elif mode == "app-headers": self._send(200, b'{"mode":"app-headers"}', extra=[("Cache-Control", "max-age=60"), ("X-Frame-Options", "SAMEORIGIN"), ("Referrer-Policy", "origin"), ("X-Test-Custom", "v-app")])
         elif mode == "empty200": self._send(200, b"", ctype="application/json")
         else: self._send(200, json.dumps({"mode": "ok"}).encode(), extra=[("X-Test-Custom", "v-ok")])
     do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _do

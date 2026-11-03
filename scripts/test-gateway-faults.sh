@@ -38,6 +38,10 @@ c=$(req err503); chk "R2.1 앱이 직접 낸 503 UNAVAILABLE 은 본문·Retry-A
 chk "R2.1 앱 503 의 Retry-After 가 앱 값(3)" bash -c '[ "$(grep -i "^retry-after:" "$1/h" | tr -d "\r" | sed "s/^[^:]*: *//")" = 3 ]' _ "$T"
 c=$(req err413); chk "R2.1 앱이 낸 413 은 그대로(상태·본문 INVALID_RECORD)" bash -c '[ "$1" = 413 ] && grep -q "\"code\": \"INVALID_RECORD\"" "$2/b"' _ "$c" "$T"
 c=$(req ok); chk "R2.1 정상 200 본문·X-Test-Custom 그대로" bash -c '[ "$1" = 200 ] && grep -q "\"mode\": \"ok\"" "$2/b" && [ "$(grep -i "^x-test-custom:" "$2/h" | tr -d "\r" | sed "s/^[^:]*: *//")" = v-ok ]' _ "$c" "$T"
+# ---- R2.1(개정): 앱이 정한 Cache-Control·보안 머리글은 그대로, 앱이 안 정한 것만 게이트웨이가 더한다(우선순위: 앱 > 게이트웨이 선언값) ----
+c=$(req app-headers); chk "R2.1 앱이 정한 Cache-Control(max-age=60)·X-Frame-Options(SAMEORIGIN)·Referrer-Policy(origin)가 그대로" bash -c '[ "$1" = 200 ] && [ "$(grep -i "^cache-control:" "$2/h" | tr -d "\r" | sed "s/^[^:]*: *//")" = max-age=60 ] && [ "$(grep -i "^x-frame-options:" "$2/h" | tr -d "\r" | sed "s/^[^:]*: *//")" = SAMEORIGIN ] && [ "$(grep -i "^referrer-policy:" "$2/h" | tr -d "\r" | sed "s/^[^:]*: *//")" = origin ]' _ "$c" "$T"
+chk "R2.1 앱이 안 정한 보안 머리글은 게이트웨이가 더한다(X-Content-Type-Options: nosniff, Strict-Transport-Security)" bash -c 'grep -qi "^x-content-type-options: nosniff" "$1/h" && grep -qi "^strict-transport-security:" "$1/h"' _ "$T"
+c=$(req ok); chk "R2.1 앱이 Cache-Control 을 안 정했으면 게이트웨이의 no-store 가 붙는다" bash -c 'grep -qi "^cache-control: no-store" "$1/h"' _ "$T"
 # ---- R3.5: 본문 상한 초과 -> 413 + 본문, 503 아님 ----
 c=$(head -c 9437184 /dev/zero | curl -sk -m 60 -o "$T/b" -D "$T/h" -w '%{http_code}' -X POST -H "Authorization: Bearer $DEVTOK" -H 'Content-Type: text/plain' --data-binary @- "$URL")
 chk "R3.5 Content-Length 가 8MiB 초과: 413 + {\"code\":\"PAYLOAD_TOO_LARGE\"} + application/json" bash -c '[ "$1" = 413 ] && grep -q PAYLOAD_TOO_LARGE "$2/b" && grep -qi "^content-type: application/json" "$2/h"' _ "$c" "$T"

@@ -91,7 +91,7 @@ res() { local n=$1 st=$2; STAT["$n"]=$st; RESULT+=("$n|$st|$3"); [ "$st" = FAIL 
 # 선행 항목(NEED 배열 + 인자 하나)이 FAIL/SKIP 이면 이 항목은 돌리지 않고 SKIP 으로 센다. 뿌리 항목명을 남긴다
 blocked_by() { local d; for d in "${NEED[@]}" "$@"; do [ -n "$d" ] || continue; case "${STAT[$d]:-}" in FAIL) echo "$d"; return 0;; SKIP) echo "${ROOTF[$d]:-$d}"; return 0;; esac; done; return 1; }
 chk_dep() { local dep=$1; shift; local root; if root=$(blocked_by "$dep"); then ROOTF["$1"]=$root; res "$1" SKIP "SKIP(선행 실패: $root)"; else chk "$@"; fi; }
-chk() { local name=$1; local root; if root=$(blocked_by); then ROOTF["$name"]=$root; res "$name" SKIP "SKIP(선행 실패: $root)"; return 0; fi; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }
+chk() { local name=$1; local root; if root=$(blocked_by); then ROOTF["$name"]=$root; res "$name" SKIP "SKIP(선행 실패: $root)"; return 0; fi; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else mkdir -p "$W/diag"; { printf '## %s\n## 명령: %s\n' "$name" "$*"; printf '%s\n' "$out"; } > "$W/diag/chk-$(printf '%s' "$name" | tr -c 'A-Za-z0-9가-힣' '_' | cut -c1-80)-$RANDOM.txt" 2>/dev/null; res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }   # 실패한 점검의 출력 전체를 진단 폴더(collect_diag 가 $W/diag 를 복사한다)에 남긴다: 한 줄 요약만으로는 원인을 못 찾는다(4차 E2E 분리 배치 플레이북)
 finish() {
 {
 echo; echo "============================ 요약 ============================"

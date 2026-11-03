@@ -97,6 +97,7 @@
 | 입력 | `config/Caddyfile`, `auth.caddy`, 환경 `GATEWAY_HOSTS`·`GATEWAY_TLS_MODE`, 비밀 파일(토큰), 상류 `https://<서비스>`(루트: `/etc/openit/pki/root_ca.crt`), `forward_auth https://oauth2-proxy`. |
 | 출력 | 공개 API·사람 화면. 인증 없음: 화면 302(`/oauth2/start`), API 401+Bearer, 닫힌 면 404. 상류 장애: 503/504 JSON(R3.1~R3.4). 본문 상한 초과: 413(R3.5). |
 | 실패 동작 | 상류 거부·이름 해석 실패는 502→503 `UPSTREAM_UNAVAILABLE`+`Retry-After`, 시간 초과는 504(`handle_errors`). Content-Length 가 8MiB 를 넘는 요청은 상류에 보내기 전에 413. 상류(앱·종단·oauth2-proxy)가 준비된 뒤에야 뜬다(`depends_on: service_healthy`, R5.2). |
+| 더하는 머리글과 우선순위 (R2.1) | 앱이 같은 이름을 이미 정했으면 앱 값을 지우거나 바꾸지 않는다(우선순위: 앱 > 게이트웨이 선언값). 게이트웨이는 앱이 안 정했을 때만 다음을 더한다. 사이트 전체: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Strict-Transport-Security: max-age=31536000`. 상류 중계 경로: `Cache-Control: no-store`(키오스크 API·저작·검수·릴리스·oauth2 경로). `Server` 는 지운다(게이트웨이가 낸 값만). 문법: Caddy `header ?<이름> <값>`(없을 때만 설정). `header_down` 은 `?` 를 받지 않는다(2.11.7). 주의: 한 `header { }` 블록 안의 `?` 항목은 하나의 "모두 없을 때만" 조건으로 묶여 앱이 하나만 정해도 나머지가 빠지므로 머리글마다 한 줄씩 쓴다. 시험: `scripts/test-gateway-faults.sh`(앱이 Cache-Control·X-Frame-Options·Referrer-Policy 를 정하면 그대로, 안 정하면 게이트웨이 값). |
 | 전제 | P7: Caddy `reverse_proxy` 는 상류 연결 실패를 502, 시간 초과를 504 로 내고, 본문 읽기 오류는 상류가 TLS 이면 413 이 아니라 502 로 올라온다. 시험: `scripts/test-gateway-auth.sh`(8MiB 413 포함). P13: Content-Length 로 사전 거절할 수 있다(위 시험). |
 
 ## 8. 사람 인증 `oauth2-proxy`, `keycloak`

@@ -19,6 +19,12 @@ def func_body(text, name):
 
 
 class T(unittest.TestCase):
+    def test_failed_check_keeps_its_full_output_in_the_diag_folder(self):
+        # 진단 수단 보존: 실패한 점검(chk)은 한 줄 요약만이 아니라 출력 전체를 $W/diag 에 남긴다(collect_diag 가 그 폴더를 진단 폴더로 복사한다)
+        body = func_body(SH, "chk")
+        self.assertIn('$W/diag', body); self.assertIn("printf '%s\\n' \"$out\"", body)
+        self.assertIn('cp -r "$W/diag/."', SH)
+
     def test_collect_diag_reads_no_environment(self):
         body = func_body(SH, "collect_diag")
         code = "\n".join(l for l in body.splitlines() if not l.lstrip().startswith("#"))
