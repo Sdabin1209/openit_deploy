@@ -7,3 +7,4 @@ modules:
       valid_status_codes: []    # 비면 2xx 만 성공(옛: 기대 상태 코드 200)
       preferred_ip_protocol: ip4
       follow_redirects: false
+      tls_config: {ca_file: /etc/openit/pki/root_ca.crt}   # 서비스 사이드카 인증서는 deploy step-ca 발급(ADR 0060)

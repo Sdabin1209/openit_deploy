@@ -30,6 +30,7 @@ services:
       - ${CONFIG_DIR:-./config}/prometheus/${PROMETHEUS_INFERENCE_TARGETS:-local-inference-targets.yml}:/etc/prometheus/inference-targets.yml:ro   # 외부 추론 모드는 no-local-inference-targets.yml (prometheus.yml 주석)
       - ${CONFIG_DIR:-./config}/prometheus/${PROMETHEUS_INFERENCE_METRICS_TARGETS:-local-inference-metrics-targets.yml}:/etc/prometheus/inference-metrics-targets.yml:ro   # 외부 추론 모드는 no-local-inference-targets.yml
       - ${CONFIG_DIR:-./config}/prometheus/rules:/etc/prometheus/rules:ro
+      - pki-root:/etc/openit/pki:ro   # 서비스 사이드카 인증서를 검증할 루트(공개 인증서). 지표 읽기가 https 다(ADR 0060)
       - prometheus-data:/prometheus
     networks: [monitoring]
     depends_on: [alertmanager, blackbox-exporter, json-exporter, node-exporter]
@@ -59,7 +60,7 @@ services:
     cpus: ${BLACKBOX_CPUS:-0.25}
     pids_limit: ${BLACKBOX_PIDS_LIMIT:-64}
     command: ["--config.file=/etc/blackbox/blackbox.yml"]
-    volumes: ["${CONFIG_DIR:-./config}/prometheus/blackbox.yml:/etc/blackbox/blackbox.yml:ro"]
+    volumes: ["${CONFIG_DIR:-./config}/prometheus/blackbox.yml:/etc/blackbox/blackbox.yml:ro", "pki-root:/etc/openit/pki:ro"]
     networks: [monitoring, serving]
   json-exporter:
     <<: *monhard
@@ -69,7 +70,7 @@ services:
     cpus: ${JSON_EXPORTER_CPUS:-0.25}
     pids_limit: ${JSON_EXPORTER_PIDS_LIMIT:-64}
     command: ["--config.file=/config/json-exporter.yml"]
-    volumes: ["${CONFIG_DIR:-./config}/prometheus/json-exporter.yml:/config/json-exporter.yml:ro"]
+    volumes: ["${CONFIG_DIR:-./config}/prometheus/json-exporter.yml:/config/json-exporter.yml:ro", "pki-root:/etc/openit/pki:ro"]
     networks: [monitoring, serving]
   node-exporter:
     <<: *monhard
@@ -93,5 +94,6 @@ services:
 networks:
   monitoring:
 volumes:
+  pki-root:   # compose.yaml 가 정의한다(같은 프로젝트라 같은 볼륨). 루트 인증서만 있다
   prometheus-data:
   alertmanager-data:

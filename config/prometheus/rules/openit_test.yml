@@ -25,7 +25,7 @@ tests:
   - name: 탐침 실패는 2분 지속될 때 CRIT, 성공이면 조용
     interval: 1m
     input_series:
-      - {series: 'probe_success{instance="http://release-gate:8080/readyz"}', values: '1 1 0 0 0 0'}
+      - {series: 'probe_success{instance="https://release-gate/readyz"}', values: '1 1 0 0 0 0'}
       - {series: 'probe_success{instance="http://gateway:8080/healthz"}', values: '1 1 1 1 1 1'}
     alert_rule_test:
       - eval_time: 3m
@@ -34,8 +34,8 @@ tests:
       - eval_time: 5m
         alertname: ProbeDown
         exp_alerts:
-          - exp_labels: {severity: critical, instance: "http://release-gate:8080/readyz"}
-            exp_annotations: {summary: "http://release-gate:8080/readyz 탐침 실패 (healthz/readyz 가 2xx 가 아니거나 닿지 못함)"}
+          - exp_labels: {severity: critical, instance: "https://release-gate/readyz"}
+            exp_annotations: {summary: "https://release-gate/readyz 탐침 실패 (healthz/readyz 가 2xx 가 아니거나 닿지 못함)"}
   - name: release-gate 판정 루프 연속 실패 0/1/2/3 회, 인증 실패, 오래된 실행
     interval: 1m
     input_series:

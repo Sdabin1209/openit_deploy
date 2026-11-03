@@ -30,15 +30,17 @@ gen_db() {
   local a n
   for a in survey qa ops_log ops_failure gate keycloak; do
     n=${a//_/-}; tok "db-$n-password" >/dev/null
-    putlist "db-$n-dsn" "postgresql://$a:$(cat "$D/tokens/db-$n-password")@postgres:5432/$a"
+    putlist "db-$n-dsn" "postgresql://$a:$(cat "$D/tokens/db-$n-password")@postgres:5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
   done
   # L08: 스키마를 만드는 소유자 계정(위 db-$n-*, admin migrate 잡만 쓴다)과 DML만 가진 앱 계정(<이름>_app, 서버·잡이 쓴다)을 나눈다. 앱 계정 비밀은 db-$n-app-*
   for a in $PG_APP_DBS; do
     n=${a//_/-}; tok "db-$n-app-password" >/dev/null
-    putlist "db-$n-app-dsn" "postgresql://${a}_app:$(cat "$D/tokens/db-$n-app-password")@postgres:5432/$a"
+    putlist "db-$n-app-dsn" "postgresql://${a}_app:$(cat "$D/tokens/db-$n-app-password")@postgres:5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
   done
 }
 gen_db
+# 인증기관(ADR 0060): step-ca 가 루트·중간 키를 암호화하는 비밀번호. 키 자체는 step-ca 가 처음 기동에 1회 만들어 pki-ca 볼륨에 둔다(값은 출력하지 않는다). 개행 없이 만든다(step-ca 는 파일 내용을 그대로 비밀번호로 쓴다)
+[ -s "$D/tokens/step-ca-password" ] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$D/tokens/step-ca-password" ); secret_fix "$D/tokens/step-ca-password" step-ca-password
 # 사람 인증(U82, ADR 0057): Keycloak 부트스트랩 관리자, realm openit 의 초기 admin 임시 비밀번호, OIDC 클라이언트 비밀(Keycloak 과 oauth2-proxy 가 같은 값), oauth2-proxy 쿠키 키(32자: 16·24·32바이트만 받는다)
 gen_idp() {
   tok keycloak-bootstrap-admin-password >/dev/null; tok openit-initial-admin-password >/dev/null
