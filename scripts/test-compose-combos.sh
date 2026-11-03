@@ -14,10 +14,10 @@ while IFS= read -r combo; do
   N=$((N+1)); abs=""; for f in ${combo#ALONE }; do abs="$abs $DEPLOY_ROOT/$f"; done
   case "$combo" in ALONE\ *) alone=1;; *) alone=0;; esac
   # 호출자가 정해 주는 필수 변수(`:?`)는 더미를 채워 다시 해석한다(변수 이름은 compose 가 알려 준다). 값이 맞는지가 아니라 조합이 합쳐지는지를 본다
-  ( for _ in 1 2 3 4 5 6 7 8 9 10; do if [ $alone = 1 ]; then out=$("$DOCKER" compose -p deploy-combos -f ${abs# } config -q 2>&1) && break; else out=$(COMPOSE_EXTRA="${abs# }" dc deploy-combos config -q 2>&1) && break; fi
+  ( okx=1; for _ in $(seq 30); do if [ $alone = 1 ]; then out=$("$DOCKER" compose -p deploy-combos -f ${abs# } config -q 2>&1) && { okx=0; break; }; else out=$(COMPOSE_EXTRA="${abs# }" dc deploy-combos config -q 2>&1) && { okx=0; break; }; fi
      
       v=$(echo "$out" | sed -n 's/.*required variable \([A-Z0-9_]*\) is missing.*/\1/p' | head -1); [ -n "$v" ] || break
-      export "$v=$T/dummy"; touch "$T/dummy"; done; echo "$out" > "$T/out"; exit $([ -z "$out" ] && echo 0 || echo 1) ) ; rcx=$?; out=$(cat "$T/out")
+      case "$v" in *_PORT) export "$v=18443";; *) export "$v=$T/dummy"; touch "$T/dummy";; esac; done; echo "$out" > "$T/out"; exit $okx ) ; rcx=$?; out=$(cat "$T/out")
   if [ $rcx = 0 ]; then echo "  PASS config -q: ${combo:-기본}"
   else echo "  FAIL config -q: ${combo:-기본} :: $(echo "$out" | tail -1 | cut -c1-200)"; F=$((F+1)); fi
 done < <("$DEPLOY_PY" "$DEPLOY_ROOT/scripts/compose_combos.py" list)

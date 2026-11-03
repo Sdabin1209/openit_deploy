@@ -8,7 +8,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALONE = ["compose.inference.yaml", "compose.registry.yaml"]   # 이 파일만으로 띄운다(다른 호스트의 추론 서버, 서버 안 로컬 레지스트리): compose.yaml 과 합치지 않는다
-SINGLES = ["compose.external-inference.yaml", "compose.monitoring.yaml", "compose.backup-target.yaml",
+SINGLES = ["compose.external-inference.yaml", "compose.monitoring.yaml", "compose.backup-target.yaml", "compose.step-ca-publish.yaml",
            "test/compose.sandbox.yaml", "test/compose.fake-model.yaml", "test/compose.risk-rules.yaml", "demo/compose.demo-mimic.yaml"]
 
 
