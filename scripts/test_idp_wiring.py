@@ -4,6 +4,9 @@
 (2) compose: keycloak·oauth2-proxy 는 호스트 포트가 없고 비밀은 *_FILE 경로만(환경 변수에 값 없음), 안쪽 네트워크, oauth2-proxy 는 일반 oidc 공급자(keycloak-oidc 아님), 정적 계정 경로(basic_auth)는 없다,
 (3) 게이트웨이: 인증 조각은 oauth2-proxy 에 묻고 위조 헤더를 지우며, /auth/* /oauth2/* 만 IdP 로 보내고 master realm 과 /oauth2/auth 는 닫는다.
 사용: python3 scripts/test_idp_wiring.py (PyYAML 필요)"""
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
+from compose_nets import nets  # noqa: E402
 import json, pathlib, re, subprocess, tempfile, unittest
 
 import yaml
@@ -64,7 +67,7 @@ class Compose(unittest.TestCase):
             self.assertNotIn("ports", S[n], n)
         for net in ("auth", "db-keycloak"):
             self.assertTrue(C["networks"][net].get("internal"), net)
-        self.assertEqual(S["keycloak"]["networks"], ["auth", "db-keycloak"]); self.assertEqual(S["oauth2-proxy"]["networks"], ["auth"])
+        self.assertEqual(nets(S, "keycloak"), ["auth", "db-keycloak"]); self.assertEqual(nets(S, "oauth2-proxy"), ["auth"])
         self.assertIn("auth", S["gateway"]["networks"])
         self.assertIn("db-keycloak", S["postgres"]["networks"])
 

@@ -275,5 +275,5 @@ def inference_url() -> Optional[str]:
     ip = _C.get("inference_project")
     if not ip:
         return None
-    p = _docker_port(f"{ip}-model-serving-1", "model-serving", "443")
+    p = _docker_port(f"{ip}-model-serving-net-1", "model-serving", "443")
     return f"https://localhost:{p}" if p else None   # 인증서 SAN 에 localhost 가 있다(e2e.sh 가 토큰·인증서에 함께 넣는다)   # 서비스 TLS 사이드카(ADR 0060)가 받는 https. 인증서 이름이 host.docker.internal 이라 그 이름으로 부른다. 검증 루트는 호출 프로세스의 SSL_CERT_FILE(e2e.sh 가 step-ca 루트를 준다)

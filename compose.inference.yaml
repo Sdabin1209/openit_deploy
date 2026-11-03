@@ -12,6 +12,7 @@
 #   INFERENCE_PKI_ROOT_FILE  파일 경로. deploy step-ca 의 루트 인증서(공개, 비밀 아님; deploy 호스트의 pki-root 볼륨 root_ca.crt). 사이드카가 ACME 서버를 검증하는 데 쓴다(ADR 0060)
 #   INFERENCE_STEP_CA_URL        deploy step-ca 주소(https://<step-ca 주소>:9000). 이 서버 -> step-ca 경로만 있으면 된다(도전 없음)
 #   INFERENCE_TLS_TOKEN_FILE     파일 경로. 지휘 쪽이 `step ca token <INFERENCE_TLS_NAME>` 으로 발급한 일회용 토큰(5분). 인증서의 SAN 은 토큰이 정한다(step 은 --token 과 --san 을 함께 받지 않는다): 같은 호스트에서 localhost 로도 부르려면 토큰을 `--san <이름> --san localhost` 로 발급한다
+#   INFERENCE_PAUSE_IMAGE  네트워크 공간만 잡는 컨테이너 이미지(pause, digest 참조; deploy 잠금의 PAUSE_IMAGE)
 #   INFERENCE_STEP_IMAGE         step-ca 이미지(digest 참조, 잠금의 STEP_CA_IMAGE)
 #   INFERENCE_TLS_NAME   이 서버의 이름(호출자가 https://<이름> 으로 부르는 DNS 이름 = 인증서 이름)
 #   INFERENCE_SIDECAR_IMAGE  TLS 사이드카(Caddy 공식 이미지, digest 참조; deploy 잠금의 GATEWAY_IMAGE 와 같은 값)
@@ -56,8 +57,24 @@ volumes:
   # hf-cache:       # GPU 변형: Hugging Face 모델 캐시. 아래 model-serving 의 주석을 같이 푼다 (마운트 경로는 이미지가 준비한 /var/lib/model-runtime/hf)
 
 services:
-  model-serving:
+  model-serving-net:   # model-serving 의 네트워크 공간만 갖는 작은 컨테이너(pause, RUNTIME.md R3.2): 게시 포트·extra_hosts·sysctls·network_mode 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-serving-net 으로 붙어 앱이 멈춰도 공간이 남는다(ADR 0060)
+    image: ${INFERENCE_PAUSE_IMAGE:?INFERENCE_PAUSE_IMAGE(pause 이미지, digest 참조; deploy 잠금의 PAUSE_IMAGE)가 필요하다}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카가 추가 capability 없이 443 을 연다(ADR 0060)
+    network_mode: ${INFERENCE_NETWORK_MODE:-bridge}
+    extra_hosts: ["host.docker.internal:host-gateway"]   # 게이트가 같은 호스트의 다른 컴포즈 프로젝트에 있을 때(시험·단일 서버)
+    ports:
+      - "${INFERENCE_BIND:-127.0.0.1}:${INFERENCE_PORT-443}:443"   # 밖에 열리는 것은 TLS 사이드카(443)뿐이다. 앱의 8080 은 게시하지 않는다(ADR 0060)
+  model-serving:
+    network_mode: "service:model-serving-net"
     <<: *hardening
     image: ${INFERENCE_IMAGE:?INFERENCE_IMAGE(model-serving 이미지, digest 참조)가 필요하다}
     env_file:
@@ -65,7 +82,6 @@ services:
     secrets: [model-runtime-tokens, model-runtime-release-token]
     configs:
       - {source: gateway-ca, target: /etc/openit/gateway-ca.crt}   # 공개 인증서라 secrets 가 아니라 configs 다
-    network_mode: ${INFERENCE_NETWORK_MODE:-bridge}
     environment:
       SSL_CERT_FILE: /etc/openit/gateway-ca.crt   # 왜: 번들 읽기 클라이언트(boundary_contracts)와 probe() 의 urllib 이 이 CA 만으로 게이트웨이 TLS 를 검증한다. 시스템 신뢰 저장소를 고치지 않는다
       MODEL_RUNTIME_HOST: ${INFERENCE_LISTEN_HOST:-127.0.0.1}   # 앱은 TLS 사이드카(같은 네임스페이스)에게만 닿는다(ADR 0060). 게시되는 것은 사이드카 443 뿐이다
@@ -80,9 +96,6 @@ services:
     volumes:
       - serving-data:/var/lib/model-runtime
       # - hf-cache:/var/lib/model-runtime/hf   # GPU 변형(예시, 주석): 이미지가 uid 10001 소유로 준비한 HF_HOME 기본 경로. HF_HOME 을 덮어쓰지 않는다
-    extra_hosts: ["host.docker.internal:host-gateway"]   # 게이트가 같은 호스트의 다른 컴포즈 프로젝트에 있을 때(시험·단일 서버)
-    ports:
-      - "${INFERENCE_BIND:-127.0.0.1}:${INFERENCE_PORT-443}:443"   # 밖에 열리는 것은 TLS 사이드카(443)뿐이다. 앱의 8080 은 게시하지 않는다(ADR 0060)
     # GPU 예약(예시, 주석): NVIDIA Container Toolkit 이 있는 호스트에서
     # deploy:
     #   resources:
@@ -105,14 +118,14 @@ services:
     read_only: true
     tmpfs: ["/tmp"]
     environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
+    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
     secrets: [tls-token]
     extra_hosts: ["host.docker.internal:host-gateway"]   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험). 다른 서버면 배치 값이 step-ca 주소를 준다
     configs:
       - {source: pki-root, target: /etc/openit/pki/root_ca.crt}
     volumes: ["certs:/home/step"]
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    healthcheck: {test: ["CMD", "test", "-s", "/home/step/tls.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
+    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/home/step/tls.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
   model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): 파일 인증서로 TLS 를 끝내 127.0.0.1:8080 으로 넘긴다
     group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}"]   # L02(ADR 0054): 비밀 파일은 640 + 이 그룹이다. 누구나 읽게(644) 하지 않는다
     image: ${INFERENCE_SIDECAR_IMAGE:?INFERENCE_SIDECAR_IMAGE(Caddy 이미지, digest 참조)가 필요하다}
@@ -120,10 +133,10 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; f=0; i=0; while sleep 5; do kill -0 $$p 2>/dev/null || exit 1; if nc -z 127.0.0.1 $${TLS_UPSTREAM##*:}; then f=0; else f=$$((f+1)); [ $$f -ge 6 ] && exit 1; fi; i=$$((i+1)); [ $$((i%12)) = 0 ] || continue; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]
+    entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --force --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]
     read_only: true
     tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
-    network_mode: "service:model-serving"
+    network_mode: "service:model-serving-net"
     environment:
       TLS_NAME: ${INFERENCE_TLS_NAME:?INFERENCE_TLS_NAME(호출자가 부르는 이름)이 필요하다}
       TLS_UPSTREAM: "127.0.0.1:8080"

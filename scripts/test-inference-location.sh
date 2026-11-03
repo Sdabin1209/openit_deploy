@@ -72,11 +72,11 @@ reach() {
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   # 이 변수들은 "다른 호스트" 쪽 compose 의 환경이다(제품 쪽에는 없다). fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험 전용 표시, model-runtime ADR 0009)
   INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gateway-inference-token" \
-  INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$SCP" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott" \
+  INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$SCP" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott" \
   INFERENCE_CA_FILE="$W/gateway-ca.crt" RELEASE_URL="https://host.docker.internal:$GWPORT" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
 
-STEP_IMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$DEPLOY_LOCK"); SC_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")
+PAUSE_IMG=$(sed -n 's/^PAUSE_IMAGE=//p' "$DEPLOY_LOCK"); STEP_IMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$DEPLOY_LOCK"); SC_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")
 # 빈 포트(고정 포트 금지). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml). 호스트 쪽 제외 포트 범위(WSL/Windows)에 걸리면 Docker 가 게시를 거부하므로(측정함) 실제로 게시해 보고 고른다
 SCP=""
 for _try in 1 2 3 4 5 6 7 8; do
@@ -114,7 +114,7 @@ for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   chmod 640 "$W/tls.ott"
   echo "== (나) 다른 호스트: 별도 프로젝트 $INF, compose.inference.yaml 하나 (바인드 $BIND, 포트는 Docker 배정)"
   inf_compose up -d --wait || { echo "  추론 서버가 준비되지 않았다 (바인드 $BIND)"; "$DOCKER" logs --tail 20 "$INF-model-serving-1" 2>&1 | sed 's/^/    /'; bail "추론 서버 기동 실패"; }
-  IPORT=$(port_of "$INF-model-serving-1" 443)
+  IPORT=$(port_of "$INF-model-serving-net-1" 443)
   [ -n "$IPORT" ] || bail "추론 서버 호스트 포트를 읽지 못했다"
   if reach "https://host.docker.internal:$IPORT/healthz" "$W/pki/root_ca.crt"; then OK=1; break; fi   # body-judged: reach 가 본문 status/ok 를 판정한다
   echo "  컨테이너에서 추론 서버 host.docker.internal:$IPORT 에 닿지 못했다 (바인드 $BIND)"

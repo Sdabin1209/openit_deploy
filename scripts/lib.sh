@@ -118,7 +118,7 @@ dc() { # dc <project> <compose args...>
   [ -f "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}" ] && envs+=(--env-file "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}")
   [ -f "$DEPLOY_ROOT/.env" ] && envs+=(--env-file "$DEPLOY_ROOT/.env")
   # 잠금 파일이 digest의 유일한 출처다: 셸에 남은 같은 이름의 변수가 --env-file 을 이기지 못하게 지운다
-  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u STEP_CA_IMAGE -u DEPLOY_REGISTRY "GATEWAY_HOST_NAMES=$(gateway_host_names)" "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
+  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u STEP_CA_IMAGE -u PAUSE_IMAGE -u DEPLOY_REGISTRY "GATEWAY_HOST_NAMES=$(gateway_host_names)" "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
     "$DOCKER" compose -p "$project" --project-directory "$DEPLOY_ROOT" "${files[@]}" "${envs[@]}" "$@"
 }
 # 외부 추론 서버 모드(D72): external_inference_setup <URL>. INFERENCE_URL / INFERENCE_TOKEN_FILE 을 내보내고 COMPOSE_EXTRA 에 override 를 붙인다.
@@ -135,7 +135,7 @@ external_inference_setup() {
   elif [ -n "${INFERENCE_TOKEN:-}" ]; then
     mkdir -p "$sd/tokens"; chmod 700 "$sd" "$sd/tokens" 2>/dev/null || true
     INFERENCE_TOKEN_FILE="$sd/tokens/external-inference"
-    ( umask 022; printf '%s\n' "$INFERENCE_TOKEN" > "$INFERENCE_TOKEN_FILE" )   # 644: 컨테이너(uid 10001)가 읽는다. 폴더가 700
+    ( umask 027; printf '%s\n' "$INFERENCE_TOKEN" > "$INFERENCE_TOKEN_FILE" ); chgrp "$SECRETS_GID" "$INFERENCE_TOKEN_FILE" 2>/dev/null || true   # 640 + 그룹 SECRETS_GID: 컨테이너는 group_add 로 읽는다(R6.3). 폴더가 700
   elif [ -s "$sd/tokens/external-inference" ]; then
     INFERENCE_TOKEN_FILE="$sd/tokens/external-inference"
   else
@@ -189,14 +189,14 @@ PG_DBS="survey qa ops_log ops_failure gate keycloak"   # 데이터베이스 = �
 
 # 비밀 파일 모드(docs/adr/0022-secret-file-permissions.md, 0054). compose 의 파일 secrets/configs 는 호스트 소유자·그룹·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않는다.
 # 컨테이너가 읽는 파일(compose.yaml 의 secrets/configs 가 가리키는 이름)은 640 + 파일 그룹 SECRETS_GID, 컨테이너는 group_add 로 그 그룹을 더해 읽는다(0054). 폴더는 700.
-# 다른 호스트로 옮겨 읽는 추론 서버용 파일 셋(model-runtime-tokens, gate-read-model-serving, external-inference)은 그 호스트의 gid 를 모르므로 644 다.
-# 호스트에서만 쓰는 파일(계정 암호·해시, 기기 토큰 원본)은 600 이다. secret_mode <이름> -> 600|640|644
+# 다른 호스트의 추론 서버가 읽는 파일 셋(model-runtime-tokens, gate-read-model-serving, external-inference)도 640 + 그룹이다(RUNTIME.md R6.3): 추론 compose 의 group_add(SECRETS_GID)가 읽는다. 누구나 읽게(644) 하지 않는다.
+# 호스트에서만 쓰는 파일(계정 암호·해시, 기기 토큰 원본)은 600 이다. secret_mode <이름> -> 600|640
 secret_mode() {
   local n=$1
   if [ -z "${_MOUNTED_SECRETS+x}" ]; then
     _MOUNTED_SECRETS=" $(sed -n 's|^[[:space:]]*file:[[:space:]]*${SECRETS_DIR:-./secrets}/\(tokens/\)\{0,1\}\([A-Za-z0-9._-]*\).*|\2|p' "$DEPLOY_ROOT/compose.yaml" | tr '\n' ' ') "
   fi
-  case "$n" in model-runtime-tokens|gate-read-model-serving|external-inference) echo 644; return;; esac
+  case "$n" in external-inference) echo 640; return;; esac   # compose.external-inference.yaml 의 비밀(survey-service 가 마운트): compose.yaml 의 file: 줄에 없어도 컨테이너가 읽는다
   case "$_MOUNTED_SECRETS" in *" $n "*) echo 640;; *) echo 600;; esac
 }
 # 비밀 파일 하나의 모드와 그룹을 규칙대로 맞춘다: secret_fix <파일> [이름]. 640 이면 그룹을 SECRETS_GID 로 바꾼다(속한 그룹이면 root 없이 된다. 못 바꾸면 이유를 낸다)

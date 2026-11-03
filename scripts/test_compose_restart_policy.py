@@ -26,6 +26,11 @@ class RestartPolicy(unittest.TestCase):
         self.assertEqual(sum(len(k) for k in kinds), len(SERVICES), "서비스가 두 종류에 걸친다")
         self.assertTrue(ALWAYS and JOBS and ONESHOT, "상시·잡·일회성 중 하나가 비었다: 분류 규칙이 깨졌다")
 
+    def test_every_tls_sidecar_has_net_owner_and_cert(self):
+        # 사이드카(<서비스>-tls)마다 공간 소유자(<서비스>-net)와 인증서 컨테이너(<서비스>-cert)가 있다(RUNTIME-COMPONENTS 2·5절)
+        miss = [n for n in SERVICES if n.endswith("-tls") and not (f"{n[:-4]}-net" in SERVICES and f"{n[:-4]}-cert" in SERVICES)]
+        self.assertEqual(miss, [])
+
     def test_always_on_services_restart_unless_stopped(self):
         bad = {n: s.get("restart") for n, s in ALWAYS.items() if s.get("restart") != "unless-stopped"}
         self.assertEqual(bad, {}, "상시 서비스는 restart: unless-stopped 이다")

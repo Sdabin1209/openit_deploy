@@ -6,6 +6,7 @@ import copy, itertools, pathlib, sys, unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_callers_trust_root as C  # noqa: E402
+from compose_nets import nets  # noqa: E402   # network_mode 를 따라가 앱의 망(= <서비스>-net 의 망)을 돌려준다
 
 S = C.S
 # 계약이 정한 호출 중 compose 서비스 사이에서 일어나지 않는 것(오프 컴포즈 호출자: model-lab, synthetic-data 는 compose 서비스가 아니다). 현재 없음.
@@ -23,7 +24,7 @@ KNOWN = {
 
 
 def scope(svcs):
-    apps = {str(v["network_mode"]).split(":", 1)[1] for v in svcs.values() if str(v.get("network_mode") or "").startswith("service:")}
+    apps = {n[:-4] for n in svcs if n.endswith("-tls")}   # TLS 종단을 둔 앱(<서비스>-tls 의 <서비스>)
     return sorted(apps | {"gateway"})
 
 
@@ -38,7 +39,7 @@ def allowed(svcs):
 def violations(svcs):
     ok = allowed(svcs); out = {}
     for a, b in itertools.combinations(scope(svcs), 2):
-        common = set(svcs[a].get("networks") or []) & set(svcs[b].get("networks") or [])
+        common = set(nets(svcs, a)) & set(nets(svcs, b))
         if common and frozenset((a, b)) not in ok: out[frozenset((a, b))] = sorted(common)
     return out
 
@@ -59,7 +60,7 @@ class T(unittest.TestCase):
         self.assertIn(frozenset(("survey-service", "release-gate")), allowed(S))
 
     def test_mutation_new_shared_network_is_caught(self):
-        m = copy.deepcopy(S); m["admin-console"]["networks"] = list(m["admin-console"]["networks"]) + ["authoring"]
+        m = copy.deepcopy(S); m["admin-console-net"]["networks"] = list(m["admin-console-net"]["networks"]) + ["authoring"]   # 공간 소유자에 망을 더한다
         self.assertTrue(any(k not in KNOWN for k in violations(m)), "일부러 admin-console 을 authoring 망에 붙였는데 새 위반이 안 잡힌다")
 
 

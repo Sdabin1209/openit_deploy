@@ -17,6 +17,6 @@ for f in "$D"/tokens/* "$D"/gateway-devices.caddy; do [ -f "$f" ] || continue
   elif [ "$want" = 600 ] && (( 8#$m & 8#077 )); then echo "FAIL $n 모드 $m: 호스트 전용 비밀은 600 이어야 한다 (chmod 600; gen-secrets.sh 를 다시 실행하면 바로잡는다)"; bad=$((bad+1))
   elif [ "$want" = 640 ] && { (( 8#$m & 8#007 )) || ! (( 8#$m & 8#040 )); }; then echo "FAIL $n 모드 $m: 컨테이너가 읽는 파일은 640 이어야 한다(그룹 읽기 있고 기타 접근 없음). 아니면 서비스가 못 읽는다(600) 또는 필요 이상으로 열려 있다(기타 접근) (gen-secrets.sh 를 다시 실행)"; bad=$((bad+1))
   elif [ "$want" = 640 ] && [ "$(stat -c %g "$f")" != "$SECRETS_GID" ]; then echo "FAIL $n 그룹 $(stat -c %g "$f"): 컨테이너 group_add 의 gid(SECRETS_GID=$SECRETS_GID)와 다르다 -> 서비스가 못 읽는다 (gen-secrets.sh 를 다시 실행)"; bad=$((bad+1))
-  elif [ "$want" = 644 ] && ! (( 8#$m & 8#004 )); then echo "FAIL $n 모드 $m: 다른 호스트의 컨테이너가 읽는 파일인데 기타 읽기가 없다 (gen-secrets.sh 를 다시 실행)"; bad=$((bad+1)); fi
+  elif false; then echo "FAIL $n 모드 $m: 다른 호스트의 컨테이너가 읽는 파일인데 기타 읽기가 없다 (gen-secrets.sh 를 다시 실행)"; bad=$((bad+1)); fi
 done
 [ $bad = 0 ] && { echo "OK 비밀 파일 권한 ($(ls "$D/tokens" 2>/dev/null | wc -l)개 + 게이트웨이 설정 2개)"; exit 0; } || { echo "비밀 권한 어긋남 ${bad}건"; exit 1; }

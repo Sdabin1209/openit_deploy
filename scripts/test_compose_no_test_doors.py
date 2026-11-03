@@ -10,7 +10,7 @@ import pathlib, re, sys
 import yaml
 
 ROOT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parents[1]
-PORT_OK = {("compose.yaml", "gateway"), ("compose.inference.yaml", "model-serving"), ("compose.step-ca-publish.yaml", "step-ca")}   # step-ca 게시는 서버를 나눌 때만 더하는 overlay(ADR 0060)
+PORT_OK = {("compose.yaml", "gateway"), ("compose.inference.yaml", "model-serving-net"), ("compose.step-ca-publish.yaml", "step-ca")}   # step-ca 게시는 서버를 나눌 때만 더하는 overlay(ADR 0060)
 # 운영자용 관찰 면(헤드 결정 2026-11-01): 시험용 문이 아니라 운영자가 보는 화면·도구다. 파일·서비스를 이름으로 허용하고, 바인드가 127.0.0.1 이어야 한다(조건 검사).
 #  - compose.monitoring.yaml prometheus, alertmanager: 운영자 관찰 UI. 127.0.0.1 바인드 필수.
 #  - compose.registry.yaml registry: 빌드·게시용 임시 레지스트리(D24), 제품이 아닌 별도 프로젝트. 호스트(docker push)가 닿아야 존재 이유가 있다. 127.0.0.1 바인드가 기본이어야 한다.
