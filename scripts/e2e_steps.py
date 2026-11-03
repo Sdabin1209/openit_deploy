@@ -1372,10 +1372,14 @@ def step5a():
     # 이웃 읽기 면(I1)은 gateway 에 열지 않는다. 본문 상한 8MiB 초과는 413
     assert _c2_raw("GET", f"/v1/question-sets/{qset}/versions", basic=_C2_AUTHOR)[0] == 404, "I1 읽기 면이 gateway 에 열려 있다"
     assert _c2_raw("GET", "/v1/question-sets", basic=_C2_AUTHOR)[0] == 401, "정확히 /v1/question-sets 는 키오스크 목록(I10)이라 사람 계정이 아니라 기기 토큰만 받는다"
-    # Caddy 는 상한을 넘는 본문을 읽다가 413 으로 끊는다. 클라이언트가 아직 보내는 중이면 응답을 받기 전에 연결이 끊겨(SSL EOF·연결 재설정) 상태 코드를 못 읽기도 한다: 둘 다 '거부됨'으로 본다(정상 업로드가 아님)
-    try: c9 = gw_bytes("POST", up, b"x" * (9 * 1024 * 1024), "text/plain", basic=_C2_AUTHOR)[0]
-    except (urllib.error.URLError, ConnectionError, OSError) as e9: c9 = f"연결 끊김({type(e9).__name__})"
-    assert c9 == 413 or isinstance(c9, str), ("8MiB 초과 본문이 거부되지 않았다", c9)
+    # R3.5: 본문 상한(8MiB) 초과는 게이트웨이가 상류로 보내기 전에 413 + {"code":"PAYLOAD_TOO_LARGE"} 로 거절한다(예전엔 "413 또는 연결 끊김"을 모두 거부로 봤다: 연결 끊김은 R3.5 가 아니다).
+    # curl 로 보낸다: 서버가 413 을 먼저 보내고 연결을 닫으면 파이썬 urllib 은 보내던 중 쓰기 오류로 응답을 못 읽는다(curl 은 응답이 오면 읽는다). 쿠키는 OIDC 로그인 세션을 쓴다
+    cookie = SB.session_cookie(_C2_AUTHOR)
+    r9 = subprocess.run(["curl", "-s", "-m", "60", "--cacert", str(a.gw_ca), "-o", "-", "-w", "\n%{http_code} %{content_type}", "-X", "POST", "-H", f"Cookie: {cookie}", "-H", "Content-Type: text/plain",
+                         "--data-binary", "@-", SB.gw_url(human=True) + up], input=b"x" * (9 * 1024 * 1024), capture_output=True)
+    out9 = r9.stdout.decode(errors="replace").rsplit("\n", 1)
+    code9, ctype9 = (out9[-1].split(" ", 1) + [""])[:2]
+    assert code9 == "413" and "PAYLOAD_TOO_LARGE" in out9[0] and ctype9.startswith("application/json"), ("8MiB 초과 본문이 413 + PAYLOAD_TOO_LARGE + application/json 이 아니다", code9, out9[0][:100], ctype9)
     rec("5a", "REAL", f"저자 경로(gateway 경유, 개별 계정): 인증 없음 401, 역할 없는 계정 403, author 계정의 자료 등록·미리보기·확인(문항 세트 {qset}@{ref['version']}), 저자의 자기 임상 승인 403(4-eyes), clinical-reviewer 계정의 승인 200(위조 X-Openit-User 는 무시되고 reviewer_id={_C2_CLINICAL} 가 기록됨), 승인 뒤 reviewed_only 최신 버전, I1 읽기 면 404, 9MiB 본문 거부({c9})")
 
 def dev_tok(d): return TOK(f"kiosk-device-{d}")
