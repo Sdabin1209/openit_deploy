@@ -261,11 +261,11 @@ cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; cp "$GWT
 #  (1) 제품: up.sh --external-inference <자리표시 주소>  (2) 제품 입구의 CA·포트, step-ca 루트를 꺼내고 이 서버 이름의 일회용 토큰(5분)을 발급
 #  (3) 추론 서버를 별도 프로젝트로(RELEASE_URL=제품 입구)  (4) 실제 추론 서버 주소를 제품(survey-service)에 알린다.
 mkdir -p "$W/pki"; : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
-STEP_IMG=$STEP_CA_IMAGE; SC_IMG=$GATEWAY_IMAGE
+STEP_IMG=$STEP_CA_IMAGE; SC_IMG=$GATEWAY_IMAGE; PAUSE_IMG=$PAUSE_IMAGE
 inf_up() { # inf_up <RELEASE_URL> <게이트웨이 CA 파일>: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
   local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
     INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal
-    INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
+    INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
   env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
 }
@@ -295,7 +295,7 @@ chk "추론 서버용 일회용 TLS 토큰 발급 (step-ca 게시 포트로, 지
 abort_if_failed
 chk "추론 서버 기동 (별도 프로젝트 $INF: compose.inference.yaml, 제품 입구로 release-gate 를 읽는다, https)" inf_up "$GWTLS" "$W/gateway-ca.crt"
 abort_if_failed
-IPORT=$(port_of "$INF-model-serving-1" 443)
+IPORT=$(port_of "$INF-model-serving-net-1" 443)
 external_inference_setup "https://host.docker.internal:$IPORT"
 chk "survey-service 가 추론 서버 주소를 쓴다 (INFERENCE_URL 갱신, up.sh)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 abort_if_failed

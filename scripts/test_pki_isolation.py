@@ -3,9 +3,12 @@
 (4차 E2E: survey-service -> question-authoring 이 pki 망으로 닿았다). 인증서는 <서비스>-cert 컨테이너(pki 망)가 받아 볼륨으로 준다.
 또 e2e.sh 가 "차단" 으로 확인하는 서비스 쌍은 compose 에서 공통 망이 없어야 한다.
 변이 확인(일부러 망을 붙이면 실패하는가)은 작업 트리의 compose.yaml 을 건드리지 않고 임시 사본에서 한다. 사용: python3 scripts/test_pki_isolation.py"""
-import copy, pathlib, re, unittest
+import copy, pathlib, re, sys, unittest
 
 import yaml
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from compose_nets import nets  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 S = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
@@ -14,15 +17,15 @@ CERT_ONLY = ("step-ca", "pki-root", "pki-tokens", "postgres-cert")
 
 
 def sidecared_apps(svcs):
-    return sorted({str(v["network_mode"]).split(":", 1)[1] for v in svcs.values() if str(v.get("network_mode") or "").startswith("service:")})
+    return sorted(n[:-4] for n in svcs if n.endswith("-tls"))
 
 
 def apps_on_pki(svcs):
-    return [a for a in sidecared_apps(svcs) if "pki" in (svcs[a].get("networks") or [])]
+    return [a for a in sidecared_apps(svcs) if "pki" in nets(svcs, a)]
 
 
 def non_cert_on_pki(svcs):
-    return [n for n, s in svcs.items() if "pki" in (s.get("networks") or []) and not (n.endswith("-cert") or n in CERT_ONLY)]
+    return [n for n in svcs if "pki" in nets(svcs, n) and not (n.endswith("-cert") or n in CERT_ONLY)]
 
 
 def blocked_pairs_sharing_networks(svcs):
@@ -31,7 +34,7 @@ def blocked_pairs_sharing_networks(svcs):
     for a, b in pairs:
         if a not in svcs or b not in svcs or "model-serving" in (a, b):   # model-serving 은 제품 밖(다른 호스트 역할): compose.yaml 의 망으로 비교하지 않는다
             continue
-        common = set(svcs[a].get("networks") or []) & set(svcs[b].get("networks") or [])
+        common = set(nets(svcs, a)) & set(nets(svcs, b))
         if common: bad.append(f"{a} -> {b}: 공통 망 {sorted(common)}")
     return bad
 
@@ -46,9 +49,9 @@ class T(unittest.TestCase):
 
     def test_mutations_on_a_copy_are_caught(self):
         # 작업 트리 파일이 아니라 메모리 사본(deepcopy)을 바꾼다
-        m = copy.deepcopy(S); m["survey-service"]["networks"] = list(m["survey-service"]["networks"]) + ["pki"]
+        m = copy.deepcopy(S); m["survey-service-net"]["networks"]["pki"] = {}
         self.assertIn("survey-service", apps_on_pki(m))
-        m = copy.deepcopy(S); m["survey-service"]["networks"] = list(m["survey-service"]["networks"]) + ["authoring"]
+        m = copy.deepcopy(S); m["survey-service-net"]["networks"]["authoring"] = {}
         self.assertTrue(any(x.startswith("survey-service -> question-authoring") for x in blocked_pairs_sharing_networks(m)))
         m = copy.deepcopy(S); m["gateway"]["networks"] = list(m["gateway"]["networks"]) + ["pki"]
         self.assertIn("gateway", non_cert_on_pki(m))

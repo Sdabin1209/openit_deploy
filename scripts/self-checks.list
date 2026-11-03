@@ -84,3 +84,4 @@ E2E 의 PostgreSQL 목록은 PG_DBS 정본이다(하드코딩 금지, keycloak �
 deploy .venv 에 pip install 은 설치 스크립트(prepare-host.sh, prepare-areas.sh)에만 있다: 빌드·시험이 공용 venv 를 바꾸면 다른 실행이 깨진다 (4차 E2E build-images.sh force-reinstall) :: python3 "$DEPLOY_ROOT/scripts/test_no_pip_outside_setup.py"
 rollback.sh: 서비스 digest 가 SERVICES 전부 있는 잠금만 후보, 키 집합이 다른(다른 deploy 판) 잠금으로는 멈춘다 (가짜 history 로 단독 시험) :: bash "$DEPLOY_ROOT/scripts/test-rollback.sh"
 R1.4 배치 무관: 서버별 override 의 호출 설정 이름·경로·서비스 이름이 한 서버 배치와 같다 (정적, 주소는 서비스 이름 + extra_hosts) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_placement_names.py"
+네트워크 공간 수명: 앱·사이드카 stop/start·프로세스 kill 뒤 게이트웨이 503/200 (pause <서비스>-net, ADR 0060) :: bash "$DEPLOY_ROOT/scripts/test-netns-lifetime.sh"
