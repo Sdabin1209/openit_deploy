@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-450 D7c: 영역 시험 6곳 실패의 원인 (check-all --strict 규칙 8)
+- 원인 셋, 영역 코드는 고치지 않았다. (1) GitHub 에 로컬 태그(link v0.4.6, 계약 v3.4.0 등)가 없어 영역 시험의 `build-image.sh` 가 `pip install git+ssh://…@태그` 에서 실패: `insteadOf` 로 로컬 리포로 돌리면(ssh:// 와 git@github.com: 와 https:// 세 형식, 이름 `openit_<리포>` 와 `<리포>` 둘) model-lab·release-gate·survey-service·synthetic-data 가 통과했다. (2) deploy 결함: `scripts/lib.sh` 가 `HF_CACHE_VOLUME` 을 환경에 내보내(export) check-all 이 돌리는 model-runtime 의 run_session 시험이 ModelServingEnv 에 없는 변수라며 거부했다 -> export 를 없애고 `dc` 가 compose 에만 넘기며, check-all 진입(wiring)이 deploy 전용 변수를 영역 시험 전에 지운다. (3) 환경 낡음: 계약 태그 v3.4.0 이 다시 찍혀(d383b21 -> 5c6be96) model-runtime·ops-feedback 의 .venv 에 설치된 계약이 낡았다(`pip` 이 같은 버전이라 다시 설치하지 않는다) -> 두 .venv 에 `pip install --force-reinstall` 로 다시 설치. 결과: 규칙 8 PASS(12/13, 1은 설계 문서 영역).
+
 ## wo-450 D7b·D7d
 - D7b: `docker compose up --wait` 는 정상 종료(0)한 일회성 서비스(restart no + 의존 서비스 `service_completed_successfully`)를 성공으로 본다. 이미 종료된 상태의 두 번째 up 도 성공, 일회성 서비스가 1 로 끝나면 up 이 실패한다(docker compose 2.40.3, 이 PC). 제품 이미지 없이 작은 compose 로 재현: `scripts/test-compose-oneshot-wait.sh`. ops-feedback-migrate 구성은 바꾸지 않았다.
 - D7d: Basic 전제 정리. 기계 경로(`@inferencedenied`)의 사람 표지를 `Authorization: Basic*` 에서 OIDC 세션 쿠키(`_openit_session`)로 바꿨다: 쿠키도 기계 토큰도 없으면 401 + Bearer, 사람 세션이 `/v1/releases/*` 로 오면 404(아래 `/v1/*`), 기계 토큰이면 상류에 model-serving 읽기 토큰. 시험은 `test-gateway-auth.sh`. 주석·문서의 Basic/기본 인증 표현을 OIDC 로 고쳤다(남은 Basic 은 restic rest-server 와 도구 이름 `BASIC_AUTH_S`(시간 여유 상수)뿐).

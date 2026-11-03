@@ -25,7 +25,13 @@ def workspace_of(deploy: pathlib.Path) -> pathlib.Path:
     return deploy.parent
 
 
+# deploy 가 자기 일을 하려고 셸에 내보내는 변수: 영역 시험의 환경에 새면 영역이 자기 환경 선언(예: ModelServingEnv)을 어긴다고 거부한다. 영역 시험을 돌리기 전에 지운다(D7c)
+DEPLOY_ONLY_ENV = ("HF_CACHE_VOLUME", "GATEWAY_HOST_NAMES", "GATEWAY_PUBLIC_URL", "GATEWAY_PUBLIC_TLS_PORT", "GATEWAY_TLS_PORT", "GATEWAY_PORT", "GATEWAY_HOSTS", "SECRETS_GID", "KEYCLOAK_REALM_FILE", "COMPOSE_EXTRA")
+
+
 def build_request(argv) -> dict:
+    for k in DEPLOY_ONLY_ENV:
+        os.environ.pop(k, None)
     ws = pathlib.Path(os.environ.get("CHECK_ALL_WORKSPACE") or workspace_of(DEPLOY))
     af = ws / "head" / "shared" / "areas.json"
     return {"workspace": str(ws), "deploy_dir": str(DEPLOY), "areas_doc": areas_file.read(af) if af.is_file() else {"areas": []},
