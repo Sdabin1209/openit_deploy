@@ -1,17 +1,16 @@
 # 서비스 TLS 사이드카 설정(ADR 0060). 서비스마다 같은 파일을 쓰고 이름·상류만 환경 변수다(12-Factor III): TLS_NAME(서비스 이름 = 인증서 이름), TLS_UPSTREAM(같은 네트워크 네임스페이스의 앱, 보통 127.0.0.1:8080).
-# 왜 사이드카: 앱 코드를 바꾸지 않고 영역 사이 통신을 TLS 로 만든다(구조 규칙 1·4). 인증서는 ACME(RFC 8555)로 deploy step-ca 에서 자동 발급·갱신한다(수명 24시간, step-ca 기본).
+# 인증서는 파일이다(/certs/tls.crt, tls.key): <서비스>-cert 가 step-ca 에서 일회용 토큰(OTT)으로 받고 renew 데몬이 갱신한다. ACME 도전을 쓰지 않는 이유는 ADR 0060.
 {
-	admin off
+	admin unix//tmp/caddy.sock   # 인증서 갱신 때 사이드카의 감시 루프가 reload 한다(TCP 포트를 열지 않는다)
 	skip_install_trust
-	persist_config off   # 읽기 전용 루트에서 autosave 를 쓰지 않는다
-	auto_https disable_redirects
-	acme_ca {$STEP_CA_ACME_URL:https://step-ca:9000/acme/acme/directory}
-	acme_ca_root {$STEP_CA_ROOT:/etc/openit/pki/root_ca.crt}
+	persist_config off
+	auto_https off
 	storage file_system /data/caddy
 	servers {
 		trusted_proxies static private_ranges   # 게이트웨이(같은 사설망)가 붙인 X-Forwarded-* 를 지우지 않는다
 	}
 }
-{$TLS_NAME} {
+https://{$TLS_NAME} {
+	tls /certs/tls.crt /certs/tls.key
 	reverse_proxy {$TLS_UPSTREAM:127.0.0.1:8080}
 }

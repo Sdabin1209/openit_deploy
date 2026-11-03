@@ -43,7 +43,7 @@ for a in $PG_DBS; do eval "FP_$a=\$(fp $a)"; done
 ok "pg-backup.sh (5개 병렬)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh"
 ok "restic 저장소가 만들어졌고 모드 700 폴더 안이다" bash -c "[ -f '$W/backups/restic/config' ] && [ \"\$(stat -c %a '$W/backups')\" = 700 ]"
 ok "저장소 파일에 덤프 평문 표지(PGDMP)나 테이블 이름이 없다(암호화됨)" bash -c "! grep -rqa 'PGDMP\|CREATE TABLE' '$W/backups/restic'"
-ok "스냅샷이 데이터베이스마다 하나(host pg-<db>)이고 같은 set 태그를 가진다" bash -c "n=\$(bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json' | python3 -c 'import json,sys;d=json.load(sys.stdin);print(len(d), len({t for s in d for t in s[\"tags\"] if t.startswith(\"set-\")}))'); [ \"\$n\" = '5 1' ]"
+ok "스냅샷이 데이터베이스마다 하나(host pg-<db>)이고 같은 set 태그를 가진다" bash -c "n=\$(bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json' | python3 -c 'import json,sys;d=json.load(sys.stdin);print(len(d), len({t for s in d for t in s[\"tags\"] if t.startswith(\"set-\")}))'); [ \"\$n\" = '$(set -- $PG_DBS; echo $#) 1' ]"
 echo "== 지운 뒤 복구 -> 지문 일치 (평문 덤프는 디스크에 쓰이지 않는다)"
 "$DOCKER" exec "$(C)" psql -U survey -d survey -qc "DELETE FROM items WHERE id % 2 = 0" >/dev/null 2>&1
 rc "지운 뒤 지문이 달라졌다" 1 bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" = '$FP_survey' ]"
