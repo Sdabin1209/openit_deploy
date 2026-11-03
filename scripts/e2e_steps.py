@@ -1821,8 +1821,21 @@ def _c3_pointer():   # 운영자가 보는 활성 포인터(없으면 None)
     assert c in (200, 404), ("활성 포인터 조회", c, str(j)[:120])
     return (j.get("item") if isinstance(j, dict) else None) if c == 200 else None   # 응답은 {"item": ActivePointer 또는 null}
 
-def _c3_pg_wait(pg):
-    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, "postgres healthy", every=2)
+# 영역마다 자기 DB 컨테이너(<서비스>-db): 계정(데이터베이스) -> DB 서비스. 앱이 쓰는 4개 영역 DB 가 "데이터베이스 전체"다(keycloak-db 는 사람 인증 몫)
+_DB_OF = {"survey": "survey-db", "qa": "question-authoring-db", "ops": "ops-feedback-db", "gate": "release-gate-db"}
+
+
+def _pgs():
+    return [f"{a.project}-{d}-1" for d in _DB_OF.values()]
+
+
+def _pg_each(verb, pgs, **kw):   # 영역 DB 컨테이너 전부에 같은 docker 동사(stop/start/pause/unpause)
+    for c in ([pgs] if isinstance(pgs, str) else pgs): sh([a.docker, verb, c], **kw)
+
+
+def _c3_pg_wait(pgs):
+    for pg in ([pgs] if isinstance(pgs, str) else pgs):
+        wait(lambda pg=pg: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", pg], check=False).stdout.strip() == "healthy", 120, f"{pg} healthy", every=2)
 
 @step('6', repos=('ops-feedback', 'survey-service', 'boundary-contracts') + _GW, deps=('1', '4'),
       why="step6 은 STATE['qs'](step1)·['releases'](step4)를 읽는다")
@@ -2249,7 +2262,7 @@ R = [st, b]''', qs=qset)
       why="STATE['pointers'] 가 없으면 활성 릴리스 없이 일부만 시험한다(has_release). postgres 를 stop/start 한다")
 def step5p():
     title("5p", "PostgreSQL 컨테이너 중지 -> 서비스 /readyz 비정상 관찰 -> 기동 -> /readyz 복구, 이전 데이터 보존, 새 쓰기 (D85)")
-    pg = f"{a.project}-postgres-1"
+    pg = _pgs()
     svcs = [("qa", "question-authoring"), ("gate", "release-gate"), ("ops", "ops-feedback-ingest"), ("survey", "survey-service")]
     def ready(k):   # 서비스 컨테이너 안에서 본 /readyz (코드, 본문)
         try: c, b, _ = _c3_probe(k, "/readyz"); return c, b
@@ -2280,7 +2293,7 @@ def step5p():
     fp0 = {d: pgfp(d) for d in dbs}
     for k, n in svcs: assert healthy(k), f"{n} /readyz 가 처음부터 200 이 아니다: {ready(k)}"
     # 2) 중지. /healthz(살아 있음)는 유지되고 /readyz 는 비정상이 되어야 한다
-    t0 = time.time(); sh([a.docker, "stop", pg])
+    t0 = time.time(); _pg_each("stop", pg)
     obs = {}   # 서비스 -> (처음 비정상이 관찰된 시각, 코드, 본문 일부)
     def all_down():
         for k, n in svcs:
@@ -2299,7 +2312,7 @@ def step5p():
         hc = _c3_healthz(k)
         assert hc == 200, f"{n} /healthz 가 DB 중지 중 {hc} (살아 있음 점검은 DB 와 무관해야 한다)"
     # 3) 기동하고 복구를 기다린다
-    t1 = time.time(); sh([a.docker, "start", pg])
+    t1 = time.time(); _pg_each("start", pg)
     _c3_pg_wait(pg)
     t_pg = time.time() - t1
     rec_t = {}
@@ -2361,7 +2374,6 @@ def _run_ops_job():   # 스케줄러와 같은 호출(compose run --rm job-ops-f
 def step5pn():
     title("5pn", "PostgreSQL 네트워크 분리(docker network disconnect, F8) -> 서비스 /readyz 2초 안 503 -> 재연결 -> 사람 개입 없이 200 (FAULT_MATRIX A5·C4·D1·D4·E1 F8)")
     # FAULT_POLICY 11: 분리(F8)는 중지(F1)·멈춤(F2)과 같은 규칙. 연결할 수 없으면 F1 로 분류한다 -> 원칙 5: 의존이 죽으면 /readyz 는 2초 안에 503. 원칙 12: 의존이 돌아오면 사람 개입 없이 /readyz 200
-    pg = f"{a.project}-postgres-1"
     edges = [("A5", "survey", "survey-service", "db-survey"), ("C4", "gate", "release-gate", "db-gate"), ("D4", "ops", "ops-feedback-ingest", "db-ops"), ("E1", "qa", "question-authoring", "db-qa")]
     if "pointers" not in STATE:   # 활성 릴리스가 없으면 survey-service /readyz 는 DB 와 무관하게 503(5p 와 같은 제한)
         edges = [e for e in edges if e[1] != "survey"]; print("  (활성 릴리스가 없어 A5(survey-service)는 제외한다: 단계 4 를 포함해 돌려야 A5 가 확인된다)")
@@ -2370,6 +2382,7 @@ def step5pn():
         N = f"{a.project}_{net}"
         assert _ready_code(k) == 200, f"{name} /readyz 가 처음부터 200 이 아니다"
         # postgres 쪽에서 그 서비스의 DB 네트워크만 끊는다: stop 과 달리 postgres 는 살아 있고 다른 서비스는 영향이 없다. 서비스 쪽에서는 postgres 이름이 풀리지 않거나 경로가 없다
+        pg = f"{a.project}-{_DB_OF[k]}-1"   # 그 서비스 영역의 DB 컨테이너만 그 영역의 DB 망에서 끊는다
         sh([a.docker, "network", "disconnect", N, pg])
         try:
             wait(lambda: _ready_code(k) != 200 or None, 60, f"{name} 분리 뒤 /readyz 비정상", every=1)
@@ -2384,7 +2397,7 @@ def step5pn():
                 rc, tail = _run_ops_job(); assert rc != 0, f"D1: 분리 중 job-ops-feedback 이 성공(0)으로 끝났다: {tail}"
                 job_note = f", D1 잡 종료 코드 {rc}"
         finally:
-            sh([a.docker, "network", "connect", "--alias", "postgres", N, pg], check=False)   # 시험이 실패해도 분리를 남기지 않는다
+            sh([a.docker, "network", "connect", "--alias", _DB_OF[k], N, pg], check=False)   # 시험이 실패해도 분리를 남기지 않는다
         t1 = time.time(); wait(lambda: _ready_code(k) == 200 or None, 90, f"{name} 재연결 뒤 /readyz 200 (사람 개입 없이)", every=1)
         if net == "db-ops":
             rc2, tail2 = _run_ops_job(); assert rc2 == 0, f"D1: 재연결 뒤 job-ops-feedback 이 성공하지 않는다({rc2}): {tail2}"
@@ -2396,31 +2409,31 @@ def step5pn():
 def step5pj():
     title("5pj", "DB 중지 중 job-ops-feedback run-once: 실패가 드러나고(조용히 성공 안 함) 복구 뒤 재실행이 멱등으로 성공 (FAULT_MATRIX D1 F1·F4)")
     # FAULT_POLICY 14: 스케줄러/잡 실패는 상태 파일 또는 종료 코드로 드러난다. 원칙 4: DB 는 connect_timeout 이 있어 무한 대기하지 않는다. 원칙 12: 복구 뒤 재전송/재실행이 안전하다
-    pg = f"{a.project}-postgres-1"
+    pg = f"{a.project}-ops-feedback-db-1"   # job-ops-feedback 이 쓰는 영역 DB
     # 잡의 멱등만 보려면 기준(fp0)과 비교(fp1) 사이에 ops_log 의 다른 쓰기 주체(ingest)가 쓰지 않아야 한다. 지문 대상을 잡의 테이블로 좁히는 방식은 쓰지 않았다:
     # 잡도 ops_log 에 쓰고(compose 의 job-ops-feedback 에 OPS_LOG_DATABASE_URL_FILE), 어느 테이블을 쓰는지는 ops-feedback 내부라 deploy 가 정하면 그 영역 스키마에 묶인다.
     # 대신 밀린 Trace 가 다 전송된 뒤 첫 잡이 그것을 처리하고 기준을 잡으며, fp1 에서 전송 수가 그대로임(새 Trace 없음)을 확인한다.
     sent0 = _outbox_drained()
     rc0, tail0 = _run_ops_job(); assert rc0 == 0, f"사전 조건: DB 정상일 때 잡이 성공하지 않는다({rc0}): {tail0}"
     fp0 = sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), "ops_log"], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
-    sh([a.docker, "stop", pg]); notes = []
+    _pg_each("stop", pg); notes = []
     try:
         t = time.time(); rc, tail = _run_ops_job(); el = time.time() - t
         assert rc != 0, f"DB 중지 중 job-ops-feedback 이 성공(0)으로 끝났다(조용한 성공): {tail}"
         assert el <= 60, f"DB 중지 중 잡이 {el:.0f}s 걸렸다(무한 대기 금지, 원칙 4)"
         notes.append(f"F1 중지: 종료 코드 {rc} ({el:.0f}s)")
     finally:
-        sh([a.docker, "start", pg])
+        _pg_each("start", pg)
     _pg_ready_wait(pg)
     wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "postgres 기동 뒤 서비스 /readyz 200", every=1)
-    sh([a.docker, "pause", pg]); 
+    _pg_each("pause", pg); 
     try:
         t = time.time(); rc, tail = _run_ops_job(); el = time.time() - t
         assert rc != 0, f"DB 무응답(pause) 중 job-ops-feedback 이 성공(0)으로 끝났다: {tail}"
         assert el <= 60, f"DB pause 중 잡이 {el:.0f}s 걸렸다(무한 대기 금지, 원칙 4)"
         notes.append(f"F4 pause: 종료 코드 {rc} ({el:.0f}s)")
     finally:
-        sh([a.docker, "unpause", pg], check=False)
+        _pg_each("unpause", pg, check=False)
     wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "unpause 뒤 서비스 /readyz 200", every=1)
     for i in (1, 2):   # 같은 입력으로 두 번: 둘 다 성공하고 행 지문이 같다(멱등)
         rc, tail = _run_ops_job(); assert rc == 0, f"복구 뒤 재실행 {i} 이 실패했다({rc}): {tail}"
@@ -2470,12 +2483,12 @@ def step5g():
     rec("5g", "REAL", "레지스트리 컨테이너: " + "; ".join(notes) + "; 복구 뒤 재시도 성공.")
 
 @step('5b', repos=('deploy:scripts,config,compose.yaml',), deps=(),
-      why='STATE 를 읽지 않는다. 임시 BACKUP_DIR 에 pg-backup.sh 를 돌리고 도중에 postgres 를 stop 한다',
-      also={'survey-service': 'survey DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'release-gate': 'gate DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'ops-feedback': 'ops_log·ops_failure DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고된다(G3 F1)', 'question-authoring': 'qa DB 의 pg_dump 가 백업 도중 postgres 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)'})
+      why='STATE 를 읽지 않는다. 임시 BACKUP_DIR 에 pg-backup.sh 를 돌리고 도중에 qa 영역 DB(question-authoring-db)를 stop 한다',
+      also={'survey-service': 'survey DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'release-gate': 'gate DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'ops-feedback': 'ops_log·ops_failure DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고된다(G3 F1)', 'question-authoring': 'qa DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)'})
 def step5b():
-    title("5b", "백업 도중 postgres 중지(F1): 백업이 실패로 보고되고 불완전한 백업이 성공으로 남지 않으며 복구 뒤 다시 성공 (FAULT_MATRIX G3 F1)")
+    title("5b", "백업 도중 영역 DB 중지(F1): 백업이 실패로 보고되고 불완전한 백업이 성공으로 남지 않으며 복구 뒤 다시 성공 (FAULT_MATRIX G3 F1)")
     # 기대 출처: FAULT_MATRIX G3 '완료 시에만 완성본이 보인다'(옛 .partial -> mv). pg-backup.sh(restic): 덤프 실패 시 이 실행의 스냅샷을 모두 forget + die. FAULT_POLICY 14(잡 실패는 종료 코드로 드러남), 12(복구 뒤 재실행)
-    pg = f"{a.project}-postgres-1"; bdir = WORK / "backups-5b"; bdir.mkdir(parents=True, exist_ok=True)
+    pg = f"{a.project}-question-authoring-db-1"; bdir = WORK / "backups-5b"; bdir.mkdir(parents=True, exist_ok=True)
     pw = WORK / "backup-5b.pass"; pw.write_text("e2e-5b-test-password-not-a-secret\n"); pw.chmod(0o600)   # 시험 전용 임시 암호(시험 폴더 안)
     cfg = WORK / "backup-5b.env"; cfg.write_text(f"BACKUP_DIR={bdir}\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE={pw}\n")
     env = {"DEPLOY_PROJECT": a.project, "BACKUP_CONFIG": str(cfg)}

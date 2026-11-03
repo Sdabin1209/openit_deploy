@@ -395,14 +395,16 @@ chk "차단: model-registry -> dataset-store" blocked model-registry dataset-sto
 chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
 chk "gateway 설정(Caddyfile)에 dataset-store 경로가 없다" bash -c "! grep -q 'dataset-store\|datasets' $DEPLOY_ROOT/config/Caddyfile"
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
-for pair in "db-survey:survey-service" "db-qa:question-authoring" "db-ops:ops-feedback-ingest" "db-gate:release-gate"; do
-  chk "db 네트워크 ${pair%%:*} 에는 postgres 와 ${pair##*:} 만 있다(postgres 클라이언트끼리 닿지 않는다)" net_is "${pair%%:*}" "${PROJECT}-postgres-1" "${PROJECT}-${pair##*:}-1"
+for pair in "db-survey:survey-service:survey-db" "db-qa:question-authoring:question-authoring-db" "db-ops:ops-feedback-ingest:ops-feedback-db" "db-gate:release-gate:release-gate-db"; do   # 영역마다 자기 DB 컨테이너(구조 규칙 1)
+  _n=${pair%%:*}; _r=${pair#*:}; _svc=${_r%%:*}; _db=${_r##*:}
+  chk "db 네트워크 $_n 에는 $_db 와 $_svc 만 있다(다른 영역의 DB 에 닿지 않는다)" net_is "$_n" "${PROJECT}-$_db-1" "${PROJECT}-$_svc-1"
 done
 tcp() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import socket;socket.create_connection(('$2',$3),timeout=3)" >/dev/null 2>&1; }
-for s in survey-service question-authoring ops-feedback-ingest release-gate; do chk "도달: $s -> postgres:5432 (db 네트워크)" tcp $s postgres 5432; done
+for pair in survey-service:survey-db question-authoring:question-authoring-db ops-feedback-ingest:ops-feedback-db release-gate:release-gate-db; do chk "도달: ${pair%%:*} -> ${pair##*:}:5432 (db 네트워크)" tcp "${pair%%:*}" "${pair##*:}" 5432; done
 tcp_blocked() { ! tcp "$@"; }
-chk "차단: model-registry -> postgres" tcp_blocked model-registry postgres 5432
-chk "차단: 호스트에 postgres 포트 게시 없음" bash -c "[ -z \"\$($DOCKER port ${PROJECT}-postgres-1)\" ]"
+for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do chk "차단: model-registry -> $_db" tcp_blocked model-registry $_db 5432; done
+chk "차단: survey-service -> 다른 영역의 DB(release-gate-db)" tcp_blocked survey-service release-gate-db 5432
+for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do chk "차단: 호스트에 $_db 포트 게시 없음" bash -c "[ -z \"\$($DOCKER port ${PROJECT}-$_db-1)\" ]"; done
 chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "https://host.docker.internal:$IPORT/healthz"   # body-judged: reachu 가 본문 status/ok 를 판정한다
 chk "도달: 추론 서버 -> 제품 입구(게이트웨이 TLS, 게이트웨이 CA 검증, I4 번들 읽기의 운영 경로 D72)" reachu model-serving "$GWTLS/healthz"
 chk "차단: 추론 서버 -> question-authoring (제품 내부 이름으로는 닿지 않는다)" blocked model-serving question-authoring
@@ -474,7 +476,7 @@ chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/
 printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_REPOSITORY=rest:https://backup-target:8000/openit\nBACKUP_CACERT_FILE=%s/backup-tls/root_ca.crt\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s_backup\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W" "$W/backup-target.cred" "$PROJECT" "$W/backup.pass" > "$W/backup-test.env"
 export BACKUP_CONFIG="$W/backup-test.env"
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
-dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx -e postgres -e backup-target | tr '\n' ' ') >/dev/null 2>&1
+dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx -e backup-target $(printf -- "-e %s " $PG_SERVICES | sed "s/^/ /") | tr '\n' ' ') >/dev/null 2>&1
 STORES="gate-data models-data datasets-data"; PGDBS="$PG_DBS"; NPG=$(set -- $PGDBS; echo $#)   # 정본은 lib.sh 의 PG_DBS(keycloak 포함): 하드코딩하면 Keycloak(직원 계정·역할)이 백업·복구·지문 검사에서 빠진다
 for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
 for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-before-pg-$d.json"; done
@@ -493,10 +495,10 @@ append_only() { local id; id=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; sour
 chk "서버 자격으로는 백업을 지울 수 없다(append-only)" append_only
 chk "저장소 쪽 관리 자격으로 보관 정리(host마다 최신 1개 이상 유지)" bash "$DEPLOY_ROOT/scripts/backup-prune.sh" "${PROJECT}_backup-target-data" openit "$W/backup.pass" 7
 dc "$PROJECT" down >/dev/null 2>&1
-chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_datasets-data ${PROJECT}_pg-data >/dev/null"
-dc "$PROJECT" up -d --wait --wait-timeout 120 postgres backup-target >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다. 백업 저장소(볼륨 backup-target-data 는 down 으로 지워지지 않는다)도 다시 올린다
-chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
-NEED+=("볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 pg-data)")
+chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_datasets-data $(for _s in $PG_SERVICES; do printf "%s_%s-data " "$PROJECT" "$_s"; done) >/dev/null"
+dc "$PROJECT" up -d --wait --wait-timeout 120 $PG_SERVICES backup-target >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다. 백업 저장소(볼륨 backup-target-data 는 down 으로 지워지지 않는다)도 다시 올린다
+chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
+NEED+=("볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)")
 for s in $STORES; do chk "복구 $s" bash "$DEPLOY_ROOT/scripts/restore.sh" $s latest --yes; done
 for d in $PGDBS; do chk "복구 pg-$d" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" $d latest --yes; done
 for s in $STORES; do chk_dep "복구 $s" "복구 후 지문 일치 $s" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh $s)\" = \"\$(cat $W/fp-before-$s.json)\" ]"; done
