@@ -244,6 +244,34 @@ class JobFailureResult(TypedDict):
     text: str
 
 
+class Declared(TypedDict):
+    name: str
+    argv: List[str]
+    timeout_seconds: NotRequired[int]
+
+
+class Job1(TypedDict):
+    compose_service: str
+    declared: Declared
+
+
+class JobOverlayRequest(TypedDict):
+    jobs: List[Job1]
+
+
+Services = TypedDict(
+    'Services',
+    {
+        'command': List[str],
+        'x-openit-timeout-seconds': int,
+    },
+)
+
+
+class JobOverlayResult(TypedDict):
+    services: Dict[str, Services]
+
+
 class JobSelectRequest(TypedDict):
     labels: Dict[str, str]
     job_name: str

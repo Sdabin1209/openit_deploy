@@ -97,3 +97,4 @@ R1.4 배치 무관: 서버별 override 의 호출 설정 이름·경로·서비�
 단독 시험은 깨끗한 환경에서 돈다 (E2E 사전 점검 env -i, 밖에서 온 DEPLOY_LOCK 등을 읽지 않는다) :: python3 "$DEPLOY_ROOT/scripts/test_selfcheck_clean_env.py"
 배치·내보내기 운영 규칙 (R10.12 호스트 키 확인·배치 한 번에 하나, R1.5 내보내는 파일 SHA-256 대조, 정적) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_placement_ops.py"
 로컬 미러 git 설정(S14)이 git insteadOf 로 원격 주소를 로컬 리포로 푼다 :: python3 "$DEPLOY_ROOT/scripts/test_local_mirrors.py"
+잡 command·시간 한도는 이미지 라벨 io.openit.jobs 에서 온다(S10, R9.2·R9.3, compose 에 python -m 없음) :: python3 "$DEPLOY_ROOT/scripts/test_gen_jobs.py"

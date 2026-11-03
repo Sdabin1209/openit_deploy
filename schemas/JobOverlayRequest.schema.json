@@ -1,0 +1,56 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "JobOverlayRequest.schema.json",
+ "title": "JobOverlayRequest",
+ "type": "object",
+ "required": [
+  "jobs"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "jobs": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": [
+     "compose_service",
+     "declared"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "compose_service": {
+      "type": "string",
+      "pattern": "^job-[a-z][a-z0-9-]*$",
+      "description": "deploy compose 의 잡 서비스 이름"
+     },
+     "declared": {
+      "type": "object",
+      "required": [
+       "name",
+       "argv"
+      ],
+      "additionalProperties": true,
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "argv": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+         "type": "string"
+        }
+       },
+       "timeout_seconds": {
+        "type": "integer",
+        "minimum": 1
+       }
+      },
+      "description": "이미지 라벨 io.openit.jobs(계약 JobsDeclaration)의 잡 하나. 계약 검증은 내는 쪽(wiring)이 끝냈다"
+     }
+    }
+   }
+  }
+ }
+}

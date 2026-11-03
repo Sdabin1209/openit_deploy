@@ -1,0 +1,1 @@
+{"jobs": [{"compose_service": "job-survey-purge", "declared": {"name": "session-purge", "argv": ["python", "-m", "survey_service", "purge"], "idempotent": true}}, {"compose_service": "job-release-gate-collect", "declared": {"name": "collect", "argv": ["x", "collect"], "timeout_seconds": 120}}]}

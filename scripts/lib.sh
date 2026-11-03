@@ -45,9 +45,9 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.4}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.6}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.16}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
-DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.10}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
+DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.12}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
@@ -104,6 +104,11 @@ ensure_pg_tls_volume() { # ensure_pg_tls_volume <프로젝트>
   UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
   "$DOCKER" run --network none --user 0 --cap-drop ALL --cap-add CHOWN --rm -v "$V:/data" "$UTIL" chown 999:999 /data >/dev/null || die "pg-tls 볼륨 소유자 설정 실패"
 }
+gen_jobs_overlay() { # gen_jobs_overlay <프로젝트>: 이미지 라벨 io.openit.jobs 로 잡 command·시간 한도 덧씌우기 파일(JOBS_OVERLAY)을 만든다(S10)
+  local out=${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}
+  rm -f "$out"   # 이전 덧씌우기가 config 입력에 섞이지 않게 한다
+  dc "$1" --profile jobs config --format json | "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-jobs.py" --out "$out" >/dev/null || return 1
+}
 dc() { # dc <project> <compose args...>
   local project=$1; shift
   case " $* " in *" up "*|*" run "*) [ -n "${DOCKER:-}" ] && ensure_pg_tls_volume "$project";; esac
@@ -114,6 +119,8 @@ dc() { # dc <project> <compose args...>
   if [ -n "${COMPOSE_EXTRA:-}" ]; then
     for f in $COMPOSE_EXTRA; do files+=(-f "$f"); done
   fi
+  # 잡 서비스의 command·시간 한도는 이미지 라벨 io.openit.jobs 에서 만든 덧씌우기 파일이 정한다(S10, scripts/gen-jobs.py). 있으면 맨 뒤에 얹는다
+  [ -f "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}" ] && files+=(-f "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}")
   local envs=(--env-file "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
   [ -f "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}" ] && envs+=(--env-file "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}")
   [ -f "$DEPLOY_ROOT/.env" ] && envs+=(--env-file "$DEPLOY_ROOT/.env")
