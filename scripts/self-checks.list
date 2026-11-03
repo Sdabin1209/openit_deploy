@@ -82,3 +82,4 @@ sslrootcert 를 쓰는 모든 서비스가 pki-root 를 그 경로에 마운트�
 https /healthz·/readyz 확인은 상태 코드만이 아니라 본문까지 읽는다 (사이드카의 빈 200 헛통과, 4차 E2E) :: python3 "$DEPLOY_ROOT/scripts/test_health_checks_read_body.py"
 E2E 의 PostgreSQL 목록은 PG_DBS 정본이다(하드코딩 금지, keycloak 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_pg_dbs.py"
 deploy .venv 에 pip install 은 설치 스크립트(prepare-host.sh, prepare-areas.sh)에만 있다: 빌드·시험이 공용 venv 를 바꾸면 다른 실행이 깨진다 (4차 E2E build-images.sh force-reinstall) :: python3 "$DEPLOY_ROOT/scripts/test_no_pip_outside_setup.py"
+rollback.sh: 서비스 digest 가 SERVICES 전부 있는 잠금만 후보, 키 집합이 다른(다른 deploy 판) 잠금으로는 멈춘다 (가짜 history 로 단독 시험) :: bash "$DEPLOY_ROOT/scripts/test-rollback.sh"
