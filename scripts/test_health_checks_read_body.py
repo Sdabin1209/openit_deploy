@@ -7,17 +7,20 @@ import pathlib, re, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 URL = re.compile(r"https://[^\s\"']*/(healthz|readyz)")
+JUDGES = re.compile(r"status|ready|ok")   # 본문의 status(또는 서비스별 ready)·ok 를 판정하는 흔적
 READS = re.compile(r"\.read\(|json\.load|grep|awk|\| *tr |-w '\\n|\$\(curl[^)]*\) *\|")
 
 
 def offenders(text, name):
     bad = []
     for i, l in enumerate(text.splitlines(), 1):
-        if l.lstrip().startswith("#") or "port-wait" in l or "status-code-ok" in l or not URL.search(l):
+        if l.lstrip().startswith("#") or "port-wait" in l or "status-code-ok" in l or "body-judged" in l or not URL.search(l):
             continue
         discards = "-o /dev/null" in l or ("urlopen" in l and not READS.search(l))
         if discards and not READS.search(l):
             bad.append(f"{name}:{i}")
+        elif not JUDGES.search(l) and "status-code-ok" not in l and "body-judged" not in l:   # 본문을 읽는데 status/ready 를 판정하지 않으면(예: 비어 있지 않음만) R5.1 을 놓친다
+            bad.append(f"{name}:{i} (본문을 읽지만 status/ready 를 판정하지 않는다)")
     return bad
 
 
@@ -33,8 +36,9 @@ class T(unittest.TestCase):
     def test_detects_status_only_checks(self):
         self.assertTrue(offenders("curl -s -o /dev/null -w '%{http_code}' https://h/healthz", "x"))
         self.assertTrue(offenders("python -c \"urllib.request.urlopen('https://h/healthz',timeout=3)\"", "x"))
-        self.assertFalse(offenders("python -c \"urllib.request.urlopen('https://h/healthz').read()\"", "x"))
+        self.assertFalse(offenders("python -c \"assert json.loads(urllib.request.urlopen('https://h/healthz').read())['status']=='ok'\"", "x"))
         self.assertFalse(offenders("curl -s -o /dev/null https://h/healthz  # port-wait: 포트 열림만", "x"))
+        self.assertTrue(offenders("python -c \"print(urllib.request.urlopen('https://h/healthz').read())\"", "x"), "본문을 읽어도 status 를 판정하지 않으면 걸린다")
 
 
 if __name__ == "__main__":

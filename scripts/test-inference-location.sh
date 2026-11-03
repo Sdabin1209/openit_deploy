@@ -107,7 +107,7 @@ for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   GWPORT=$(port_of "$P-gateway-1" 8443)
   [ -n "$GWPORT" ] || bail "게이트웨이 TLS 호스트 포트를 읽지 못했다 (바인드 $BIND)"
   bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$W/gateway-ca.crt" || bail "게이트웨이 CA 를 꺼내지 못했다"
-  if ! reach "https://host.docker.internal:$GWPORT/healthz" "$W/gateway-ca.crt"; then echo "  컨테이너에서 게이트웨이 https://host.docker.internal:$GWPORT 에 닿지 못했다 (바인드 $BIND)"; continue; fi
+  if ! reach "https://host.docker.internal:$GWPORT/healthz" "$W/gateway-ca.crt"; then echo "  컨테이너에서 게이트웨이 https://host.docker.internal:$GWPORT 에 닿지 못했다 (바인드 $BIND)"; continue; fi   # body-judged: reach 가 본문 status/ok 를 판정한다
   "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$UTIL" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || bail "step-ca 루트를 꺼내지 못했다"
   # 지휘 쪽: 이 서버 이름(host.docker.internal)의 일회용 토큰을 발급해 파일로 준다(비밀번호는 이 컨테이너만 읽는다)
   "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$SCP" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; bail "일회용 토큰을 발급하지 못했다"; }
@@ -116,7 +116,7 @@ for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   inf_compose up -d --wait || { echo "  추론 서버가 준비되지 않았다 (바인드 $BIND)"; "$DOCKER" logs --tail 20 "$INF-model-serving-1" 2>&1 | sed 's/^/    /'; bail "추론 서버 기동 실패"; }
   IPORT=$(port_of "$INF-model-serving-1" 443)
   [ -n "$IPORT" ] || bail "추론 서버 호스트 포트를 읽지 못했다"
-  if reach "https://host.docker.internal:$IPORT/healthz" "$W/pki/root_ca.crt"; then OK=1; break; fi
+  if reach "https://host.docker.internal:$IPORT/healthz" "$W/pki/root_ca.crt"; then OK=1; break; fi   # body-judged: reach 가 본문 status/ok 를 판정한다
   echo "  컨테이너에서 추론 서버 host.docker.internal:$IPORT 에 닿지 못했다 (바인드 $BIND)"
 done
 [ $OK = 1 ] || bail "컨테이너가 호스트에 게시된 게이트웨이·서버에 닿지 못했다(방화벽·제외 포트 범위 확인)"

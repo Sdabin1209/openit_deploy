@@ -246,15 +246,15 @@ def run_job(job: str, args=(), *, env: Optional[dict] = None, timeout: float = 3
 
 
 _READYZ = ("import json,sys,urllib.request,urllib.error\n"
-           "try:\n r=urllib.request.urlopen('http://127.0.0.1:8080/readyz',timeout=5); c,b=r.status,r.read()\n"
+           "try:\n r=urllib.request.urlopen('https://'+SERVICE+'/readyz',timeout=5); c,b=r.status,r.read()\n"
            "except urllib.error.HTTPError as e: c,b=e.code,e.read()\n"
            "try: d=json.loads(b)\nexcept Exception: d={'raw':b.decode(errors='replace')[:200]}\n"
            "print(json.dumps([c,d]))\n")
 
 
 def readyz(service: str) -> tuple[int, dict]:
-    """컨테이너 안에서 http://127.0.0.1:8080/readyz. 왜 python: 서비스 이미지(파이썬)에는 wget 이 없고 python 은 있다(e2e.sh 의 reach 도 같은 방식)."""
-    c, d = json.loads(exec_py(service, _READYZ, timeout=30).strip().splitlines()[-1])
+    """컨테이너 안에서 중계(TLS 종단)를 거쳐 https://<서비스 이름>/readyz (R4.3·R5.1: 앱 포트 직접 호출이 아니다). 왜 python: 서비스 이미지(파이썬)에는 wget 이 없고 python 은 있다(e2e.sh 의 reach 도 같은 방식)."""
+    c, d = json.loads(exec_py(service, "SERVICE = %r\n" % service + _READYZ, timeout=30).strip().splitlines()[-1])
     return c, d
 
 

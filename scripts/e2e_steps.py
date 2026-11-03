@@ -1167,7 +1167,10 @@ def policy(step, waits, name, fn):
     except AssertionError as e: rec(f"{step}-policy", "POLICY-PENDING", f"{name} -- 기다리는 변경: {waits}. 지금 값: {e}")
 
 def wait_gw_ready(timeout):
-    wait(lambda: gwk("GET", "/readyz", auth=False)[0] == 200, timeout, "gateway /readyz 200(survey-service 가 활성 릴리스까지 적재)", every=2)
+    def ready():   # R4.3·R5.1: 상태 코드 200 이고 본문 status 가 ok (빈 200·다른 본문은 준비가 아니다)
+        c, b, _h, _t = gwk("GET", "/readyz", auth=False)
+        return c == 200 and isinstance(b, dict) and b.get("status") == "ok"
+    wait(ready, timeout, "gateway /readyz 200 + {\"status\":\"ok\"}(survey-service 가 활성 릴리스까지 적재)", every=2)
 
 def upstream_503_json(c, b, h, what):
     assert c == 503 and b == {"code": "UPSTREAM_UNAVAILABLE"}, f"{what}: 503 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:120]}"

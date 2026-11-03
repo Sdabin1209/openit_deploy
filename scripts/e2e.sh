@@ -303,23 +303,33 @@ cn() { if [ "$1" = model-serving ]; then echo "$INF-model-serving-1"; else echo 
 echo "  Docker가 배정한 호스트 포트: gateway=$PGW(평문) gateway-tls=$PGWS 추론서버=$IPORT (제품의 다른 서비스는 호스트 포트가 없다)"
 getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
 getinf() { local o; o=$(curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" "https://localhost:$IPORT$1") || return 1; [ -n "$o" ] || { echo "본문이 비었다(사이드카가 Host 를 못 맞췄다?)"; return 1; }; printf "%s" "$o"; }   # 호스트에서는 localhost 로 부른다: 인증서 SAN 에 host.docker.internal 과 localhost 가 함께 있다(토큰·인증서에 --san). 컨테이너 쪽 호출자는 host.docker.internal 그대로
-inpy() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;sys.stdout.write(urllib.request.urlopen('http://127.0.0.1:8080'+sys.argv[1],timeout=5).read().decode())" "$2"; }   # 샌드박스 접근 (b): 컨테이너 안에서 자기 포트를 부른다
+# R2.2·R4.3·R5.1: 서비스 건강 확인은 앱 포트(127.0.0.1:8080)를 직접 부르지 않고 **중계(TLS 종단)를 거쳐** 자기 서비스 이름으로 부른다(앱 컨테이너 안에서 https://<서비스 이름>, 같은 공간이라 별칭이 자기에게 풀린다).
+# 앱만 살아 있는 상태를 건강으로 오판하지 않으려는 것이다. 판정은 상태 코드 + 본문 status(없으면 서비스별 ready, HealthStatus 정의 부재: docs/change-requests/CR-HealthStatus-schema.md)다.
+inpy() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;sys.stdout.write(urllib.request.urlopen('https://'+sys.argv[1]+sys.argv[2],timeout=5).read().decode())" "$1" "$2"; }
 inpy_code() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request,urllib.error
 try:
-    r=urllib.request.urlopen('http://127.0.0.1:8080'+sys.argv[1],timeout=5); print(r.status, r.read().decode())
+    r=urllib.request.urlopen('https://'+sys.argv[1]+sys.argv[2],timeout=5); print(r.status, r.read().decode())
 except urllib.error.HTTPError as e:
-    print(e.code, e.read().decode())" "$2"; }
+    print(e.code, e.read().decode())" "$1" "$2"; }
+health_body_ok() { python3 -c "import sys,json
+b=sys.stdin.read()
+try: d=json.loads(b)
+except Exception: sys.exit('본문이 JSON 이 아니다: '+b[:60])
+st=d.get('status')
+ok = (st=='ok') if st is not None else (d.get('ready') is True)
+sys.exit(0 if ok else 'status/ready 가 정상이 아니다: '+b[:80])"; }
+health_check() { local o; o=$("$@") || return 1; printf '%s' "$o" | health_body_ok; }   # health_check inpy <서비스> <경로>
 no_doors() { local bad; bad=$("$DOCKER" ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | tr -d '\r' | grep -- '->' | grep -v "^${PROJECT}-gateway-1 " | grep -v "^${PROJECT}-step-ca-1 "); [ -z "$bad" ] || { echo "gateway 밖에서 호스트 포트를 게시한 제품 컨테이너: $bad"; return 1; }; echo "호스트 포트를 게시한 제품 컨테이너는 gateway 뿐이다 (시험용 문 0)"; }
 chk "샌드박스: 제품에 시험용 문이 없다 (호스트 포트는 gateway 뿐, 실행 중 컨테이너 기준)" no_doors
 chk "샌드박스: 제품 compose 정적 점검 (시험용 포트·가짜 백엔드·compose.test.yaml 없음)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_no_test_doors.py"
 for n in gateway question-authoring release-gate ops-feedback-ingest model-registry dataset-store survey-service; do
-  if [ "$n" = gateway ]; then chk "/healthz $n" getj "$PGW" /healthz; else chk "/healthz $n (컨테이너 안에서)" inpy "$n" /healthz; fi
+  if [ "$n" = gateway ]; then chk "/healthz $n (본문 status=ok)" health_check getj "$PGW" /healthz; else chk "/healthz $n (중계를 거쳐, 본문 status=ok)" health_check inpy "$n" /healthz; fi
   [ "$n" = survey-service ] && continue
   [ "$n" = gateway ] && continue   # gateway /readyz 는 survey-service 를 반영한다(아래에서 따로)
-  chk "/readyz $n (컨테이너 안에서)" inpy "$n" /readyz
+  chk "/readyz $n (중계를 거쳐, 본문 status/ready)" health_check inpy "$n" /readyz
 done
-chk "/healthz model-serving (추론 서버, 별도 프로젝트, https)" getinf /healthz
-chk "/readyz model-serving (추론 서버, 별도 프로젝트, https)" getinf /readyz
+chk "/healthz model-serving (추론 서버, 별도 프로젝트, https, 본문 status=ok)" health_check getinf /healthz
+chk "/readyz model-serving (추론 서버, 별도 프로젝트, https, 본문 status/ready)" health_check getinf /readyz
 survey_noactive() { local o; o=$(inpy_code survey-service /readyz); case "$o" in 503*no_active_release*) echo "활성 릴리스가 없어 503 no_active_release (정상: 아직 게이트에 PASS 릴리스가 없다)";; *) echo "기대와 다름: $o" | cut -c1-200; return 1;; esac; }
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
 gw_mirrors() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' --cacert "$W/gateway-ca.crt" "https://127.0.0.1:$PGWS/readyz"); echo "$o" | grep -q '\[503\]' && ! echo "$o" | grep -q 'survey' && echo "gateway /readyz 는 survey-service 를 반영한다: 활성 릴리스 전 503, 본문에 내부 정보 없음 ($o)"; }
@@ -374,7 +384,7 @@ for s in survey-service question-authoring ops-feedback-ingest release-gate; do 
 tcp_blocked() { ! tcp "$@"; }
 chk "차단: model-registry -> postgres" tcp_blocked model-registry postgres 5432
 chk "차단: 호스트에 postgres 포트 게시 없음" bash -c "[ -z \"\$($DOCKER port ${PROJECT}-postgres-1)\" ]"
-chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "https://host.docker.internal:$IPORT/healthz"
+chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "https://host.docker.internal:$IPORT/healthz"   # body-judged: reachu 가 본문 status/ok 를 판정한다
 chk "도달: 추론 서버 -> 제품 입구(게이트웨이 TLS, 게이트웨이 CA 검증, I4 번들 읽기의 운영 경로 D72)" reachu model-serving "$GWTLS/healthz"
 chk "차단: 추론 서버 -> question-authoring (제품 내부 이름으로는 닿지 않는다)" blocked model-serving question-authoring
 chk "도달: question-authoring -> ops-feedback-ingest (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback-ingest
