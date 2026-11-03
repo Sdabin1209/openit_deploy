@@ -113,7 +113,7 @@ dc() { # dc <project> <compose args...>
 # 또는 이미 있는 $SECRETS_DIR/tokens/external-inference. 파일은 compose 가 secrets 로 마운트한다(컨테이너 환경 변수로 넣지 않는다). 값은 출력하지 않는다.
 external_inference_setup() {
   local url=${1:-} sd=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
-  case "$url" in http://*|https://*) ;; *) die "--external-inference 에는 http:// 또는 https:// 로 시작하는 주소가 필요하다: '$url'";; esac
+  case "$url" in https://*) ;; *) die "--external-inference 에는 https:// 로 시작하는 주소만 받는다(평문 http 는 거부, ADR 0060): '$url'";; esac
   case "${url#*://}" in *@*) die "주소에 계정·암호를 넣지 않는다 (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE 로)";; esac
   if [ -n "${INFERENCE_TOKEN_FILE:-}" ]; then
     case "$INFERENCE_TOKEN_FILE" in /*) ;; *) INFERENCE_TOKEN_FILE="$PWD/$INFERENCE_TOKEN_FILE";; esac

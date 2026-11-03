@@ -64,7 +64,7 @@ cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 64
 export INFERENCE_TOKEN_FILE="$W/inference-token"
 INF_IMAGE=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST" )
 BRIDGE_GW=$("$DOCKER" network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null | tr -d '\r')
-PLACEHOLDER="http://host.docker.internal:1"   # 서버가 뜨기 전 자리표시 주소(아무 포트도 열지 않는다). 서버가 뜬 뒤 실제 주소로 바꿔 survey-service 만 다시 만든다
+PLACEHOLDER="https://host.docker.internal:1"   # 서버가 뜨기 전 자리표시 주소(아무 포트도 열지 않는다). 서버가 뜬 뒤 실제 주소로 바꿔 survey-service 만 다시 만든다
 # 컨테이너(서버·호출자와 같은 위치)에서 host.docker.internal 로 닿는지. 인자: URL [CA 파일]
 reach() {
   "$DOCKER" run --rm --name "$P-probe" --add-host host.docker.internal:host-gateway ${2:+-v "$2:/ca.crt:ro" -e SSL_CERT_FILE=/ca.crt} "$UTIL" python -c "import sys,urllib.request;urllib.request.urlopen(sys.argv[1],timeout=5)" "$1" >/dev/null 2>&1
@@ -90,14 +90,14 @@ for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   inf_compose up -d --wait || { echo "  추론 서버가 준비되지 않았다 (바인드 $BIND)"; "$DOCKER" logs --tail 20 "$INF-model-serving-1" 2>&1 | sed 's/^/    /'; bail "추론 서버 기동 실패"; }
   IPORT=$(port_of "$INF-model-serving-1" 8080)
   [ -n "$IPORT" ] || bail "추론 서버 호스트 포트를 읽지 못했다"
-  if reach "http://host.docker.internal:$IPORT/healthz"; then OK=1; break; fi
+  if reach "https://host.docker.internal:$IPORT/healthz" "$W/pki/root_ca.crt"; then OK=1; break; fi
   echo "  컨테이너에서 추론 서버 host.docker.internal:$IPORT 에 닿지 못했다 (바인드 $BIND)"
 done
 [ $OK = 1 ] || bail "컨테이너가 호스트에 게시된 게이트웨이·서버에 닿지 못했다(방화벽·제외 포트 범위 확인)"
 echo "  바인드 $BIND 로 게이트웨이 https://host.docker.internal:$GWPORT, 추론 서버 :$IPORT 에 컨테이너에서 닿는다"
 
-echo "== survey-service 를 실제 서버 주소로 다시 만든다(--external-inference http://host.docker.internal:$IPORT)"
-GATEWAY_BIND=$BIND bash "$DEPLOY_ROOT/scripts/up.sh" "$P" --external-inference "http://host.docker.internal:$IPORT" || bail "제품 재기동 실패"
+echo "== survey-service 를 실제 서버 주소로 다시 만든다(--external-inference https://host.docker.internal:$IPORT)"
+GATEWAY_BIND=$BIND bash "$DEPLOY_ROOT/scripts/up.sh" "$P" --external-inference "https://host.docker.internal:$IPORT" || bail "제품 재기동 실패"
 chk "추론 서버가 별도 프로젝트($INF)의 컨테이너다" test -n "$("$DOCKER" ps -q --filter "label=com.docker.compose.project=$INF" --filter "name=model-serving")"
 chk "제품에 model-serving 컨테이너가 없다(프로필로 꺼짐)" test -z "$("$DOCKER" ps -a -q --filter "name=^$P-model-serving")"
 # 운영 compose 에 release-gate 호스트 게시가 없다(시험용 문이 없다)
@@ -115,7 +115,7 @@ gw_inf() { gw_code "$1" -H "Authorization: Bearer $(tr -d '\r\n' < "$INF_TOK_FIL
 is() { [ "$(eval "$1")" = "$2" ]; }
 
 echo "== 1. 추론 서버 /readyz: release 도달"
-READY=$(curl -sS --max-time 10 "http://$BIND:$IPORT/readyz" 2>&1 || true)
+READY=$(curl -sS --max-time 10 "https://$BIND:$IPORT/readyz" --cacert "$W/pki/root_ca.crt" 2>&1 || true)
 [ "$BIND" = 0.0.0.0 ] && READY=$(curl -sS --max-time 10 "http://127.0.0.1:$IPORT/readyz" 2>&1 || true)
 echo "  /readyz: $(echo "$READY" | cut -c1-300)"
 chk "추론 서버가 게이트웨이(HTTPS, 신뢰 CA)로 release 에 닿는다 (/readyz 에 release 도달 실패 사유가 없다)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);t=json.dumps(d,ensure_ascii=False);sys.exit(1 if \"닿지 못한다\" in t else 0)"' _ "$READY"
@@ -145,9 +145,9 @@ echo "== 4. 추론 서버 자신의 클라이언트가 게이트웨이(HTTPS + �
 # 없는 ID 면 release-gate 의 NOT_FOUND 가 서버의 FAILED(code NOT_FOUND)로 돌아온다. TLS 검증 실패·토큰 거부·경로 차단이면 다른 코드(UNAVAILABLE/PERMISSION_DENIED 등)가 나오므로 구별된다.
 MS_HOST=$([ "$BIND" = 0.0.0.0 ] && echo 127.0.0.1 || echo "$BIND")
 MS_TOK=$(sed 's/^[^=]*=//; s/,.*//' "$SECRETS_DIR/tokens/model-runtime-tokens" | tr -d '\r\n')
-curl -sS --max-time 15 -X PUT -H "Authorization: Bearer $MS_TOK" "http://$MS_HOST:$IPORT/v1/releases/rel-loc-test-none" >/dev/null 2>&1
+curl -sS --max-time 15 -X PUT -H "Authorization: Bearer $MS_TOK" "https://$MS_HOST:$IPORT/v1/releases/rel-loc-test-none" --cacert "$W/pki/root_ca.crt" >/dev/null 2>&1
 sleep 3
-ST=$(curl -sS --max-time 10 -H "Authorization: Bearer $MS_TOK" "http://$MS_HOST:$IPORT/v1/releases/rel-loc-test-none" 2>&1)
+ST=$(curl -sS --max-time 10 -H "Authorization: Bearer $MS_TOK" "https://$MS_HOST:$IPORT/v1/releases/rel-loc-test-none" --cacert "$W/pki/root_ca.crt" 2>&1)
 echo "  서버의 상태: $(echo "$ST" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('state'), (d.get('error') or {}).get('code'), (d.get('error') or {}).get('details'))" 2>&1)"
 chk "서버가 release-gate 의 NOT_FOUND 를 받았다(FAILED, code NOT_FOUND: 게이트웨이 TLS·토큰·경로가 모두 통과)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get(\"state\")==\"FAILED\" and d[\"error\"][\"code\"]==\"NOT_FOUND\" else 1)"' _ "$ST"
 chk "게이트웨이 접근 기록에 서버의 GET /v1/releases/{id}/bundle 이 있다(Python-urllib, 상태 404)" bash -c '"$1" logs "$2" 2>&1 | grep -q "\"uri\":\"/v1/releases/rel-loc-test-none/bundle\".*Python-urllib"' _ "$DOCKER" "$P-gateway-1"

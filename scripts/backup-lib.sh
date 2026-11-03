@@ -8,14 +8,14 @@
 backup_load_config() {
   CFG=${BACKUP_CONFIG:-$DEPLOY_ROOT/config/backup.env}
   [ -f "$CFG" ] || { echo "CRIT: 백업 설정 파일이 없다: $CFG (config/backup.env.example 을 복사해 채운다. 백업 없이 운영하지 않는다, D88 U6)" >&2; exit 2; }
-  BACKUP_DIR=; BACKUP_REPOSITORY=; BACKUP_REST_CREDENTIAL_FILE=; BACKUP_DOCKER_NETWORK=; BACKUP_RETENTION_DAYS=; BACKUP_PASSWORD_FILE=; BACKUP_ENCRYPT_RECIPIENTS=; BACKUP_ENCRYPT_TOOL=; BACKUP_ALLOW_PLAINTEXT=; BACKUP_SECRETS_DIR=; BACKUP_SECRETS_KEEP=
+  BACKUP_DIR=; BACKUP_REPOSITORY=; BACKUP_CACERT_FILE=; BACKUP_REST_CREDENTIAL_FILE=; BACKUP_DOCKER_NETWORK=; BACKUP_RETENTION_DAYS=; BACKUP_PASSWORD_FILE=; BACKUP_ENCRYPT_RECIPIENTS=; BACKUP_ENCRYPT_TOOL=; BACKUP_ALLOW_PLAINTEXT=; BACKUP_SECRETS_DIR=; BACKUP_SECRETS_KEEP=
   set -a; source "$CFG"; set +a
   # 옛 키(age/gpg 공개키 암호화, ADR 0020)는 조용히 무시하지 않고 거부한다: 설정을 그대로 두면 암호화가 바뀐 줄 모르고 운영하게 된다
   if [ -n "$BACKUP_ENCRYPT_RECIPIENTS$BACKUP_ENCRYPT_TOOL$BACKUP_ALLOW_PLAINTEXT$BACKUP_SECRETS_DIR$BACKUP_SECRETS_KEEP" ]; then
     echo "CRIT: $CFG 에 옛 키(BACKUP_ENCRYPT_RECIPIENTS/BACKUP_ENCRYPT_TOOL/BACKUP_ALLOW_PLAINTEXT/BACKUP_SECRETS_DIR/BACKUP_SECRETS_KEEP)가 있다. 백업은 restic 으로 바뀌었다(ADR 0038): 이 키들을 지우고 BACKUP_PASSWORD_FILE 을 둔다" >&2; exit 2; fi
   # 저장소 두 가지: (a) 운영 = BACKUP_REPOSITORY(restic rest-server --append-only, 서버 밖, D112): 서버는 쓰기만 하고 지우거나 고칠 수 없다. (b) 개발·시험 = BACKUP_DIR(로컬 폴더, 서버가 지울 수 있다)
   if [ -n "$BACKUP_REPOSITORY" ]; then
-    case "$BACKUP_REPOSITORY" in rest:http://*|rest:https://*) ;; *) echo "CRIT: BACKUP_REPOSITORY 는 rest:http(s)://호스트:포트/저장소이름 형식이어야 한다(restic rest-server): $BACKUP_REPOSITORY" >&2; exit 2;; esac
+    case "$BACKUP_REPOSITORY" in rest:https://*) ;; *) echo "CRIT: BACKUP_REPOSITORY 는 rest:https://호스트:포트/저장소이름 형식(TLS 필수, 평문 http 는 거부한다. ADR 0060)이어야 한다(restic rest-server): $BACKUP_REPOSITORY" >&2; exit 2;; esac
     case "$BACKUP_REPOSITORY" in *@*) echo "CRIT: BACKUP_REPOSITORY 에 계정·암호를 넣지 않는다(URL 은 인자·로그에 남는다): 자격은 BACKUP_REST_CREDENTIAL_FILE 로 준다" >&2; exit 2;; esac
     [ -n "$BACKUP_REST_CREDENTIAL_FILE" ] && [ -r "$BACKUP_REST_CREDENTIAL_FILE" ] && [ -s "$BACKUP_REST_CREDENTIAL_FILE" ] || { echo "CRIT: BACKUP_REST_CREDENTIAL_FILE(RESTIC_REST_USERNAME=…, RESTIC_REST_PASSWORD=… 두 줄이 든 파일)을 읽을 수 없거나 비었다: ${BACKUP_REST_CREDENTIAL_FILE:-<비어 있음>}" >&2; exit 2; }
     case "$(stat -c %a "$BACKUP_REST_CREDENTIAL_FILE")" in 400|600) ;; *) echo "CRIT: 저장소 자격 파일 모드가 400/600 이 아니다: $BACKUP_REST_CREDENTIAL_FILE" >&2; exit 2;; esac
@@ -46,6 +46,7 @@ backup_restic() {
   shift
   if [ "$BACKUP_MODE" = rest ]; then   # 서버 밖 append-only 저장소: URL 은 환경 변수, 자격은 env 파일(값이 docker 인자·ps 에 나오지 않는다)
     repo=(--env-file "$BACKUP_REST_CREDENTIAL_FILE" -e "RESTIC_REPOSITORY=$BACKUP_REPOSITORY"); [ -z "$BACKUP_DOCKER_NETWORK" ] || repo+=(--network "$BACKUP_DOCKER_NETWORK")
+    [ -z "$BACKUP_CACERT_FILE" ] || repo+=(-v "$BACKUP_CACERT_FILE:/run/secrets/backup-ca.crt:ro" -e RESTIC_CACERT=/run/secrets/backup-ca.crt)   # 저장소 서버 인증서를 검증할 루트(공개 인증서, restic --cacert 와 같다). 공인 인증서면 비운다
   else repo=(-v "$BACKUP_DIR:/backup" -e RESTIC_REPOSITORY=/backup/restic); fi
   "$DOCKER" run --rm "${u[@]+"${u[@]}"}" --security-opt no-new-privileges:true --tmpfs /tmp \
     "${repo[@]}" -v "$BACKUP_PASSWORD_FILE:/run/secrets/restic-password:ro" \

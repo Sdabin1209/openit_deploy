@@ -100,18 +100,19 @@ RSI=$(sed -n 's/^REST_SERVER_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); GWI=$
 RN=bkrest-net-$ID; RV=bkrest-data-$ID; RC=bkrest-target-$ID
 rest_cleanup() { "$DOCKER" rm -f $RC >/dev/null 2>&1; "$DOCKER" network rm $RN >/dev/null 2>&1; "$DOCKER" volume rm -f $RV >/dev/null 2>&1; }
 trap 'rest_cleanup; cleanup' EXIT
+mkdir -p "$W/tls"; gateway_test_pki "$W/tls" "$RC" || { echo "시험 PKI 실패"; exit 1; }   # 저장소 서버는 TLS 만(ADR 0060)
 "$DOCKER" network create $RN >/dev/null; "$DOCKER" volume create $RV >/dev/null
 RH=$(printf 'srvpw-%s\nsrvpw-%s\n' $ID $ID | "$DOCKER" run --rm -i "$GWI" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n'); echo "srv:$RH" > "$W/htpasswd"; chmod 644 "$W/htpasswd"
 ( umask 077; printf 'RESTIC_REST_USERNAME=srv\nRESTIC_REST_PASSWORD=srvpw-%s\n' $ID > "$W/rest.cred" )
-"$DOCKER" run -d --name $RC --network $RN --read-only --cap-drop ALL --security-opt no-new-privileges:true -v $RV:/data -v "$W/htpasswd:/run/htpasswd:ro" --entrypoint rest-server "$RSI" --path /data --listen :8000 --append-only --htpasswd-file /run/htpasswd >/dev/null
+"$DOCKER" run -d --name $RC --network $RN --read-only --cap-drop ALL --security-opt no-new-privileges:true -v $RV:/data -v "$W/htpasswd:/run/htpasswd:ro" -v "$W/tls:/run/tls:ro" --entrypoint rest-server "$RSI" --path /data --listen :8000 --append-only --htpasswd-file /run/htpasswd --tls --tls-cert /run/tls/leaf.crt --tls-key /run/tls/leaf.key >/dev/null
 sleep 2
-rcfg() { printf 'BACKUP_REPOSITORY=rest:http://%s:8000/openit\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s\nBACKUP_RETENTION_DAYS=0\nBACKUP_PASSWORD_FILE=%s\n' "$RC" "$W/rest.cred" "$RN" "$W/backup.pass" > "$W/rest.env"; }
+rcfg() { printf 'BACKUP_REPOSITORY=rest:https://%s:8000/openit\nBACKUP_CACERT_FILE=%s/tls/root_ca.crt\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s\nBACKUP_RETENTION_DAYS=0\nBACKUP_PASSWORD_FILE=%s\n' "$RC" "$W" "$W/rest.cred" "$RN" "$W/backup.pass" > "$W/rest.env"; }
 rcfg; export BACKUP_CONFIG="$W/rest.env"
-printf 'BACKUP_REPOSITORY=rest:http://srv:pw@%s:8000/openit\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$RC" "$W/rest.cred" "$W/backup.pass" > "$W/r1.env"
+printf 'BACKUP_REPOSITORY=rest:https://srv:pw@%s:8000/openit\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$RC" "$W/rest.cred" "$W/backup.pass" > "$W/r1.env"
 rc "URL 에 계정·암호를 넣으면 거부 -> 2" 2 env BACKUP_CONFIG="$W/r1.env" bash "$DEPLOY_ROOT/scripts/backup-check.sh"
-cp "$W/rest.cred" "$W/loose.cred"; chmod 644 "$W/loose.cred"; printf 'BACKUP_REPOSITORY=rest:http://x:8000/o\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$W/loose.cred" "$W/backup.pass" > "$W/r2.env"
+cp "$W/rest.cred" "$W/loose.cred"; chmod 644 "$W/loose.cred"; printf 'BACKUP_REPOSITORY=rest:https://x:8000/o\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$W/loose.cred" "$W/backup.pass" > "$W/r2.env"
 rc "저장소 자격 파일 모드가 644 면 거부 -> 2" 2 env BACKUP_CONFIG="$W/r2.env" bash "$DEPLOY_ROOT/scripts/backup-check.sh"
-printf 'BACKUP_REPOSITORY=http://x:8000/o\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$W/rest.cred" "$W/backup.pass" > "$W/r3.env"
+printf 'BACKUP_REPOSITORY=https://x:8000/o\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$W/rest.cred" "$W/backup.pass" > "$W/r3.env"
 rc "BACKUP_REPOSITORY 가 rest: 로 시작하지 않으면 거부 -> 2" 2 env BACKUP_CONFIG="$W/r3.env" bash "$DEPLOY_ROOT/scripts/backup-check.sh"
 rc "올바른 rest 설정은 backup-check.sh 통과" 0 bash "$DEPLOY_ROOT/scripts/backup-check.sh"
 ok "pg-backup.sh (rest, survey gate): 저장소가 만들어지고 백업된다" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" survey gate
