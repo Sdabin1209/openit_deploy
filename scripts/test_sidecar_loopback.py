@@ -22,7 +22,7 @@ class Loopback(unittest.TestCase):
 
     def test_sidecar_shares_namespace_of_app(self):
         for n in SIDECARED:
-            self.assertEqual(S[n + "-tls"]["network_mode"], f"service:{n}")
+            self.assertEqual(S[n + "-tls"]["network_mode"], f"service:{n}-net"); self.assertEqual(S[n]["network_mode"], f"service:{n}-net")
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공�
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
-  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; f=0; i=0; while sleep 5; do kill -0 $$p 2>/dev/null || exit 1; if nc -z 127.0.0.1 $${TLS_UPSTREAM##*:}; then f=0; else f=$$((f+1)); [ $$f -ge 6 ] && exit 1; fi; i=$$((i+1)); [ $$((i%12)) = 0 ] || continue; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(측정함). 인증서가 갱신되면(<서비스>-cert 의 renew 데몬) 60초 안에 caddy reload. 상류(앱)가 30초 동안 안 닿으면 사이드카가 종료해 restart 정책이 다시 붙인다: 앱 컨테이너가 docker stop/start·OOM 재시작으로 새 네트워크 네임스페이스를 받으면 network_mode: service:<앱> 사이드카는 옛 네임스페이스에 남기 때문이다(ADR 0060)
+  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --force --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(측정함). 인증서가 갱신되면(<서비스>-cert 의 renew 데몬) 60초 안에 caddy reload --force (설정이 그대로면 reload 가 건너뛰어 새 인증서를 못 쓴다, 실험 C6)
   read_only: true
   tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
   mem_limit: 64m   # 측정 안 함(시작값)
@@ -397,77 +397,77 @@ services:
     volumes: ["certs-oauth2-proxy:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   survey-service-tls:   # survey-service 의 TLS 사이드카(ADR 0060): https://survey-service 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:survey-service"
+    network_mode: "service:survey-service-net"
     environment: {TLS_NAME: survey-service, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-survey-service:/certs:ro"]
     depends_on:
       survey-service-cert: {condition: service_healthy}
   question-authoring-tls:   # question-authoring 의 TLS 사이드카(ADR 0060): https://question-authoring 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:question-authoring"
+    network_mode: "service:question-authoring-net"
     environment: {TLS_NAME: question-authoring, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-question-authoring:/certs:ro"]
     depends_on:
       question-authoring-cert: {condition: service_healthy}
   ops-feedback-ingest-tls:   # ops-feedback-ingest 의 TLS 사이드카(ADR 0060): https://ops-feedback-ingest 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:ops-feedback-ingest"
+    network_mode: "service:ops-feedback-ingest-net"
     environment: {TLS_NAME: ops-feedback-ingest, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-ops-feedback-ingest:/certs:ro"]
     depends_on:
       ops-feedback-ingest-cert: {condition: service_healthy}
   release-gate-tls:   # release-gate 의 TLS 사이드카(ADR 0060): https://release-gate 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:release-gate"
+    network_mode: "service:release-gate-net"
     environment: {TLS_NAME: release-gate, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-release-gate:/certs:ro"]
     depends_on:
       release-gate-cert: {condition: service_healthy}
   model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): https://model-serving 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:model-serving"
+    network_mode: "service:model-serving-net"
     environment: {TLS_NAME: model-serving, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-model-serving:/certs:ro"]
     depends_on:
       model-serving-cert: {condition: service_healthy}
   model-registry-tls:   # model-registry 의 TLS 사이드카(ADR 0060): https://model-registry 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:model-registry"
+    network_mode: "service:model-registry-net"
     environment: {TLS_NAME: model-registry, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-model-registry:/certs:ro"]
     depends_on:
       model-registry-cert: {condition: service_healthy}
   dataset-store-tls:   # dataset-store 의 TLS 사이드카(ADR 0060): https://dataset-store 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:dataset-store"
+    network_mode: "service:dataset-store-net"
     environment: {TLS_NAME: dataset-store, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-dataset-store:/certs:ro"]
     depends_on:
       dataset-store-cert: {condition: service_healthy}
   admin-console-tls:   # admin-console 의 TLS 사이드카(ADR 0060): https://admin-console 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:admin-console"
+    network_mode: "service:admin-console-net"
     environment: {TLS_NAME: admin-console, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-admin-console:/certs:ro"]
     depends_on:
       admin-console-cert: {condition: service_healthy}
   kiosk-frontend-tls:   # kiosk-frontend 의 TLS 사이드카(ADR 0060): https://kiosk-frontend 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:kiosk-frontend"
+    network_mode: "service:kiosk-frontend-net"
     environment: {TLS_NAME: kiosk-frontend, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-kiosk-frontend:/certs:ro"]
     depends_on:
       kiosk-frontend-cert: {condition: service_healthy}
   keycloak-tls:   # keycloak 의 TLS 사이드카(ADR 0060): https://keycloak 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:keycloak"
+    network_mode: "service:keycloak-net"
     environment: {TLS_NAME: keycloak, TLS_UPSTREAM: "127.0.0.1:8080"}
     volumes: ["certs-keycloak:/certs:ro"]
     depends_on:
       keycloak-cert: {condition: service_healthy}
   oauth2-proxy-tls:   # oauth2-proxy 의 TLS 사이드카(ADR 0060): https://oauth2-proxy 으로 받는다
     <<: *tlssidecar
-    network_mode: "service:oauth2-proxy"
+    network_mode: "service:oauth2-proxy-net"
     environment: {TLS_NAME: oauth2-proxy, TLS_UPSTREAM: "127.0.0.1:4180"}
     volumes: ["certs-oauth2-proxy:/certs:ro"]
     healthcheck: {test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 443 && wget -q -O /dev/null http://127.0.0.1:4180/ping"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}   # 왜: oauth2-proxy 이미지에는 셸이 없어(healthcheck 를 둘 수 없다) 같은 네임스페이스의 사이드카가 표준 /ping 으로 준비를 본다. 게이트웨이가 이것을 기다린다
@@ -594,34 +594,76 @@ services:
     networks: [edge, ui, serving, authoring, release, auth]   # release: 학습 서버의 패키지 게시 입구(U69, model-registry). ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
+  kiosk-frontend-net:   # kiosk-frontend 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:kiosk-frontend-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      ui: {aliases: [kiosk-frontend]}
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     environment: {KIOSK_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
-    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
     pids_limit: ${KIOSK_FRONTEND_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/kiosk-frontend@${KIOSK_FRONTEND_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
-    networks: [ui]
+    network_mode: "service:kiosk-frontend-net"   # 망·별칭·sysctls 는 kiosk-frontend-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
+  admin-console-net:   # admin-console 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:admin-console-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      ui: {aliases: [admin-console]}
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
     environment: {ADMIN_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
-    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
     pids_limit: ${ADMIN_CONSOLE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/admin-console@${ADMIN_CONSOLE_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
-    networks: [ui]
+    network_mode: "service:admin-console-net"   # 망·별칭·sysctls 는 admin-console-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
-  survey-service:
+  survey-service-net:   # survey-service 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:survey-service-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      edge: {aliases: [survey-service]}
+      serving: {aliases: [survey-service]}
+      db-survey: {aliases: [survey-service]}
+      monitoring: {aliases: [survey-service]}
+  survey-service:
     <<: *hardening
     mem_limit: ${SURVEY_SERVICE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${SURVEY_SERVICE_CPUS:-1.0}
@@ -643,7 +685,7 @@ services:
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &survey_secrets [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data, pki-root:/etc/openit/pki:ro]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
-    networks: [edge, serving, db-survey, monitoring]
+    network_mode: "service:survey-service-net"   # 망·별칭·sysctls 는 survey-service-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
@@ -653,8 +695,23 @@ services:
       release-gate: {condition: service_healthy}
       model-serving: {condition: service_healthy}
 
-  question-authoring:
+  question-authoring-net:   # question-authoring 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:question-authoring-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      authoring: {aliases: [question-authoring]}
+      release: {aliases: [question-authoring]}
+      db-qa: {aliases: [question-authoring]}
+  question-authoring:
     <<: *hardening
     mem_limit: ${QUESTION_AUTHORING_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${QUESTION_AUTHORING_CPUS:-1.0}
@@ -674,15 +731,29 @@ services:
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
     tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
-    networks: [authoring, release, db-qa]
+    network_mode: "service:question-authoring-net"   # 망·별칭·sysctls 는 question-authoring-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  keycloak:   # 사람 계정 IdP(U82, head ADR 0014, deploy ADR 0057). optimized image(images/keycloak/Dockerfile, ADR 0058)라 읽기 전용 루트다(그 밖의 강화는 같다)
+  keycloak-net:   # keycloak 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:keycloak-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      auth: {aliases: [keycloak]}
+      db-keycloak: {aliases: [keycloak]}
+  keycloak:   # 사람 계정 IdP(U82, head ADR 0014, deploy ADR 0057). optimized image(images/keycloak/Dockerfile, ADR 0058)라 읽기 전용 루트다(그 밖의 강화는 같다)
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -714,7 +785,7 @@ services:
     secrets:
       - keycloak-secrets.conf          # db-password, bootstrap-admin-password (scripts/gen-secrets.sh)
       - {source: keycloak-realm.json, target: /opt/keycloak/data/import/openit-realm.json}   # realm 가져오기: 클라이언트 비밀·초기 admin 임시 비밀번호가 값으로 들어 있어 비밀 파일이다(scripts/gen-keycloak-realm.sh)
-    networks: [auth, db-keycloak]
+    network_mode: "service:keycloak-net"   # 망·별칭·sysctls 는 keycloak-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:   # 관리 포트(9000)의 /auth/health/ready. 이미지에 curl 이 없어 bash 의 /dev/tcp 로 요청한다
@@ -724,8 +795,21 @@ services:
       retries: 20
       start_period: 90s   # 첫 기동은 시작 때 다시 빌드·realm 가져오기를 한다(측정 전, 시작값)
 
-  oauth2-proxy:   # OIDC 클라이언트(U82). 인증 결과를 쿠키 세션으로 갖고 gateway 의 forward_auth(/oauth2/auth)에 답한다. 이미지에 셸이 없어 healthcheck 를 두지 않는다
+  oauth2-proxy-net:   # oauth2-proxy 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:oauth2-proxy-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      auth: {aliases: [oauth2-proxy]}
+  oauth2-proxy:   # OIDC 클라이언트(U82). 인증 결과를 쿠키 세션으로 갖고 gateway 의 forward_auth(/oauth2/auth)에 답한다. 이미지에 셸이 없어 healthcheck 를 두지 않는다
     <<: *hardening
     mem_limit: ${OAUTH2_PROXY_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${OAUTH2_PROXY_CPUS:-0.5}
@@ -763,7 +847,7 @@ services:
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [oauth2-proxy-client-secret, oauth2-proxy-cookie-secret]
-    networks: [auth]
+    network_mode: "service:oauth2-proxy-net"   # 망·별칭·sysctls 는 oauth2-proxy-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       keycloak: {condition: service_healthy}
 
@@ -789,8 +873,24 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
 
-  ops-feedback-ingest:
+  ops-feedback-ingest-net:   # ops-feedback-ingest 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:ops-feedback-ingest-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      serving: {aliases: [ops-feedback-ingest]}
+      logs: {aliases: [ops-feedback-ingest]}
+      authoring: {aliases: [ops-feedback-ingest]}
+      db-ops: {aliases: [ops-feedback-ingest]}
+  ops-feedback-ingest:
     <<: *hardening
     mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${OPS_FEEDBACK_INGEST_CPUS:-1.0}
@@ -810,7 +910,7 @@ services:
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-app-dsn, db-ops-failure-app-dsn]
     tmpfs: ["/tmp", "/data"]
-    networks: [serving, logs, authoring, db-ops]
+    network_mode: "service:ops-feedback-ingest-net"   # 망·별칭·sysctls 는 ops-feedback-ingest-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       postgres: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
       ops-feedback-migrate: {condition: service_completed_successfully}   # L08: 스키마는 소유자 계정의 migrate 가 먼저 만든다. 서버는 verify 만 한다
@@ -818,8 +918,23 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  release-gate:
+  release-gate-net:   # release-gate 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:release-gate-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      serving: {aliases: [release-gate]}
+      release: {aliases: [release-gate]}
+      db-gate: {aliases: [release-gate]}
+  release-gate:
     <<: *hardening
     mem_limit: ${RELEASE_GATE_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${RELEASE_GATE_CPUS:-1.0}
@@ -838,7 +953,7 @@ services:
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &gate_secrets [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]
-    networks: [serving, release, db-gate]
+    network_mode: "service:release-gate-net"   # 망·별칭·sysctls 는 release-gate-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     stop_grace_period: 40s   # release-gate 최악 종료 시간 하드 상한 35초(요청 소켓 30s 등, 근거 release-gate docs/adr/0008-timeouts.md, 측정 안 함) + 여유 5초 -> SIGKILL 전에 끝나게 한다. 값은 scripts/test_e2e_constants.py 가 35초와 대조한다
     depends_on:
       postgres: {condition: service_healthy}
@@ -846,8 +961,22 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  model-serving:        # 추론 서버(model-runtime, CPU/fake 변형, 문진 스키마는 이미지에 내장 D72). survey-service가 I9(HTTP)로 부른다
+  model-serving-net:   # model-serving 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-serving-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      serving: {aliases: [model-serving]}
+      monitoring: {aliases: [model-serving]}
+  model-serving:        # 추론 서버(model-runtime, CPU/fake 변형, 문진 스키마는 이미지에 내장 D72). survey-service가 I9(HTTP)로 부른다
     <<: *hardening
     mem_limit: ${MODEL_SERVING_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${MODEL_SERVING_CPUS:-2.0}
@@ -865,13 +994,26 @@ services:
     volumes:
       - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다)
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
-    networks: [serving, monitoring]   # monitoring: /metrics 수집 전용(ADR 0053)
+    network_mode: "service:model-serving-net"   # 망·별칭·sysctls 는 model-serving-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
+  model-registry-net:   # model-registry 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-registry-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      release: {aliases: [model-registry]}
+  model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
     <<: *hardening
     mem_limit: ${MODEL_REGISTRY_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${MODEL_REGISTRY_CPUS:-1.0}
@@ -885,13 +1027,26 @@ services:
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [model-registry-read-tokens, model-registry-write-tokens]
     volumes: [models-data:/data, pki-root:/etc/openit/pki:ro]
-    networks: [release]
+    network_mode: "service:model-registry-net"   # 망·별칭·sysctls 는 model-registry-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     healthcheck:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  dataset-store:        # synthetic-data의 I2 서버(소스 리포지토리는 synthetic-data, 이미지 이름은 dataset-store, 계약 v2.1.0 D100). 읽기=model-lab, 쓰기=synthetic-data
+  dataset-store-net:   # dataset-store 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:dataset-store-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+    image: ${PAUSE_IMAGE:?locks/images.lock}
+    restart: unless-stopped
+    user: "65535:65535"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m   # 측정 안 함(시작값)
+    cpus: 0.1
+    pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    networks:
+      datasets: {aliases: [dataset-store]}
+  dataset-store:        # synthetic-data의 I2 서버(소스 리포지토리는 synthetic-data, 이미지 이름은 dataset-store, 계약 v2.1.0 D100). 읽기=model-lab, 쓰기=synthetic-data
     <<: *hardening
     mem_limit: ${DATASET_STORE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${DATASET_STORE_CPUS:-1.0}
@@ -905,7 +1060,7 @@ services:
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [dataset-store-read-tokens, dataset-store-write-tokens]
     volumes: [datasets-data:/data, pki-root:/etc/openit/pki:ro]   # 이미지의 DATASET_STORE_ROOT=/data (uid 10001 소유). 서버의 임시 폴더(/data/.tmp)도 같은 볼륨이라 게시 rename 이 원자적이다. 루트는 read_only
-    networks: [datasets]
+    network_mode: "service:dataset-store-net"   # 망·별칭·sysctls 는 dataset-store-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     stop_grace_period: 40s   # 서버는 SIGTERM 에서 진행 중 요청을 끝까지 기다린다(daemon_threads=False). 요청 소켓 timeout 30초(DATASET_STORE_SOCKET_TIMEOUT 기본) + 여유 10초. 하드 상한은 그 영역이 확정하지 않았다(큰 게시·느린 읽기는 더 걸릴 수 있다, 측정 안 함). SIGKILL 이어도 게시는 임시 폴더 후 rename 이라 반쯤 쓴 버전이 보이지 않는다(synthetic-data ADR 0008·0012). 근거 docs/adr/0032-dataset-store-boundary.md
     healthcheck:
       <<: *pyhealth
