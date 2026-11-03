@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""정적 시험(RUNTIME.md R4.4, 실험 S8, ADR 0060): 인증서 컨테이너(<서비스>-cert, postgres-cert, 추론 model-serving-cert)는 시작할 때 파일의 존재가 아니라 검증(만료 포함)으로 발급 여부를 정한다
+"""정적 시험(RUNTIME-COMPONENTS.md DC-PKI.1, 실험 S8, ADR 0060): 인증서 컨테이너(<서비스>-cert, postgres-cert, 추론 model-serving-cert)는 시작할 때 파일의 존재가 아니라 검증(만료 포함)으로 발급 여부를 정한다
 (`step certificate verify … ||` 발급). 존재만 보면 만료된 인증서가 남아 renew 가 `certificate expired` 로 거부된다. healthcheck 도 검증이라 만료된 인증서로는 healthy 가 아니다."""
 import pathlib, unittest
 import yaml

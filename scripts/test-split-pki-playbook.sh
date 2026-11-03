@@ -79,7 +79,7 @@ grep -q 'step-ca:' "$T/r/app/compose.placement.yaml" && ok "(2) app 서버 overr
 S=$(docker run --rm --network none -v ${A}_certs-release-gate:/c:ro "$UTIL" cat /c/tls.crt | openssl x509 -noout -subject -issuer 2>/dev/null)
 case "$S" in *"CN = release-gate"*|*"CN=release-gate"*) ok "(2) app 서버 -cert 가 다른 망의 step-ca 에서 서비스 이름(release-gate) 인증서를 받았다";; *) bad "인증서 주체: $S";; esac
 [ "$(docker inspect -f '{{.State.Health.Status}}' $A-release-gate-tls-1)" = healthy ] && ok "(2) 사이드카가 그 인증서로 443 을 연다(healthy)" || bad "사이드카가 healthy 가 아니다"
-# --- R3.2·R3.4·R4.1·R4.2·R6.2: 실제 사이드카·<서비스>-net 구조에서, 다른 서버의 호출자가 보는 것 ---
+# --- R3.2·R3.4·R4.1·DC-NET.1·R6.2: 실제 사이드카·<서비스>-net 구조에서, 다른 서버의 호출자가 보는 것 ---
 CALL() { docker exec $D-survey-service-1 python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/',timeout=15).read().decode())"; }
 R=$(CALL); case "$R" in "200 https://release-gate:"*" ok") ok "(R1.4) 다른 서버의 호출자가 https://<서비스 이름>:<게시 포트> 로 사이드카를 거쳐 앱 응답을 받는다 ($R)";; *) bad "기준 호출: $R";; esac
 A_APP=$A-release-gate-1; A_TLS=$A-release-gate-tls-1; A_NET=$A-release-gate-net-1
@@ -93,8 +93,8 @@ docker start $A_APP >/dev/null; waith $A_APP || bad "앱이 healthy 로 돌아�
 SA=$(docker inspect -f '{{.State.StartedAt}}' $A_APP)
 docker stop -t 2 $A_TLS >/dev/null; R=$(CALL)
 notok "$R" && case "$R" in "ERR "*|"502 "*|"503 "*) ok "(R3.4) 사이드카가 멈추면 다른 서버의 호출자는 연결 실패를 본다 ($R)";; *) bad "R3.4 응답: $R";; esac || bad "R3.4: 사이드카가 멈췄는데 200: $R"
-docker start $A_TLS >/dev/null; waith $A_TLS || bad "사이드카가 healthy 로 돌아오지 않는다"; R=$(CALL); case "$R" in "200 "*" ok") ok "(R4.2) 사이드카 재시작 뒤 앱을 건드리지 않고 같은 주소로 200 ($R)";; *) bad "R4.2 복구: $R";; esac
-[ "$(docker inspect -f '{{.State.StartedAt}}' $A_APP)" = "$SA" ] || bad "사이드카 재시작에 앱이 같이 재시작됐다"; ok "(R4.2) 사이드카 stop/start 에 앱은 재시작되지 않았다"
+docker start $A_TLS >/dev/null; waith $A_TLS || bad "사이드카가 healthy 로 돌아오지 않는다"; R=$(CALL); case "$R" in "200 "*" ok") ok "(DC-NET.1) 사이드카 재시작 뒤 앱을 건드리지 않고 같은 주소로 200 ($R)";; *) bad "DC-NET.1 복구: $R";; esac
+[ "$(docker inspect -f '{{.State.StartedAt}}' $A_APP)" = "$SA" ] || bad "사이드카 재시작에 앱이 같이 재시작됐다"; ok "(DC-NET.1) 사이드카 stop/start 에 앱은 재시작되지 않았다"
 # R6.2: 인증서 발급용 망(pki)과 DB 망은 서로의 서비스에 닿지 않는다(계약 호출 관계 밖의 쌍)
 PROBE() { docker run --rm --network "$1" "$UTIL" python -c "import socket,sys
 try:

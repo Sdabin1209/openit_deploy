@@ -21,7 +21,7 @@ mk "$DEPLOY_LOCK" b; rm -f "$T/history"/*.lock; mk "$T/history/20260103T000000Z.
 rb > "$T/o2" 2>&1; rc=$?
 ok "TLS 이전처럼 키 집합이 다른 잠금은 다른 deploy 판과 짝이라고 말하고 멈춘다(종료 2)" bash -c "[ $rc = 2 ] && grep -q '다른 deploy 판' '$T/o2' && grep -q 'STEP_CA_IMAGE' '$T/o2'"
 ok "그때 현재 잠금은 바뀌지 않는다" cmp -s "$DEPLOY_LOCK" "$T/before"
-ok "R4.5 메시지가 그 잠금을 만든 deploy 커밋 해시와 되돌리는 방법(git checkout)을 짚는다" bash -c 'grep -Eq "만든 deploy 커밋: ([0-9a-f]{7,}|찾지 못했다)" "$1" && grep -q "되돌리는 방법\|찾지 못했다" "$1"' _ "$T/o2"
+ok "DC-REL.1 메시지가 그 잠금을 만든 deploy 커밋 해시와 되돌리는 방법(git checkout)을 짚는다" bash -c 'grep -Eq "만든 deploy 커밋: ([0-9a-f]{7,}|찾지 못했다)" "$1" && grep -q "되돌리는 방법\|찾지 못했다" "$1"' _ "$T/o2"
 # (3) 같은 판의 이전 잠금
 rm -f "$T/history"/*.lock; mk "$T/history/20260104T000000Z.lock" a; rb > "$T/o3" 2>&1
 ok "같은 판의 이전 잠금으로 되돌아간다" bash -c "grep -q 'sha256:a' '$DEPLOY_LOCK'"

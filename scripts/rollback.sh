@@ -23,7 +23,7 @@ fi
 has_all_digests "$TO" || die "이 잠금에는 서비스 digest 가 다 없다(lib.sh SERVICES 기준): $TO"
 # 이미지만 되돌리는 코드 축 롤백은 같은 deploy 판(compose)의 잠금 사이에서만 성립한다. 잠금 전체(제3자 이미지 줄 포함)를 바꾸므로, 키 집합이 현재와 다르면(예: TLS 이전 잠금에는 STEP_CA_IMAGE 가 없다) compose 가 거부한다
 if [ "$(keys "$TO")" != "$(keys "$LOCK")" ]; then
-  # 어느 deploy 커밋인가(R4.5): 잠금 파일 이름(YYYYmmddTHHMMSSZ)은 만든 시각이다. 그 시각에 compose.yaml 의 최신 커밋이 그 잠금과 짝인 deploy 판이다. 잠금 파일이 git 에 추적되면 그것을 추가한 커밋을 먼저 쓴다
+  # 어느 deploy 커밋인가(DC-REL.1): 잠금 파일 이름(YYYYmmddTHHMMSSZ)은 만든 시각이다. 그 시각에 compose.yaml 의 최신 커밋이 그 잠금과 짝인 deploy 판이다. 잠금 파일이 git 에 추적되면 그것을 추가한 커밋을 먼저 쓴다
   c=$(git -C "$DEPLOY_ROOT" log -1 --format='%h %s' --diff-filter=A -- "$TO" 2>/dev/null || true)
   if [ -z "$c" ]; then ts=$(basename "$TO" .lock | sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z.*/\1-\2-\3T\4:\5:\6Z/'); c=$(git -C "$DEPLOY_ROOT" log -1 --until="$ts" --format='%h %s' -- compose.yaml 2>/dev/null || true); fi
   echo "이 잠금($(basename "$TO"))을 만든 deploy 커밋: ${c:-찾지 못했다(git 이력이 없다)}" >&2

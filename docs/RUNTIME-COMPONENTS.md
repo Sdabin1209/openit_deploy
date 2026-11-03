@@ -14,6 +14,22 @@
 - 모든 컴포넌트는 입력을 파일·환경 변수·네트워크 호출로만 받고, 이웃의 내부 구조(파일 경로, 설정 키 목록)를 모른다. 비밀은 파일(640 + 그룹)만 쓴다(R6.3).
 - 컴포넌트 사이 호출은 `https://<서비스 이름>` + `SSL_CERT_FILE` 로 믿는 step-ca 루트만 쓴다(R1.1, R1.3). 예외는 같은 네트워크 공간 안의 loopback 평문뿐이다.
 
+### 0.1 deploy 컴포넌트 계약 번호 (DC-)
+
+영역 사이 계약(RUNTIME.md)에서 3.4.4 에 걷어 낸 deploy 안 컴포넌트 사이의 약속은 이 문서가 정본이고 번호는 `DC-` 로 쓴다(handoff `head/docs/handoffs/deploy-runtime-internal-2026-11-04.md`). 영역 사이 출력은 RUNTIME.md 가 정한다.
+
+| 번호 | 내용 | 옛 번호 | 영역 사이 출력(RUNTIME.md) |
+|---|---|---|---|
+| DC-GW.1 | 게이트웨이 자신의 `/healthz`·`/readyz` 본문은 HealthStatus | R2.3 | 없음 |
+| DC-GW.2 | 게이트웨이는 상류(앱·종단·인증)가 준비된 뒤에 요청을 받는다 | R5.2 | 없음 |
+| DC-GW.3 | 게이트웨이 `/healthz` 는 살아 있으면 200, `/readyz` 코드는 받을 수 있는가, 본문은 상류별 | R5.3 | 없음 |
+| DC-NET.1 | 중계(종단·소유자)가 재시작해도 앱을 재시작하지 않는다 | R4.2 | R3.4·R4.1 |
+| DC-PKI.1 | 서버 인증서 자동 갱신, 갱신 뒤 중계가 새 인증서를 쓴다, 만료 뒤 재발급 | R4.4 | R3.8·R3.11·R4.6 |
+| DC-REL.1 | 이미지 digest 잠금 롤백은 같은 배포 판끼리만 | R4.5 | 없음 |
+| DC-MON.1 | 경보 목록(발급 실패·수명 1/3·디스크 80%·readyz·시계)과 로그 크기 상한 | R8.2 | 없음 |
+| DC-MON.2 | alertmanager 만 바깥 망으로 나간다 | R10.10 | R6.4 |
+| DC-TLS.1 | 서비스 TLS 종단의 읽기 한도 | R10.7 | R3.17 |
+
 ## 1. 구성 한눈에
 
 ```
@@ -41,12 +57,12 @@
 | 실패 동작 | 소유자가 멈추면 앱·TLS 종단도 함께 못 쓴다(공간이 없어진다). 그러므로 소유자는 **하는 일이 없고** 앱·TLS 종단의 재시작에 영향받지 않는다. 소유자 재시작은 앱·TLS 종단을 다시 붙이는 일을 요구한다(운영상 거의 일어나지 않는다). |
 | 책임 | 수명이 가장 길다. `restart: unless-stopped`, 자원 한도 극소, 읽기 전용 루트, cap_drop ALL. |
 
-**왜 이 구조인가(대안 비교, 근거는 RUNTIME R3.2·R3.4·R4.1·R4.2).**
+**왜 이 구조인가(대안 비교, 근거는 RUNTIME R3.2·R3.4·R4.1·DC-NET.1).**
 
-| 안 | 앱 멈춤(R3.2) | TLS 종단 멈춤(R3.4) | 앱 재시작(R4.1) | TLS 종단 재시작(R4.2) | 비고 |
+| 안 | 앱 멈춤(R3.2) | TLS 종단 멈춤(R3.4) | 앱 재시작(R4.1) | TLS 종단 재시작(DC-NET.1) | 비고 |
 |---|---|---|---|---|---|
 | A. 앱이 공간 소유(현재) | 공간이 사라져 종단도 못 뜬다. 게이트웨이가 연결을 못 맺고 시간 초과 504 가 나왔다(5q, 확인함) | 앱은 산다. 종단만 다시 붙이면 된다 | 종단을 다시 붙여야 한다(자동 아님) | 앱 영향 없음 | R3.2·R4.1 위반 |
-| B. TLS 종단이 공간 소유 | 종단이 살아서 502 를 낸다. 종단이 연결을 끊으면 503 을 만들 수 있다 | 앱까지 공간을 잃는다 | 앱만 다시 붙이면 된다 | 앱을 다시 붙여야 한다 | R4.2 위반(종단 재시작이 앱 재시작을 요구) |
+| B. TLS 종단이 공간 소유 | 종단이 살아서 502 를 낸다. 종단이 연결을 끊으면 503 을 만들 수 있다 | 앱까지 공간을 잃는다 | 앱만 다시 붙이면 된다 | 앱을 다시 붙여야 한다 | DC-NET.1 위반(종단 재시작이 앱 재시작을 요구) |
 | C. 공간을 나누고 앱이 0.0.0.0 으로 연다 | 이름 해석 실패·연결 거부로 503 | 같음 | 이름·주소가 그대로 | 같음 | 앱 평문 포트가 망에 열린다: R6.1 위반(서비스 사이 평문 경로가 생김) |
 | D. 전용 소유자 `<서비스>-net`(채택) | 소유자가 살아 있어 연결은 맺히고, 종단이 상류 거부를 즉시 연결 종료로 올려 503(R3.2) | 앱은 산다. 소유자는 산다. 503(R3.4) | 앱만 재시작. 종단은 그대로 | 종단만 재시작. 앱은 그대로 | 컨테이너가 서비스당 하나 늘어난다(감수) |
 | D'. 전용 소유자를 `UTIL_IMAGE` + `sleep` 으로 | D 와 같음 | D 와 같음 | D 와 같음 | D 와 같음 | 새 외부 이미지는 없지만 셸이 있는 이미지가 서비스마다 하나 더 돈다(공격 면 증가). pause 가 더 작고 표준이라 D 를 채택한다 |
@@ -70,7 +86,7 @@
 |---|---|
 | 입력 | `/certs/tls.crt`, `/certs/tls.key`(인증서 컨테이너가 쓰는 볼륨, 읽기 전용), 환경 `TLS_NAME`(서비스 이름), `TLS_UPSTREAM`(기본 127.0.0.1:8080), 설정 `config/tls-sidecar.caddy`. |
 | 출력 | 443 에서 `https://<서비스 이름>`. 맞는 Host 는 상류로 전달(응답 상태·헤더·본문 불변, R2.1). 모르는 Host/SNI 는 421(R3.7). 평문 http 는 받지 않는다(R3.9). |
-| 실패 동작 | 상류(앱)가 거부하면 연결을 끊어 호출자가 503 으로 해석하게 한다(빈 502 를 내지 않는다, R3.1·R2.2). 인증서 파일이 새로 바뀌면 일정 주기에 reload 한다(R4.4). 상류가 안 닿는 동안에도 종단은 종료하지 않고 계속 떠서 503 을 낸다(결정: 공간 소유자가 별도이므로 앱이 멈춰도 종단은 산다. 종단이 상류 부재로 스스로 죽으면 앱이 돌아와도 종단을 다시 올려야 해서 R3.4 의 "복구까지 재시작 없음"을 어긴다. 종단 프로세스 자체가 죽는 경우만 restart 정책이 다시 올린다. 현재 구현의 30초 종료 감시는 2절 구현과 함께 없앤다, 위반 목록 참조). |
+| 실패 동작 | 상류(앱)가 거부하면 연결을 끊어 호출자가 503 으로 해석하게 한다(빈 502 를 내지 않는다, R3.1·R2.2). 인증서 파일이 새로 바뀌면 일정 주기에 reload 한다(DC-PKI.1). 상류가 안 닿는 동안에도 종단은 종료하지 않고 계속 떠서 503 을 낸다(결정: 공간 소유자가 별도이므로 앱이 멈춰도 종단은 산다. 종단이 상류 부재로 스스로 죽으면 앱이 돌아와도 종단을 다시 올려야 해서 R3.4 의 "복구까지 재시작 없음"을 어긴다. 종단 프로세스 자체가 죽는 경우만 restart 정책이 다시 올린다. 현재 구현의 30초 종료 감시는 2절 구현과 함께 없앤다, 위반 목록 참조). |
 | 전제 | P1: Caddy 는 맞는 사이트가 없으면 본문 없는 200 을 돌려준다 → 마지막 사이트(catch-all)로 421 을 낸다. 시험: `scripts/test-tls-sidecar.sh`("모르는 Host 는 421"). P2: Caddy 는 사이트 이름이 `localhost` 이면 그 이름에 내부(local) CA 발급 정책을 자동으로 만들어 루트 설치를 시도한다 → 사이트 이름 대신 Host 매처를 쓴다. 시험: **없음(필요한 시험: `caddy adapt` 결과에 internal 발급 정책이 없음을 보는 정적 시험)**. |
 
 ## 5. 인증서 컨테이너 `<서비스>-cert`, `postgres-cert`
@@ -78,7 +94,7 @@
 | 항목 | 내용 |
 |---|---|
 | 입력 | 일회용 토큰 파일(`pki-tokens` 볼륨 `/tokens/<이름>.ott`), step-ca 루트(`pki-root` 볼륨, 읽기 전용), step-ca 주소(`https://step-ca:<포트>`). |
-| 출력 | `/certs/tls.crt`, `/certs/tls.key`(서비스 이름 SAN). 갱신 데몬(`step ca renew --daemon`)이 만료 전에 같은 파일을 갈아 쓴다(R4.4). |
+| 출력 | `/certs/tls.crt`, `/certs/tls.key`(서비스 이름 SAN). 갱신 데몬(`step ca renew --daemon`)이 만료 전에 같은 파일을 갈아 쓴다(DC-PKI.1). |
 | 실패 동작 | 토큰이 없거나 만료(5분)면 시작 실패 → healthcheck 실패 → 종속 컨테이너(TLS 종단)가 뜨지 않는다. 이미 인증서가 있으면 토큰 없이 재시작해 갱신만 한다. 인증기관이 멈춰도 만료 전 인증서로 정상 동작한다(R3.11). |
 | 전제 | P4: `step ca certificate` 는 `--token` 과 `--san` 을 함께 받지 않는다. 인증서 SAN 은 토큰이 정한다. 시험: **직접 시험 없음(필요한 시험: 토큰 SAN 과 인증서 SAN 이 같음을 보는 단독 시험)**, 간접: `scripts/test-split-pki.sh`, `scripts/test-inference-location.sh`. P5: 토큰은 일회용이고 5분 유효하다. 시험: `scripts/test-split-pki.sh`. |
 
@@ -96,7 +112,7 @@
 |---|---|
 | 입력 | `config/Caddyfile`, `auth.caddy`, 환경 `GATEWAY_HOSTS`·`GATEWAY_TLS_MODE`, 비밀 파일(토큰), 상류 `https://<서비스>`(루트: `/etc/openit/pki/root_ca.crt`), `forward_auth https://oauth2-proxy`. |
 | 출력 | 공개 API·사람 화면. 인증 없음: 화면 302(`/oauth2/start`), API 401+Bearer, 닫힌 면 404. 상류 장애: 503/504 JSON(R3.1~R3.4). 본문 상한 초과: 413(R3.5). |
-| 실패 동작 | 상류 거부·이름 해석 실패는 502→503 `UPSTREAM_UNAVAILABLE`+`Retry-After`, 시간 초과는 504(`handle_errors`). Content-Length 가 8MiB 를 넘는 요청은 상류에 보내기 전에 413. 상류(앱·종단·oauth2-proxy)가 준비된 뒤에야 뜬다(`depends_on: service_healthy`, R5.2). |
+| 실패 동작 | 상류 거부·이름 해석 실패는 502→503 `UPSTREAM_UNAVAILABLE`+`Retry-After`, 시간 초과는 504(`handle_errors`). Content-Length 가 8MiB 를 넘는 요청은 상류에 보내기 전에 413. 상류(앱·종단·oauth2-proxy)가 준비된 뒤에야 뜬다(`depends_on: service_healthy`, DC-GW.2). |
 | 더하는 머리글과 우선순위 (R2.1) | 앱이 같은 이름을 이미 정했으면 앱 값을 지우거나 바꾸지 않는다(우선순위: 앱 > 게이트웨이 선언값). 게이트웨이는 앱이 안 정했을 때만 다음을 더한다. 사이트 전체: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Strict-Transport-Security: max-age=31536000`. 상류 중계 경로: `Cache-Control: no-store`(키오스크 API·저작·검수·릴리스·oauth2 경로). `Server` 는 지운다(게이트웨이가 낸 값만). 문법: Caddy `header ?<이름> <값>`(없을 때만 설정). `header_down` 은 `?` 를 받지 않는다(2.11.7). 주의: 한 `header { }` 블록 안의 `?` 항목은 하나의 "모두 없을 때만" 조건으로 묶여 앱이 하나만 정해도 나머지가 빠지므로 머리글마다 한 줄씩 쓴다. 시험: `scripts/test-gateway-faults.sh`(앱이 Cache-Control·X-Frame-Options·Referrer-Policy 를 정하면 그대로, 안 정하면 게이트웨이 값). |
 | 전제 | P7: Caddy `reverse_proxy` 는 상류 연결 실패를 502, 시간 초과를 504 로 내고, 본문 읽기 오류는 상류가 TLS 이면 413 이 아니라 502 로 올라온다. 시험: `scripts/test-gateway-auth.sh`(8MiB 413 포함). P13: Content-Length 로 사전 거절할 수 있다(위 시험). |
 
@@ -113,7 +129,7 @@
 |---|---|
 | 입력 | 비밀(비밀번호·접속 문자열 `db-*-dsn`), `pg_hba.conf`(TLS 접속만), 서버 인증서(`postgres-cert`가 `/pg-tls` 에 쓴다). |
 | 출력 | 5432 TLS(`sslmode=verify-full`). 서비스마다 계정 분리(ADR 0055). |
-| 실패 동작 | 멈추면 서비스가 계약대로 503 `UNAVAILABLE`(`/readyz` 503, R3.10). 인증서 갱신 뒤 `postgres-reload` 가 주기적으로 `pg_reload_conf()` 로 새 인증서를 읽게 한다(R4.4). |
+| 실패 동작 | 멈추면 서비스가 계약대로 503 `UNAVAILABLE`(`/readyz` 503, R3.10). 인증서 갱신 뒤 `postgres-reload` 가 주기적으로 `pg_reload_conf()` 로 새 인증서를 읽게 한다(DC-PKI.1). |
 | 전제 | P10: PostgreSQL 은 `pg_reload_conf()` 로 서버 인증서를 다시 읽는다. 시험: **없음(필요한 시험: 갱신 뒤 reload 로 새 인증서가 쓰임을 보는 단독 시험)**. 증거 시험: E2E 5p·5pn. |
 
 ## 10. `backup-target`, 백업·복구
@@ -158,14 +174,14 @@
 | 실패 동작 | 감시가 멈춰도 제품은 영향받지 않는다. |
 | 시험 | `scripts/test-monitoring.sh`, `scripts/check-monitoring-live.sh`. |
 
-### 12.1 경보 목록 (R8.2)
+### 12.1 경보 목록 (DC-MON.1)
 
 | 경보 | 조건(결정) | 근거 | 현재 구현 |
 |---|---|---|---|
 | 인증서 발급·갱신 실패 | `<서비스>-cert` 컨테이너가 종료·재시작 반복하거나 갱신 로그가 실패(지표: 인증서 파일 갱신 시각이 수명의 2/3 지난 뒤에도 안 바뀜) | step-ca 갱신 데몬은 수명의 2/3 지점에 갱신한다(smallstep 문서) | 규칙 없음: 위반으로 센다 |
-| 인증서 남은 수명 < 1/3 | 서비스 `:443` 인증서 `notAfter` 까지 남은 시간 / 전체 수명 < 1/3 (blackbox `probe_ssl_earliest_cert_expiry`) | RUNTIME R8.2 | 규칙 없음: 위반으로 센다 |
-| 디스크 사용률 80% 이상 | 기존 `DiskUsageWarning`(80%), `DiskUsageCritical`(90%) | RUNTIME R8.2 | 있음(`config/prometheus/rules/openit.yml`) |
-| 상류 `/readyz` 실패 | `ProbeDown`(`probe_success == 0`) | RUNTIME R8.2 | 있음 |
+| 인증서 남은 수명 < 1/3 | 서비스 `:443` 인증서 `notAfter` 까지 남은 시간 / 전체 수명 < 1/3 (blackbox `probe_ssl_earliest_cert_expiry`) | RUNTIME-COMPONENTS.md DC-MON.1 | 규칙 없음: 위반으로 센다 |
+| 디스크 사용률 80% 이상 | 기존 `DiskUsageWarning`(80%), `DiskUsageCritical`(90%) | RUNTIME-COMPONENTS.md DC-MON.1 | 있음(`config/prometheus/rules/openit.yml`) |
+| 상류 `/readyz` 실패 | `ProbeDown`(`probe_success == 0`) | RUNTIME-COMPONENTS.md DC-MON.1 | 있음 |
 | 시계 오차 | node exporter `node_timex_offset_seconds` 절댓값 > 0.5초, `node_timex_sync_status == 0`(NTP 비동기) | Kerberos 등 관례 5분은 인증서·토큰에 느슨하다. 0.5초는 측정 근거 없이 정한 상한이며 측정하면 고친다(R1.6) | 규칙 없음: 위반으로 센다 |
 
 로그 크기 상한은 compose 의 `logging` 옵션(`max-size`, `max-file`)으로 둔다(Docker 문서 json-file 드라이버).
@@ -213,16 +229,16 @@ R9.1 (시험·잡 입력 명시): 단독 시험은 E2E 가 내보낸 값을 상�
 
 | # | todo | 전제 | 결과 | 근거(실험 이름·핵심 출력) | 기대는 조항 |
 |---|---|---|---|---|---|
-| X1 | P3 | pause 이미지(`registry.k8s.io/pause:3.10`, digest `sha256:ee6521f2…917a`)가 read_only·cap_drop ALL·no-new-privileges·비루트로 뜨고 SIGTERM 에 끝난다 | **확인** | 실험 A: `status=running user=65535:65535 ro=true capdrop=[ALL]`(no-new-privileges 포함), stop 0.37초, 종료 코드 0 | R3.1·R3.2·R3.4·R4.1·R4.2 |
-| X2 | P4 | 앱·사이드카가 `network_mode: service:<서비스>-net`(pause) 일 때 앱 재시작에도 같은 공간 | **확인** | 실험 B: 정상 200 → 앱 stop 중 사이드카·pause running, 사이드카 안 `127.0.0.1:8080` 연결 거부, 클라이언트 ABORT RemoteDisconnected → 앱 start 뒤 200 | R3.2·R3.4·R4.1·R4.2 |
+| X1 | P3 | pause 이미지(`registry.k8s.io/pause:3.10`, digest `sha256:ee6521f2…917a`)가 read_only·cap_drop ALL·no-new-privileges·비루트로 뜨고 SIGTERM 에 끝난다 | **확인** | 실험 A: `status=running user=65535:65535 ro=true capdrop=[ALL]`(no-new-privileges 포함), stop 0.37초, 종료 코드 0 | R3.1·R3.2·R3.4·R4.1·DC-NET.1 |
+| X2 | P4 | 앱·사이드카가 `network_mode: service:<서비스>-net`(pause) 일 때 앱 재시작에도 같은 공간 | **확인** | 실험 B: 정상 200 → 앱 stop 중 사이드카·pause running, 사이드카 안 `127.0.0.1:8080` 연결 거부, 클라이언트 ABORT RemoteDisconnected → 앱 start 뒤 200 | R3.2·R3.4·R4.1·DC-NET.1 |
 | X3 | D2 | 현재 구조(앱이 공간 소유): 앱 stop/start 뒤 사이드카 끊김 | **확인(재현)** | 실험 B: 앱 stop→start 뒤 사이드카 running 이지만 안의 `127.0.0.1:8080` 거부, 클라이언트 ABORT URLError, netns 다름(사이드카 4026533201, 앱 4026532729). 또 e2e-b6 5q 504 | R3.2·R4.1 위반 근거 |
 | X4 | P5 | 망 별칭·게시 포트·`extra_hosts`·`sysctls` 는 `-net` 이 갖고, 앱에 `networks`/`ports` 를 두면 compose 가 거부 | **확인** | 실험 A·A2: `-net` 이 sysctls·extra_hosts·게시 포트(127.0.0.1:16323)·별칭(app)을 가지고 앱 `network_mode: service:app-net`, netns 같음(`net:[4026532727]`). 앱에 `networks` → "mutually exclusive network_mode and networks". 앱에 `ports` → `config -q` 는 통과하나 `up` 에서 "conflicting options: port publishing and the container type network mode" | R1.4·R6.1·R7.1 |
 | X5 | C4 | 앱 stop → 게이트웨이(현 `config/Caddyfile` `handle_errors`) 503 + Retry-After | **확인** | 실험 B: 앱 stop 중 HTTP 503, `Retry-After: 2`, `application/json`, `{"code":"UPSTREAM_UNAVAILABLE"}`; 앱 start 뒤 200 | R3.1·R3.2·R3.4 |
-| X6a | S7 | 수명 5분 인증서 + `step ca renew --daemon --expires-in 4m` 가 갱신 | **확인** | 실험 C: 파일 인증서 지문이 1분마다 변경(6cbca3… → 38ff50… → 87cee0…) | R4.4·R3.11 |
-| X6b | C6 | 같은 감시 루프의 `caddy reload` 가 새 인증서를 서빙 | **반증** | 실험 C: 3분 뒤에도 서빙 인증서는 처음 것(serial=D5ACDBC9467266A7805E5EB63689E12E, notAfter=15:46:57). `caddy reload` → serial 그대로, `caddy reload --force` → serial=89E0F0130E13E164707D9930DF9BA036, notAfter=15:50:33. 원인: Caddyfile 이 그대로면 reload 를 건너뜀 | R4.4 **위반(V7)** |
-| X7 | S4 | 일회용 토큰 재사용 거부 | **확인(만료 거부는 미확인)** | 실험 A: JWT `exp-iat=300초`, 재사용 시 "The request lacked necessary authorization", 첫 사용 성공. 만료 시각 이후 거부는 기다리지 않고 JWT exp 표준에 의존 | R1.2·R4.4 |
+| X6a | S7 | 수명 5분 인증서 + `step ca renew --daemon --expires-in 4m` 가 갱신 | **확인** | 실험 C: 파일 인증서 지문이 1분마다 변경(6cbca3… → 38ff50… → 87cee0…) | DC-PKI.1·R3.11 |
+| X6b | C6 | 같은 감시 루프의 `caddy reload` 가 새 인증서를 서빙 | **반증** | 실험 C: 3분 뒤에도 서빙 인증서는 처음 것(serial=D5ACDBC9467266A7805E5EB63689E12E, notAfter=15:46:57). `caddy reload` → serial 그대로, `caddy reload --force` → serial=89E0F0130E13E164707D9930DF9BA036, notAfter=15:50:33. 원인: Caddyfile 이 그대로면 reload 를 건너뜀 | DC-PKI.1 **위반(V7)** |
+| X7 | S4 | 일회용 토큰 재사용 거부 | **확인(만료 거부는 미확인)** | 실험 A: JWT `exp-iat=300초`, 재사용 시 "The request lacked necessary authorization", 첫 사용 성공. 만료 시각 이후 거부는 기다리지 않고 JWT exp 표준에 의존 | R1.2·DC-PKI.1 |
 | X8 | S5 | 토큰 audience 포트가 다르면 거부(그래서 `STEP_CA_PORT` 안팎 동일이 필요) | **반증** | 실험 A3: CA 컨테이너 안 9000, 호스트 게시 16339. (a) 안쪽 주소 토큰(aud=`https://step-ca:9000/1.0/sign`)을 바깥 `https://host.docker.internal:16339` 로 사용 → 발급 성공, (b) 바깥 주소 토큰 → 성공. 한정: 접속 이름은 CA 인증서 SAN(`step ca init --dns`)에 있어야 한다. dnsNames 밖 이름의 audience 거부는 미시험. 안팎 동일은 필요 이상이지만 단순함을 위해 유지 | R7.1 |
-| X9 | S8 | 만료 뒤 재시작 복구 | **결과 대기** | 01:15 실험 중 | R4.4 (줄 T 3) |
+| X9 | S8 | 만료 뒤 재시작 복구 | **결과 대기** | 01:15 실험 중 | DC-PKI.1 (줄 T 3) |
 
 **미확인으로 남은 것**: S8, 토큰 만료 시각 이후 거부, dnsNames 밖 이름의 audience 거부, Windows 호스트의 `host.docker.internal` 해석 차이, R3.3 의 응답 헤더 지연 504(실험 B 는 연결 거부만), PostgreSQL 인증서 reload(P10).
 

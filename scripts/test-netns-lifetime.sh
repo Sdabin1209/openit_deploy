@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 네트워크 공간 수명 단독 시험(RUNTIME.md R3.1·R3.2·R4.1·R4.2, ADR 0060). 사용: bash scripts/test-netns-lifetime.sh   (Docker 필요, 고정 호스트 포트 없음)
+# 네트워크 공간 수명 단독 시험(RUNTIME.md R3.1·R3.2·R4.1·DC-NET.1, ADR 0060). 사용: bash scripts/test-netns-lifetime.sh   (Docker 필요, 고정 호스트 포트 없음)
 # 서비스마다 네트워크 공간만 갖는 pause 컨테이너(<서비스>-net)가 있고, 앱·사이드카가 network_mode: container:<net> 으로 붙는다. 이 구조에서 제품 설정 그대로
 # (config/tls-sidecar.caddy, 게이트웨이 config/Caddyfile 의 handle_errors)로 다음 경우의 응답을 상태 코드 + 본문 + 헤더로 단언한다:
 #  (1) 정상 200  (2) 앱 컨테이너 stop: 사이드카가 살아 있고 연결을 끊고 게이트웨이는 503 {"code":"UPSTREAM_UNAVAILABLE"} + Retry-After  (3) 앱 start 뒤 200 (같은 공간에 다시 붙음)

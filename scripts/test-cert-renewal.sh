@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 인증서 갱신·복구 단독 시험(RUNTIME.md R4.4, 실험 C6·S8, ADR 0060). 사용: bash scripts/test-cert-renewal.sh   (Docker 필요, 약 10~12분: 수명 5분 인증서가 실제로 만료되길 기다린다)
+# 인증서 갱신·복구 단독 시험(RUNTIME-COMPONENTS.md DC-PKI.1, 실험 C6·S8, ADR 0060). 사용: bash scripts/test-cert-renewal.sh   (Docker 필요, 약 10~12분: 수명 5분 인증서가 실제로 만료되길 기다린다)
 # 제품 compose.yaml 의 survey-service-cert 시작 명령을 그대로 꺼내(수명만 5분으로) 쓰고 사이드카도 제품 설정(config/tls-sidecar.caddy, 감시 루프 `caddy reload --force`)이다.
 #  (A) renew 데몬이 인증서를 갱신하면 사이드카가 서빙하는 인증서 serial 이 바뀐다 (reload 가 설정 그대로라도 새 파일을 읽는다)
 #  (B) 서비스 전체를 인증서 수명보다 오래 멈췄다 pki-tokens 재실행(새 토큰)과 함께 다시 시작하면 사람 손 없이 새 인증서를 받아 https 가 다시 검증된다 (만료 뒤 renew 는 거부되므로 검증 실패면 토큰 발급 경로)

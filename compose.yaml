@@ -601,7 +601,7 @@ services:
     networks: [edge, authoring, auth, ui-kiosk, ui-admin, release-mr, release-qa]   # release: 학습 서버의 패키지 게시 입구(U69, model-registry). ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
-  kiosk-frontend-net:   # kiosk-frontend 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:kiosk-frontend-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  kiosk-frontend-net:   # kiosk-frontend 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:kiosk-frontend-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -627,7 +627,7 @@ services:
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
-  admin-console-net:   # admin-console 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:admin-console-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  admin-console-net:   # admin-console 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:admin-console-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -653,7 +653,7 @@ services:
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
-  survey-service-net:   # survey-service 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:survey-service-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  survey-service-net:   # survey-service 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:survey-service-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -703,7 +703,7 @@ services:
       release-gate: {condition: service_healthy}
       model-serving: {condition: service_healthy}
 
-  question-authoring-net:   # question-authoring 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:question-authoring-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  question-authoring-net:   # question-authoring 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:question-authoring-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -746,7 +746,7 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  keycloak-net:   # keycloak 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:keycloak-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  keycloak-net:   # keycloak 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:keycloak-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -803,7 +803,7 @@ services:
       retries: 20
       start_period: 90s   # 첫 기동은 시작 때 다시 빌드·realm 가져오기를 한다(측정 전, 시작값)
 
-  oauth2-proxy-net:   # oauth2-proxy 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:oauth2-proxy-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  oauth2-proxy-net:   # oauth2-proxy 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:oauth2-proxy-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -881,7 +881,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
 
-  ops-feedback-ingest-net:   # ops-feedback-ingest 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:ops-feedback-ingest-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  ops-feedback-ingest-net:   # ops-feedback-ingest 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:ops-feedback-ingest-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -926,7 +926,7 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  release-gate-net:   # release-gate 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:release-gate-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  release-gate-net:   # release-gate 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:release-gate-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -971,7 +971,7 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  model-serving-net:   # model-serving 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-serving-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  model-serving-net:   # model-serving 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-serving-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -1009,7 +1009,7 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  model-registry-net:   # model-registry 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-registry-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  model-registry-net:   # model-registry 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-registry-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -1042,7 +1042,7 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  dataset-store-net:   # dataset-store 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/R4.2): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:dataset-store-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  dataset-store-net:   # dataset-store 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:dataset-store-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"

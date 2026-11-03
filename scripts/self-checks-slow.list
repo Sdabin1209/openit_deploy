@@ -1,4 +1,4 @@
 # deploy 느린 시험 목록(self-checks.list 와 같은 형식: 설명 :: 명령). run-self-checks.sh 는 기본에서 이것을 빼고, `--slow` 를 주면 기본 목록 뒤에 이것도 돌린다.
 # 왜 따로 두나: 실제 시간(인증서 수명)이 지나기를 기다려야 해서 분 단위가 걸린다. 완료를 말하기 전에 **1회는 반드시** `scripts/run-self-checks.sh --slow` 를 돌린다(기본 묶음만 통과한 것은 완료가 아니다).
 # 등록 형식은 scripts/test_self_checks_lists.py 가 본다.
-인증서 갱신·복구 단독 시험 (수명 5분 인증서: renew 뒤 서빙 serial 변경 + 만료 뒤 전체 재시작 복구, 약 11분, RUNTIME.md R4.4, ADR 0060) :: bash "$DEPLOY_ROOT/scripts/test-cert-renewal.sh"
+인증서 갱신·복구 단독 시험 (수명 5분 인증서: renew 뒤 서빙 serial 변경 + 만료 뒤 전체 재시작 복구, 약 11분, RUNTIME-COMPONENTS.md DC-PKI.1, ADR 0060) :: bash "$DEPLOY_ROOT/scripts/test-cert-renewal.sh"

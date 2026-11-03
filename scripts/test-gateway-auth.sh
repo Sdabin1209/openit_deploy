@@ -189,7 +189,7 @@ chkhdr "위조한 X-Openit-User·X-Openit-Roles 는 인증 결과로 덮어쓴�
 chkhdr "위조한 X-Auth-Request-* 는 믿지 않는다(인증 결과로 덮어쓴다)" staff-e2e staff staff-e2e GET /v1/staff/alerts -H "X-Auth-Request-User: attacker" -H "X-Auth-Request-Preferred-Username: attacker" -H "X-Auth-Request-Groups: admin,operator"
 chk401 "위조한 X-Auth-Request-* 만으로는 인증되지 않는다" Bearer - GET /v1/staff/alerts -H "X-Auth-Request-User: staff-e2e" -H "X-Auth-Request-Preferred-Username: staff-e2e" -H "X-Auth-Request-Groups: staff"
 chkhdr "화면 경로(/admin/)에는 신원 머리글을 붙이지 않는다(정적 화면)" "" "" staff-e2e GET /admin/
-# 게이트웨이 자신의 /healthz·/readyz: 상태 코드와 본문 HealthStatus(status), Content-Type json (R2.3·R5.1)
+# 게이트웨이 자신의 /healthz·/readyz: 상태 코드와 본문 HealthStatus(status), Content-Type json (DC-GW.1·R5.1)
 for pth in /healthz /readyz; do AN=$((AN+1)); hb=$(curl -sk -m 10 -D "$T/hh" "https://127.0.0.1:$CP$pth"); hc=$(sed -n '1s/[^ ]* \([0-9]*\).*/\1/p' "$T/hh")
   if [ "$hc" = 200 ] && echo "$hb" | grep -Eq '^\{"status": ?"ok"\}$' && grep -qi '^content-type: application/json' "$T/hh"; then echo "  PASS $pth 는 200 + {\"status\":\"ok\"} + application/json"; else echo "  FAIL $pth: $hc '$hb'"; FAILS=$((FAILS+1)); fi; done
 # 본문 상한(8MiB)을 Content-Length 로 넘는 요청은 상류로 보내기 전에 413 이다(상류가 TLS 사이드카일 때 본문 읽기 오류가 503 으로 올라왔다, 4차 E2E 5a)
