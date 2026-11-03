@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sd_jobs.py 시험: (1) 라벨의 JobsDeclaration 을 계약 validator 로 검증해 잡을 고른다 (2) 명령 조립 (3) 실제 dataset-store 이미지(라벨 io.openit.jobs 가 있는 것)가 있으면
+"""규칙 D39 C36 C37. sd_jobs.py 시험: (1) 라벨의 JobsDeclaration 을 계약 validator 로 검증해 잡을 고른다 (2) 명령 조립 (3) 실제 dataset-store 이미지(라벨 io.openit.jobs 가 있는 것)가 있으면
 `import` 잡을 시험용 입력으로 실제로 돌려 게시 결과를 본다(없으면 그 시험만 건너뛴다: 통과로 세지 않고 출력에 SKIP 을 쓴다). 사용: <deploy .venv>/bin/python scripts/test_sd_jobs.py"""
 import json, os, pathlib, shutil, subprocess, sys, tempfile, unittest
 

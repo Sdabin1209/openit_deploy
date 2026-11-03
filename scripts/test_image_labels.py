@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_image_labels.py 자체 시험(Docker 불필요): 이미지 라벨이 계약 ImageLabels 스키마를 따르는지 가리는 규칙.
+"""규칙 D63. check_image_labels.py 자체 시험(Docker 불필요): 이미지 라벨이 계약 ImageLabels 스키마를 따르는지 가리는 규칙.
 기대값의 출처: 헤드 결정(wo8) - 필수 라벨은 publish-image.sh 가 보는 4개(service, revision, contracts.boundary, contracts.survey-schema),
 model-runtime·langgraph 는 해당 서비스에만(선택; turn-engine 라벨은 계약 3.0 에서 없어졌다), 값 없음 표기는 `n/a` 하나, revision `unknown` 거부. 값 예시는 이 PC 의 실제 이미지 라벨(deploy-build/*)에서 왔다.
 사용: python3 scripts/test_image_labels.py   (jsonschema 가 있는 파이썬: deploy .venv)"""

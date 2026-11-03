@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_exposure.py 시험: 실제 config/Caddyfile 에 대해 (1) 일치하는 라벨은 통과 (2) 흔한 어긋남(역할·상류 토큰·시간 제한·거부 경로 열림·라벨에 없는 노출·root 사용자·포트)을 잡는다.
+"""규칙 D124. check_exposure.py 시험: 실제 config/Caddyfile 에 대해 (1) 일치하는 라벨은 통과 (2) 흔한 어긋남(역할·상류 토큰·시간 제한·거부 경로 열림·라벨에 없는 노출·root 사용자·포트)을 잡는다.
 라벨은 시험에서 직접 만든다(이웃 영역의 라벨을 복사하지 않는다). 사용: <deploy .venv>/bin/python scripts/test_check_exposure.py"""
 import copy, json, pathlib, sys, unittest
 

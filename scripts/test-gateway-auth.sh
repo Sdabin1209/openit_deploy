@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 규칙 D70.
 # 게이트웨이 인증 비밀 자체 시험(D85). 사용: bash scripts/test-gateway-auth.sh   (임시 폴더에 만들고 caddy validate 로 설정을 확인한다. 값은 출력하지 않는다)
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
