@@ -13,7 +13,7 @@ PY=${DEPLOY_PY:-}; [ -n "$PY" ] || for c in "$ROOT/.venv/bin/python" "$ROOT/../.
 AP="$(dirname "$PY")/ansible-playbook"
 ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
 T=$(mktemp -d)
-trap 'rc=$?; if [ $rc -ne 0 ]; then for s in data app; do docker ps -a --filter "label=com.docker.compose.project=deploy-$ID-$s" --format "{{.Names}} {{.Status}}" >&2; for n in $(docker ps -a -q --filter "label=com.docker.compose.project=deploy-$ID-$s"); do echo "--- $(docker inspect -f "{{.Name}}" $n)" >&2; docker logs --tail 8 $n 2>&1 | cut -c1-200 >&2; done; done; tail -25 "$T/run1.log" 2>/dev/null >&2; fi; [ "${SPLIT_KEEP:-0}" = 1 ] || { for s in data app; do docker compose -p "deploy-$ID-$s" down -v --remove-orphans >/dev/null 2>&1; done; rm -rf "$T" "$ROOT/build/placement/$ID"-*; }; exit $rc' EXIT
+trap 'rc=$?; if [ $rc -ne 0 ]; then for s in data app; do docker ps -a --filter "label=com.docker.compose.project=deploy-$ID-$s" --format "{{.Names}} {{.Status}}" >&2; for n in $(docker ps -a -q --filter "label=com.docker.compose.project=deploy-$ID-$s"); do echo "--- $(docker inspect -f "{{.Name}}" $n)" >&2; docker logs --tail 8 $n 2>&1 | cut -c1-200 >&2; done; done; tail -25 "$T/run1.log" 2>/dev/null >&2; fi; [ "${SPLIT_KEEP:-0}" = 1 ] || { for s in data app; do docker compose -p "deploy-$ID-$s" down -v --remove-orphans >/dev/null 2>&1; done; rm -rf "$T" "$ROOT/build/placement/$ID"-* "$ROOT/build/placement.lock"; }; exit $rc' EXIT
 freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
 PGP=$(freeport); SCP=$(freeport); RGP=$(freeport)   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1); [ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
@@ -102,6 +102,14 @@ try:
 except Exception: print('blocked')" "$2" "$3"; }
 [ "$(PROBE ${D}_pki postgres 5432)" = blocked ] && ok "(R6.2) 인증서 발급 망(pki)에서 postgres 에 닿지 않는다" || bad "R6.2: pki 망에서 postgres 에 닿는다"
 [ "$(PROBE ${D}_db-keycloak step-ca $SCP)" = blocked ] && ok "(R6.2) DB 망에서 step-ca 에 닿지 않는다" || bad "R6.2: DB 망에서 step-ca 에 닿는다"
+# R1.5·R1.7: compose 밖 호출자는 내보낸 루트 + hosts 표 + 서비스 토큰만으로 부른다(배포 내부 구조를 모른다). 기본 브리지의 새 컨테이너로 시험한다
+EXP="$T/export"; docker run --rm --network none -v ${D}_pki-root:/r:ro "$UTIL" cat /r/root_ca.crt > "$T/root.pem"
+"$PY" scripts/placement.py export "$T/inv.yml" --compose "$T/compose.subset.yaml" --out "$EXP" --root-ca "$T/root.pem" >/dev/null || bad "내보내기 실패"
+( cd "$EXP" && sha256sum -c SHA256SUMS >/dev/null ) || bad "내보낸 파일의 SHA-256 대조 실패"; ok "(R1.5) 내보낸 파일(루트·hosts·포트 표)의 SHA-256 목록이 맞는다"
+XADDR=$(awk '$2=="release-gate"{print $1}' "$EXP/hosts"); XPORT=$(awk -F'\t' '$1=="release-gate"{print $2}' "$EXP/ports.tsv")
+XC="import urllib.request;print(urllib.request.urlopen('https://release-gate:$XPORT/',timeout=8).read().decode())"
+[ "$(docker run --rm --add-host release-gate:$XADDR -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "$XC" 2>&1)" = ok ] && ok "(R1.5) compose 밖 호출자가 내보낸 루트 + hosts 표만으로 https 검증을 통과해 앱 응답을 받는다" || bad "R1.5: 내보낸 파일만으로 호출 실패"
+docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/null 2>&1 && bad "R1.5: 루트 없이 호출이 통과했다" || ok "(R1.5) 루트 없이는 검증 실패(변이 확인)"
 O=$(docker run --rm --network none -v ${D}_pg-tls:/p:ro "$UTIL" stat -c %u /p/server.key); [ "$O" = 999 ] || bad "pg-tls 의 server.key 소유자 $O"; ok "(3) postgres-cert 의 pg-tls 소유자 999"
 DSN="$T/r/app/secrets/tokens/db-gate-dsn"; grep -q "@postgres:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
 ok "(3) app 서버 DSN = postgres:$PGP, sslmode=verify-full"
