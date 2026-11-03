@@ -41,6 +41,7 @@ printf 'postgresql://survey:x@postgres:5432/survey\n' > "$T/secrets/tokens/db-su
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1)   # Docker Desktop(WSL2): host.docker.internal 의 IP
 [ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')   # 그 밖의 리눅스: 기본 브리지의 게이트웨이
 PORTS_YAML="{postgres: $PORT_PG, release-gate: $PORT_GATE, question-authoring: $PORT_QA}"
+CAVAR=""; [ "$SCHEME" != https ] || CAVAR="placement_ca_path: $T/config/certs/ca.pem"
 inv() { # inv <파일> <a의 서비스> <b> <c>
 cat > "$1" <<YML
 all:
@@ -52,7 +53,7 @@ all:
     placement_ports: $PORTS_YAML
     placement_compose: $ROOT/test/split/compose.split.yaml
     placement_config_dir: $T/config
-    placement_ca_path: $T/config/certs/ca.pem
+    $CAVAR
     placement_lock: $T/images.lock
     placement_secrets_dir: $T/secrets
   hosts:
