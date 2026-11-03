@@ -120,7 +120,7 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]
+    entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; f=0; i=0; while sleep 5; do kill -0 $$p 2>/dev/null || exit 1; if nc -z 127.0.0.1 $${TLS_UPSTREAM##*:}; then f=0; else f=$$((f+1)); [ $$f -ge 6 ] && exit 1; fi; i=$$((i+1)); [ $$((i%12)) = 0 ] || continue; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]
     read_only: true
     tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
     network_mode: "service:model-serving"
