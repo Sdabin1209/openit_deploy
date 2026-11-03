@@ -34,7 +34,7 @@
 | 쓰기 토큰 소유 | — | 저자 | 수집(survey) | 역할 5개 | model-lab |
 | 확인 | healthy, 활성 릴리스 전 `/readyz` 503 `no_active_release`, 적재 후 200 | healthy, I1 읽기 면 | healthy, 수집·I7 읽기 | healthy, `can_pass:false`(운영), 시험용 정책으로 true | healthy, 게시·조회 |
 
-model-serving(model-runtime CPU/fake 변형): 포트 8080, uid 10001, `/healthz`·`/readyz`; 환경 `MODEL_RUNTIME_BACKEND`(fake), 문진 스키마는 이미지에 내장(`/opt/survey-schema`, D72; 마운트·`MODEL_RUNTIME_SCHEMA_DIR` 불필요), `MODEL_RUNTIME_RELEASE_URL`/`_TOKEN`(게이트 I4 읽기), `MODEL_RUNTIME_TOKENS`, 번들 캐시 기본 경로 `/var/lib/model-runtime/bundles`(볼륨 `serving-data`); 네트워크 serving. GPU 변형(VARIANT=gpu)은 GPU 서버 전용이라 이 Compose에 없다.
+model-serving(model-runtime CPU/fake 변형): 포트 8080, uid 10001, `/healthz`·`/readyz`; 환경 `MODEL_RUNTIME_BACKEND`(운영 기본 vllm, L29; fake·mimic 은 샌드박스 추론 compose 에서만 MODEL_RUNTIME_ALLOW_FAKE=1 과 함께), 문진 스키마는 이미지에 내장(`/opt/survey-schema`, D72; 마운트·`MODEL_RUNTIME_SCHEMA_DIR` 불필요), `MODEL_RUNTIME_RELEASE_URL`/`_TOKEN`(게이트 I4 읽기), `MODEL_RUNTIME_TOKENS`, 번들 캐시 기본 경로 `/var/lib/model-runtime/bundles`(볼륨 `serving-data`); 네트워크 serving. GPU 변형(VARIANT=gpu)은 GPU 서버 전용이라 이 Compose에 없다.
 
 정적 화면 2개(compose.yaml 확인): `kiosk-frontend`(키오스크 앱 + 직원 콘솔, 네트워크 edge, digest `KIOSK_FRONTEND_DIGEST`)와 `admin-console`(출고 승인 화면, edge, `ADMIN_CONSOLE_DIGEST`, `ADMIN_DEV_APPROVER_ID`는 설정하지 않음). 둘 다 포트 8080에 `/healthz`·`/readyz`를 두고 `/v1`은 처리하지 않으며, 게이트웨이가 경로로 나눠 전달한다. 게이트웨이는 `edge`·`serving` 네트워크에 걸쳐 있고 위 화면 둘과 survey-service, release-gate(승인 경로 네 개), ops-feedback-ingest가 healthy여야 뜬다.
 
