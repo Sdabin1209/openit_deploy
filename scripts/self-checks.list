@@ -85,3 +85,4 @@ deploy .venv 에 pip install 은 설치 스크립트(prepare-host.sh, prepare-ar
 rollback.sh: 서비스 digest 가 SERVICES 전부 있는 잠금만 후보, 키 집합이 다른(다른 deploy 판) 잠금으로는 멈춘다 (가짜 history 로 단독 시험) :: bash "$DEPLOY_ROOT/scripts/test-rollback.sh"
 서비스를 https 로 부르는 컨테이너(호출자, compose 환경·설정에서 뽑음)는 모두 step-ca 루트(SSL_CERT_FILE 등)와 pki-root 마운트를 갖는다 (R1.3, 변이 확인 포함) :: python3 "$DEPLOY_ROOT/scripts/test_callers_trust_root.py"
 호출 관계 밖의 서비스 쌍은 공통 망이 없다(허용 목록 = compose 환경·설정에서 뽑은 호출 관계 + 계약 EXTRA; 알려진 위반 V8 5쌍은 표에 있고 줄어들기만 한다) (R6.2) :: python3 "$DEPLOY_ROOT/scripts/test_service_pair_isolation.py"
+게이트웨이 자신의 /healthz·/readyz 본문이 JSON HealthStatus(status)이고 읽는 쪽(감시·E2E)도 본문을 본다 (R2.3·R5.1) :: python3 "$DEPLOY_ROOT/scripts/test_gateway_health_body.py"

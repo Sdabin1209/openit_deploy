@@ -328,7 +328,7 @@ chk "/healthz gateway: 상류와 무관하게 200" getj "$PGW" /healthz
 tls_checks() { # HTTPS 필수(D88/U5): 평문은 /healthz 만 답하고 나머지는 308 로 https 로 보낸다. HTTPS 는 시험용 CA 로 검증되고 HSTS 가 있다
   local r; r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://127.0.0.1:$PGW/v1/sessions"); echo "$r" | grep -q '^308 https://' || { echo "평문 요청이 https 로 308 이동하지 않는다: $r"; return 1; }
   [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PGW/staff/")" = 308 ] || { echo "평문 /staff/ 가 308 이 아니다"; return 1; }
-  curl -s "http://127.0.0.1:$PGW/healthz" | grep -q '^ok' || { echo "평문 /healthz 가 ok 가 아니다"; return 1; }
+  curl -s "http://127.0.0.1:$PGW/healthz" | grep -Eq '"status": *"ok"' || { echo "평문 /healthz 본문이 HealthStatus(status=ok)가 아니다"; return 1; }
   curl -s -o /dev/null "https://127.0.0.1:$PGWS/healthz" 2>/dev/null && { echo "시험용 CA 없이 https 가 검증을 통과했다(자체 서명 인증서를 신뢰하는 환경?)"; return 1; }   # status-code-ok: TLS 신뢰 점검(검증 실패를 보는 시험이라 본문은 무관)
   local h; h=$($GWCURL -s -D - -o /dev/null "https://127.0.0.1:$PGWS/healthz") || { echo "시험용 CA 로 https 접속 실패"; return 1; }   # status-code-ok: TLS 신뢰 점검(응답 머리글만 본다)
   echo "$h" | grep -qi '^strict-transport-security: max-age=31536000' || { echo "HSTS 헤더가 없다"; return 1; }

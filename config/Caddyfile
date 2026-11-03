@@ -48,7 +48,9 @@ import /etc/caddy/gateway-tls/{$GATEWAY_TLS_MODE:internal}.caddy
 }
 http://:8080 {
 	handle /healthz {
-		respond "ok" 200
+		header Content-Type application/json
+		header Cache-Control no-store
+		respond `{"status":"ok"}` 200   # R2.3·R5.1: 게이트웨이 자신의 응답. 본문은 HealthStatus(status)
 	}
 	handle {
 		redir https://{host}:{$GATEWAY_PUBLIC_TLS_PORT:8443}{uri} 308
@@ -103,9 +105,11 @@ http://:8080 {
 		respond "not found" 404
 	}
 	handle /healthz {
-		respond "ok" 200
+		header Content-Type application/json
+		header Cache-Control no-store
+		respond `{"status":"ok"}` 200   # R2.3·R5.1: 게이트웨이 자신의 응답. 본문은 HealthStatus(status)
 	}
-	# /readyz: 환자 경로의 survey-service /readyz 를 반영한다(FAULT_POLICY 5). 2xx 면 "ok" 200, 아니면 서비스의 상태 코드를 그대로 두되 본문은 {"ready":false} 만(서비스의 내부 문제 목록은 밖에 내지 않는다).
+	# /readyz: 환자 경로의 survey-service /readyz 를 반영한다(FAULT_POLICY 5). 2xx 면 {"status":"ok"} 200, 아니면 서비스의 상태 코드를 그대로 두되 본문은 {"status":"not-ready"} 만(서비스의 내부 문제 목록은 밖에 내지 않는다).
 	# 상류에 닿지 못하면 아래 handle_errors 가 503/504 와 UPSTREAM_UNAVAILABLE 을 준다. /healthz 는 상류와 무관한 정적 200.
 	handle /readyz {
 		reverse_proxy https://survey-service {
@@ -124,12 +128,14 @@ http://:8080 {
 			}
 			@up status 2xx
 			handle_response @up {
-				respond "ok" 200
+				header Content-Type application/json
+				header Cache-Control no-store
+				respond `{"status":"ok"}` 200
 			}
 			handle_response {
 				header Content-Type application/json
 				header Cache-Control no-store
-				respond `{"ready":false}` {rp.status_code}
+				respond `{"status":"not-ready"}` {rp.status_code}
 			}
 		}
 	}
