@@ -1,5 +1,51 @@
 ---
 # 한 단계: 이 서버의 서비스 중 stage_i 단계에 든 것을 올리고(이미 떠 있으면 바뀌지 않는다), 다른 서버가 부를 서비스(게시 포트)는 지휘 기계에서 /readyz 로 기다린다.
+# 다른 서버의 step-ca 가 발급하는 일회용 토큰(OTT, 수명 5분)을 이 서버에 놓는다: step-ca 서버에서 pki-tokens 를 다시 돌려(프로비저너 비밀은 그 서버 밖으로 나가지 않는다) 토큰과 루트 인증서(공개)만 지휘 기계를 거쳐 이 서버의 볼륨으로 쓴다.
+# 이 서버에 인증서가 아직 없는 서비스만 받는다(다시 실행하면 건너뛴다). 이 단계의 <서비스>-cert 기동 직전에 한다.
+- name: "단계 {{ stage_i }}: 인증서가 아직 없는 서비스 찾기"
+  ansible.builtin.shell: |
+    UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ p_dir }}/locks/images.lock")
+    for n in {{ plan.stage_tokens[stage_i] | join(' ') }}; do
+      if [ "$n" = postgres ]; then v={{ p_project }}_pg-tls; f=server.crt; else v={{ p_project }}_certs-$n; f=tls.crt; fi
+      if docker volume inspect "$v" >/dev/null 2>&1 && docker run --rm --network none -v "$v:/c:ro" "$UTIL" test -s "/c/$f"; then continue; fi
+      echo "$n"
+    done
+  args: {executable: /bin/bash}
+  register: missing
+  changed_when: false
+  when: plan.stage_tokens[stage_i] | length > 0
+- name: "단계 {{ stage_i }}: step-ca 서버에서 토큰 다시 발급하고 읽기 (출력 안 함)"
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ ca_dir }}"
+    export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ ca_dir }}/secrets" SECRETS_GID="{{ hostvars[plan.step_ca_host].gid }}" COMPOSE_EXTRA="{{ ca_dir }}/compose.placement.yaml" CONFIG_DIR="{{ ca_dir }}/config"
+    source scripts/lib.sh
+    dc "{{ ca_project }}" run --rm pki-tokens >/dev/null 2>&1
+    UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ ca_dir }}/locks/images.lock")
+    docker run --rm --network none -v "{{ ca_project }}_pki-tokens:/t:ro" -v "{{ ca_project }}_pki-root:/r:ro" "$UTIL" python -c 'import json,sys;print(json.dumps({"root":open("/r/root_ca.crt").read(),"tokens":{n:open("/t/%s.ott"%n).read().strip() for n in sys.argv[1:]}}))' {{ missing.stdout_lines | join(' ') }}
+  args: {executable: /bin/bash}
+  vars:
+    ca_dir: "{{ hostvars[plan.step_ca_host].placement_remote_dir | default('/opt/openit-deploy') }}"
+    ca_project: "{{ hostvars[plan.step_ca_host].placement_project | default('deploy') }}"
+  delegate_to: "{{ plan.step_ca_host }}"
+  register: tokens
+  no_log: true
+  changed_when: false
+  when: plan.stage_tokens[stage_i] | length > 0 and (missing.stdout_lines | length) > 0
+- name: "단계 {{ stage_i }}: 이 서버의 토큰 볼륨에 쓰기 (640)"
+  ansible.builtin.shell: |
+    set -e
+    UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ p_dir }}/locks/images.lock")
+    for v in pki-tokens pki-root; do
+      docker volume inspect "{{ p_project }}_$v" >/dev/null 2>&1 || docker volume create --label "com.docker.compose.project={{ p_project }}" --label "com.docker.compose.volume=$v" "{{ p_project }}_$v" >/dev/null
+    done
+    docker run -i --rm --network none --user 0 -v "{{ p_project }}_pki-tokens:/t" -v "{{ p_project }}_pki-root:/r" -v "{{ p_dir }}/scripts/put-tokens.py:/p.py:ro" "$UTIL" python /p.py
+  args:
+    executable: /bin/bash
+    stdin: "{{ tokens.stdout }}"
+  no_log: true
+  changed_when: true
+  when: plan.stage_tokens[stage_i] | length > 0 and (missing.stdout_lines | length) > 0
 - name: "단계 {{ stage_i }}: 기동 {{ plan.stages[stage_i] | join(' ') }}"
   ansible.builtin.shell: |
     set -e

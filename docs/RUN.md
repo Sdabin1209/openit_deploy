@@ -361,6 +361,11 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 
 서버 한 대면 지금처럼 `scripts/up.sh` 하나로 끝난다(Ansible 이 필요 없다). 서비스를 여러 서버에 나눌 때만 아래를 쓴다. 서버에는 SSH, python3, Docker 만 있으면 된다(새 OS 패키지 없음).
 
+
+지휘 기계 준비물: Python 가상환경의 ansible-core(`requirements-deploy-tools.txt`), `curl`(https 일 때 게시된 서비스의 `/readyz` 를 `--resolve` 로 확인한다), SSH 접속, 이 저장소. 서버 준비물은 SSH, python3, Docker 뿐이다.
+
+인증서(ADR 0060, 0061): `step-ca`, `pki-root`, `pki-tokens` 는 step-ca 가 놓인 서버에서만 돈다(프로비저너 비밀은 그 서버 밖으로 나가지 않는다). 다른 서버의 `<서비스>-cert` 는 그 단계 기동 직전에 플레이북이 step-ca 서버에서 일회용 토큰(수명 5분)을 새로 만들어 지휘 기계를 거쳐 그 서버의 토큰 볼륨(파일 640)에 쓰고 루트 인증서(공개)를 함께 놓는다. 이미 인증서가 있는 서비스는 건너뛴다.
+
 1. 지휘 기계(이 저장소를 가진 PC)에 도구를 설치한다: `.venv/bin/pip install -r requirements-deploy-tools.txt` (ansible-core, 판 고정). 서버에는 설치하지 않는다.
 2. 배치 정의를 쓴다: `ansible/inventory.example.yml` 을 복사해 서버 이름, `ansible_host`(다른 서버가 이 서버를 부르는 주소), `placement_region`, `placement_services`(compose 서비스 이름 목록)를 채운다. 서버나 지역이 바뀌면 이 파일만 고친다.
 3. 점검: `.venv/bin/python scripts/placement.py validate <인벤토리>`. 서비스 이름이 compose 와 같은지, 한 서비스가 한 서버에만 있는지, 기반 요소(postgres, step-ca, keycloak, gateway)가 놓였는지 본다.
