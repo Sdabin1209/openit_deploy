@@ -1,5 +1,5 @@
 """wiring/진입: check_config_contracts.py [--compose-json 파일|-]  — 컨테이너에 주입·배치하는 설정이 기동 전에 계약을 따르는지 본다(R7). up.sh 가 `compose up` 전에 부른다(합쳐진 compose 설정을 `dc ... config --format json` 으로 받아 표준 입력으로 넘긴다).
-검증 대상: 서비스 환경(survey-service=SurveyServiceEnv, ops-feedback-ingest=OpsFeedbackServerEnv(OPS_ 접두 변수만), question-authoring=QuestionAuthoringDeployInterface 의 Environment), 배치 파일(config/ops-feedback-job.yaml=OpsFeedbackJobConfig, test/fake-model/question_flow.json=RuntimeFlowFile).
+검증 대상: 서비스 환경(ENV_SERVICES 표: 서비스마다 계약의 *Env 선언 스키마, 3.2.0 U73), 배치 파일(config/ops-feedback-job.yaml=OpsFeedbackJobConfig, test/fake-model/question_flow.json=RuntimeFlowFile).
 GateJobConfig·GatePolicy 는 deploy 가 만들지 않는다(release-gate 잡은 환경 변수로 설정되고 정책 파일은 O11 확정 전이라 없다): 만드는 코드가 생기면 여기에 문서를 더한다. 종료 코드: 0 통과, 1 위반(위치만 출력, 값은 출력하지 않는다)."""
 import argparse
 import json
@@ -12,10 +12,15 @@ from openit_deploy.components import config_contract_check
 from openit_deploy.wiring.call import call
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-ENV_SERVICES = {   # compose 서비스 -> (계약 스키마, 환경 문서로 바꾸는 규칙)
+ENV_SERVICES = {   # compose 서비스 -> (계약 스키마, 환경 문서로 바꾸는 규칙). 3.2.0(U73): 모든 서비스 컨테이너의 환경을 그 서비스의 선언 스키마로 검증한다
     "survey-service": ("SurveyServiceEnv", lambda env: env),
     "ops-feedback-ingest": ("OpsFeedbackServerEnv", lambda env: {"env": {k: v for k, v in env.items() if k.startswith("OPS_")}}),   # 스키마: OPS_ 접두 변수만 넣는다
-    "question-authoring": ("QuestionAuthoringDeployInterface#Environment", lambda env: env),
+    "question-authoring": ("QuestionAuthoringEnv", lambda env: env),
+    "release-gate": ("GateEnv", lambda env: env),
+    "model-serving": ("ModelServingEnv", lambda env: env),
+    "model-registry": ("ModelRegistryEnv", lambda env: env),
+    "dataset-store": ("DatasetStoreEnv", lambda env: env),
+    "kiosk-frontend": ("KioskFrontendEnv", lambda env: env),
 }
 FILES = {"config/ops-feedback-job.yaml": "OpsFeedbackJobConfig",
          "test/fake-model/question_flow.json": "RuntimeFlowFile"}   # E2E·데모의 가짜 백엔드가 읽는 문항 흐름 파일(compose.fake-model.yaml 이 마운트): deploy 의 시험 설정
