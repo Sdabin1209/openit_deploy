@@ -10,7 +10,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if u.path == "/call":
             var = urllib.parse.parse_qs(u.query)["env"][0]
             url = os.environ[var].rstrip("/") + "/healthz"
-            ctx = ssl.create_default_context(cafile=os.environ["STUB_CA"]) if os.environ.get("STUB_CA") else None
+            ctx = ssl.create_default_context(cafile="/certs/ca.pem") if os.environ.get("STUB_SCHEME") == "https" else None
             try:
                 code = urllib.request.urlopen(url, timeout=3, context=ctx).status
             except Exception as e:
@@ -23,5 +23,8 @@ import threading
 # 8080(서비스)과 5432(postgres 대역): 서비스마다 컨테이너 포트가 다르다(scripts/placement.py CONTAINER_PORT)
 for port in (5432, 8080):
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", port), H)
+    if os.environ.get("STUB_SCHEME") == "https":   # 서비스 이름 = 인증서 이름. 사이드카 대신 대역이 직접 TLS 를 끝낸다
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/certs/stub.crt", "/certs/stub.key")   # 시험 CA 가 서명한 인증서 하나, SAN 에 서비스 이름 전부
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     (threading.Thread(target=srv.serve_forever, daemon=True).start() if port == 5432 else None)
 srv.serve_forever()

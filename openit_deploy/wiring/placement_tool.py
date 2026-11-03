@@ -16,12 +16,13 @@ ROOT = os.path.dirname(os.path.dirname(HERE))   # 리포 루트(openit_deploy/wi
 FOUNDATION = ["postgres", "step-ca", "keycloak", "gateway"]   # 기반 요소(명세 "배치" 행). compose 에 있는 것만 요구한다
 # 기동 순서(명세): postgres -> step-ca -> keycloak -> 나머지. 각 단계는 그 서버에 있는 서비스만 올린다
 # 서버를 넘나드는 기동 단계(ADR 0061): 앞 단계가 준비된 뒤에 다음 단계를 올린다. 목록에 없는 서비스는 3단계(저장소·서버 서비스)에 든다
-STAGES = [["postgres"], ["step-ca"], ["keycloak"],
+STAGES = [["step-ca"], ["postgres"], ["keycloak"],   # step-ca 가 먼저: 모든 서비스의 인증서(postgres-cert 포함)를 받으려면 CA 가 떠 있어야 한다(ADR 0060)
+         
           ["release-gate", "question-authoring", "ops-feedback-migrate", "ops-feedback-ingest", "model-registry", "dataset-store"],
           ["survey-service", "model-serving"],
           ["oauth2-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3
-CONTAINER_PORT = {"postgres": 5432}   # 나머지는 8080(이미지 규칙, HTTP.md)
+CONTAINER_PORT = {"postgres": 5432, "step-ca": 9000}   # 나머지는 8080(이미지 규칙, HTTP.md)
 PUBLISH_NET = "placement-publish"      # 내부 전용 네트워크에만 붙은 서비스가 호스트 포트를 열 수 있게 더하는 일반 네트워크
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 DSN_RE = re.compile(r"^db-.*-dsn$")
@@ -93,6 +94,9 @@ def leaders(compose):
         nm = str(s.get("network_mode") or "")
         if nm.startswith("service:"):
             out[n] = nm.split(":", 1)[1]
+    for n in compose["services"]:   # <서비스>-cert 는 <서비스> 의 인증서를 받는 짝이다(ADR 0060): 같은 서버에서 앱보다 먼저 올라온다
+        if n.endswith("-cert") and n[:-5] in compose["services"] and n not in out:
+            out[n] = n[:-5]
     for n in ("postgres-cert", "postgres-reload"):
         if n in compose["services"]:
             out[n] = "postgres"
@@ -150,12 +154,37 @@ def check(p, compose):
         if len(ns) > 1 and len({owner.get(n) for n in ns}) == 1:
             errs.append("게시 포트 %d 를 같은 서버의 %s 가 함께 쓴다" % (port, ", ".join(ns)))
     for srv, d in p["servers"].items():
-        if any(n in called for n in d["services"]) and not (d.get("bind") or IP_RE.match(d["address"])):
-            errs.append("서버 %s: 게시 포트를 열 주소가 없다(address 가 IP 가 아니면 placement_bind_address 를 준다)" % srv)
+        if any(n in called for n in d["services"]) and not IP_RE.match(d["address"]):
+            errs.append("서버 %s: 다른 서버가 이름을 이 서버로 돌리는 extra_hosts 는 IP 만 받는다(address 는 IP 여야 한다)" % srv)
+    if (p.get("ports") or {}).get("step-ca", 9000) != 9000:
+        errs.append("placement_ports 의 step-ca 는 9000 이어야 한다(인증서 발급 명령이 https://step-ca:9000 으로 고정이라 게시 포트가 같아야 한다)")
     for port in (p.get("ports") or {}):
         if port not in known:
             errs.append("ports: 서비스 '%s' 는 compose 서비스 목록에 없다" % port)
     return errs
+
+
+def uses_step_ca(svc):
+    """step-ca 에 닿아야 하는 서비스(인증서 발급·갱신: depends_on step-ca 이거나 명령에 https://step-ca 가 있다)"""
+    dep = svc.get("depends_on") or {}
+    return "step-ca" in dep or "https://step-ca" in (str(svc.get("entrypoint")) + str(svc.get("command")))
+
+
+def call_targets(p, compose, n, srv, owner):
+    """서비스 n(서버 srv)이 부르는 다른 서버의 서비스 이름 집합: 환경의 URL, DB 접속 비밀(postgres), 인증서 발급(step-ca)"""
+    svc = compose["services"].get(n)
+    out = set()
+    if not svc:
+        return out
+    for v in env_of(svc, p["_compose_dir"]).values():
+        m = URL_RE.match(v)
+        if m and m.group(2) in owner and owner[m.group(2)] != srv:
+            out.add(m.group(2))
+    if "postgres" in owner and owner["postgres"] != srv and any(DSN_RE.match(x) for x in names(svc.get("secrets"))):
+        out.add("postgres")
+    if "step-ca" in owner and owner["step-ca"] != srv and n != "step-ca" and uses_step_ca(svc):
+        out.add("step-ca")
+    return out
 
 
 def remote_called(p, compose):
@@ -163,15 +192,7 @@ def remote_called(p, compose):
     owner = {s: srv for srv, d in p["servers"].items() for s in d["services"]}
     out = set()
     for n, srv in owner.items():
-        svc = compose["services"].get(n)
-        if not svc:
-            continue
-        for v in env_of(svc, p["_compose_dir"]).values():
-            m = URL_RE.match(v)
-            if m and m.group(2) in owner and owner[m.group(2)] != srv:
-                out.add(m.group(2))
-        if "postgres" in owner and owner["postgres"] != srv and any(DSN_RE.match(x) for x in names(svc.get("secrets"))):
-            out.add("postgres")
+        out |= call_targets(p, compose, n, srv, owner)
     return out
 
 
@@ -222,9 +243,13 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
             m = URL_RE.match(v)
             if m and m.group(2) in owner and owner[m.group(2)] != host:
                 tgt = m.group(2)
-                new[k] = "%s://%s:%d%s" % (scheme, servers[owner[tgt]]["address"], ports[tgt], m.group(4))
+                # 호출자는 언제나 <스킴>://<서비스 이름>:<게시 포트> 로 부른다(인증서 이름 = 서비스 이름, ADR 0060). 이름은 extra_hosts 가 그 서버 주소로 돌린다
+                new[k] = "%s://%s:%d%s" % (scheme, tgt, ports[tgt], m.group(4))
         if new:
             ov.setdefault(n, {})["environment"] = new
+        hosts_ = sorted(call_targets(p, compose, n, host, owner))
+        if hosts_ and compose["services"][n].get("network_mode") is None:   # 사이드카(network_mode)는 extra_hosts 를 받지 못한다. 부르는 쪽은 앱이다
+            ov.setdefault(n, {})["extra_hosts"] = ["%s:%s" % (t, servers[owner[t]]["address"]) for t in hosts_]
     # 이 서버의 서비스를 다른 서버가 부르면 호스트 포트를 연다(서버 사이 호출은 게시 포트로만, 바인드 주소는 인벤토리 값)
     published = remote_called(p, compose) & localset
     # depends_on 은 이 서버에 있는 것만 남긴다(다른 서버의 준비는 플레이북의 단계 순서와 /readyz 확인이 맡는다)
@@ -257,6 +282,10 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
                     lines.append("      %s: %s" % (k, json.dumps(c if isinstance(c, dict) else {"condition": "service_started"})))
             else:
                 lines.append("    depends_on: !reset []")
+        if "extra_hosts" in ov.get(n, {}):
+            lines.append("    extra_hosts:")
+            for h in ov[n]["extra_hosts"]:
+                lines.append("      - %s" % json.dumps(h))
         if "networks" in ov.get(n, {}):
             lines.append("    networks: !override")
             for x in ov[n]["networks"]:
@@ -288,7 +317,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
         for f in files:
             if DSN_RE.match(os.path.basename(f)):
                 src = open(os.path.join(secrets_dir, f), encoding="utf-8").read()
-                dst = src.replace("@postgres:5432/", "@%s:%d/" % (servers[pg]["address"], ports["postgres"])).rstrip("\n") + q + "\n"
+                dst = src.replace("@postgres:5432/", "@postgres:%d/" % ports["postgres"]).rstrip("\n") + q + "\n"
                 path = os.path.join(out, "secrets", f)
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
