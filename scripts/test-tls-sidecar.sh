@@ -29,7 +29,7 @@ ok "step-ca 가 healthy (ACME 공급자 활성)" bash -c '[ "$(docker inspect -f
 docker run --rm --user 1000:1000 --cap-drop ALL --read-only -v $ID-ca:/ca:ro -v $ID-root:/home/step --entrypoint sh "$CA_IMG" -c 'cp /ca/certs/root_ca.crt /home/step/root_ca.crt && chmod 644 /home/step/root_ca.crt'
 ok "루트 인증서가 공개 볼륨에 있다 (키는 없다)" bash -c 'docker run --rm -v $1:/r:ro --entrypoint sh "$2" -c "test -s /r/root_ca.crt && [ \$(ls /r | wc -l) = 1 ]"' _ $ID-root "$CA_IMG"
 # 3) 앱(8080, 평문, 컨테이너 안) + 사이드카(같은 네트워크 네임스페이스)
-docker run -d --name $ID-app --network $NET --network-alias $NAME --sysctl net.ipv4.ip_unprivileged_port_start=0 "$SC_IMG" caddy respond --listen :8080 "hello-from-app" >/dev/null
+docker run -d --name $ID-app --network $NET --network-alias $NAME --sysctl net.ipv4.ip_unprivileged_port_start=0 "$SC_IMG" caddy respond --listen 127.0.0.1:8080 "hello-from-app" >/dev/null
 docker run -d --name $ID-sc --network container:$ID-app --user 65532:65532 --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:exec --tmpfs /data:uid=65532,gid=65532 --entrypoint sh \
   -e TLS_NAME=$NAME -e TLS_UPSTREAM=127.0.0.1:8080 -v "$DEPLOY_ROOT/config/tls-sidecar.caddy:/etc/caddy/Caddyfile:ro" -v $ID-root:/etc/openit/pki:ro "$SC_IMG" -c 'cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile' >/dev/null
 for i in $(seq 1 40); do docker logs $ID-sc 2>&1 | grep -q "certificate obtained successfully" && break; sleep 1; done
@@ -41,6 +41,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/x.key" -out "$T/other_root
 ok "다른 루트만 아는 호출자는 검증 실패로 거부된다" bash -c '! docker run --rm --network $1 -e SSL_CERT_FILE=/pki/other_root.crt -v $2:/pki:ro "$3" python -c "$4"' _ $NET "$T" "$UTIL" "$CLIENT"
 ok "루트를 지정하지 않은 호출자(시스템 신뢰 저장소)도 거부된다" bash -c '! docker run --rm --network $1 "$2" python -c "$3"' _ $NET "$UTIL" "$CLIENT"
 ok "평문 http 로 사이드카 443 을 부르면 TLS 가 아니라 거부된다" bash -c '! docker run --rm --network $1 "$2" python -c "import urllib.request;urllib.request.urlopen(\"http://$3:443/\",timeout=5)"' _ $NET "$UTIL" $NAME
+ok "다른 컨테이너에서 앱 포트(8080)는 연결 거부된다 (앱은 loopback 에 바인드, 사이드카만 닿는다)" bash -c '! docker run --rm --network $1 "$2" python -c "import urllib.request;urllib.request.urlopen(\"http://$3:8080/\",timeout=5)"' _ $NET "$UTIL" $NAME
 # 5) 사이드카 격리 상태(check-containers 와 같은 항목)
 ok "사이드카는 비루트, 읽기 전용, cap_drop ALL, 추가 capability 없음(앱 netns 의 ip_unprivileged_port_start=0 으로 443 을 연다)" bash -c 'r=$(docker inspect -f "{{.Config.User}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.CapDrop}}|{{.HostConfig.CapAdd}}" $1); [ "$r" = "65532:65532|true|[ALL]|[]" ]' _ $ID-sc
 [ "$FAILS" = 0 ] && echo "통과: TLS 사이드카 단독 시험" || echo "실패: $FAILS건"

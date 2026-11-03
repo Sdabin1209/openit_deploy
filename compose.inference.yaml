@@ -62,7 +62,7 @@ services:
     network_mode: ${INFERENCE_NETWORK_MODE:-bridge}
     environment:
       SSL_CERT_FILE: /etc/openit/gateway-ca.crt   # 왜: 번들 읽기 클라이언트(boundary_contracts)와 probe() 의 urllib 이 이 CA 만으로 게이트웨이 TLS 를 검증한다. 시스템 신뢰 저장소를 고치지 않는다
-      MODEL_RUNTIME_HOST: ${INFERENCE_LISTEN_HOST:-0.0.0.0}   # bridge 에서는 0.0.0.0 이어야 게시 포트가 닿는다. host 모드에서만 바꾼다
+      MODEL_RUNTIME_HOST: ${INFERENCE_LISTEN_HOST:-127.0.0.1}   # 앱은 TLS 사이드카(같은 네임스페이스)에게만 닿는다(ADR 0060). 게시되는 것은 사이드카 443 뿐이다
       MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/model-runtime-release-token
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}
