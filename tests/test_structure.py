@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 HTTP_PY = re.compile(r"^\s*(from|import)\s+(boundary_contracts\.clients|openit_link|urllib\.request|http\.client|http\.server|requests|waitress|wsgiref)\b", re.M)
 # 수용 시험(E2E 시나리오와 그 보조): 시스템 전체를 이웃의 HTTP 로 확인하는 시험이지 deploy 의 업무 컴포넌트가 아니다(ADR 0045). 시험에 든다.
-ACCEPTANCE = {"e2e_steps.py", "e2e_plan.py", "e2e_asserts.py", "e2e_sandbox.py"}   # e2e_sandbox.py: 수용 시험(E2E 드라이버)이 제품에 닿는 접근 계층(ADR 0049)
+ACCEPTANCE = {"e2e_steps.py", "e2e_plan.py", "e2e_asserts.py", "e2e_sandbox.py", "e2e_verify_keycloak.py"}   # e2e_sandbox.py: 수용 시험(E2E 드라이버)이 제품에 닿는 접근 계층(ADR 0049)   # e2e_verify_keycloak.py: 복구 뒤 사람 로그인을 E2E 접근 계층(e2e_sandbox)으로 확인하는 수용 시험 보조
 SHIM_MAX_STATEMENTS = 8   # 진입점은 경로 설정, wiring 의 main 을 가져오기, 호출만 한다(머리말 설명은 세지 않는다)
 
 
