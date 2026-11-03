@@ -436,7 +436,7 @@ def _c1_wait_report(sid, label, timeout=60):
         if c == 200 and isinstance(r, dict): return r
         st, txt = _c1_explain(sid)
         if st in ("REJECTED_AUTO", "REJECTED_HUMAN"): raise AssertionError(f"제출 {label} 이(가) 반려되어 승인 요청 보고서가 생기지 않는다.\n{txt}")
-        time.sleep(2)
+        time.sleep(2)   # 폴링 간격(반려되면 즉시 중단, 종료 조건은 보고서 생성)
     raise AssertionError(f"시간 초과({timeout}s): 자동 검사 후 승인 요청 보고서 {label}.\n{_c1_explain(sid)[1]}")
 
 def sd_config(name, seeds, failure=False, version=None):
@@ -1226,7 +1226,7 @@ def step5q():
     while time.time() - t_kill < 30 and seen is None:
         c, b, h = _c2_gw("GET", f"/v1/sessions/{sid}", None, token=_c2_kdev(), timeout=10)
         if c != 200: seen = (c, b, h)
-        else: time.sleep(0.2)
+        else: time.sleep(0.2)   # 폴링 간격(정지 구간 관찰 루프, 종료 조건은 비 200 응답)
     assert seen is not None, "프로세스를 죽였는데 30초 안에 정지 구간(비 200 응답)을 관찰하지 못했다"
     upstream_503_json(*seen, "프로세스 죽음 중 환자 세션 조회")
     wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", svc]).stdout.strip() == "healthy", 120, "프로세스 죽음 뒤 survey-service healthy(restart 정책)", every=2)
@@ -1465,7 +1465,7 @@ def step5n():
         return code, b, hd
     def state_dev(tok, session=None):   # state_of 는 시험 기본 기기(e2e) 토큰이라 다른 기기가 만든 세션은 404 다(survey-service _device_denied). 세션을 만든 기기 토큰으로 조회한다
         for _ in range(8):
-            time.sleep(0.7)
+            time.sleep(0.7)   # 속도 제한 간격: 서버가 0.5초보다 잦은 상태 조회를 429 로 막는다
             c, r, _h = tcall(tok, "GET", f"/v1/sessions/{session or sid}/state")
             if c != 429: return c, r
         return c, r
@@ -2559,7 +2559,7 @@ def step5k():
     def dk(tok, method, path, body=None): c, b, _h = _c1_gw(method, path, token=tok, body=body); return c, b
     def state_dk(tok, sid):   # 서버가 0.5초보다 잦은 상태 조회를 429 로 막는다(state_of 와 같은 이유)
         for _ in range(8):
-            time.sleep(0.7); c, r = dk(tok, "GET", f"/v1/sessions/{sid}/state")
+            time.sleep(0.7); c, r = dk(tok, "GET", f"/v1/sessions/{sid}/state")   # 속도 제한 간격: 서버가 0.5초보다 잦은 상태 조회를 429 로 막는다
             if c != 429: return c, r
         return c, r
     # 활성 문진표 목록(I10): 기기 토큰이 필요하다(세션과 같은 인증). 활성 릴리스의 문진표 둘이 ID·제목·버전과 함께 나온다
