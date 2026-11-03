@@ -1,0 +1,10 @@
+# 지휘 기계(배치를 돌리는 PC)의 프로젝트 가상환경용. 서버에는 설치하지 않는다(서버는 SSH·python3·Docker 만, ADR 0060).
+# 설치: .venv/bin/pip install -r requirements-deploy-tools.txt   (판 고정: 직접 의존 + 전이 의존 전부)
+ansible-core==2.18.20
+cffi==2.1.1
+cryptography==50.0.2
+Jinja2==3.1.6
+MarkupSafe==3.0.4
+packaging==26.3
+pycparser==3.12
+resolvelib==1.0.1

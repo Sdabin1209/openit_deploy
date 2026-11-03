@@ -1,0 +1,134 @@
+---
+# 배치 플레이북(ADR 0060): 서버마다 (a) 그 서버 몫의 env·비밀·인증서 파일을 지휘 기계에서 배포하고 (b) 상대 서비스 주소를 인벤토리에서 계산한 override 를 놓고
+# (c) 그 서버 몫만, 서버를 넘나드는 단계 순서(scripts/placement.py STAGES: postgres -> step-ca -> keycloak -> 저장소·서버 서비스 -> survey·model-serving -> gateway)로 기동한다. 다음 단계 전에 앞 단계의 게시된 서비스가 /readyz 에 응답하는지 지휘 기계에서 기다린다. 다시 실행하면 바뀐 것만 바뀐다(멱등).
+# 서버에는 SSH·python3·Docker 만 있으면 된다: Docker 전용 Ansible 모듈을 쓰지 않는다(서버에 파이썬 라이브러리를 요구하지 않으려고). compose 는 command 로 부른다.
+# 지휘 기계에서만 도는 점검: 배치 정의 점검, 서버별 설정·환경이 계약을 따르는지(check_config_contracts, placement_check_contracts: false 로 끈다. 시험용). 서버에는 jsonschema 를 요구하지 않는다.
+# 사용: .venv/bin/ansible-playbook -i <인벤토리> ansible/site.yml     (인벤토리 형식: ansible/inventory.example.yml)
+# 변수(모두 선택): placement_remote_dir(서버의 설치 폴더), placement_project(compose 프로젝트 이름), placement_secrets_dir(지휘 기계의 비밀 폴더), placement_compose(compose 파일)
+- name: 배치 정의 검증(지휘 기계, 서버에 닿기 전에)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: 인벤토리 형식·서비스 이름·한 서비스 한 서버·기반 요소 점검
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "validate", "{{ ansible_inventory_sources[0] }}", "--compose", "{{ placement_compose | default(playbook_dir + '/../compose.yaml') }}"]
+      changed_when: false
+
+- name: 서버별 배포(서버끼리 병렬)
+  hosts: all:!localhost
+  gather_facts: false
+  vars:
+    p_root: "{{ playbook_dir }}/.."
+    p_compose: "{{ placement_compose | default(p_root + '/compose.yaml') }}"
+    p_dir: "{{ placement_remote_dir | default('/opt/openit-deploy') }}"
+    p_project: "{{ placement_project | default('deploy') }}"
+    p_secrets: "{{ placement_secrets_dir | default(p_root + '/secrets') }}"
+    p_out: "{{ playbook_dir }}/../build/placement/{{ inventory_hostname }}"
+  tasks:
+    - name: 이 서버의 override·계획 계산(지휘 기계)
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "render", "{{ ansible_inventory_sources[0] }}", "--host", "{{ inventory_hostname }}", "--out", "{{ p_out }}", "--compose", "{{ p_compose }}", "--secrets-dir", "{{ p_secrets }}"]
+      delegate_to: localhost
+      changed_when: false
+      register: render
+    - name: 계획 읽기
+      ansible.builtin.set_fact:
+        plan: "{{ render.stdout | from_json }}"
+    - name: 이 서버 몫의 환경이 계약을 따르는지(지휘 기계, 실패면 여기서 멈춘다)
+      ansible.builtin.shell: |
+        set -e
+        export SECRETS_DIR="{{ p_secrets }}" COMPOSE_EXTRA="{{ p_out }}/compose.placement.yaml"
+        source "{{ p_root }}/scripts/lib.sh"
+        dc "{{ p_project }}" config --format json > "{{ p_out }}/config.json"
+        "$DEPLOY_PY" -W ignore "{{ p_root }}/scripts/check_config_contracts.py" --compose-json "{{ p_out }}/config.json"
+      args: {executable: /bin/bash}
+      delegate_to: localhost
+      changed_when: false
+      when: placement_check_contracts | default(true) | bool
+    - name: 비밀 파일 그룹 gid(SECRETS_GID 규칙, ADR 0054)
+      ansible.builtin.command: id -g
+      register: idg
+      changed_when: false
+      when: placement_secrets_gid is not defined
+    - name: gid 정하기
+      ansible.builtin.set_fact:
+        gid: "{{ placement_secrets_gid | default(idg.stdout | trim) }}"
+    - name: 폴더
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "{{ p_dir }}", mode: "0755"}
+        - {path: "{{ p_dir }}/scripts", mode: "0755"}
+        - {path: "{{ p_dir }}/locks", mode: "0755"}
+        - {path: "{{ p_dir }}/state", mode: "0755"}
+        - {path: "{{ p_dir }}/secrets", mode: "0700"}
+    - name: compose 파일과 공통 스크립트
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ p_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {src: "{{ p_compose }}", dest: compose.yaml}
+        - {src: "{{ p_root }}/scripts/lib.sh", dest: scripts/lib.sh}
+        - {src: "{{ placement_lock | default(p_root + '/locks/images.lock') }}", dest: locks/images.lock}
+    - name: 레지스트리 주소(state/registry.env, 있으면)
+      ansible.builtin.copy:
+        src: "{{ placement_registry_env | default(p_root + '/state/registry.env') }}"
+        dest: "{{ p_dir }}/state/registry.env"
+        mode: "0644"
+      when: (placement_registry_env | default(p_root + '/state/registry.env')) is file
+    - name: 설정 폴더(비밀 아님. env, Caddyfile, 인증서)
+      ansible.builtin.copy:
+        src: "{{ placement_config_dir | default(p_root + '/config') }}/"
+        dest: "{{ p_dir }}/config/"
+        mode: preserve
+    - name: 이 서버의 배치 override
+      ansible.builtin.copy:
+        src: "{{ p_out }}/compose.placement.yaml"
+        dest: "{{ p_dir }}/compose.placement.yaml"
+        mode: "0644"
+    - name: 비밀 폴더(이 서버 몫만)
+      ansible.builtin.file:
+        path: "{{ p_dir }}/secrets/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop: "{{ plan.secret_files | select('contains', '/') | map('dirname') | unique | list }}"
+      loop_control: {label: "{{ item }}"}
+    - name: 이 서버 몫의 비밀 파일(640, 그룹 SECRETS_GID)
+      ansible.builtin.copy:
+        src: "{{ (p_out + '/secrets/' + item) if item in plan.generated_secret_files else (p_secrets + '/' + item) }}"   # db-*-dsn 은 postgres 가 다른 서버면 이 서버용으로 새로 만든 파일
+        dest: "{{ p_dir }}/secrets/{{ item }}"
+        mode: "0640"
+        group: "{{ gid }}"
+      loop: "{{ plan.secret_files }}"
+      loop_control: {label: "{{ item }}"}   # 이름만 출력한다. 내용은 출력하지 않는다
+      no_log: false
+    - name: gateway CA 볼륨의 소유자(비루트 uid 10001, 처음 한 번)
+      ansible.builtin.shell: |
+        set -e
+        V="{{ p_project }}_gateway-data"
+        docker volume inspect "$V" >/dev/null 2>&1 && exit 0
+        docker volume create --label "com.docker.compose.project={{ p_project }}" --label "com.docker.compose.volume=gateway-data" "$V" >/dev/null
+        UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ p_dir }}/locks/images.lock")
+        docker run --rm --network none --user 0 --cap-drop ALL --cap-add CHOWN -v "$V:/data" "$UTIL" chown 10001:10001 /data >/dev/null
+        echo CHANGED
+      args: {executable: /bin/bash}
+      register: gwvol
+      changed_when: "'CHANGED' in gwvol.stdout"
+      when: "'gateway' in plan.services"
+
+- name: 서버를 넘나드는 단계별 기동과 준비 확인
+  hosts: all:!localhost
+  gather_facts: false
+  vars:
+    p_dir: "{{ placement_remote_dir | default('/opt/openit-deploy') }}"
+    p_project: "{{ placement_project | default('deploy') }}"
+    p_scheme: "{{ placement_scheme | default('https') }}"
+  tasks:
+    - name: 단계 0..5 (모든 서버가 한 단계를 마친 뒤 다음 단계로 간다)
+      ansible.builtin.include_tasks: stage.yml
+      loop: "{{ range(0, 6) | list }}"
+      loop_control: {loop_var: stage_i}
