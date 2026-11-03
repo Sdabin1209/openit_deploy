@@ -11,7 +11,7 @@
   tasks:
     - name: 인벤토리 형식·서비스 이름·한 서비스 한 서버·기반 요소 점검
       ansible.builtin.command:
-        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "validate", "{{ inventory_file }}", "--compose", "{{ placement_compose | default(playbook_dir + '/../compose.yaml') }}"]
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "validate", "{{ ansible_inventory_sources[0] }}", "--compose", "{{ placement_compose | default(playbook_dir + '/../compose.yaml') }}"]
       changed_when: false
 
 - name: 서버별 배포와 기동
@@ -29,7 +29,7 @@
   tasks:
     - name: 이 서버의 override·계획 계산(지휘 기계)
       ansible.builtin.command:
-        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "render", "{{ inventory_file }}", "--host", "{{ inventory_hostname }}", "--out", "{{ p_out }}", "--compose", "{{ p_compose }}"]
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "render", "{{ ansible_inventory_sources[0] }}", "--host", "{{ inventory_hostname }}", "--out", "{{ p_out }}", "--compose", "{{ p_compose }}"]
       delegate_to: localhost
       changed_when: false
       register: render
@@ -70,7 +70,7 @@
         dest: "{{ p_dir }}/state/registry.env"
         mode: "0644"
       when: (placement_registry_env | default(p_root + '/state/registry.env')) is file
-    - name: 설정 폴더(비밀 아님: env, Caddyfile, 인증서)
+    - name: 설정 폴더(비밀 아님. env, Caddyfile, 인증서)
       ansible.builtin.copy:
         src: "{{ placement_config_dir | default(p_root + '/config') }}/"
         dest: "{{ p_dir }}/config/"
@@ -82,7 +82,7 @@
         mode: "0644"
     - name: 비밀 폴더(이 서버 몫만)
       ansible.builtin.file:
-        path: "{{ p_dir }}/secrets/{{ item | dirname }}"
+        path: "{{ p_dir }}/secrets/{{ item }}"
         state: directory
         mode: "0700"
       loop: "{{ plan.secret_files | select('contains', '/') | map('dirname') | unique | list }}"
