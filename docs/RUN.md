@@ -223,7 +223,7 @@ HTTPS(내부 CA)·OIDC 로그인이지만 시험용 대체 데이터다. `DEMO_B
 | `INFERENCE_BIND` / `INFERENCE_PORT` | 선택 | 호스트 바인드(기본 127.0.0.1: 다른 호스트가 닿게 하려면 사설 인터페이스 주소나 0.0.0.0을 명시하고 방화벽으로 호출자만 허용한다) / 포트(기본 8080, 빈 값이면 Docker 배정 -> `docker port`로 읽는다) |
 | `INFERENCE_NETWORK_MODE` | 선택 | 기본 `bridge`. 게이트웨이에 ssh 터널처럼 **호스트 루프백**으로만 닿을 때 `host`. host 모드는 포트 게시가 무시되므로 `INFERENCE_LISTEN_HOST=127.0.0.1`을 같이 준다 |
 
-토큰 파일 두 개는 컨테이너(uid 10001)가 읽을 수 있어야 한다(모드 644, 비밀을 둔 폴더는 700). CA 파일은 공개 인증서다.
+토큰 파일 두 개와 TLS 토큰 파일은 모드 640 + 그룹 SECRETS_GID 다(컨테이너는 compose 의 group_add 로 읽는다. 644 로 누구나 읽게 하지 않는다. 비밀을 둔 폴더는 700). CA 파일은 공개 인증서다.
 
 ```
 # INFERENCE_BIND 기본은 127.0.0.1 이라 다른 호스트의 호출자가 닿으려면 아래처럼 명시한다(방화벽으로 호출자만 허용)
@@ -250,7 +250,7 @@ bash scripts/up.sh deploy --external-inference http://<서버>:8080   # 이 구�
 bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모도 같은 옵션
 ```
 
-토큰 값은 인자로 받지 않고 출력하지 않는다(`INFERENCE_TOKEN`이면 `secrets/tokens/external-inference`로 파일을 만든다. 컨테이너가 읽도록 모드 644, 폴더 700).
+토큰 값은 인자로 받지 않고 출력하지 않는다(`INFERENCE_TOKEN`이면 `secrets/tokens/external-inference`로 파일을 만든다. 컨테이너가 읽도록 모드 640 + 그룹 SECRETS_GID, 폴더 700).
 
 **양방향 도달성.** 호출자 -> 서버(위 doctor가 확인)와 서버 -> 게이트웨이(위 확인 순서 ①)가 모두 열려야 한다. 상시 구성에서 release-gate는 호스트 포트를 열지 않으며, 열지 않는다: 서버는 게이트웨이 하나만 본다.
 

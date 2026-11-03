@@ -60,10 +60,8 @@ bash "$DEPLOY_ROOT/scripts/publish-images.sh" || bail "게시 실패"
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null || bail "비밀 생성 실패"
 
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_LOCK")
-cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 644 "$W/inference-token"
+cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 640 "$W/inference-token"
 export INFERENCE_TOKEN_FILE="$W/inference-token"
-# 다른 호스트의 추론 서버는 이 호스트의 비밀 폴더를 읽지 않는다: 지휘 쪽이 서버 호스트에 두는 토큰 파일을 컨테이너(uid 10001)가 읽을 수 있게 644 사본으로 준다(compose.inference.yaml 머리말). 비밀 폴더의 원본은 640 + 그룹(L02)이라 uid 10001 이 읽지 못한다(SecretError, 측정함)
-cp "$SECRETS_DIR/tokens/model-runtime-tokens" "$W/inf-tokens"; cp "$SECRETS_DIR/tokens/gateway-inference-token" "$W/inf-release-token"; chmod 644 "$W/inf-tokens" "$W/inf-release-token"
 INF_IMAGE=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST" )
 BRIDGE_GW=$("$DOCKER" network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null | tr -d '\r')
 PLACEHOLDER="https://host.docker.internal:1"   # 서버가 뜨기 전 자리표시 주소(아무 포트도 열지 않는다). 서버가 뜬 뒤 실제 주소로 바꿔 survey-service 만 다시 만든다
@@ -73,7 +71,7 @@ reach() {
 }
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   # 이 변수들은 "다른 호스트" 쪽 compose 의 환경이다(제품 쪽에는 없다). fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험 전용 표시, model-runtime ADR 0009)
-  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$W/inf-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/inf-release-token" \
+  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gateway-inference-token" \
   INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$SCP" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott" \
   INFERENCE_CA_FILE="$W/gateway-ca.crt" RELEASE_URL="https://host.docker.internal:$GWPORT" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
@@ -113,7 +111,7 @@ for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$UTIL" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || bail "step-ca 루트를 꺼내지 못했다"
   # 지휘 쪽: 이 서버 이름(host.docker.internal)의 일회용 토큰을 발급해 파일로 준다(비밀번호는 이 컨테이너만 읽는다)
   "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$SCP" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; bail "일회용 토큰을 발급하지 못했다"; }
-  chmod 644 "$W/tls.ott"
+  chmod 640 "$W/tls.ott"
   echo "== (나) 다른 호스트: 별도 프로젝트 $INF, compose.inference.yaml 하나 (바인드 $BIND, 포트는 Docker 배정)"
   inf_compose up -d --wait || { echo "  추론 서버가 준비되지 않았다 (바인드 $BIND)"; "$DOCKER" logs --tail 20 "$INF-model-serving-1" 2>&1 | sed 's/^/    /'; bail "추론 서버 기동 실패"; }
   IPORT=$(port_of "$INF-model-serving-1" 443)
@@ -171,7 +169,7 @@ base, ca, pwf = sys.argv[1:4]
 jar = SB.oidc_login(base, "trainer-e2e", open(pwf).read().strip(), ca=ca)
 print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session")))
 PY
-) 2>"$W/oidc.err" || { tail -4 "$W/oidc.err" | sed "s/^/    /" >&2; bail "승인자 OIDC 로그인에 실패했다"; }
+) 2>"$W/oidc.err" || { tail -4 "$W/oidc.err" | sed "s/^/    /" >&2; echo "  로그인 대상 $GATEWAY_PUBLIC_URL, 게시 포트 $GWPORT, 컨테이너 상태:" >&2; "$DOCKER" ps -a --filter "label=com.docker.compose.project=$P" --format "    {{.Names}} {{.Status}}" 2>&1 | grep -E "gateway-1|oauth2-proxy-1|keycloak-1" >&2; "$DOCKER" logs --tail 5 "$P-gateway-1" 2>&1 | cut -c1-240 | sed "s/^/    gw: /" >&2; bail "승인자 OIDC 로그인에 실패했다"; }
 [ -n "$HCOOKIE" ] || bail "승인자 세션 쿠키가 비었다"
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
