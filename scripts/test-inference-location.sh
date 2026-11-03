@@ -77,7 +77,13 @@ inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
 
 STEP_IMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$DEPLOY_LOCK"); SC_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")
-SCP=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')   # 빈 포트(고정 포트 금지). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml)
+# 빈 포트(고정 포트 금지). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml). 호스트 쪽 제외 포트 범위(WSL/Windows)에 걸리면 Docker 가 게시를 거부하므로(측정함) 실제로 게시해 보고 고른다
+SCP=""
+for _try in 1 2 3 4 5 6 7 8; do
+  _p=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+  if "$DOCKER" run --rm --network none -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then SCP=$_p; break; fi
+done
+[ -n "$SCP" ] || bail "게시할 수 있는 빈 포트를 찾지 못했다"
 export STEP_CA_PORT=$SCP STEP_CA_DNS_NAMES=host.docker.internal COMPOSE_EXTRA="${COMPOSE_EXTRA:-} $DEPLOY_ROOT/compose.step-ca-publish.yaml"
 mkdir -p "$W/pki"
 OK=0
@@ -142,8 +148,22 @@ chk "추론 토큰으로 POST /v1/activate 는 사람 인증 블록에 막힌다
 chk "추론 토큰으로 GET /v1/releases (목록)는 열리지 않는다(사람 인증 블록 401)" is "gw_inf /v1/releases" 401
 
 echo "== 3. 음성 확인"
-APPROVER_PW=$(tr -d '\r\n' < "$SECRETS_DIR/tokens/account-trainer-e2e-password")
-echo "  (미확인) (ㄱ) 사람 세션의 GET /v1/releases/{id}(/bundle) 는 404: 사람 인증은 OIDC 세션(Keycloak 로그인)이라 Basic 계정으로는 만들 수 없다(U82). scripts/test-idp-smoke.sh·E2E 단계 5u 가 사람 세션 경로를 본다"
+# (ㄱ) 사람 세션: E2E 단계 5u·test-idp-smoke.sh 와 같은 OIDC 로그인 도우미(scripts/e2e_sandbox.py oidc_login: Keycloak 로그인 -> _openit_session 쿠키)로 승인자 계정 세션을 만든다
+bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$P" >/dev/null 2>&1 || bail "시험 사용자(Keycloak)를 만들지 못했다"
+HCOOKIE=$("$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GW" "$CA" "$MS_HOST" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" <<'PY'
+import os, socket, sys
+sys.path.insert(0, os.path.join(os.environ["DEPLOY_ROOT"], "scripts"))
+import e2e_sandbox as SB
+base, ca, addr, pwf = sys.argv[1:5]
+_orig = socket.getaddrinfo
+socket.getaddrinfo = lambda h, *a, **k: _orig(addr if h == "host.docker.internal" else h, *a, **k)   # 시험 호스트가 이 이름을 풀지 못해도 게시 주소로 간다(curl --resolve 와 같다)
+jar = SB.oidc_login(base, "trainer-e2e", open(pwf).read().strip(), ca=ca)
+print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session")))
+PY
+) || bail "승인자 OIDC 로그인에 실패했다"
+[ -n "$HCOOKIE" ] || bail "승인자 세션 쿠키가 비었다"
+chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
+chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄴ) 토큰 없이 GET /v1/releases/{id}/bundle 은 401" is "gw_code /v1/releases/does-not-exist/bundle" 401
 chk "(ㄴ) 토큰 없이 GET /v1/active-pointer 는 401" is "gw_code /v1/active-pointer" 401
 chk "(ㄴ) 틀린 토큰으로 GET /v1/releases/{id} 는 401" is "gw_code /v1/releases/does-not-exist -H 'Authorization: Bearer wrong'" 401
