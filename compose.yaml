@@ -470,6 +470,7 @@ services:
     network_mode: "service:oauth2-proxy"
     environment: {TLS_NAME: oauth2-proxy, TLS_UPSTREAM: "127.0.0.1:4180"}
     volumes: ["certs-oauth2-proxy:/certs:ro"]
+    healthcheck: {test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 443 && wget -q -O /dev/null http://127.0.0.1:4180/ping"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}   # 왜: oauth2-proxy 이미지에는 셸이 없어(healthcheck 를 둘 수 없다) 같은 네임스페이스의 사이드카가 표준 /ping 으로 준비를 본다. 게이트웨이가 이것을 기다린다
     depends_on:
       oauth2-proxy-cert: {condition: service_healthy}
   postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
@@ -556,13 +557,25 @@ services:
       - {source: gateway-tls-cert, target: /etc/openit/gateway-tls/server.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
     secrets: [gateway-tls-key, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
-    depends_on:
+    depends_on:   # 게이트웨이가 상류로 부르는 서비스는 모두 준비된 뒤에 뜬다: 앱과 그 TLS 사이드카가 둘 다 healthy (준비 전 요청은 503 이 된다, 정적 시험 test_gateway_depends.py)
       kiosk-frontend: {condition: service_healthy}
+      kiosk-frontend-tls: {condition: service_healthy}
       survey-service: {condition: service_healthy}
+      survey-service-tls: {condition: service_healthy}
       admin-console: {condition: service_healthy}
+      admin-console-tls: {condition: service_healthy}
       release-gate: {condition: service_healthy}
+      release-gate-tls: {condition: service_healthy}
       ops-feedback-ingest: {condition: service_healthy}
-      oauth2-proxy: {condition: service_started}   # 사람 인증(forward_auth). 준비 전에 오는 요청은 503(UPSTREAM_UNAVAILABLE)
+      ops-feedback-ingest-tls: {condition: service_healthy}
+      question-authoring: {condition: service_healthy}
+      question-authoring-tls: {condition: service_healthy}
+      model-registry: {condition: service_healthy}
+      model-registry-tls: {condition: service_healthy}
+      keycloak: {condition: service_healthy}
+      keycloak-tls: {condition: service_healthy}
+      oauth2-proxy-tls: {condition: service_healthy}   # 사람 인증(forward_auth): 사이드카의 healthcheck 가 oauth2-proxy 의 /ping 을 본다
+      oauth2-proxy: {condition: service_started}
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
