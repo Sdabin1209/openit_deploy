@@ -1,5 +1,8 @@
 # 변경 이력
 
+## wo-450 D7a: clinician 전용 계정의 푸시 요청 상류 토큰
+- survey-service 는 push 경로에서 topics `results` 를 result-reader 토큰 요청에만 허용한다(staff 토큰이면 403). clinician 전용 계정의 푸시 요청에 `survey-result-reader` 를 붙이도록 고쳤다. staff 도 가진 계정은 staff 블록이 먼저 잡아 staff 토큰과 `X-Openit-Roles` 를 넘긴다(어느 토큰으로 어느 topics 를 받을지는 서비스가 `X-Openit-Roles` 로 판단하는 쪽이 계약에 맞다: survey-service 몫). 시험은 `test-gateway-auth.sh` 의 상류 토큰 단언 5건(시험 사용자 `both-e2e` 추가).
+
 ## wo-450 D6 (U82): 사람 인증을 Keycloak(OIDC)로 (ADR 0057)
 - 새 서비스 `keycloak`(26.4)·`oauth2-proxy`(v7.12.0), 게이트웨이 `(authenticate)` 는 `forward_auth`(config/gateway-auth.caddy). `/oauth2/*`(oauth2-proxy)·`/auth/*`(Keycloak) 경로, `/oauth2/auth`·master realm 은 닫음. 신원 헤더 `X-Openit-User`(사용자 이름)·`X-Openit-Roles`(그룹)를 인증 결과에서 붙이고 위조 헤더는 지운다. 인증 없음: `/v1/*` 401+Bearer, 화면 302(`/oauth2/start`), 그룹 없음 403 `ACCOUNT_PENDING_APPROVAL`.
 - realm `openit` 가져오기(그룹 8개, 자가 등록, 이벤트 365일, 클라이언트 `openit-gateway`, 초기 admin). `scripts/gen-keycloak-realm.sh`(GATEWAY_HOSTS → 허용 리다이렉트), `gen-secrets.sh`(Keycloak·oauth2-proxy 비밀, `keycloak` DB 계정), `idp-test-users.sh`(시험 사용자, kcadm).

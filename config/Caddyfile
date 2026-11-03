@@ -147,10 +147,11 @@ http://:8080 {
 		# 의사(clinician)는 푸시 설정·구독 경로만 더 쓸 수 있다(계약 3.4.0 U92: topics results 는 clinician 만). 직원 API 의 나머지(알림 목록·개입 등)는 계속 staff 전용이다
 		handle @role_clinician {
 			handle @clinicianpush {
+				# clinician 전용 계정은 result-reader 토큰이다: survey-service 는 topics results 구독을 result-reader 토큰 요청에만 허용한다(staff 토큰이면 403). staff 도 가진 계정은 위 staff 블록이 먼저 잡아 staff 토큰 + X-Openit-Roles 를 넘긴다
 				reverse_proxy survey-service:8080 {
 					header_up -X-Openit-Dn
 					header_up -X-Openit-Device
-					header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
+					header_up Authorization "Bearer {file./run/secrets/survey-result-reader}"
 					header_up X-Openit-User "{http.request.header.X-Auth-Request-Preferred-Username}"
 					header_up X-Openit-Roles "{http.request.header.X-Auth-Request-Groups}"   # 계약 CONVENTIONS 6절(3.4.0): 인증 계정의 역할 목록. 클라이언트가 보낸 같은 헤더는 덮어쓴다
 					lb_try_duration 0

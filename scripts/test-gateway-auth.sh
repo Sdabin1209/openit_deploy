@@ -154,6 +154,16 @@ chkpass "staff 계정 -> 직원 API" staff-e2e GET /v1/staff/alerts
 chkpass "clinician 계정 -> 푸시 설정 GET /v1/staff/push-config" clinician-e2e GET /v1/staff/push-config
 chkpass "clinician 계정 -> 푸시 구독 POST /v1/staff/push-subscriptions" clinician-e2e POST /v1/staff/push-subscriptions
 chkpass "clinician 계정 -> 푸시 해지 POST /v1/staff/push-subscriptions/unsubscribe" clinician-e2e POST /v1/staff/push-subscriptions/unsubscribe
+up_tok() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]))["headers"];print(d.get("Authorization",[""])[0])' "$T/ab.out"; }
+chkup() { # chkup <설명> <기대 상류 토큰 파일 이름> <who> <메서드> <경로>: 상류가 받은 Authorization 이 그 비밀 파일의 토큰이다
+  local name=$1 want=$2 code got; shift 2; code=$(call "$@"); AN=$((AN+1)); got=$(up_tok 2>/dev/null)
+  if [ "$code" = 200 ] && [ "$got" = "Bearer $(tr -d '\r\n' < "$T/tokens/$want")" ]; then echo "  PASS $name -> 상류 토큰 = $want"; else echo "  FAIL $name -> $code, 상류 토큰이 $want 가 아니다"; FAILS=$((FAILS+1)); fi; }
+# D7a: survey-service 는 push 경로에서 topics results 를 result-reader 토큰 요청에만 허용한다 -> clinician 전용 계정은 result-reader, staff 도 가진 계정은 staff 토큰 + X-Openit-Roles
+chkup "clinician 전용 계정의 push-config 요청: 상류 토큰 = survey-result-reader" survey-result-reader clinician-e2e GET /v1/staff/push-config
+chkup "clinician 전용 계정의 push-subscriptions 요청: 상류 토큰 = survey-result-reader" survey-result-reader clinician-e2e POST /v1/staff/push-subscriptions
+chkup "staff 전용 계정의 push-subscriptions 요청: 상류 토큰 = survey-api-staff" survey-api-staff staff-e2e POST /v1/staff/push-subscriptions
+chkup "staff 도 가진 계정의 push 요청: staff 토큰" survey-api-staff both-e2e POST /v1/staff/push-subscriptions
+chkhdr "staff 도 가진 계정: X-Openit-Roles 에 두 역할이 그대로 간다" both-e2e staff,clinician both-e2e POST /v1/staff/push-subscriptions
 chk403 "clinician 계정 -> 직원 알림 목록 GET /v1/staff/alerts" clinician-e2e GET /v1/staff/alerts
 chk403 "clinician 계정 -> 직원 개입 POST /v1/sessions/s1/intervention" clinician-e2e POST /v1/sessions/s1/intervention
 chk403 "operator 계정 -> 푸시 설정 GET /v1/staff/push-config" operator-e2e GET /v1/staff/push-config
