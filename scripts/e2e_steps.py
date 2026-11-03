@@ -1204,8 +1204,20 @@ def step5q():
         c, again = _c2_turn(sid, "q-1", "네 있어요"); assert c == 200 and again == r1, ("재시작 뒤 이미 확정된 turn_id 재전송이 저장된 응답과 다르다", c, str(again)[:100])
         assert utt_count(staff_sv(sid), "네 있어요") == 1, "같은 turn_id 가 두 번 기록됐다"
     policy("5q", "survey-service 의 turn_id 멱등(저장된 결과 재생)", "재시작 뒤 확정된 turn_id 재전송은 같은 응답이고 한 번만 기록된다", idem)
+    # R3.1: 컨테이너를 멈추는 것(위)과 다른 경우 — 앱 프로세스가 죽는다(SIGKILL). restart 정책이 다시 올리는 동안 게이트웨이가 503 + UPSTREAM_UNAVAILABLE + Retry-After 를 주고(504·빈 502 아님),
+    # 다시 올라오면 사람 손 없이 같은 주소로 응답한다(R4.1: 복구까지 걸린 시간을 Retry-After 와 비교하지 않고 준비 확인으로 기다린다, R4.3)
+    sh([a.docker, "kill", "-s", "KILL", svc]); seen = None; t_kill = time.time()
+    while time.time() - t_kill < 30 and seen is None:
+        c, b, h = _c2_gw("GET", f"/v1/sessions/{sid}", None, token=_c2_kdev(), timeout=10)
+        if c != 200: seen = (c, b, h)
+        else: time.sleep(0.2)
+    assert seen is not None, "프로세스를 죽였는데 30초 안에 정지 구간(비 200 응답)을 관찰하지 못했다"
+    upstream_503_json(*seen, "프로세스 죽음 중 환자 세션 조회")
+    wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", svc]).stdout.strip() == "healthy", 120, "프로세스 죽음 뒤 survey-service healthy(restart 정책)", every=2)
+    wait_gw_ready(300)
+    assert _c2_gw("GET", f"/v1/sessions/{sid}", None, token=_c2_kdev(), timeout=20)[0] == 200, "프로세스 죽음에서 복구한 뒤 세션 조회가 200이 아니다"
     _c2_kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
-    rec("5q", "REAL", f"survey-service stop 중 gateway 경유: 환자 턴 {obs['turn'][0]}({obs['turn'][1]}s) {{\"code\":\"UPSTREAM_UNAVAILABLE\"}} + Retry-After + JSON(본문에 내부 주소 없음), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s), /healthz {obs['healthz']}. start 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 세션 보존(Q1.D01 값 유지, 상류에 닿지 못한 턴은 기록 없음), 같은 turn_id 로 재전송하면 200 으로 확정")
+    rec("5q", "REAL", f"(프로세스 SIGKILL 도 503 JSON + restart 복구) survey-service stop 중 gateway 경유: 환자 턴 {obs['turn'][0]}({obs['turn'][1]}s) {{\"code\":\"UPSTREAM_UNAVAILABLE\"}} + Retry-After + JSON(본문에 내부 주소 없음), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s), /healthz {obs['healthz']}. start 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 세션 보존(Q1.D01 값 유지, 상류에 닿지 못한 턴은 기록 없음), 같은 turn_id 로 재전송하면 200 으로 확정")
 
 def gw_log_duration(path_part, since):
     """gateway(Caddy) 접근 로그(JSON)에서 path_part 가 든 요청의 서버 쪽 처리 시간(duration, 초)과 상태를 (가장 최근 것으로) 읽는다. 클라이언트와 gateway 사이 전달 지연은 이 값에 들지 않는다."""
