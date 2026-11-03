@@ -89,7 +89,8 @@ class ProxyChain(unittest.TestCase):
         for host, body, dial, hdr in proxy_blocks():
             total = dial + hdr
             if host == "survey-service":
-                if "read_timeout" in body: kind, lo, hi = "직원 API(@staffapi)", turn, staff
+                if "survey-result-reader" in body: kind, lo, hi = "의사 결과 보기(@clinician: 관리 화면이 부른다)", 2.0, admin_wait["admin-console"]   # 턴이 아닌 결과 읽기·확인 표시: 서버 턴 마감과 무관하고 관리 화면 대기(admin-console)보다 짧으면 된다(U83)
+                elif "read_timeout" in body: kind, lo, hi = "직원 API(@staffapi)", turn, staff
                 elif hdr <= 2.0: kind, lo, hi = "/readyz", None, None    # 점검용 짧은 상한(연결 1s + 헤더 2s)은 사슬 밖
                 else: kind, lo, hi = "키오스크 API(@kioskapi)", turn, kiosk
                 if lo is not None and not (lo < total < hi): bad.append(f"{kind}: 연결 {dial}s + 헤더 {hdr}s = {total}s 는 ({lo}s, {hi}s) 사이여야 한다")
@@ -100,7 +101,7 @@ class ProxyChain(unittest.TestCase):
             else: kind = host   # kiosk-frontend 정적 화면 등: 사람이 쓰는 브라우저 화면, 대기 상한이 deploy 에 기록된 클라이언트가 없다
             seen[kind] = seen.get(kind, 0) + 1
         self.assertEqual(bad, [])
-        for need in ("직원 API(@staffapi)", "키오스크 API(@kioskapi)", "release-gate", "ops-feedback-ingest", "question-authoring", "admin-console"):
+        for need in ("직원 API(@staffapi)", "키오스크 API(@kioskapi)", "의사 결과 보기(@clinician: 관리 화면이 부른다)", "release-gate", "ops-feedback-ingest", "question-authoring", "admin-console"):
             self.assertIn(need, seen, f"Caddyfile 에서 {need} 프록시를 찾지 못했다: 시험이 껍데기가 아닌지 본다")
 
 
