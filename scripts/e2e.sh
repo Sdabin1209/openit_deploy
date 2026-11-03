@@ -320,6 +320,10 @@ ok = (st=='ok') if st is not None else (d.get('ready') is True)
 sys.exit(0 if ok else 'status/ready 가 정상이 아니다: '+b[:80])"; }
 health_check() { local o; o=$("$@") || return 1; printf '%s' "$o" | health_body_ok; }
 # /readyz 본문(R5.1, 계약 개정): 그 서비스의 준비 확인 스키마가 계약에 있으면(SurveyReadyz·GateReadyz·OpsFeedbackReadyz) 통과해야 하고, 없으면 비어 있지 않은 JSON 객체여야 한다. ready 가 있으면 참이어야 한다
+readyz_obj() { local o; o=$("$@") || return 1; printf '%s' "$o" | python3 -c "import sys,json
+d=json.loads(sys.stdin.read())
+if not isinstance(d,dict) or not d: sys.exit('본문이 비어 있지 않은 JSON 객체가 아니다')
+if d.get('ready') is False or d.get('status') in ('not-ready','error','fail','failed'): sys.exit('준비되지 않았다: '+json.dumps(d)[:80])"; }   # 스키마가 없는 서비스(model-serving)의 /readyz: status 값은 서비스별이다
 readyz_check() { local sch o; case "$1" in survey-service) sch=SurveyReadyz;; release-gate) sch=GateReadyz;; ops-feedback-ingest) sch=OpsFeedbackReadyz;; *) sch=-;; esac
   o=$(inpy "$1" /readyz) || return 1
   printf '%s' "$o" | "$VENV/bin/python" -W ignore -c "import sys,json
@@ -340,7 +344,7 @@ for n in gateway question-authoring release-gate ops-feedback-ingest model-regis
   chk "/readyz $n (중계를 거쳐, 계약 Readyz 스키마 또는 비어 있지 않은 JSON 객체)" readyz_check "$n"
 done
 chk "/healthz model-serving (추론 서버, 별도 프로젝트, https, 본문 status=ok)" health_check getinf /healthz
-chk "/readyz model-serving (추론 서버, 별도 프로젝트, https, 본문 status/ready)" health_check getinf /readyz
+chk "/readyz model-serving (추론 서버, 별도 프로젝트, https, 비어 있지 않은 JSON 객체)" readyz_obj getinf /readyz
 survey_noactive() { local o; o=$(inpy_code survey-service /readyz); case "$o" in 503*no_active_release*) echo "활성 릴리스가 없어 503 no_active_release (정상: 아직 게이트에 PASS 릴리스가 없다)";; *) echo "기대와 다름: $o" | cut -c1-200; return 1;; esac; }
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
 gw_mirrors() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' --cacert "$W/gateway-ca.crt" "https://127.0.0.1:$PGWS/readyz"); echo "$o" | grep -q '\[503\]' && ! echo "$o" | grep -q 'survey' && echo "gateway /readyz 는 survey-service 를 반영한다: 활성 릴리스 전 503, 본문에 내부 정보 없음 ($o)"; }
