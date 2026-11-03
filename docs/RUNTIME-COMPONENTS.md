@@ -178,19 +178,22 @@
 | P12 | 공용 venv 설치 동시 실행 경합 | 예 | `scripts/test_no_pip_outside_setup.py` |
 | P13 | Caddy: Content-Length 로 사전 413 | 예 | `scripts/test-gateway-auth.sh` |
 
-## 16. TLS 보조의 미확인 전제 (단독 실험 대기, 코드 수정 없이 확인)
+## 16. TLS 보조의 외부 도구 전제 (단독 실험 결과)
 
-출처: `/tmp/tls-premises-todo.md`(헤드, 00:5x). 아래는 **확인하지 않았다**. 실험 결과가 오면 "확인" 칸과 근거(실험 이름·출력 요약)를 채운다. 확인 전에는 이 전제에 기대는 조항을 `docs/RUNTIME-MAP.md` 에서 "전제 미확인"으로 센다.
+출처: `/tmp/tls-premises-todo.md`(헤드, 00:5x)의 목록과, 헤드가 전달한 TLS 보조의 실험 결과(01:0x). **이 문서의 근거 칸은 헤드가 전달한 결과 요약이다.** 실험 스크립트 이름과 출력 원문은 TLS 보조의 보고에 있고, 이 worktree 에서 내가 다시 돌려 확인한 것은 아니다(그래서 "전달받음"으로 적는다). 코드는 아직 고치지 않았다.
 
-| # | 전제(원문) | 기대는 조항 | 확인 | 근거(실험 이름·출력 요약) |
-|---|---|---|---|---|
-| X1 | pause 이미지(`registry.k8s.io/pause:3.10`, digest `sha256:ee6521f2…917a`)가 read_only·cap_drop ALL·no-new-privileges·비루트로 뜨고 SIGTERM 에 끝난다 | R3.1·R3.2·R3.4·R4.1·R4.2 (2절) | 미확인 | — |
-| X2 | 앱·사이드카가 `network_mode: service:<서비스>-net` 일 때: 앱 `docker stop` → 사이드카 살아 있음·`127.0.0.1:8080` 연결 거부 → 앱 `docker start` → 같은 공간에 다시 붙어 사이드카 경유 200. 사이드카 재시작도 같은 확인 | R3.2·R3.4·R4.1·R4.2 | 미확인 | — |
-| X3 | 대조: 지금 구조(`network_mode: service:<앱>`)에서 앱 stop/start 시 사이드카가 끊기는 것을 같은 실험으로 재현 | R3.2·R4.1 위반 근거 | 부분 확인(5q 에서 `survey-service-tls` Exited(1) 로 남음). 같은 실험 재현은 미확인 | E2E e2e-b6 5q 504 |
-| X4 | 망 별칭·게시 포트·`extra_hosts`·`sysctls` 를 `-net` 에 두고, `network_mode: service:` 컨테이너에 `networks`/`ports` 를 두면 compose 가 거부하는지 | R1.4·R6.1·R7.1 | 미확인 | — |
-| X5 | 게이트웨이(Caddy `handle_errors`)→사이드카(`handle_errors abort`)→앱 멈춤에서 게이트웨이가 503 `{"code":"UPSTREAM_UNAVAILABLE"}` + `Retry-After`. 앱이 응답 헤더를 늦게 주면 504 | R3.1·R3.2·R3.3·R3.4 | 미확인 | — |
-| X6 | 인증서 수명을 몇 분(`--not-after 5m` 류)으로 줄여 `step ca renew --daemon` 이 실제 갱신하고, 사이드카 감시 루프가 `caddy reload` 로 새 인증서를 쓰는지(`openssl s_client` 로 일련번호 변화) | R4.4·R3.11 | 미확인 | — |
-| X7 | 일회용 토큰 재사용 거부·만료 거부 | R1.2·R4.4 | 미확인 | — |
-| X8 | 토큰 audience 포트가 다르면 거부되는지(그래서 `STEP_CA_PORT` 안팎 동일이 필요한지) | R7.1 | 미확인 | — |
+| # | todo 의 이름 | 전제 | 결과 | 근거(전달받은 요약) | 기대는 조항 |
+|---|---|---|---|---|---|
+| X1 | P3 | pause 이미지(`registry.k8s.io/pause:3.10`, digest `sha256:ee6521f2…917a`)가 read_only·cap_drop ALL·no-new-privileges·비루트로 뜨고 SIGTERM 에 끝난다 | **확인(성립)** | 전달받음: "pause 구조 전제 성립". 실험 출력 원문은 TLS 보조 보고 | R3.1·R3.2·R3.4·R4.1·R4.2 (2절) |
+| X2 | P4 | 앱·사이드카가 `network_mode: service:<서비스>-net` 일 때 앱 stop → 사이드카 생존·`127.0.0.1:8080` 거부 → 앱 start → 같은 공간에 다시 붙어 사이드카 경유 200. 사이드카 재시작도 같다 | **확인(성립)** | 전달받음: P3·P4·P5 성립. 대조(현재 구조의 사이드카 끊김, 원래 X3)는 5q 에서 `survey-service-tls` Exited(1) 로 확인했다 | R3.2·R3.4·R4.1·R4.2 |
+| X3 | D2 | 현재 구조(`network_mode: service:<앱>`)에서 앱 stop/start 시 사이드카가 끊김 | **확인(재현)** | e2e-b6 5q 504, `survey-service-tls` Exited(1) | R3.2·R4.1 위반 근거 |
+| X4 | P5 | 망 별칭·게시 포트·`extra_hosts`·`sysctls` 는 `-net` 에 두고, `network_mode: service:` 컨테이너(앱)에 `networks`/`ports` 를 두면 compose 가 거부한다 | **확인(성립)** | 전달받음: "앱에 networks·ports 불가" | R1.4·R6.1·R7.1 |
+| X5 | C4 | 게이트웨이(Caddy `handle_errors`)→사이드카→앱 멈춤에서 게이트웨이가 503 `{"code":"UPSTREAM_UNAVAILABLE"}` + `Retry-After` | **확인(성립)** | 전달받음: "앱 stop 시 게이트웨이 503+Retry-After". 앱이 응답 헤더를 늦게 줄 때 504 인지는 전달받은 요약에 없다(**미확인**) | R3.1·R3.2·R3.4 (R3.3 의 504 쪽은 미확인) |
+| X6a | S7 | 인증서 수명을 몇 분으로 줄이면 `step ca renew --daemon` 이 실제로 갱신한다 | **확인(성립)** | 전달받음: S7 확인 | R4.4·R3.11 |
+| X6b | C6 | 갱신 뒤 사이드카 감시 루프의 `caddy reload` 가 새 인증서를 서빙한다 | **반증** | 전달받음: 설정 파일이 같으면 `caddy reload` 가 reload 를 건너뛰어 갱신된 인증서를 쓰지 않는다 → `--force` 가 필요하다 | R4.4 **위반(V7)** |
+| X7 | S4 | 일회용 토큰 재사용·만료 거부 | **확인(성립)** | 전달받음: S4 확인 | R1.2·R4.4 |
+| X8 | S5 | 토큰 audience 의 포트가 다르면 거부된다(그래서 `STEP_CA_PORT` 안팎 동일이 필요하다) | **반증** | 전달받음: 포트 불일치는 거부되지 않는다. 따라서 안팎 동일은 필요 이상이지만, 설정을 단순하게 두기 위해 **유지**한다(바꾸는 이득이 없고 바꿀 때의 위험만 있다) | R7.1 (제약이 아니라 선택) |
+| X9 | S8 | (todo 목록에 없는 항목. 헤드가 01:15 실험 결과로 채우라고 함) | **결과 대기** | 01:15 실험 결과로 채운다 | 미정 |
 
-실패하는 전제가 나오면 그 자리에서 대안(표준)과 함께 이 표에 적는다.
+실패하거나 반증된 전제는 그 자리에서 대안과 함께 적는다.
+- X6b 의 대안(표준): `caddy reload --force` 로 설정이 같아도 강제로 다시 읽게 한다(`caddy reload` 의 공식 옵션). 또는 `tls /certs/...` 파일 인증서 대신 Caddy 가 파일을 감시하는 `tls { ... }` 로드 방식(미확인). 구현은 `compose.yaml`·`compose.inference.yaml` 의 감시 루프 + `test-tls-sidecar.sh`.

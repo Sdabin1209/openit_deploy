@@ -34,7 +34,7 @@
 | R4.1 앱 재시작 후 같은 이름·주소로 응답 | `restart: unless-stopped`, 공간 소유자(2절 목표), 게이트웨이 `depends_on` | `scripts/test_compose_restart_policy.py`(정책 존재만) | **없음(만들 것: `test-netns-lifetime.sh` — 앱 재시작 뒤 종단 경유 200)**. 전제 미확인: X2 | 단계 5q(복구, 세션 보존), 5p·5pn(DB 복구). 5q **현재 실패** |
 | R4.2 종단 재시작해도 앱 그대로 | 공간 소유자 + 종단 `restart: unless-stopped`(목표) | `scripts/test_compose_restart_policy.py` | **없음(만들 것: `test-netns-lifetime.sh` 종단만 재시작)**. 전제 미확인: X2 | **없음(만들 것: 5q 변형)** |
 | R4.3 복구 판단은 `/readyz` 본문 `status`, 고정 대기 없음 | `e2e_steps.py wait(...)`(폴링), `survey_ready_after` | `scripts/test_health_checks_read_body.py`. **고정 sleep 으로 복구를 흉내 내는 곳 점검: 없음(만들 것: e2e_steps.py 에서 복구 단언 앞의 무조건 sleep 금지 정적 점검)** | 해당 없음(시험 도구 규칙) | 단계 5q·5p·5pn 의 복구 단언 |
-| R4.4 인증서 사람 손 없이 갱신, 갱신 뒤 종단이 새 인증서 사용 | `<서비스>-cert`(`step ca renew --daemon --expires-in 12h`), 종단 감시 루프(`caddy reload`), `postgres-reload` | **없음(만들 것: 갱신 주기(12h)·인증서 수명(24h) 일치를 대조하는 정적 점검)** | **없음(만들 것: 수명 몇 분 인증서로 갱신·reload 일련번호 변화를 보는 `test-cert-renewal.sh`)**. 전제 미확인: X6, P10 | **없음(만들 것: 해당 없음 — 수명 24h 라 E2E 길이 밖; 단독 시험이 대신한다)** |
+| R4.4 인증서 사람 손 없이 갱신, 갱신 뒤 종단이 새 인증서 사용 | `<서비스>-cert`(`step ca renew --daemon --expires-in 12h`), 종단 감시 루프(`caddy reload` — 설정이 같으면 건너뜀, **`--force` 필요: V7**), `postgres-reload` | **없음(만들 것: 갱신 주기(12h)·인증서 수명(24h) 일치를 대조하는 정적 점검)** | **없음(만들 것: 수명 몇 분 인증서로 갱신·reload 일련번호 변화를 보는 `test-cert-renewal.sh`)**. 전제: X6a 확인, **X6b 반증(V7)**, P10 미확인 | **없음(만들 것: 해당 없음 — 수명 24h 라 E2E 길이 밖; 단독 시험이 대신한다)** |
 | R5.1 건강 확인은 상태 코드 + 본문 `status` | 컨테이너 healthcheck(`python urlopen`, 상태만), E2E `getinf`·`inpy` | `scripts/test_health_checks_read_body.py` | `scripts/test-tls-sidecar.sh`(본문 확인) | e2e.sh `/healthz`·`/readyz` 점검 |
 | R5.2 게이트웨이는 상류가 준비된 뒤 받음 | compose `gateway.depends_on`(앱·종단·oauth2-proxy `service_healthy`) | `scripts/test_gateway_depends.py` | — (정적으로 충분. 동적: `compose up --wait` 가 단독 시험 `test-idp-smoke.sh` 의 기동 구간) | `compose up --wait` 점검 |
 | R6.1 앱 평문 포트는 앱·종단 밖에서 안 닿음 | 앱 `*_HOST=127.0.0.1`(계약 3.4.2·3.4.3), 공간 공유 | `scripts/test_sidecar_loopback.py` | `scripts/test-tls-sidecar.sh`("앱 포트(8080)는 연결 거부") | e2e.sh "차단:" 점검, `check-containers.sh` 런타임 |
@@ -44,17 +44,19 @@
 | R7.2 잡은 서버와 같은 환경·비밀·신뢰 | compose YAML 앵커(`job-*` = 서버), `ENV_SERVICES` 에 잡 포함 | `scripts/test_job_env_matches_server.py`, `scripts/check_config_contracts.py`(잡 포함) | — (정적이 정본) | 단계 4a(수집기 run-once)·6(비식별 잡)·5pj |
 | R8.1 503 `UNAVAILABLE` 때 로그에 예외 종류·위치 | 서비스 몫(survey-service 로그 포매터가 예외를 버렸다: 헤드가 survey 담당에 넘김) | 없음(해당 없음: 서비스 코드 점검은 서비스 몫). deploy 몫은 아래 E2E 에서 관찰 | 없음(해당 없음: 서비스 몫. survey-service 의 로그 단독 시험은 survey 담당) | **없음(만들 것: E2E 에서 503 UNAVAILABLE 을 일부러 낸 뒤 서비스 로그에 예외 종류가 남음을 단언하는 단계 한 건)** |
 
-## 전제 미확인 때문에 근거가 약한 조항
+## 전제 상태와 근거가 약한 조항
 
-`docs/RUNTIME-COMPONENTS.md` 16절의 X1~X8 이 실험으로 확인되기 전까지 아래 조항은 "전제 미확인"이다.
+`docs/RUNTIME-COMPONENTS.md` 16절의 결과(헤드 전달) 기준.
 
-| 조항 | 기대는 미확인 전제 |
-|---|---|
-| R3.1·R3.2·R3.4 | X1(pause 가 제한된 보안 설정으로 뜸), X2(소유자 유지 중 앱·종단 독립 재시작), X5(게이트웨이→종단→앱 멈춤 체인의 503/504) |
-| R4.1·R4.2 | X2 |
-| R4.4·R3.11 | X6(수명을 줄인 갱신과 reload), P10(PostgreSQL reload) |
-| R1.2 | X7(토큰 재사용·만료 거부) |
-| R7.1 | X4(compose 가 `-net` 에 둔 설정을 허용), X8(토큰 audience 포트) |
+| 조항 | 기대는 전제 | 상태 |
+|---|---|---|
+| R3.1·R3.2·R3.4 | X1·X2·X5 | 확인(성립). 구현이 목표 구조에 맞춰질 때까지는 위반(V1) |
+| R3.3 | X5 의 504 쪽(응답 헤더 지연) | **전제 미확인**(전달받은 요약에 없음) |
+| R4.1·R4.2 | X2 | 확인(성립). 구현 대기 |
+| R4.4 | X6a, X6b | X6a 확인, **X6b 반증 → 위반 V7** |
+| R3.11 | X6a, P10 | X6a 확인, P10(PostgreSQL reload) **전제 미확인** |
+| R1.2 | X7 | 확인(성립) |
+| R7.1 | X4, X8, X9 | X4 확인, X8 반증(제약이 아니라 선택, 유지), X9 결과 대기(01:15) |
 
 ## 알려진 위반 (조항 번호)
 
@@ -66,3 +68,4 @@
 | V4 | `test-idp-smoke.sh` 가 TLS 구성에서 실패 | R1.1·R6.1 의 시험 의무(시험이 새 구성을 따라가야 한다) | 해소(TLS 보조: wo-450-pre `5e31e9a`, rc=0 보고). 이 worktree 에서는 아직 재확인하지 않음 |
 | V5 | 단계 9 뒷구간(jobs·backup·rollback)이 TLS 구성에서 E2E 로 한 번도 안 돌았다 | R7.2·R1.1 의 E2E 대응 | 미해소(최종 전체 E2E 에서 처음 돈다) |
 | V6 | survey-service 의 503 UNAVAILABLE 로그에 예외 종류·위치가 없었다(포매터가 트레이스를 버림) | R8.1 | survey 담당에 넘김. 해소 확인 전 |
+| V7 | 인증서 갱신 뒤 사이드카 감시 루프의 `caddy reload` 가 설정이 같으면 reload 를 건너뛰어 갱신된 인증서를 서빙하지 않는다(실험 C6, 헤드 전달). 24시간 인증서가 만료되면 서비스 사이 호출이 실패한다 | **R4.4** | 구현 대상: `compose.yaml`·`compose.inference.yaml` 의 감시 루프(`caddy reload --force`) + `scripts/test-tls-sidecar.sh`, 단독 시험 "수명 5분 갱신 뒤 서빙 serial 변경"(`scripts/test-cert-renewal.sh`, 만들 것). 코드 수정은 헤드 지시 대기 |
