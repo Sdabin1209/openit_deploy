@@ -180,20 +180,21 @@
 
 ## 16. TLS 보조의 외부 도구 전제 (단독 실험 결과)
 
-출처: `/tmp/tls-premises-todo.md`(헤드, 00:5x)의 목록과, 헤드가 전달한 TLS 보조의 실험 결과(01:0x). **이 문서의 근거 칸은 헤드가 전달한 결과 요약이다.** 실험 스크립트 이름과 출력 원문은 TLS 보조의 보고에 있고, 이 worktree 에서 내가 다시 돌려 확인한 것은 아니다(그래서 "전달받음"으로 적는다). 코드는 아직 고치지 않았다.
+출처: 목록 `/tmp/tls-premises-todo.md`, 결과 원문 요지 `/tmp/tls-premises-results.md`(TLS 보조 00:46 보고), 실험 스크립트 `/tmp/tlsx/exp/`(`common.sh`, `expA`, `expA2`, `expA3`, `expB`, `expC`). 리포에 들어갈 단독 시험은 줄 T 가 `scripts/test-netns-lifetime.sh`·`scripts/test-cert-renewal.sh` 로 만든다(여기서는 만들지 않았다). 아래 값은 그 원문 요지를 옮긴 것이고 내가 다시 돌린 것은 아니다.
 
-| # | todo 의 이름 | 전제 | 결과 | 근거(전달받은 요약) | 기대는 조항 |
+| # | todo | 전제 | 결과 | 근거(실험 이름·핵심 출력) | 기대는 조항 |
 |---|---|---|---|---|---|
-| X1 | P3 | pause 이미지(`registry.k8s.io/pause:3.10`, digest `sha256:ee6521f2…917a`)가 read_only·cap_drop ALL·no-new-privileges·비루트로 뜨고 SIGTERM 에 끝난다 | **확인(성립)** | 전달받음: "pause 구조 전제 성립". 실험 출력 원문은 TLS 보조 보고 | R3.1·R3.2·R3.4·R4.1·R4.2 (2절) |
-| X2 | P4 | 앱·사이드카가 `network_mode: service:<서비스>-net` 일 때 앱 stop → 사이드카 생존·`127.0.0.1:8080` 거부 → 앱 start → 같은 공간에 다시 붙어 사이드카 경유 200. 사이드카 재시작도 같다 | **확인(성립)** | 전달받음: P3·P4·P5 성립. 대조(현재 구조의 사이드카 끊김, 원래 X3)는 5q 에서 `survey-service-tls` Exited(1) 로 확인했다 | R3.2·R3.4·R4.1·R4.2 |
-| X3 | D2 | 현재 구조(`network_mode: service:<앱>`)에서 앱 stop/start 시 사이드카가 끊김 | **확인(재현)** | e2e-b6 5q 504, `survey-service-tls` Exited(1) | R3.2·R4.1 위반 근거 |
-| X4 | P5 | 망 별칭·게시 포트·`extra_hosts`·`sysctls` 는 `-net` 에 두고, `network_mode: service:` 컨테이너(앱)에 `networks`/`ports` 를 두면 compose 가 거부한다 | **확인(성립)** | 전달받음: "앱에 networks·ports 불가" | R1.4·R6.1·R7.1 |
-| X5 | C4 | 게이트웨이(Caddy `handle_errors`)→사이드카→앱 멈춤에서 게이트웨이가 503 `{"code":"UPSTREAM_UNAVAILABLE"}` + `Retry-After` | **확인(성립)** | 전달받음: "앱 stop 시 게이트웨이 503+Retry-After". 앱이 응답 헤더를 늦게 줄 때 504 인지는 전달받은 요약에 없다(**미확인**) | R3.1·R3.2·R3.4 (R3.3 의 504 쪽은 미확인) |
-| X6a | S7 | 인증서 수명을 몇 분으로 줄이면 `step ca renew --daemon` 이 실제로 갱신한다 | **확인(성립)** | 전달받음: S7 확인 | R4.4·R3.11 |
-| X6b | C6 | 갱신 뒤 사이드카 감시 루프의 `caddy reload` 가 새 인증서를 서빙한다 | **반증** | 전달받음: 설정 파일이 같으면 `caddy reload` 가 reload 를 건너뛰어 갱신된 인증서를 쓰지 않는다 → `--force` 가 필요하다 | R4.4 **위반(V7)** |
-| X7 | S4 | 일회용 토큰 재사용·만료 거부 | **확인(성립)** | 전달받음: S4 확인 | R1.2·R4.4 |
-| X8 | S5 | 토큰 audience 의 포트가 다르면 거부된다(그래서 `STEP_CA_PORT` 안팎 동일이 필요하다) | **반증** | 전달받음: 포트 불일치는 거부되지 않는다. 따라서 안팎 동일은 필요 이상이지만, 설정을 단순하게 두기 위해 **유지**한다(바꾸는 이득이 없고 바꿀 때의 위험만 있다) | R7.1 (제약이 아니라 선택) |
-| X9 | S8 | (todo 목록에 없는 항목. 헤드가 01:15 실험 결과로 채우라고 함) | **결과 대기** | 01:15 실험 결과로 채운다 | 미정 |
+| X1 | P3 | pause 이미지(`registry.k8s.io/pause:3.10`, digest `sha256:ee6521f2…917a`)가 read_only·cap_drop ALL·no-new-privileges·비루트로 뜨고 SIGTERM 에 끝난다 | **확인** | 실험 A: `status=running user=65535:65535 ro=true capdrop=[ALL]`(no-new-privileges 포함), stop 0.37초, 종료 코드 0 | R3.1·R3.2·R3.4·R4.1·R4.2 |
+| X2 | P4 | 앱·사이드카가 `network_mode: service:<서비스>-net`(pause) 일 때 앱 재시작에도 같은 공간 | **확인** | 실험 B: 정상 200 → 앱 stop 중 사이드카·pause running, 사이드카 안 `127.0.0.1:8080` 연결 거부, 클라이언트 ABORT RemoteDisconnected → 앱 start 뒤 200 | R3.2·R3.4·R4.1·R4.2 |
+| X3 | D2 | 현재 구조(앱이 공간 소유): 앱 stop/start 뒤 사이드카 끊김 | **확인(재현)** | 실험 B: 앱 stop→start 뒤 사이드카 running 이지만 안의 `127.0.0.1:8080` 거부, 클라이언트 ABORT URLError, netns 다름(사이드카 4026533201, 앱 4026532729). 또 e2e-b6 5q 504 | R3.2·R4.1 위반 근거 |
+| X4 | P5 | 망 별칭·게시 포트·`extra_hosts`·`sysctls` 는 `-net` 이 갖고, 앱에 `networks`/`ports` 를 두면 compose 가 거부 | **확인** | 실험 A·A2: `-net` 이 sysctls·extra_hosts·게시 포트(127.0.0.1:16323)·별칭(app)을 가지고 앱 `network_mode: service:app-net`, netns 같음(`net:[4026532727]`). 앱에 `networks` → "mutually exclusive network_mode and networks". 앱에 `ports` → `config -q` 는 통과하나 `up` 에서 "conflicting options: port publishing and the container type network mode" | R1.4·R6.1·R7.1 |
+| X5 | C4 | 앱 stop → 게이트웨이(현 `config/Caddyfile` `handle_errors`) 503 + Retry-After | **확인** | 실험 B: 앱 stop 중 HTTP 503, `Retry-After: 2`, `application/json`, `{"code":"UPSTREAM_UNAVAILABLE"}`; 앱 start 뒤 200 | R3.1·R3.2·R3.4 |
+| X6a | S7 | 수명 5분 인증서 + `step ca renew --daemon --expires-in 4m` 가 갱신 | **확인** | 실험 C: 파일 인증서 지문이 1분마다 변경(6cbca3… → 38ff50… → 87cee0…) | R4.4·R3.11 |
+| X6b | C6 | 같은 감시 루프의 `caddy reload` 가 새 인증서를 서빙 | **반증** | 실험 C: 3분 뒤에도 서빙 인증서는 처음 것(serial=D5ACDBC9467266A7805E5EB63689E12E, notAfter=15:46:57). `caddy reload` → serial 그대로, `caddy reload --force` → serial=89E0F0130E13E164707D9930DF9BA036, notAfter=15:50:33. 원인: Caddyfile 이 그대로면 reload 를 건너뜀 | R4.4 **위반(V7)** |
+| X7 | S4 | 일회용 토큰 재사용 거부 | **확인(만료 거부는 미확인)** | 실험 A: JWT `exp-iat=300초`, 재사용 시 "The request lacked necessary authorization", 첫 사용 성공. 만료 시각 이후 거부는 기다리지 않고 JWT exp 표준에 의존 | R1.2·R4.4 |
+| X8 | S5 | 토큰 audience 포트가 다르면 거부(그래서 `STEP_CA_PORT` 안팎 동일이 필요) | **반증** | 실험 A3: CA 컨테이너 안 9000, 호스트 게시 16339. (a) 안쪽 주소 토큰(aud=`https://step-ca:9000/1.0/sign`)을 바깥 `https://host.docker.internal:16339` 로 사용 → 발급 성공, (b) 바깥 주소 토큰 → 성공. 한정: 접속 이름은 CA 인증서 SAN(`step ca init --dns`)에 있어야 한다. dnsNames 밖 이름의 audience 거부는 미시험. 안팎 동일은 필요 이상이지만 단순함을 위해 유지 | R7.1 |
+| X9 | S8 | 만료 뒤 재시작 복구 | **결과 대기** | 01:15 실험 중 | R4.4 (줄 T 3) |
 
-실패하거나 반증된 전제는 그 자리에서 대안과 함께 적는다.
-- X6b 의 대안(표준): `caddy reload --force` 로 설정이 같아도 강제로 다시 읽게 한다(`caddy reload` 의 공식 옵션). 또는 `tls /certs/...` 파일 인증서 대신 Caddy 가 파일을 감시하는 `tls { ... }` 로드 방식(미확인). 구현은 `compose.yaml`·`compose.inference.yaml` 의 감시 루프 + `test-tls-sidecar.sh`.
+**미확인으로 남은 것**: S8, 토큰 만료 시각 이후 거부, dnsNames 밖 이름의 audience 거부, Windows 호스트의 `host.docker.internal` 해석 차이, R3.3 의 응답 헤더 지연 504(실험 B 는 연결 거부만), PostgreSQL 인증서 reload(P10).
+
+반증된 X6b 의 대안(표준): `caddy reload --force`(공식 옵션). 구현은 줄 T 2.
