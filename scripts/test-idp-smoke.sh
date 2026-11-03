@@ -108,7 +108,7 @@ jar = SB.oidc_login(base, "newbie-e2e", newpw, ca=str(W / "gateway-ca.crt")) if 
 cookie = "; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session"))
 st, h, b = SB.gw_request("GET", "/v1/staff/alerts", headers={"Cookie": cookie}); chk("가입 직후(그룹 없음)는 403 ACCOUNT_PENDING_APPROVAL", st == 403 and b"ACCOUNT_PENDING_APPROVAL" in b, (st, b[:80]))
 def kcadm(*a):
-    r = subprocess.run(["bash", "-c", 'source "$1/scripts/lib.sh" && shift && dc "$@"', "dc", os.environ.get("DEPLOY_ROOT", str(pathlib.Path(__file__).resolve().parent) if False else "."), P, "exec", "-T", "keycloak", "/opt/keycloak/bin/kcadm.sh", *a], capture_output=True, text=True)
+    r = subprocess.run(["bash", "-c", 'source "$1/scripts/lib.sh" && shift && dc "$@"', "dc", os.environ.get("DEPLOY_ROOT", str(pathlib.Path(__file__).resolve().parent) if False else "."), P, "exec", "-T", "keycloak", "/opt/keycloak/bin/kcadm.sh", *a, "--config", "/tmp/kcadm.config"], capture_output=True, text=True)
     return r.returncode, r.stdout
 rc, out = kcadm("get", "users", "-r", "openit", "-q", "username=newbie-e2e", "--fields", "id", "--format", "csv", "--noquotes"); uid = out.strip()
 rc, out = kcadm("get", "groups", "-r", "openit", "-q", "search=staff", "--fields", "id,name", "--format", "csv", "--noquotes"); gid = [l.split(",")[0] for l in out.splitlines() if l.strip().endswith(",staff")][0]

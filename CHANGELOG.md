@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 D10-7·8: Keycloak optimized image, 세션 시간 근거
+- (7) 기동 실패 원인: Dockerfile 의 `kc.sh build --cache=local` (`--cache` 는 런타임 옵션이라 build 가 거부). 고침과 함께 읽기 전용 루트 + tmpfs 로 `test-idp-smoke` 통과, check-containers 의 Keycloak 예외 삭제. kcadm 설정은 `--config /tmp/kcadm.config`. ADR 0058.
+- (8) 쿠키 절대 만료 12h -> 8h(OWASP 세션 관리, 업무일), 갱신 5m(Keycloak 액세스 토큰 기본 수명). ADR 0058.
+
 ## wo-450 D10-3·4·잡 환경: 비밀을 프로세스 환경에서 뺀다, 선행 실패 연쇄, 잡 환경 = 서버 환경
 - (3) Keycloak 은 비밀을 환경 변수가 아니라 `--config-file`(secrets/keycloak-secrets.conf: db-password, bootstrap-admin-password)과 비밀 파일 realm 가져오기(secrets/keycloak-realm.json, 640)로 받는다. 엔트리포인트 래퍼 삭제. 점검: `test_no_secret_in_environment.py`(compose environment 의 비밀 이름은 *_FILE, config 셸의 export 금지), `test-idp-smoke.sh`(keycloak /proc/1/environ 에 값 없음, 로그인 흐름 전부 통과).
 - (4) 복구 확인 FAIL 은 단계 1 실패(work/state.json 없음)의 연쇄였다. 그 항목을 `chk_dep "단계 1~8"` 로 바꾸고 `test_e2e_sh_deps.py` 로 같은 모양을 잡는다.

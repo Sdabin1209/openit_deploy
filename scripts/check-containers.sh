@@ -17,9 +17,7 @@ for P in "${PROJECTS[@]}"; do
     name=${name#/}; probs=(); warns=()
     uid=$("$DOCKER" exec "$id" id -u 2>/dev/null | tr -d '\r'); [ -n "$uid" ] || uid=${user%%:*}
     case "$uid" in ""|0|root) probs+=("root 로 실행 중이다(uid ${uid:-?}, Config.User='${user}')");; esac
-    if [ "$ro" != true ]; then   # 예외 하나: keycloak 은 시작 때 Quarkus 가 /opt/keycloak/lib/quarkus 에 다시 빌드한 결과를 쓴다(deploy ADR 0057). 나머지 강화는 그대로 본다
-      case "$svc" in keycloak) warns+=("루트 파일시스템이 쓰기 가능하다(예외, ADR 0057)");; *) probs+=("루트 파일시스템이 쓰기 가능하다");; esac
-    fi
+    [ "$ro" = true ] || probs+=("루트 파일시스템이 쓰기 가능하다")
     [ "$priv" = false ] || probs+=("privileged 이다")
     case "$capdrop" in *ALL*) ;; *) probs+=("cap_drop ALL 이 아니다(CapDrop=$capdrop)");; esac
     [ "$capadd" = "[]" ] || warns+=("추가 capability: $capadd")

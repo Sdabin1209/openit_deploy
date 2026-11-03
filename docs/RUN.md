@@ -124,7 +124,7 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 
 - **401과 403(계약 CONVENTIONS.md 6절, RFC 9110 15.5.2·11.6.1, RFC 6750 3절).** 사람 경로에서 인증이 없으면 `/v1/*`는 401 + `WWW-Authenticate: Bearer realm="openit"`, 화면 경로(`/staff/`, `/admin/`)는 `/oauth2/start`로 302(로그인)이다. 기기 토큰 경로는 401 + `Bearer`. 인증은 됐는데 역할이 모자라면 403, 그룹이 하나도 없으면 403 `ACCOUNT_PENDING_APPROVAL`이다. `scripts/test-gateway-auth.sh`(가짜 oauth2-proxy)가 경로별로, `scripts/test-idp-smoke.sh`(진짜 Keycloak·oauth2-proxy)가 로그인 흐름을 확인한다.
 - 역할별 경로는 그대로다: `staff`(직원 콘솔 `/staff/`, `/v1/staff/*`, 개입), `operator`(`GET /v1/active-pointer`, `GET /v1/releases`, `POST /v1/activate`, `POST /v1/rollback`), `release-approver`(출고 승인 경로), `reviewer`(실패 사례 검토), `author`/`clinical-reviewer`(저작), `clinician`(결과 읽기·확인 표시, 푸시 설정·구독). operator 경로 네 개는 operator 뒤에서만 열린다(읽기 둘은 게이트의 operator 읽기 토큰 `gate-read-operator`, 변경 둘은 쓰기 토큰 `gate-write-operator`). 응답은 `Cache-Control: no-store`. `/v1/releases/*`(번들, I9)와 그 밖의 `/v1/*`는 404.
-- **세션 길이.** oauth2-proxy 쿠키는 12시간 유효하고 5분마다 Keycloak에 다시 물어 그룹(역할) 변경·계정 정지를 반영한다(시작값, 측정·결정 전). Keycloak SSO 유휴 시간(기본 30분)을 넘기면 다시 로그인한다.
+- **세션 길이.** oauth2-proxy 쿠키는 8시간 유효하고 5분마다 Keycloak에 다시 물어 그룹(역할) 변경·계정 정지를 반영한다(시작값, 측정·결정 전). Keycloak SSO 유휴 시간(기본 30분)을 넘기면 다시 로그인한다.
 - **로그아웃.** admin-console은 `/oauth2/sign_out?rd=<URL 인코딩한 /auth/realms/openit/protocol/openid-connect/logout?client_id=openit-gateway&post_logout_redirect_uri=<origin>/>`로 보낸다. `rd`가 `/`로 시작하는 상대 경로라 oauth2-proxy가 막지 않는다(`test-idp-smoke.sh`가 확인). 로그아웃 뒤 URI는 클라이언트의 허용 목록(`https://<호스트>/`)에 있다.
 
 ## 4-2. 버전 표 (드리프트 점검)

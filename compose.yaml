@@ -352,18 +352,20 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  keycloak:   # 사람 계정 IdP(U82, head ADR 0014, deploy ADR 0057). 읽기 전용 루트를 쓰지 않는다: 시작 때 Quarkus 가 /opt/keycloak/lib/quarkus 에 다시 빌드한 결과를 쓴다(그 밖의 강화는 같다)
+  keycloak:   # 사람 계정 IdP(U82, head ADR 0014, deploy ADR 0057). optimized image(images/keycloak/Dockerfile, ADR 0058)라 읽기 전용 루트다(그 밖의 강화는 같다)
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    tmpfs: ["/tmp"]
+    tmpfs: ["/tmp", "/opt/keycloak/data/tmp", "/opt/keycloak/data/import"]   # 쓰는 곳은 이 셋뿐(시험으로 확인): 임시 파일, realm 가져오기 작업 폴더
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
     mem_limit: ${KEYCLOAK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${KEYCLOAK_CPUS:-1.0}
     pids_limit: ${KEYCLOAK_PIDS_LIMIT:-512}
-    image: ${KEYCLOAK_IMAGE:?locks/images.lock}
-    command: ["--config-file=/run/secrets/keycloak-secrets.conf", "start", "--import-realm"]   # 비밀(db-password, bootstrap-admin-password)은 환경 변수가 아니라 설정 파일로 받는다: 프로세스 환경(/proc/1/environ)에도 값이 없다(D84, 3차 E2E check-secrets-hidden). --config-file 은 kc.sh 의 전역 옵션이라 start 앞에 온다(시험으로 확인)
+    image: openit-keycloak-optimized:26.4   # 로컬 빌드 이름(base 는 digest 고정). 이미지에 비밀이 없다
+    build: {context: ./images/keycloak, args: {KEYCLOAK_BASE: "${KEYCLOAK_IMAGE:?locks/images.lock}"}}
+    read_only: true
+    command: ["--config-file=/run/secrets/keycloak-secrets.conf", "start", "--optimized", "--import-realm"]   # 비밀(db-password, bootstrap-admin-password)은 환경 변수가 아니라 설정 파일로 받는다: 프로세스 환경(/proc/1/environ)에도 값이 없다(D84, 3차 E2E check-secrets-hidden). --config-file 은 kc.sh 의 전역 옵션이라 start 앞에 온다(시험으로 확인)
     environment:   # 비밀 아님
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
@@ -419,8 +421,8 @@ services:
       OAUTH2_PROXY_COOKIE_NAME: _openit_session
       OAUTH2_PROXY_COOKIE_SECURE: "true"
       OAUTH2_PROXY_COOKIE_SAMESITE: lax
-      OAUTH2_PROXY_COOKIE_EXPIRE: 12h     # 시작값(측정·결정 전): 하루 근무 안에서 다시 로그인
-      OAUTH2_PROXY_COOKIE_REFRESH: 5m     # 그룹(역할) 변경·계정 정지가 이 간격 안에 반영되게 Keycloak 에 다시 묻는다. 시작값(측정 전)
+      OAUTH2_PROXY_COOKIE_EXPIRE: 8h      # 절대 만료. OWASP Session Management Cheat Sheet: 절대 시간제한은 업무일 길이(4~8시간 예시)로 둔다. oauth2-proxy 기본은 168h 라 더 짧게 정했다(ADR 0058)
+      OAUTH2_PROXY_COOKIE_REFRESH: 5m     # 그룹(역할) 변경·계정 정지가 반영되는 지연의 상한. Keycloak 액세스 토큰 기본 수명 5분(realm accessTokenLifespan 300s)과 맞췄다. 측정 안 함(ADR 0058)
       OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
       OAUTH2_PROXY_AUTH_LOGGING: "true"
     secrets: [oauth2-proxy-client-secret, oauth2-proxy-cookie-secret]
