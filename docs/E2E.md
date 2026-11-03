@@ -20,10 +20,10 @@
 
 문진표(문항 세트)는 여러 개가 함께 활성이고 세션마다 어느 것으로 문진할지 고른다. E2E 는 이 제품 흐름을 그대로 따른다.
 
-1. 저자가 question-authoring 리포의 `forms/health-screening-v1.txt`(ID `health-screening`, "건강검진 문진표")와 `forms/health-screening-short-order.txt`(ID `health-screening-b`, "건강검진 문진표(순서 B)", Q3 블록이 먼저)를 올린다. 양식 위치는 읽기 전용이며 `E2E_FORMS_DIR` 로 바꿀 수 있다. `health-screening` 은 문구를 바꾼 둘째 버전도 올려 릴리스 둘(롤백 시험)을 만든다.
+1. 저자가 question-authoring 리포의 `forms/health-screening-v1.txt`(ID `health-screening`, "건강검진 문진표")와 `forms/health-screening-short-order.txt`(ID `health-screening-b`, "건강검진 문진표(순서 B)", Q3 블록이 먼저)를 올린다. 양식 위치는 읽기 전용이며 `E2E_FORMS_DIR` 로 바꿀 수 있다(e2e.sh·demo.sh 가 `--forms-dir` 로 드라이버에 넘긴다). `health-screening` 은 문구를 바꾼 둘째 버전도 올려 릴리스 둘(롤백 시험)을 만든다.
 2. 제출·승인·활성: 제출 대상(`subject.question_sets`)은 두 문진표이고, 릴리스(`ReleaseManifest.question_sets`)가 둘을 ID·버전·제목과 함께 담는다(단계 4).
 3. 단계 5k: 기기 A 는 `health-screening` 배치(`kiosk-add-device.sh place`), 기기 B 는 배치 없음. A 는 기기 설정의 문진표로 자동 시작해 첫 문항이 Q1.D01, B 는 `GET /v1/question-sets` 에 둘이 나오고 `health-screening-b` 를 골라 시작해 첫 문항이 Q3 이다. 두 세션을 끝까지 돌린 뒤 결과(`GET /v1/results/{id}`, 직원 조회, clinician)의 `question_set_id`·`question_set_title` 이 각각 맞고, clinician 확인 표시가 된다.
-4. 거절: 문진표를 고르지 않은 시작은 400, 모르는 문진표 ID 로 시작하면 400(`INVALID_RECORD`, `details.reason` `UNKNOWN_QUESTION_SET`)이고 세션이 만들어지지 않는다.
+4. 거절: 문진표를 고르지 않은 시작은 400(`INVALID_RECORD`, `QUESTION_SET_REQUIRED`), 모르는 문진표 ID 로 시작하면 400(`INVALID_RECORD`, `details.reason` `UNKNOWN_QUESTION_SET`)이고 세션이 만들어지지 않는다.
 5. 게이트웨이: `GET /v1/question-sets` 는 기기 토큰이 없으면 401, 하위 경로(I1 읽기 면)는 404 로 닫혀 있다(단계 5a, `scripts/test-gateway-auth.sh`).
 
 이 단계의 첫 문항 판정은 첫 답이 저장된 칸의 키(`Q1.D01.…`, `Q3…`)로 한다. 순서는 문진표 자신에서 나오며 deploy 는 고정 흐름을 갖지 않는다.

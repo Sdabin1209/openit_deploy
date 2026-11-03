@@ -18,7 +18,14 @@ no "실패 출력에 토큰 값이 없다" bash -c "SECRETS_DIR='$T' bash '$HERE
 ok "다른 기기의 산출물은 그대로다" test -s "$T/kiosk-config/dev-a.json"
 # 문진표 배치(계약 3.3.0 DeviceConfig.question_set_id, ADR 0052)
 qsof() { "$DEPLOY_PY" -W ignore -c "import json;print(json.load(open('$T/kiosk-config/$1.json')).get('question_set_id','-'))"; }
-ok "배치: add --question-set 이 기기 설정에 문진표 ID 를 쓰고 계약을 통과한다" bash -c "SECRETS_DIR='$T' bash '$HERE/kiosk-add-device.sh' add dev-p --question-set health-screening && [ \"\$('$DEPLOY_PY' -W ignore -c \"import json,sys;from boundary_contracts import validator;d=json.load(open('$T/kiosk-config/dev-p.json'));sys.exit(1 if list(validator('DeviceConfig').iter_errors(d)) else 0);print(d['question_set_id'])\")\" = health-screening ]"
+cat > "$T/chk.py" <<'PY'
+import json, sys
+from boundary_contracts import validator
+d = json.load(open(sys.argv[1]))
+sys.exit(1 if list(validator("DeviceConfig").iter_errors(d)) or d.get("question_set_id") != sys.argv[2] else 0)
+PY
+ok "배치: add --question-set 이 기기 설정에 문진표 ID 를 쓴다" env SECRETS_DIR="$T" bash "$HERE/kiosk-add-device.sh" add dev-p --question-set health-screening
+ok "배치: 그 기기 설정이 계약 DeviceConfig 를 통과하고 문진표 ID 가 맞다" "$DEPLOY_PY" -W ignore "$T/chk.py" "$T/kiosk-config/dev-p.json" health-screening
 ok "배치 없는 기기에는 question_set_id 칸이 없다" bash -c "[ \"\$(cd '$T' && '$DEPLOY_PY' -W ignore -c \"import json;print('question_set_id' in json.load(open('kiosk-config/dev-a.json')))\")\" = False ]"
 ok "rotate 는 배치를 그대로 둔다" bash -c "SECRETS_DIR='$T' bash '$HERE/kiosk-add-device.sh' rotate dev-p && grep -q '\"question_set_id\": \"health-screening\"' '$T/kiosk-config/dev-p.json'"
 ok "place 로 배치를 바꾼다" bash -c "SECRETS_DIR='$T' bash '$HERE/kiosk-add-device.sh' place dev-p health-screening-b && grep -q 'health-screening-b' '$T/kiosk-config/dev-p.json'"

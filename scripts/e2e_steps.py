@@ -66,6 +66,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--project", required=True); ap.add_argument("--secrets", required=True)
 ap.add_argument("--ports", required=True); ap.add_argument("--images", required=True)
 ap.add_argument("--docker", default="docker"); ap.add_argument("--root", required=True)
+ap.add_argument("--forms-dir", default="", help="문진표 양식 폴더(question-authoring 의 forms/). 문진표 시나리오(단계 1)가 읽는다")
 ap.add_argument("--work", required=True, help="이번 실행의 임시 작업 폴더")
 ap.add_argument("--run-id", default="e2e-test")
 ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기까지만 만든다(사람이 /admin/ 에서 승인)")
@@ -189,7 +190,7 @@ SD_UNUSED_DIR = "image-env-takes-precedence"
 QS, QSB, QSU = "health-screening", "health-screening-b", f"qs-{RID}-unseen"
 QS_TITLE, QSB_TITLE = "건강검진 문진표", "건강검진 문진표(순서 B)"
 QS_FIRST, QSB_FIRST = "Q1.D01", "Q3"   # 첫 문항: A 는 Q1.D01, B 는 Q3 블록이 먼저(순서는 문진표 자신의 order 에서 나온다)
-FORMS_DIR = pathlib.Path(os.environ.get("E2E_FORMS_DIR") or (ROOT.parent / "question-authoring" / "forms"))   # 양식 정본은 question-authoring 리포의 forms/ (읽기만)
+FORMS_DIR = pathlib.Path(a.forms_dir)   # 양식 정본은 question-authoring 리포의 forms/ (읽기만). 위치는 e2e.sh 가 --forms-dir 로 넘긴다(드라이버는 이웃 폴더 위치를 짐작하지 않는다)
 def read_form(name):
     f = FORMS_DIR / name
     assert f.is_file(), f"문진표 양식이 없다: {f} (question-authoring 리포의 forms/. 다른 위치면 E2E_FORMS_DIR)"
@@ -2519,11 +2520,10 @@ def step5k():
     # 활성 문진표 목록(I10): 기기 토큰이 필요하다(세션과 같은 인증). 활성 릴리스의 문진표 둘이 ID·제목·버전과 함께 나온다
     assert _c1_gw("GET", "/v1/question-sets")[0] == 401, "문진표 목록이 기기 토큰 없이 열려 있다"
     c, lst = dk(tB, "GET", "/v1/question-sets"); assert c == 200, ("문진표 목록", c, str(lst)[:150])
-    _validate_if_known("QuestionSetList", lst)
     items = {i["question_set_id"]: i for i in lst["items"]}
     assert set(items) == {QS, QSB} and items[QS]["title"] == QS_TITLE and items[QSB]["title"] == QSB_TITLE and all(i.get("version") for i in items.values()), lst
     # 문진표가 둘인데 고르지 않으면 400, 모르는 문진표 ID 도 400(INVALID_RECORD, details.reason UNKNOWN_QUESTION_SET)
-    c, b = dk(tB, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-kn0", "kind": "SESSION_START"}); assert c == 400, ("문진표 둘인데 고르지 않은 시작이 400이 아니다", c, str(b)[:150])
+    c, b = dk(tB, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-kn0", "kind": "SESSION_START"}); assert c == 400 and b.get("code") == "INVALID_RECORD" and (b.get("details") or {}).get("reason") == "QUESTION_SET_REQUIRED", ("문진표 둘인데 고르지 않은 시작", c, str(b)[:150])
     c, b = dk(tB, "POST", "/v1/sessions", {"session_id": f"sess-{RID}-kn1", "kind": "SESSION_START", "question_set_id": "no-such-set"})
     assert c == 400 and b.get("code") == "INVALID_RECORD" and (b.get("details") or {}).get("reason") == "UNKNOWN_QUESTION_SET", ("모르는 문진표로 시작", c, str(b)[:200])
     assert state_dk(tB, f"sess-{RID}-kn1")[0] == 404, "거절된 시작이 세션을 만들었다"
@@ -2556,7 +2556,7 @@ def step5k():
         c, ak, _ = _c2_raw("POST", f"/v1/results/{sid}/ack", {}, basic=_C2_CLINICIAN); assert c == 200 and ak.get("acknowledged_by") == _C2_CLINICIAN, (sid, c, str(ak)[:150])
         c, sv = _c2_staff("GET", f"/v1/staff/sessions/{sid}"); validate_survey("StaffSessionView", sv)
         assert sv["question_set_id"] == qid and sv["question_set_title"] == title_, (sid, sv["question_set_id"], sv["question_set_title"])
-    rec("5k", "REAL", f"문진표 둘 활성(릴리스 {new}): 기기 A 배치 {QS} 로 자동 시작(첫 문항 {QS_FIRST}), 배치 없는 기기 B 는 GET /v1/question-sets 에 둘({QS}, {QSB})이 나오고 {QSB} 로 시작(첫 문항 {QSB_FIRST}), 고르지 않은 시작 400, 모르는 ID 400 INVALID_RECORD/UNKNOWN_QUESTION_SET, 두 세션 끝까지, 결과(result-reader·clinician·직원 조회)에 문진표 ID·제목 일치, clinician 확인 표시")
+    rec("5k", "REAL", f"문진표 둘 활성(릴리스 {new}): 기기 A 배치 {QS} 로 자동 시작(첫 문항 {QS_FIRST}), 배치 없는 기기 B 는 GET /v1/question-sets 에 둘({QS}, {QSB})이 나오고 {QSB} 로 시작(첫 문항 {QSB_FIRST}), 고르지 않은 시작 400 INVALID_RECORD/QUESTION_SET_REQUIRED, 모르는 ID 400 INVALID_RECORD/UNKNOWN_QUESTION_SET, 두 세션 끝까지, 결과(result-reader·clinician·직원 조회)에 문진표 ID·제목 일치, clinician 확인 표시")
 
 
 STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5k", step5k), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("8", step8), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]

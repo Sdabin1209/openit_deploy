@@ -383,7 +383,7 @@ if [ "$UPONLY" = 1 ]; then
   sect ""; finish; [ "$FAILS" = 0 ]; exit $?
 fi
 STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
+"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-$WORKSPACE/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 # 단계별 상태(steps.json)를 항목 상태표에 올린다: '단계 N' 이름으로 뒤 항목이 선행으로 쓴다. 단계 안의 SKIP 은 SKIP 개수에 더한다
 if [ -f "$W/work/steps.json" ]; then
