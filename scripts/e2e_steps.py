@@ -577,7 +577,7 @@ def make_packages():
     pk = {}
     for role in ("LORA_A", "LORA_B"):
         mf = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "package_id": f"pkg-{RID}-{role.lower().replace('_', '-')}", "version": "1", "role": role,
-              "created_at": "2026-10-15T00:00:00Z", "runtime_contract_version": 2,
+              "created_at": "2026-10-15T00:00:00Z", "runtime_contract_version": 1,
               "base_model": (gm[role]["base_model"] if a.llm_package else {"id": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "main"}),   # 실제 LLM 데모는 패키지(프로파일)의 기반 모델(gpu-12g = Qwen3-1.7B)
               "adapter_hash": d["adapter_hash"][role], "serving_config": d["cfgs"][role], "serving_config_hash": d["hashes"][role],
               "lineage": {"dataset": STATE["dataset"], "training_run_id": f"run-{RID}-1", "action_rules_version": ACTION_RULES_VERSION,
@@ -1655,7 +1655,7 @@ def trace_env(release_id, n):
     STATE["extract_input"] = t["extract_input"]
     t["orchestrator_output"] = {"turn_kind": None, "session_info_created": None, "log_entry": None, "dispatch_called": False,
         "turn_failure_signal": {"session_id": f"s-{RID}", "write_committed": "NOT_COMMITTED", "staff_alert": "NONE"}, "intervention_result": None}
-    e = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "release_id": release_id, "runtime_contract_version": 2,
+    e = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "release_id": release_id, "runtime_contract_version": 1,
          "session_id": f"s-{RID}", "turn_id": f"t-{RID}-{n}", "sent_at": "2026-10-15T00:00:00Z", "trace": t}
     validate("TraceEnvelope", e); validate_survey("TurnTrace", t); return e
 

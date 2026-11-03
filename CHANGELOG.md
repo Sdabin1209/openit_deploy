@@ -1,7 +1,7 @@
 # 변경 이력
 
 ## wo-450: 문진표 여러 개 활성 (계약 3.3.0, 문진 스키마 4.0.0, ADR 0052)
-- 기준표: `DEPLOY_BC_TAG` v3.3.0, `DEPLOY_SS_TAG` survey-schema-v4.0.0. release-gate 가 지원하는 정수 버전(`GATE_SUPPORTED_RUNTIME_CONTRACT_VERSION`)과 E2E 의 시험 매니페스트 `runtime_contract_version` 은 2(문진 스키마 `CONTRACT_VERSION`). model-runtime·link 태그는 헤드가 알려 주는 값으로 바꾼다(아직 바꾸지 않았다).
+- 기준표: `DEPLOY_BC_TAG` v3.3.0, `DEPLOY_SS_TAG` survey-schema-v4.0.0. release-gate 가 지원하는 정수 버전(`GATE_SUPPORTED_RUNTIME_CONTRACT_VERSION`)와 E2E 의 시험 매니페스트 `runtime_contract_version` 은 1 그대로(헤드 확인: 모델 입출력 불변). model-runtime v0.11.12, link v0.4.5.
 - 기기 배치: 기기 설정(`secrets/kiosk-config/<ID>.json`)에 선택 칸 `question_set_id`. `kiosk-add-device.sh add --question-set`, `place`, 목록 파일 둘째 칸. `DeviceConfig` 로 쓰기 전에 검증하고 `check_config_contracts.py` 가 폴더 전체를 검증한다. `docs/RUN.md` "기기에 문진표 배치", 데모 `--question-set`(시작 URL 조각 `question_set_id`).
 - 게이트웨이: `GET /v1/question-sets` 를 `/v1/sessions` 와 같은 기기 인증 범위로 연다(쿼리 `?question_set_id=` 통과). I1 하위 경로는 계속 404.
 - E2E: 문진표 둘(`health-screening` v1·v2, `health-screening-b`)을 question-authoring 의 `forms/` 양식으로 올리고 제출 대상·릴리스에 둘을 함께 담는다. 새 단계 5k(기기 A 배치 자동 시작, 기기 B 목록에서 선택, 첫 문항, 끝까지, 결과의 문진표 ID·제목, clinician 확인, 고르지 않거나 모르는 ID 400). 세션 시작 본문은 모두 `question_set_id` 를 싣는다. 이 변경은 정적으로만 확인했고 E2E 는 아직 돌리지 않았다.
