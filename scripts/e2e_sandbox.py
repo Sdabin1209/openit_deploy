@@ -270,19 +270,10 @@ def logs(service: str, since: Optional[str] = None) -> str:
 
 
 # ---- (c) 다른 호스트 역할의 추론 서버 ----
-# 왜 getaddrinfo 를 바꾸나: 추론 서버의 인증서 이름은 host.docker.internal 이고(컨테이너들이 부르는 이름), 이 시험 프로세스는 호스트에 있다. 호스트에서 그 이름은 윈도 쪽 주소로 풀려
-# 게시 포트(127.0.0.1 또는 0.0.0.0 바인드)에 닿지 않을 수 있다. 이름은 그대로 두고(TLS 검증 유지) 접속 주소만 루프백으로 보낸다. curl 의 --resolve 와 같은 일이다.
-import socket as _socket
-_orig_gai = _socket.getaddrinfo
-def _gai(host, *a, **k):
-    return _orig_gai("127.0.0.1" if host == "host.docker.internal" else host, *a, **k)
-_socket.getaddrinfo = _gai
-
-
 def inference_url() -> Optional[str]:
     """별도 프로젝트로 띄운 추론 서버의 호스트 주소 https://host.docker.internal:<포트>. 없으면 None. 왜 docker port: 그 컨테이너가 자기 게시 포트를 Docker 에게서 배정받는다."""
     ip = _C.get("inference_project")
     if not ip:
         return None
     p = _docker_port(f"{ip}-model-serving-1", "model-serving", "443")
-    return f"https://host.docker.internal:{p}" if p else None   # 서비스 TLS 사이드카(ADR 0060)가 받는 https. 인증서 이름이 host.docker.internal 이라 그 이름으로 부른다. 검증 루트는 호출 프로세스의 SSL_CERT_FILE(e2e.sh 가 step-ca 루트를 준다)
+    return f"https://localhost:{p}" if p else None   # 인증서 SAN 에 localhost 가 있다(e2e.sh 가 토큰·인증서에 함께 넣는다)   # 서비스 TLS 사이드카(ADR 0060)가 받는 https. 인증서 이름이 host.docker.internal 이라 그 이름으로 부른다. 검증 루트는 호출 프로세스의 SSL_CERT_FILE(e2e.sh 가 step-ca 루트를 준다)

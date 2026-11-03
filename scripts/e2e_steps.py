@@ -101,7 +101,7 @@ def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
 def URL(k):   # 샌드박스(D123): 호스트에서 닿을 수 있는 주소는 게이트웨이(gw)와 다른 호스트 역할의 추론 서버(ms)뿐이다. 내부 서비스 키는 시험용 문이었으므로 실패시킨다
     if k == "ms":
-        return a.ms_url.rstrip("/") if a.ms_url else (SB.inference_url() or f"https://host.docker.internal:{_ms_port()}")
+        return a.ms_url.rstrip("/") if a.ms_url else (SB.inference_url() or f"https://localhost:{_ms_port()}")
     if k == "gw":
         return SB.gw_url()
     raise RuntimeError(f"샌드박스 위반: 내부 서비스 '{k}' 를 호스트에서 직접 부를 수 없다(게이트웨이·SB.exec_in/exec_py 를 쓴다, D123)")

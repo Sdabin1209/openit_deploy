@@ -264,7 +264,7 @@ mkdir -p "$W/pki"; : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt
 STEP_IMG=$STEP_CA_IMAGE; SC_IMG=$GATEWAY_IMAGE
 inf_up() { # inf_up <RELEASE_URL> <게이트웨이 CA 파일>: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
   local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
-    INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal
+    INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_TLS_EXTRA_SAN=localhost
     INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
   env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
@@ -286,7 +286,7 @@ GWCURL="curl --cacert $W/gateway-ca.crt"
 GWTLS="https://host.docker.internal:$PGWS"   # 추론 서버가 제품 입구를 부르는 주소(다른 호스트의 호출자와 같은 모양)
 issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 일회용 토큰을 지휘 쪽 자격(step-ca 비밀번호)으로 발급한다
   "$DOCKER" run --rm -v "${PROJECT}_pki-root:/r:ro" "$UTIL_REF" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || return 1
-  "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$STEP_CA_PORT" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; return 1; }
+  "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --san host.docker.internal --san localhost --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$STEP_CA_PORT" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; return 1; }
   chmod 644 "$W/tls.ott" "$W/pki/root_ca.crt"
 }
 chk "추론 서버용 일회용 TLS 토큰 발급 (step-ca 게시 포트로, 지휘 쪽 자격)" issue_tls_token
@@ -300,7 +300,7 @@ abort_if_failed
 cn() { if [ "$1" = model-serving ]; then echo "$INF-model-serving-1"; else echo "${PROJECT}-$1-1"; fi; }   # 컨테이너 이름: model-serving 은 제품이 아니라 추론 서버 프로젝트의 것이다
 echo "  Docker가 배정한 호스트 포트: gateway=$PGW(평문) gateway-tls=$PGWS 추론서버=$IPORT (제품의 다른 서비스는 호스트 포트가 없다)"
 getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
-getinf() { curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" --resolve "host.docker.internal:$IPORT:127.0.0.1" "https://host.docker.internal:$IPORT$1"; }   # 추론 서버는 https(서비스 TLS 사이드카, step-ca 발급). 이름은 인증서 이름 host.docker.internal
+getinf() { curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" "https://localhost:$IPORT$1"; }   # 호스트에서는 localhost 로 부른다: 인증서 SAN 에 host.docker.internal 과 localhost 가 함께 있다(토큰·인증서에 --san). 컨테이너 쪽 호출자는 host.docker.internal 그대로
 inpy() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;sys.stdout.write(urllib.request.urlopen('http://127.0.0.1:8080'+sys.argv[1],timeout=5).read().decode())" "$2"; }   # 샌드박스 접근 (b): 컨테이너 안에서 자기 포트를 부른다
 inpy_code() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request,urllib.error
 try:
