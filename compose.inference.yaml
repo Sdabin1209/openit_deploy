@@ -51,6 +51,7 @@ volumes:
 
 services:
   model-serving:
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카가 추가 capability 없이 443 을 연다(ADR 0060)
     <<: *hardening
     image: ${INFERENCE_IMAGE:?INFERENCE_IMAGE(model-serving 이미지, digest 참조)가 필요하다}
     env_file:
@@ -94,9 +95,9 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    cap_add: ["NET_BIND_SERVICE"]
+    entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile"]
     read_only: true
-    tmpfs: ["/tmp", "/data:uid=65532,gid=65532"]
+    tmpfs: ["/tmp:exec", "/data:uid=65532,gid=65532"]
     network_mode: "service:model-serving"
     environment:
       TLS_NAME: ${INFERENCE_TLS_NAME:?INFERENCE_TLS_NAME(호출자가 부르는 이름)이 필요하다}

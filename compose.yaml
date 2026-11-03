@@ -20,13 +20,13 @@ x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 
 x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공식 이미지(GATEWAY_IMAGE 와 같은 digest). 앱의 네트워크 네임스페이스에 붙어(network_mode: service:<앱>) step-ca 에서 ACME 로 서비스 이름 인증서를 받고 TLS 를 끝내 127.0.0.1 의 앱으로 넘긴다
   image: ${GATEWAY_IMAGE:?locks/images.lock}
-  user: "65532:65532"   # 왜: 비루트. 80·443 은 NET_BIND_SERVICE 하나만 더한다(ACME 검증이 80/443 으로 온다, 측정함)
+  user: "65532:65532"   # 왜: 비루트. ACME 검증이 80/443 으로 오므로 사이드카가 그 포트를 열어야 하고, 추가 capability 대신 앱(네임스페이스 소유자)의 sysctl net.ipv4.ip_unprivileged_port_start=0 을 쓴다
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
-  cap_add: ["NET_BIND_SERVICE"]
+  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(Operation not permitted, 측정함). 사본은 파일 권한이 없다. 443 은 앱 네임스페이스의 sysctl 이 연다
   read_only: true
-  tmpfs: ["/tmp", "/data:uid=65532,gid=65532"]   # 인증서는 24시간짜리라 재기동 때 다시 받는다(저장 불필요)
+  tmpfs: ["/tmp:exec", "/data:uid=65532,gid=65532"]   # 인증서는 24시간짜리라 재기동 때 다시 받는다(저장 불필요)
   mem_limit: 64m   # 측정 안 함(시작값)
   cpus: 0.25
   pids_limit: 64
@@ -242,14 +242,13 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
-    tmpfs: ["/tmp"]
+    tmpfs: ["/tmp:exec"]   # step-ca 사본을 실행한다(파일 권한이 있는 원본은 cap_drop ALL 에서 exec 가 막힌다, 측정함)
     mem_limit: 128m   # 측정 안 함(시작값)
     cpus: 0.5
     pids_limit: 128
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
-    cap_add: ["NET_BIND_SERVICE"]   # step-ca 바이너리에 파일 권한이 있어 cap_drop ALL 이면 실행이 거부된다(측정함: Operation not permitted; gateway 와 같은 사정). 실제로는 9000 을 연다
-    entrypoint: ["sh", "-c", "test -f /home/step/config/ca.json || step ca init --name OpenIt --dns step-ca --address :9000 --provisioner admin --acme --password-file /run/secrets/step-ca-password --provisioner-password-file /run/secrets/step-ca-password >/dev/null 2>&1; exec step-ca /home/step/config/ca.json --password-file /run/secrets/step-ca-password"]   # 왜 공식 entrypoint 의 DOCKER_STEPCA_INIT_* 를 쓰지 않나: 그 경로는 CA 관리 비밀번호를 컨테이너 로그에 찍는다(비밀은 로그 금지, D84). 같은 step ca init 을 출력 없이 1회 실행한다
+    entrypoint: ["sh", "-c", "test -f /home/step/config/ca.json || step ca init --name OpenIt --dns step-ca --address :9000 --provisioner admin --acme --password-file /run/secrets/step-ca-password --provisioner-password-file /run/secrets/step-ca-password >/dev/null 2>&1; cp /usr/local/bin/step-ca /tmp/step-ca && exec /tmp/step-ca /home/step/config/ca.json --password-file /run/secrets/step-ca-password"]   # 왜 공식 entrypoint 의 DOCKER_STEPCA_INIT_* 를 쓰지 않나: 그 경로는 CA 관리 비밀번호를 컨테이너 로그에 찍는다(비밀은 로그 금지, D84). 같은 step ca init 을 출력 없이 1회 실행한다
     secrets: [step-ca-password]
     volumes: [pki-ca:/home/step]
     networks: [pki]
@@ -460,6 +459,7 @@ services:
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
@@ -471,6 +471,7 @@ services:
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
@@ -482,6 +483,7 @@ services:
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   survey-service:
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${SURVEY_SERVICE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${SURVEY_SERVICE_CPUS:-1.0}
@@ -513,6 +515,7 @@ services:
       model-serving: {condition: service_healthy}
 
   question-authoring:
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${QUESTION_AUTHORING_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${QUESTION_AUTHORING_CPUS:-1.0}
@@ -539,6 +542,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
   keycloak:   # 사람 계정 IdP(U82, head ADR 0014, deploy ADR 0057). optimized image(images/keycloak/Dockerfile, ADR 0058)라 읽기 전용 루트다(그 밖의 강화는 같다)
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -580,6 +584,7 @@ services:
       start_period: 90s   # 첫 기동은 시작 때 다시 빌드·realm 가져오기를 한다(측정 전, 시작값)
 
   oauth2-proxy:   # OIDC 클라이언트(U82). 인증 결과를 쿠키 세션으로 갖고 gateway 의 forward_auth(/oauth2/auth)에 답한다. 이미지에 셸이 없어 healthcheck 를 두지 않는다
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${OAUTH2_PROXY_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${OAUTH2_PROXY_CPUS:-0.5}
@@ -644,6 +649,7 @@ services:
       postgres: {condition: service_healthy}
 
   ops-feedback-ingest:
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${OPS_FEEDBACK_INGEST_CPUS:-1.0}
@@ -671,6 +677,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
   release-gate:
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${RELEASE_GATE_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${RELEASE_GATE_CPUS:-1.0}
@@ -697,6 +704,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
   model-serving:        # 추론 서버(model-runtime, CPU/fake 변형, 문진 스키마는 이미지에 내장 D72). survey-service가 I9(HTTP)로 부른다
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${MODEL_SERVING_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${MODEL_SERVING_CPUS:-2.0}
@@ -719,6 +727,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
   model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${MODEL_REGISTRY_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${MODEL_REGISTRY_CPUS:-1.0}
@@ -737,6 +746,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
   dataset-store:        # synthetic-data의 I2 서버(소스 리포지토리는 synthetic-data, 이미지 이름은 dataset-store, 계약 v2.1.0 D100). 읽기=model-lab, 쓰기=synthetic-data
+    sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${DATASET_STORE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${DATASET_STORE_CPUS:-1.0}

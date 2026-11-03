@@ -32,10 +32,11 @@ services:
     cpus: ${BACKUP_TARGET_CPUS:-0.5}
     pids_limit: ${BACKUP_TARGET_PIDS_LIMIT:-128}
     entrypoint: ["rest-server"]
-    command: ["--path", "/data", "--listen", ":8000", "--append-only", "--htpasswd-file", "/run/htpasswd", "--private-repos=false"]
+    command: ["--path", "/data", "--listen", ":8000", "--append-only", "--htpasswd-file", "/run/htpasswd", "--private-repos=false", "--tls", "--tls-cert", "/run/tls/leaf.crt", "--tls-key", "/run/tls/leaf.key"]
     volumes:
       - backup-target-data:/data
       - ${BACKUP_TARGET_HTPASSWD:?htpasswd 파일 경로}:/run/htpasswd:ro
+      - ${BACKUP_TARGET_TLS_DIR:?서버 인증서(leaf.crt/leaf.key) 폴더}:/run/tls:ro   # TLS 필수(ADR 0060): 시험은 일회용 CA, 운영 저장소는 step-ca 또는 조직 PKI 인증서
     networks: [backup]
 networks:
   backup:

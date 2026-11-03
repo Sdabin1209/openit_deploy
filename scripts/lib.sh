@@ -92,8 +92,17 @@ gateway_public_url() {
 }
 export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
 export GATEWAY_HOST_NAMES="$(gateway_host_names)"   # 직접 compose 를 부르는 스크립트(down 등)용 기본값. dc 는 부를 때마다 다시 계산한다(E2E 가 GATEWAY_HOSTS 를 source 뒤에 바꾼다)
+# pg-tls 볼륨(postgres 서버 인증서·키, ADR 0060)은 postgres 의 uid(999)가 쓸 수 있어야 한다(새 이름 있는 볼륨은 root 소유). gateway-data 와 같은 방식으로 처음 한 번 소유자를 맞춘다. dc 가 up/run 때 부른다
+ensure_pg_tls_volume() { # ensure_pg_tls_volume <프로젝트>
+  local V="${1}_pg-tls" UTIL
+  "$DOCKER" volume inspect "$V" >/dev/null 2>&1 && return 0
+  "$DOCKER" volume create --label "com.docker.compose.project=$1" --label "com.docker.compose.volume=pg-tls" "$V" >/dev/null || return 1
+  UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
+  "$DOCKER" run --network none --user 0 --cap-drop ALL --cap-add CHOWN --rm -v "$V:/data" "$UTIL" chown 999:999 /data >/dev/null || die "pg-tls 볼륨 소유자 설정 실패"
+}
 dc() { # dc <project> <compose args...>
   local project=$1; shift
+  case " $* " in *" up "*|*" run "*) [ -n "${DOCKER:-}" ] && ensure_pg_tls_volume "$project";; esac
   # Keycloak realm 가져오기 파일(비밀 값 포함)은 비밀 폴더에 있다(SECRETS_DIR/keycloak-realm.json). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만들어 버리므로, 비밀이 있고 파일이 없으면 만든다(up.sh 는 매번 다시 만든다, ADR 0057)
   local sd=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
   [ -f "$sd/keycloak-realm.json" ] || [ ! -s "$sd/tokens/oauth2-proxy-client-secret" ] || [ ! -s "$sd/tokens/openit-initial-admin-password" ] || bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "$sd/keycloak-realm.json" >/dev/null
@@ -113,7 +122,7 @@ dc() { # dc <project> <compose args...>
 # 또는 이미 있는 $SECRETS_DIR/tokens/external-inference. 파일은 compose 가 secrets 로 마운트한다(컨테이너 환경 변수로 넣지 않는다). 값은 출력하지 않는다.
 external_inference_setup() {
   local url=${1:-} sd=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
-  case "$url" in http://*|https://*) ;; *) die "--external-inference 에는 http:// 또는 https:// 로 시작하는 주소가 필요하다: '$url'";; esac
+  case "$url" in https://*) ;; *) die "--external-inference 에는 https:// 로 시작하는 주소만 받는다(평문 http 는 거부, ADR 0060): '$url'";; esac
   case "${url#*://}" in *@*) die "주소에 계정·암호를 넣지 않는다 (토큰은 INFERENCE_TOKEN 또는 INFERENCE_TOKEN_FILE 로)";; esac
   if [ -n "${INFERENCE_TOKEN_FILE:-}" ]; then
     case "$INFERENCE_TOKEN_FILE" in /*) ;; *) INFERENCE_TOKEN_FILE="$PWD/$INFERENCE_TOKEN_FILE";; esac

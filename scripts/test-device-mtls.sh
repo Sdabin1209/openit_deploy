@@ -7,10 +7,10 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1; source "$(dirname "$0")/lib.sh"
 STATIC_ONLY=0; [ "${1:-}" = --static ] && STATIC_ONLY=1
 T=$(mktemp -d); chmod 755 "$T"; ID=$$; N=0; F=0
-PKI=$T/pki; mkdir -p "$PKI"; gateway_test_pki "$PKI" x || exit 1   # ADR 0060
+PKI=$T/pki; mkdir -p "$PKI"; gateway_test_pki "$PKI" survey-service || exit 1   # ADR 0060
 GW=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 NET=devmtls-net-$ID; CE=devmtls-echo-$ID; CG=devmtls-gw-$ID
-cleanup() { docker rm -f $CG $CE >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; rm -rf "$T"; }
+cleanup() { docker rm -f $CG $CE $CE-tls >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; rm -rf "$T"; }
 trap cleanup EXIT
 command -v openssl >/dev/null || { echo "openssl 이 필요하다"; exit 1; }
 pass() { N=$((N+1)); echo "  PASS $1"; }; fail() { N=$((N+1)); F=$((F+1)); echo "  FAIL $1"; }
@@ -28,7 +28,7 @@ grep -q 'mode verify_if_given' "$DEPLOY_ROOT/config/device-tls.mtls.caddy.exampl
 python3 - "$CF" <<'PY' && pass "survey-service 로 가는 reverse_proxy 모두 X-Openit-Device 를 지우거나 CN 으로 덮어쓰고, X-Openit-Dn 은 지운다" || fail "Caddyfile 헤더 처리"
 import re, sys
 t = open(sys.argv[1], encoding="utf-8").read()
-blocks = [m.start() for m in re.finditer(r"reverse_proxy survey-service:8080 \{", t)]
+blocks = [m.start() for m in re.finditer(r"reverse_proxy https://survey-service \{", t)]
 assert len(blocks) >= 4, f"survey 프록시 {len(blocks)}개"   # 개수를 고정하지 않는다: 새 경로(clinician 결과·푸시 등)가 늘어도 모든 프록시가 같은 규칙을 지켜야 한다
 for b in blocks:
     body = t[b:t.index("\n\t\t}\n", b)] if "\n\t\t}\n" in t[b:] else t[b:b+900]
@@ -56,6 +56,8 @@ val "$DEPLOY_ROOT/config/device-tls.caddy" "$DEPLOY_ROOT/config/device-ca.pem" &
 val "$T/pki/device-tls.caddy" "$T/pki/device-ca.pem" && pass "Caddyfile 검증 통과(인증서 검증 켜짐)" || fail "Caddyfile 검증(켜짐)"
 docker network create $NET >/dev/null
 docker run -d --name $CE --network $NET --network-alias survey-service -v "$DEPLOY_ROOT/test/device-mtls-echo.py:/echo.py:ro" "$UTIL" python /echo.py >/dev/null
+printf '{\n\tadmin off\n\tskip_install_trust\n\tauto_https off\n}\nhttps://:443 {\n\ttls /pki/leaf.crt /pki/leaf.key\n\treverse_proxy 127.0.0.1:8080\n}\n' > "$PKI/front.caddy"
+docker run -d --name $CE-tls --network container:$CE -v "$PKI/front.caddy:/etc/caddy/Caddyfile:ro" -v "$PKI:/pki:ro" "$GW" caddy run --config /etc/caddy/Caddyfile >/dev/null   # 게이트웨이는 상류를 https 로 부른다(ADR 0060)
 gwrun $CG "$T/pki/device-tls.caddy" "$T/pki/device-ca.pem"
 P=""; for i in $(seq 1 40); do P=$(docker port $CG 8443/tcp 2>/dev/null | head -1 | sed 's/.*://'); [ -n "$P" ] && curl -sk -o /dev/null -m 2 --resolve "localhost:$P:127.0.0.1" "https://localhost:$P/healthz" && break; sleep 0.5; done
 [ -n "$P" ] || { echo "게이트웨이가 뜨지 않았다"; docker logs $CG 2>&1 | tail -5; exit 1; }

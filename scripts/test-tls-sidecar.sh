@@ -21,17 +21,17 @@ trap cleanup EXIT
 ok() { local n=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $n"; else echo "  FAIL $n"; FAILS=$((FAILS+1)); fi; }
 docker network create $NET >/dev/null && docker volume create $ID-ca >/dev/null && docker volume create $ID-root >/dev/null || { echo "네트워크/볼륨 생성 실패"; exit 1; }
 # 1) 인증기관: 제품 compose 의 step-ca 와 같은 명령(처음 기동에 키를 1회 만든다, 비밀번호는 로그에 찍지 않는다)
-docker run -d --name $ID-ca --network $NET --network-alias step-ca --user 1000:1000 --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges:true --read-only --tmpfs /tmp \
-  -v $ID-ca:/home/step -v "$PW:/run/secrets/step-ca-password:ro" --entrypoint sh "$CA_IMG" -c 'test -f /home/step/config/ca.json || step ca init --name OpenIt --dns step-ca --address :9000 --provisioner admin --acme --password-file /run/secrets/step-ca-password --provisioner-password-file /run/secrets/step-ca-password >/dev/null 2>&1; exec step-ca /home/step/config/ca.json --password-file /run/secrets/step-ca-password' >/dev/null
+docker run -d --name $ID-ca --network $NET --network-alias step-ca --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:exec \
+  -v $ID-ca:/home/step -v "$PW:/run/secrets/step-ca-password:ro" --entrypoint sh "$CA_IMG" -c 'test -f /home/step/config/ca.json || step ca init --name OpenIt --dns step-ca --address :9000 --provisioner admin --acme --password-file /run/secrets/step-ca-password --provisioner-password-file /run/secrets/step-ca-password >/dev/null 2>&1; cp /usr/local/bin/step-ca /tmp/step-ca && exec /tmp/step-ca /home/step/config/ca.json --password-file /run/secrets/step-ca-password' >/dev/null
 for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' $ID-ca 2>/dev/null)" = healthy ] && break; sleep 1; done
 ok "step-ca 가 healthy (ACME 공급자 활성)" bash -c '[ "$(docker inspect -f "{{.State.Health.Status}}" $1)" = healthy ] && docker run --rm -v $2:/h:ro --entrypoint grep "$3" -q ACME /h/config/ca.json' _ $ID-ca $ID-ca "$CA_IMG"
 # 2) 루트 인증서(공개)만 pki-root 볼륨으로 복사(제품 compose 의 pki-root 잡과 같은 명령)
 docker run --rm --user 1000:1000 --cap-drop ALL --read-only -v $ID-ca:/ca:ro -v $ID-root:/home/step --entrypoint sh "$CA_IMG" -c 'cp /ca/certs/root_ca.crt /home/step/root_ca.crt && chmod 644 /home/step/root_ca.crt'
 ok "루트 인증서가 공개 볼륨에 있다 (키는 없다)" bash -c 'docker run --rm -v $1:/r:ro --entrypoint sh "$2" -c "test -s /r/root_ca.crt && [ \$(ls /r | wc -l) = 1 ]"' _ $ID-root "$CA_IMG"
 # 3) 앱(8080, 평문, 컨테이너 안) + 사이드카(같은 네트워크 네임스페이스)
-docker run -d --name $ID-app --network $NET --network-alias $NAME "$SC_IMG" caddy respond --listen :8080 "hello-from-app" >/dev/null
-docker run -d --name $ID-sc --network container:$ID-app --user 65532:65532 --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges:true --read-only --tmpfs /tmp --tmpfs /data:uid=65532,gid=65532 \
-  -e TLS_NAME=$NAME -e TLS_UPSTREAM=127.0.0.1:8080 -v "$DEPLOY_ROOT/config/tls-sidecar.caddy:/etc/caddy/Caddyfile:ro" -v $ID-root:/etc/openit/pki:ro "$SC_IMG" >/dev/null
+docker run -d --name $ID-app --network $NET --network-alias $NAME --sysctl net.ipv4.ip_unprivileged_port_start=0 "$SC_IMG" caddy respond --listen :8080 "hello-from-app" >/dev/null
+docker run -d --name $ID-sc --network container:$ID-app --user 65532:65532 --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:exec --tmpfs /data:uid=65532,gid=65532 --entrypoint sh \
+  -e TLS_NAME=$NAME -e TLS_UPSTREAM=127.0.0.1:8080 -v "$DEPLOY_ROOT/config/tls-sidecar.caddy:/etc/caddy/Caddyfile:ro" -v $ID-root:/etc/openit/pki:ro "$SC_IMG" -c 'cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile' >/dev/null
 for i in $(seq 1 40); do docker logs $ID-sc 2>&1 | grep -q "certificate obtained successfully" && break; sleep 1; done
 ok "사이드카가 ACME 로 서비스 이름 인증서를 받았다" bash -c 'docker logs $1 2>&1 | grep -q "certificate obtained successfully"' _ $ID-sc
 CLIENT='import urllib.request,sys;print(urllib.request.urlopen("https://'$NAME'/",timeout=5).read().decode())'
@@ -42,6 +42,6 @@ ok "다른 루트만 아는 호출자는 검증 실패로 거부된다" bash -c 
 ok "루트를 지정하지 않은 호출자(시스템 신뢰 저장소)도 거부된다" bash -c '! docker run --rm --network $1 "$2" python -c "$3"' _ $NET "$UTIL" "$CLIENT"
 ok "평문 http 로 사이드카 443 을 부르면 TLS 가 아니라 거부된다" bash -c '! docker run --rm --network $1 "$2" python -c "import urllib.request;urllib.request.urlopen(\"http://$3:443/\",timeout=5)"' _ $NET "$UTIL" $NAME
 # 5) 사이드카 격리 상태(check-containers 와 같은 항목)
-ok "사이드카는 비루트, 읽기 전용, cap_drop ALL" bash -c 'r=$(docker inspect -f "{{.Config.User}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.CapDrop}}" $1); [ "$r" = "65532:65532|true|[ALL]" ]' _ $ID-sc
+ok "사이드카는 비루트, 읽기 전용, cap_drop ALL, 추가 capability 없음(앱 netns 의 ip_unprivileged_port_start=0 으로 443 을 연다)" bash -c 'r=$(docker inspect -f "{{.Config.User}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.CapDrop}}|{{.HostConfig.CapAdd}}" $1); [ "$r" = "65532:65532|true|[ALL]|[]" ]' _ $ID-sc
 [ "$FAILS" = 0 ] && echo "통과: TLS 사이드카 단독 시험" || echo "실패: $FAILS건"
 exit $FAILS

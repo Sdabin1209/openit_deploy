@@ -77,7 +77,8 @@ W="$DEPLOY_ROOT/state/e2e-$ID"; mkdir -p "$W"
 export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY_PROJECT=$PROJECT
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
-export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT= GATEWAY_TLS_PORT=
+mkdir -p "$W/backup-tls"; gateway_test_pki "$W/backup-tls" backup-target || { echo "시험 PKI 실패"; exit 1; }   # 백업 저장소 서버는 TLS 만(ADR 0060)
+export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_TLS_DIR="$W/backup-tls" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT= GATEWAY_TLS_PORT=
 export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
@@ -263,7 +264,7 @@ abort_if_failed
 IPORT=$(port_of "$INF-model-serving-1" 8080)
 export INFERENCE_TOKEN_FILE="$W/inference-token"
 # 운영 모드 overlay(compose.external-inference.yaml)를 이 스크립트의 환경에 둔다: 이후 모든 dc/up.sh/rollback.sh 호출이 같은 제품 구성을 본다(INFERENCE_URL, COMPOSE_EXTRA 를 내보낸다)
-external_inference_setup "http://host.docker.internal:$IPORT"
+external_inference_setup "https://host.docker.internal:$IPORT"
 export PROMETHEUS_INFERENCE_METRICS_TARGETS=no-local-inference-targets.yml; export PROMETHEUS_INFERENCE_TARGETS=no-local-inference-targets.yml   # 외부 추론 모드: 제품 안에 model-serving 이 없으니 감시 스택이 그 탐침 대상을 갖지 않는다(config/prometheus/prometheus.yml 주석)
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 chk "시험 사용자를 Keycloak(realm openit)에 만든다 (운영 입구 kcadm, 사람 계정은 OIDC 로그인)" bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$PROJECT"
@@ -279,7 +280,7 @@ GWTLS="https://host.docker.internal:$PGWS"   # 추론 서버가 제품 입구를
 chk "추론 서버를 제품 입구로 다시 설정 (RELEASE_URL=게이트웨이 TLS 포트, 게이트웨이 CA, 추론 기계 토큰)" inf_up "$GWTLS" "$W/gateway-ca.crt"
 abort_if_failed
 IPORT=$(port_of "$INF-model-serving-1" 8080)   # 다시 만들면 Docker 배정 호스트 포트가 바뀐다
-external_inference_setup "http://host.docker.internal:$IPORT"
+external_inference_setup "https://host.docker.internal:$IPORT"
 chk "survey-service 가 다시 만든 추론 서버 주소를 쓴다 (INFERENCE_URL 갱신, up.sh)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 abort_if_failed
 cn() { if [ "$1" = model-serving ]; then echo "$INF-model-serving-1"; else echo "${PROJECT}-$1-1"; fi; }   # 컨테이너 이름: model-serving 은 제품이 아니라 추론 서버 프로젝트의 것이다
@@ -424,7 +425,7 @@ printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.e
 chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
 # 시험용 저장소 암호: 시험 폴더($W, 모드 700) 안에서만 만들고 출력·로그에 내지 않는다. 시험이 끝나면 $W 째로 지워진다
 ( umask 077; head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$W/backup.pass" )
-printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_REPOSITORY=rest:http://backup-target:8000/openit\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s_backup\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W/backup-target.cred" "$PROJECT" "$W/backup.pass" > "$W/backup-test.env"
+printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_REPOSITORY=rest:https://backup-target:8000/openit\nBACKUP_CACERT_FILE=%s/backup-tls/root_ca.crt\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s_backup\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W" "$W/backup-target.cred" "$PROJECT" "$W/backup.pass" > "$W/backup-test.env"
 export BACKUP_CONFIG="$W/backup-test.env"
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
 dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx -e postgres -e backup-target | tr '\n' ' ') >/dev/null 2>&1

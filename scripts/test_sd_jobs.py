@@ -41,6 +41,12 @@ class T(unittest.TestCase):
         with self.assertRaises(TypeError): sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1)   # 기본값 없음: 호출자가 네트워크를 고른다
         self.assertIn("--network none", " ".join(sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="none")))
 
+    def test_job_gets_pki_root(self):   # ADR 0060: 잡 컨테이너가 사이드카 https 를 검증하도록 루트 인증서(읽기 전용)와 SSL_CERT_FILE 을 받는다
+        c = sd_jobs.with_pki_root(sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="n"), "proj")
+        s = " ".join(c)
+        self.assertIn("-v proj_pki-root:/etc/openit/pki:ro", s); self.assertIn("-e SSL_CERT_FILE=/etc/openit/pki/root_ca.crt", s)
+        self.assertLess(c.index("run"), c.index("-e"), "run 뒤, 이미지 앞에 끼워야 한다"); self.assertEqual(c[-len(c) + c.index("i") :][0], "i")
+
     def test_command(self):
         job = DECL["jobs"][0]
         c = sd_jobs.docker_cmd("docker", "img:1", job, "/w/c.json", "/w", "/sec", 1000, 1000, extra_ro=["/in"], network="none")

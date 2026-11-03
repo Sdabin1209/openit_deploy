@@ -42,3 +42,10 @@ def describe_failure(returncode: int, stderr: str, validator) -> str:
             is_json = False
     return call(job_failure_text, "JobFailureRequest", "JobFailureResult",
                 {"returncode": returncode, "stderr_tail": tail, "tail_is_json": is_json, "tail_errors": errs[:1]})["text"]
+
+
+def with_pki_root(argv: list, project: str) -> list:
+    """잡 컨테이너가 서비스 사이드카의 https 를 검증하게 step-ca 루트 인증서(공개, 읽기 전용 볼륨 <프로젝트>_pki-root)와 SSL_CERT_FILE 을 더한다(ADR 0060).
+    argv 는 job_command 가 만든 `docker run ...` 이다. 스키마(JobCommandRequest)를 바꾸지 않고 run 바로 뒤에 끼워 넣는다."""
+    i = argv.index("run")
+    return argv[:i + 1] + ["-v", f"{project}_pki-root:/etc/openit/pki:ro", "-e", "SSL_CERT_FILE=/etc/openit/pki/root_ca.crt"] + argv[i + 1:]
