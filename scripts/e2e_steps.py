@@ -154,6 +154,15 @@ def wait(fn, timeout, what, every=2):
         time.sleep(every)
     raise AssertionError(f"시간 초과({timeout}s): {what}")
 
+def settled(read, timeout=30, every=1.0, what="값이 안정"):
+    """R4.3: 고정 sleep 대신 '값이 더는 바뀌지 않을 때까지' 기다린다. read() 를 every 초 간격으로 읽어 연속 두 번 같으면 그 값을 돌려준다."""
+    prev = read(); t = time.time()
+    while time.time() - t < timeout:
+        time.sleep(every); cur = read()
+        if cur == prev: return cur
+        prev = cur
+    raise AssertionError(f"시간 초과({timeout}s): {what}")
+
 def decision_text(dec):
     """GateDecision 요약: 결과, reject_codes, checks 각 항목(kind, result, detail), reject_reasons. 토큰·비밀은 없다."""
     out = [f"결과 {dec.get('result')} reject_codes={dec.get('reject_codes')}"]
@@ -1166,11 +1175,15 @@ def policy(step, waits, name, fn):
     try: fn(); rec(f"{step}-policy", "REAL", f"정책 단언 통과: {name}")
     except AssertionError as e: rec(f"{step}-policy", "POLICY-PENDING", f"{name} -- 기다리는 변경: {waits}. 지금 값: {e}")
 
-def wait_gw_ready(timeout):
+def gw_ready_seconds(timeout=60):
+    """앱이 healthy 가 된 시점부터 게이트웨이 /readyz 가 200 + status ok 가 되기까지 걸린 초(0.25초 간격으로 확인). R4.1 의 "Retry-After 이내"를 재는 데 쓴다."""
+    t0 = time.time(); wait_gw_ready(timeout, every=0.25); return time.time() - t0
+
+def wait_gw_ready(timeout, every=2):
     def ready():   # R4.3·R5.1: 상태 코드 200 이고 본문 status 가 ok (빈 200·다른 본문은 준비가 아니다)
         c, b, _h, _t = gwk("GET", "/readyz", auth=False)
         return c == 200 and isinstance(b, dict) and b.get("status") == "ok"
-    wait(ready, timeout, "gateway /readyz 200 + {\"status\":\"ok\"}(survey-service 가 활성 릴리스까지 적재)", every=2)
+    wait(ready, timeout, "gateway /readyz 200 + {\"status\":\"ok\"}(survey-service 가 활성 릴리스까지 적재)", every=every)
 
 def upstream_503_json(c, b, h, what):
     assert c == 503 and b == {"code": "UPSTREAM_UNAVAILABLE"}, f"{what}: 503 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:120]}"
@@ -1189,12 +1202,15 @@ def step5q():
     sh([a.docker, "stop", "-t", "3", svc]); obs = {}
     try:
         c, b, h, el = gk_turn(sid, "q-2", "아니요 없어요"); obs["turn"] = (c, round(el, 2)); upstream_503_json(c, b, h, "환자 턴")
+        obs["retry_after"] = float(h.get("retry-after", "2") or 2)
         rc, rb_, rh, rel = gwk("GET", "/readyz", auth=False); obs["readyz"] = (rc, round(rel, 2)); assert rc != 200, "survey-service 가 없는데 gateway /readyz 가 200"
         assert "survey" not in json.dumps(rb_) and ":8080" not in json.dumps(rb_), f"gateway /readyz 본문에 내부 정보: {rb_}"
         hc = gwk("GET", "/healthz", auth=False); obs["healthz"] = hc[0]; assert hc[0] == 200, hc[:2]
     finally: sh([a.docker, "start", svc])
     wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", svc]).stdout.strip() == "healthy", 120, "survey-service healthy", every=2)
-    t0 = time.time(); wait_gw_ready(300); t_rec = time.time() - t0
+    wait(lambda: SB.readyz("survey-service")[0] == 200, 180, "survey-service /readyz 200(중계 경유, 활성 릴리스 적재까지)", every=0.5)   # R4.1 은 앱의 /readyz 가 200 이 된 뒤부터 센다
+    t_rec = gw_ready_seconds(300)
+    assert t_rec <= obs["retry_after"] + 0.5, f"R4.1: 앱이 healthy 가 된 뒤 게이트웨이가 다시 응답하기까지 {t_rec:.2f}s 가 Retry-After {obs['retry_after']}s 를 넘었다(0.5s 은 폴링 간격 여유)"
     sv = staff_sv(sid); vals = {v["key"]: v for v in sv["values"]}
     assert vals["Q1.D01.diagnosed"]["value"] is True, ("재시작 뒤 이전 값이 사라졌다", vals)
     assert utt_count(sv, "아니요 없어요") == 0 and "Q1.D02.diagnosed" not in vals, "상류에 닿지 못한 턴이 기록됐다"
@@ -1253,7 +1269,8 @@ def step5w():
     t0 = time.time(); wait_gw_ready(60); t_rec = time.time() - t0
     def client_seen(): assert obs["turn"][1] < KIOSK_WAIT_S, f"클라이언트가 본 시간 {obs['turn'][1]}s (gateway 처리 {obs['gw_duration']}s, 차이 {obs['turn'][1]-obs['gw_duration']:.2f}s: 호스트 게시 포트 경유 전달 지연)"
     policy("5w", "Docker Desktop(WSL2) 호스트 게시 포트 전달 지연(운영 서버의 gateway 직접 접속에서는 해당 없음, 미확인)", "호스트 클라이언트가 본 gateway 504 시간이 키오스크 대기(60s) 미만이다", client_seen)
-    time.sleep(3)   # 멈춘 사이 도착한 요청을 서비스가 풀린 뒤 처리했을 수 있다
+    # 멈춘 사이 도착한 요청을 서비스가 풀린 뒤 처리했을 수 있다: 고정 3초가 아니라 발화 기록 수가 안정될 때까지 기다린다(R4.3)
+    settled(lambda: utt_count(staff_sv(sid), "네 있어요"), 30, what="unpause 뒤 발화 기록 수 안정")
     sv = staff_sv(sid); n_after_unpause = utt_count(sv, "네 있어요")
     c, r = _c2_turn(sid, "w-1", "네 있어요"); assert c == 200, ("복구 뒤 같은 turn_id 재전송이 200이 아니다", c, r)
     n_final = utt_count(staff_sv(sid), "네 있어요")
@@ -1329,7 +1346,7 @@ def step5m():
     for _ in range(4):
         c2, r2 = _c2_turn(sid, "m-2", "아니요 없어요"); tries.append((c2, r2))
         if c2 == 200 and not r2.get("turn_failure_signal"): break
-        time.sleep(3)
+        time.sleep(3)   # 재시도 간격(복구 폴링): 같은 turn_id 를 서비스가 준비된 뒤 다시 보내는 사이의 간격이고, 종료 조건은 200 + 실패 신호 없음이다(상한은 반복 횟수). 복구를 sleep 으로 흉내 내는 것이 아니다
     def same_id_confirms(): assert tries[-1][0] == 200 and not tries[-1][1].get("turn_failure_signal"), f"같은 turn_id 재전송 {len(tries)}회 모두 실패 응답: {str(tries[-1][1])[:150]}"
     policy("5m", "survey-service: NOT_COMMITTED 로 끝난 턴의 turn_id 재전송이 새로 처리되도록(CR-D25)", "model-serving 정지로 실패한 턴을 unpause 뒤 같은 turn_id 로 재전송하면 확정된다", same_id_confirms)
     # 서비스 자체의 복구는 새 turn_id 로 확인한다(하드 단언): 값이 한 번 저장된다
@@ -1409,7 +1426,7 @@ def step5d():
     c, r = gk(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "dA-1"}); assert c == 200, ("기기 A 발화", c, r)
     cs, _ = gk(A, "GET", f"/v1/sessions/{sid}/state"); assert cs in (200, 429), ("기기 A 상태 조회", cs)
     # 기기 B 는 같은 session_id 로 상태·발화·종료를 시도해도 세션에 접근하지 못한다(계약상 404, 존재를 드러내지 않는다)
-    time.sleep(1)
+    time.sleep(1)   # 속도 제한 간격: 서버가 0.5초보다 잦은 상태 조회를 429 로 막는다(위 state 조회 직후라 1초 둔다). 복구 대기가 아니다
     for lab, m, pth, bd in (("상태", "GET", f"/v1/sessions/{sid}/state", None),
                             ("발화", "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "아니요 없어요", "turn_id": "dB-1"}),
                             ("종료", "POST", f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})):
@@ -2259,7 +2276,7 @@ def step5p():
         assert kiosk("/v1/sessions", {"session_id": sidp, "kind": "SESSION_START", "question_set_id": QS})[0] == 200
         c, _p1 = public_turn(sidp, "p-1", "네 있어요"); assert c == 200, (c, _p1)
         wait(lambda: _c3_survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
-        time.sleep(3)
+        settled(lambda: json.dumps(_c3_survey_ready()[1]["trace_outbox"], sort_keys=True), 30, what="Trace outbox 가 안정(행 지문이 흔들리지 않게)")   # 고정 3초 대신(R4.3)
     fp0 = {d: pgfp(d) for d in dbs}
     for k, n in svcs: assert healthy(k), f"{n} /readyz 가 처음부터 200 이 아니다: {ready(k)}"
     # 2) 중지. /healthz(살아 있음)는 유지되고 /readyz 는 비정상이 되어야 한다
@@ -2471,7 +2488,7 @@ def step5b():
     assert tbl, "qa DB 에서 잠글 테이블을 찾지 못했다"
     locker = subprocess.Popen([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-qc", f"begin; lock table {tbl} in access exclusive mode; select pg_sleep(120);"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        time.sleep(2)
+        wait(lambda: sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-Atqc", "select count(*) from pg_locks where mode='AccessExclusiveLock' and granted"]).stdout.strip() not in ("", "0") or None, 30, "잠금 세션이 테이블 잠금을 얻음", every=0.5)   # 고정 2초 대신 잠금을 실제로 얻을 때까지(R4.3)
         bk = subprocess.Popen(["bash", str(ROOT / "scripts/pg-backup.sh")], env={**os.environ, **env}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         wait(lambda: sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-Atqc", "select count(*) from pg_stat_activity where wait_event_type='Lock' and datname='qa'"]).stdout.strip() not in ("", "0") or None, 30, "pg_dump 가 잠금에서 기다림(= 백업 진행 중)", every=1)
         sh([a.docker, "stop", "-t", "2", pg])
