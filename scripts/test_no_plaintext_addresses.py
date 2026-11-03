@@ -5,7 +5,7 @@
 import pathlib, re, subprocess, sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PLAIN = re.compile(r"http://[a-z][a-z0-9-]+:[0-9]+(?![0-9])(?!/(healthz|readyz))")
-NOVERIFY = re.compile(r"verify\s*=\s*False|ssl\.CERT_NONE|check_hostname\s*=\s*False|NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false|insecure_skip_verify")
+NOVERIFY = re.compile("|".join(["verify" + r"\s*=\s*False", "ssl" + r"\.CERT_NONE", "check_hostname" + r"\s*=\s*False", "NODE_TLS_REJECT" + "_UNAUTHORIZED", "reject" + r"Unauthorized\s*:\s*false", "insecure_skip" + "_verify"]))   # 이 파일 자체가 헤드 점검에 걸리지 않게 조각으로 만든다
 ALLOW = {"scripts/e2e.sh": "백업 시험 대상(restic rest 서버)은 이 PR 범위 밖: 보고서의 남은 일"}
 bad = []
 for f in subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split():
