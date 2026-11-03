@@ -78,3 +78,4 @@ sslrootcert 를 쓰는 모든 서비스가 pki-root 를 그 경로에 마운트�
 분리 배치 시험 (가상 서버 3개=compose 프로젝트 3개, 게시 포트 호출, https, 멱등, 잘못된 배치 거부, Docker 필요, ADR 0061) :: bash "$DEPLOY_ROOT/scripts/test-split-placement.sh"
 분리 배치의 인증서 경로 (실제 step-ca 토큰을 다른 서버 볼륨으로 전달해 https 검증, Docker 필요, ADR 0061) :: bash "$DEPLOY_ROOT/scripts/test-split-pki.sh"
 분리 배치의 실제 플레이북 경로 (토큰 전달, 다른 망 step-ca 발급, 다른 망 postgres verify-full, 멱등, Docker 필요, ADR 0061) :: bash "$DEPLOY_ROOT/scripts/test-split-pki-playbook.sh"
+인증서 발급 컨테이너만 pki 망에 붙는다: 사이드카를 둔 앱이 pki 망에 있으면 서비스 사이 차단이 깨진다 (4차 E2E survey-service -> question-authoring 도달) :: python3 "$DEPLOY_ROOT/scripts/test_pki_isolation.py"
