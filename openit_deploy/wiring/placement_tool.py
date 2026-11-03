@@ -220,7 +220,7 @@ def env_of(svc, compose_dir):
 
 
 def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
-    sidecared = set(leaders(compose).values()) - {"postgres"}
+    sidecared = set(leaders(compose).values()) - {"postgres", "step-ca"}   # step-ca 는 pki-root·pki-tokens 의 짝일 뿐 TLS 사이드카가 없다(자기 포트 9000)
     servers = p["servers"]
     if host not in servers:
         fail(["서버 '%s' 는 인벤토리에 없다" % host])

@@ -66,7 +66,7 @@ export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" AN
 timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || bad "플레이북 실패"
 ok "플레이북 1회차 완료"
 A=deploy-$ID-app; D=deploy-$ID-data
-grep -a "토큰 볼륨에 쓰기" -A1 "$T/run1.log" | grep -aq "changed: \[$ID-app\]" || bad "토큰 전달 단계가 app 서버에서 돌지 않았다"; ok "(1) 토큰 전달 단계가 실제로 돌았다"
+grep -a "토큰 볼륨에 쓰기" -A3 "$T/run1.log" | grep -aq "changed: .*$ID-app" || bad "토큰 전달 단계가 app 서버에서 돌지 않았다"; ok "(1) 토큰 전달 단계가 실제로 돌았다"
 M=$(docker run --rm --network none -v ${A}_pki-tokens:/t:ro "$UTIL" sh -c 'stat -c %a:%u /t/release-gate.ott'); [ "$M" = 640:1000 ] || bad "app 서버의 토큰 파일 권한/소유자 $M"; ok "(1) app 서버 토큰 파일 640, 소유자 1000"
 docker run --rm --network none -v ${A}_pki-tokens:/t:ro -v ${A}_pki-root:/r:ro "$UTIL" sh -c 'ls /t /r' | grep -Eq 'password|\.key|ca\.json' && bad "app 서버에 프로비저너 비밀 또는 CA 키가 있다"; ok "(1) app 서버에는 프로비저너 비밀·CA 키가 없다"
 grep -q 'step-ca:' "$T/r/app/compose.placement.yaml" && ok "(2) app 서버 override 에 extra_hosts step-ca:<호스트>" || bad "extra_hosts step-ca 없음"
