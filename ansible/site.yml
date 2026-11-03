@@ -1,7 +1,8 @@
 ---
 # 배치 플레이북(ADR 0060): 서버마다 (a) 그 서버 몫의 env·비밀·인증서 파일을 지휘 기계에서 배포하고 (b) 상대 서비스 주소를 인벤토리에서 계산한 override 를 놓고
-# (c) 그 서버 몫만 postgres -> step-ca -> keycloak -> 나머지 순으로 기동한다. 다시 실행하면 바뀐 것만 바뀐다(멱등).
+# (c) 그 서버 몫만, 서버를 넘나드는 단계 순서(scripts/placement.py STAGES: postgres -> step-ca -> keycloak -> 저장소·서버 서비스 -> survey·model-serving -> gateway)로 기동한다. 다음 단계 전에 앞 단계의 게시된 서비스가 /readyz 에 응답하는지 지휘 기계에서 기다린다. 다시 실행하면 바뀐 것만 바뀐다(멱등).
 # 서버에는 SSH·python3·Docker 만 있으면 된다: Docker 전용 Ansible 모듈을 쓰지 않는다(서버에 파이썬 라이브러리를 요구하지 않으려고). compose 는 command 로 부른다.
+# 지휘 기계에서만 도는 점검: 배치 정의 점검, 서버별 설정·환경이 계약을 따르는지(check_config_contracts, placement_check_contracts: false 로 끈다. 시험용). 서버에는 jsonschema 를 요구하지 않는다.
 # 사용: .venv/bin/ansible-playbook -i <인벤토리> ansible/site.yml     (인벤토리 형식: ansible/inventory.example.yml)
 # 변수(모두 선택): placement_remote_dir(서버의 설치 폴더), placement_project(compose 프로젝트 이름), placement_secrets_dir(지휘 기계의 비밀 폴더), placement_compose(compose 파일)
 - name: 배치 정의 검증(지휘 기계, 서버에 닿기 전에)
@@ -14,11 +15,9 @@
         argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "validate", "{{ ansible_inventory_sources[0] }}", "--compose", "{{ placement_compose | default(playbook_dir + '/../compose.yaml') }}"]
       changed_when: false
 
-- name: 서버별 배포와 기동
+- name: 서버별 배포(서버끼리 병렬)
   hosts: all:!localhost
   gather_facts: false
-  # 한 서버씩: 서버 사이 호출은 기동 순서가 아니라 서비스의 재시도가 맡지만, 로그를 읽기 쉽게 직렬로 돌린다
-  serial: 1
   vars:
     p_root: "{{ playbook_dir }}/.."
     p_compose: "{{ placement_compose | default(p_root + '/compose.yaml') }}"
@@ -29,13 +28,24 @@
   tasks:
     - name: 이 서버의 override·계획 계산(지휘 기계)
       ansible.builtin.command:
-        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "render", "{{ ansible_inventory_sources[0] }}", "--host", "{{ inventory_hostname }}", "--out", "{{ p_out }}", "--compose", "{{ p_compose }}"]
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "render", "{{ ansible_inventory_sources[0] }}", "--host", "{{ inventory_hostname }}", "--out", "{{ p_out }}", "--compose", "{{ p_compose }}", "--secrets-dir", "{{ p_secrets }}"]
       delegate_to: localhost
       changed_when: false
       register: render
     - name: 계획 읽기
       ansible.builtin.set_fact:
         plan: "{{ render.stdout | from_json }}"
+    - name: 이 서버 몫의 환경이 계약을 따르는지(지휘 기계, 실패면 여기서 멈춘다)
+      ansible.builtin.shell: |
+        set -e
+        export SECRETS_DIR="{{ p_secrets }}" COMPOSE_EXTRA="{{ p_out }}/compose.placement.yaml"
+        source "{{ p_root }}/scripts/lib.sh"
+        dc "{{ p_project }}" config --format json > "{{ p_out }}/config.json"
+        "$DEPLOY_PY" -W ignore "{{ p_root }}/scripts/check_config_contracts.py" --compose-json "{{ p_out }}/config.json"
+      args: {executable: /bin/bash}
+      delegate_to: localhost
+      changed_when: false
+      when: placement_check_contracts | default(true) | bool
     - name: 비밀 파일 그룹 gid(SECRETS_GID 규칙, ADR 0054)
       ansible.builtin.command: id -g
       register: idg
@@ -89,7 +99,7 @@
       loop_control: {label: "{{ item }}"}
     - name: 이 서버 몫의 비밀 파일(640, 그룹 SECRETS_GID)
       ansible.builtin.copy:
-        src: "{{ p_secrets }}/{{ item }}"
+        src: "{{ (p_out + '/secrets/' + item) if item in plan.generated_secret_files else (p_secrets + '/' + item) }}"   # db-*-dsn 은 postgres 가 다른 서버면 이 서버용으로 새로 만든 파일
         dest: "{{ p_dir }}/secrets/{{ item }}"
         mode: "0640"
         group: "{{ gid }}"
@@ -109,15 +119,16 @@
       register: gwvol
       changed_when: "'CHANGED' in gwvol.stdout"
       when: "'gateway' in plan.services"
-    - name: 단계별 기동(postgres -> step-ca -> keycloak -> 나머지). 이미 떠 있으면 바뀌지 않는다
-      ansible.builtin.shell: |
-        set -e
-        cd "{{ p_dir }}"
-        export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ p_dir }}/secrets" SECRETS_GID="{{ gid }}" COMPOSE_EXTRA="{{ p_dir }}/compose.placement.yaml" CONFIG_DIR="{{ p_dir }}/config"
-        source scripts/lib.sh
-        dc "{{ p_project }}" up -d --wait {{ item | join(' ') }}
-      args: {executable: /bin/bash}
-      loop: "{{ plan.phases }}"
-      register: up
-      # compose 는 진행 상황을 표준 오류에 낸다. 새로 만들거나 시작했을 때만 바뀐 것으로 센다
-      changed_when: "(up.stderr | default('')) is search('(Created|Started|Recreated|Starting) *$', multiline=True) or (up.stdout | default('')) is search('Created|Started|Recreated')"
+
+- name: 서버를 넘나드는 단계별 기동과 준비 확인
+  hosts: all:!localhost
+  gather_facts: false
+  vars:
+    p_dir: "{{ placement_remote_dir | default('/opt/openit-deploy') }}"
+    p_project: "{{ placement_project | default('deploy') }}"
+    p_scheme: "{{ placement_scheme | default('https') }}"
+  tasks:
+    - name: 단계 0..5 (모든 서버가 한 단계를 마친 뒤 다음 단계로 간다)
+      ansible.builtin.include_tasks: stage.yml
+      loop: "{{ range(0, 6) | list }}"
+      loop_control: {loop_var: stage_i}

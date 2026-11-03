@@ -5,8 +5,7 @@
 all:
   vars:
     placement_scheme: https        # 서버 사이 호출 스킴
-    placement_publish_bind: 0.0.0.0
-    # placement_ports: {release-gate: 19010}   # 선택: 서버 사이에서 불리는 서비스의 게시 포트(없으면 자동)
+    # 서버가 둘 이상이면 다른 서버에서 불리는 서비스마다 게시 포트를 명시한다(ansible/inventory.multi.example.yml)
   hosts:
     core-1:
       ansible_host: core-1.example.internal
