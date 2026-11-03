@@ -35,7 +35,7 @@ docker run -d --name $ID-app --network $NET --network-alias $NAME --sysctl net.i
 docker run -d --name $ID-cert --network $NET --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp -e STEPPATH=/tmp -v $ID-certs:/home/step -v $ID-root:/etc/openit/pki:ro -v $ID-tok:/tokens:ro --entrypoint sh "$CA_IMG" -c \
   "[ -s /home/step/tls.crt ] || step ca certificate $NAME /home/step/tls.crt /home/step/tls.key --token \"\$(cat /tokens/$NAME.ott)\" $CAARGS --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key $CAARGS" >/dev/null
 for i in $(seq 1 30); do docker exec $ID-cert test -s /home/step/tls.crt 2>/dev/null && break; sleep 1; done
-RUN='cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$!; while sleep 60; do kill -0 $p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done'
+RUN='cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$!; while sleep 60; do kill -0 $p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --force --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done'
 docker run -d --name $ID-sc --network container:$ID-app --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:exec --tmpfs /data:uid=1000,gid=1000 --entrypoint sh \
   -e TLS_NAME=$NAME -e TLS_UPSTREAM=127.0.0.1:8080 -v "$DEPLOY_ROOT/config/tls-sidecar.caddy:/etc/caddy/Caddyfile:ro" -v $ID-certs:/certs:ro "$SC_IMG" -c "$RUN" >/dev/null
 for i in $(seq 1 40); do docker exec $ID-sc nc -z 127.0.0.1 443 2>/dev/null && break; sleep 1; done
@@ -56,6 +56,22 @@ HP=$(docker port $ID-app 443/tcp | head -1 | sed 's/.*://')
 SPLIT='import urllib.request,sys;print(urllib.request.urlopen("https://"+sys.argv[1]+":'$HP'/",timeout=5).read().decode())'
 ok "다른 망의 호출자가 extra_hosts 로 돌린 서비스 이름 + 게시 포트로 https 검증에 성공한다" bash -c '[ "$(docker run --rm --network $1 --add-host $2:host-gateway -e SSL_CERT_FILE=/pki/root_ca.crt -v $3:/pki:ro "$4" python -c "$5" $2)" = hello-from-app ]' _ $NETC $NAME $ID-root "$UTIL" "$SPLIT"
 ok "다른 이름으로 같은 서버를 부르면 인증서 이름 불일치로 거부된다" bash -c '! docker run --rm --network $1 --add-host other-name:host-gateway -e SSL_CERT_FILE=/pki/root_ca.crt -v $2:/pki:ro "$3" python -c "$4" other-name' _ $NETC $ID-root "$UTIL" "$SPLIT"
+# 6c) R1.2: 서빙 인증서 SAN 은 서비스 이름뿐이고, Caddy 자동 인증서(local CA)가 생기지 않는다
+SAN=$(echo | openssl s_client -connect 127.0.0.1:$HP -servername $NAME 2>/dev/null | openssl x509 -noout -ext subjectAltName 2>/dev/null | tr -d ' \n')
+ok "서빙 인증서 SAN = 서비스 이름뿐 (별칭 없음)" bash -c '[ "$1" = "X509v3SubjectAlternativeName:DNS:$2" ]' _ "$SAN" $NAME
+ok "사이드카는 Caddy local CA 를 만들지 않는다 (로그에 pki.ca.local·루트 설치 없음)" bash -c '! docker logs $1 2>&1 | grep -qa "pki.ca.local\|installing root certificate"' _ $ID-sc
+ok "Host: localhost 는 Host 매처로 앱에 닿는다 (사이트 이름을 localhost 로 만들지 않는다)" bash -c '[ "$(curl -sk --max-time 8 --resolve localhost:$1:127.0.0.1 https://localhost:$1/)" = hello-from-app ]' _ $HP
+# R3.7: 모르는 SNI/Host 는 앱으로 넘기지 않는다(421 + 본문, 또는 검증 실패)
+OUT=$(curl -sk --max-time 8 -w ' [%{http_code}]' --resolve other.example:$HP:127.0.0.1 https://other.example:$HP/ 2>&1)
+ok "R3.7 모르는 SNI/Host: 421 + 본문 'misdirected request' 이고 앱 응답이 아니다" bash -c '[ "$1" = "misdirected request [421]" ]' _ "$OUT"
+# R3.9: 종단은 평문 리스너를 열지 않는다(80 없음, 443 만)
+ok "R3.9 사이드카 안에 80 포트 리스너가 없다 (평문 종단 없음)" bash -c '! docker exec $1 nc -z 127.0.0.1 80 2>/dev/null' _ $ID-sc
+# R3.11: 인증기관이 멈춰도 기존 인증서로 서비스는 정상이고, 새 발급만 실패하며 로그가 남는다
+docker stop $ID-ca >/dev/null; sleep 1
+ok "R3.11 인증기관 정지 중에도 기존 인증서로 https 200 + 본문" bash -c '[ "$(docker run --rm --network $1 -e SSL_CERT_FILE=/pki/root_ca.crt -v $2:/pki:ro "$3" python -c "$4")" = hello-from-app ]' _ $NET $ID-root "$UTIL" "$CLIENT"
+ISSUE_OUT=$(docker run --rm --network $NET --user 1000:1000 --cap-drop ALL --read-only --tmpfs /tmp -e STEPPATH=/tmp -v $ID-root:/etc/openit/pki:ro --entrypoint step "$CA_IMG" ca certificate $NAME /tmp/c.crt /tmp/c.key --token x.y.z $CAARGS --force 2>&1); ISSUE_RC=$?
+ok "R3.11 인증기관 정지 중 새 발급은 실패하고(종료 코드 != 0) 사유가 출력된다" bash -c '[ "$1" != 0 ] && [ -n "$2" ]' _ $ISSUE_RC "$ISSUE_OUT"
+docker start $ID-ca >/dev/null
 # 6b) 앱 프로세스가 죽고 컨테이너는 떠 있을 때: 사이드카는 빈 502 가 아니라 연결을 끊는다(게이트웨이가 상류 오류로 보고 계약 503 UPSTREAM_UNAVAILABLE 을 만들도록)
 docker exec $ID-app sh -c 'kill $(pidof caddy)' >/dev/null 2>&1; sleep 1
 PROBE='import urllib.request,urllib.error;
