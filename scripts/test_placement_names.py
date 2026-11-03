@@ -57,9 +57,15 @@ for label, groups in SPLITS.items():
                 open(os.path.join(sd, f), "w").write("postgresql://u:x@postgres:5432/d?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt\n")
         text, plan = pt.render(p, compose, host, CD, sd, os.path.join(tmp, "out"))
         cur = None
+        for n_ in plan["services"]:   # P3: <서비스>-net 은 앱과 같은 서버에 선다
+            if n_ + "-net" in compose["services"] and n_ + "-net" not in plan["services"]:
+                fails.append("%s/%s: %s-net 이 %s 와 같은 서버에 없다" % (label, host, n_, n_))
         for line in text.split("\n"):
             m = re.match(r"^  ([a-z0-9-]+):$", line)
             if m: cur = m.group(1); continue
+            m = re.match(r"^    (ports|extra_hosts|networks):", line)
+            if m and cur and compose["services"][cur].get("network_mode"):   # P3: 망·게시 포트·extra_hosts 는 <서비스>-net 에만 둔다(network_mode 서비스는 받지 못한다)
+                fails.append("%s/%s: network_mode 서비스 %s 에 %s 를 두었다(<서비스>-net 에 둔다)" % (label, host, cur, m.group(1)))
             m = LINE.match(line)
             if not m or cur is None:
                 continue
