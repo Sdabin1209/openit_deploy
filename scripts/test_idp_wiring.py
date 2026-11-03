@@ -108,7 +108,7 @@ class Gateway(unittest.TestCase):
 
     def test_authenticate_asks_oauth2_proxy_and_strips_forged_headers(self):
         a = code(AUTH)
-        self.assertIn("forward_auth oauth2-proxy:4180", a); self.assertIn("uri /oauth2/auth", a)
+        self.assertIn("forward_auth https://oauth2-proxy {", a); self.assertIn("uri /oauth2/auth", a)   # U99: oauth2-proxy 도 TLS 사이드카 뒤(ADR 0060)
         for h in ("X-Auth-Request-User", "X-Auth-Request-Preferred-Username", "X-Auth-Request-Groups"):
             self.assertIn(f"request_header -{h}", a, h)
         self.assertIn("order request_header before forward_auth", code(CF))
