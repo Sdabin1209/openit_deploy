@@ -241,6 +241,11 @@ docker_free_port() { # WSL 안에서 비어 있어도 Docker Desktop(윈도 포�
 }
 export GATEWAY_PORT=$(docker_free_port) GATEWAY_TLS_PORT=$(docker_free_port); INFERENCE_FIXED_PORT=$(docker_free_port)
 [ -n "$GATEWAY_PORT" ] && [ -n "$GATEWAY_TLS_PORT" ] && [ -n "$INFERENCE_FIXED_PORT" ] || { echo "호스트 포트 배정 실패" >&2; exit 1; }
+# 다른 호스트의 추론 서버가 인증서를 받으려면 step-ca 에 닿아야 한다(ADR 0060): 운영에서 서버를 나눌 때와 같은 overlay(compose.step-ca-publish.yaml)로 step-ca 를 게시한다.
+# 안팎 포트가 같아야 토큰 audience 가 맞는다(호스트 포트를 Docker 가 배정하게 두지 않고 시작 때 Docker 로 바인드해 본 빈 포트를 쓴다)
+export STEP_CA_PORT=$(docker_free_port) STEP_CA_BIND=$BIND STEP_CA_DNS_NAMES=host.docker.internal
+[ -n "$STEP_CA_PORT" ] || { echo "step-ca 게시 포트 배정 실패" >&2; exit 1; }
+export COMPOSE_EXTRA="$COMPOSE_EXTRA $DEPLOY_ROOT/compose.step-ca-publish.yaml"
 # 추론 서버가 TLS 로 부르는 이름(host.docker.internal)이 게이트웨이 인증서에 있어야 한다: 운영 설정 변수 GATEWAY_HOSTS 에 호출자가 쓰는 이름을 적는 것과 같다(실제 배포는 병원 내부 도메인)
 export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
 # 사람 인증(U82, ADR 0057): Keycloak 의 발급자와 oauth2-proxy 의 콜백은 밖에서 보이는 주소(첫 호스트 이름 + 밖에 보이는 포트)로 정해진다. 호스트 포트가 Docker 배정이므로 그 포트를 밖에 보이는 포트로 알린다
@@ -252,47 +257,57 @@ else echo "  이 Docker 에서는 컨테이너가 호스트의 127.0.0.1 게시 
 INF_IMAGE="$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST"
 cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; cp "$GWTOKF" "$W/gateway-inference-token"; chmod 644 "$W/inference-token" "$W/gateway-inference-token"   # 컨테이너(uid 10001)가 읽는다. 폴더 $W 는 700
 : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
-inf_up() { # inf_up <RELEASE_URL> [게이트웨이 CA 파일]: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
-  local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT="$INFERENCE_FIXED_PORT")
-  # INFERENCE_CA_FILE 은 compose.inference.yaml 의 필수 변수다(게이트웨이 CA 루트). 첫 기동에는 CA 가 아직 없어 빈 자리표시 파일을 주고, 제품 입구가 뜬 뒤 실제 CA 로 다시 만든다
-  e+=(INFERENCE_CA_FILE="${2:-$W/placeholder-ca.crt}")
+# 새 순서(U99, ADR 0060): 추론 서버는 인증서를 step-ca 에서 받으므로 제품(step-ca 게시)이 먼저 뜬다.
+#  (1) 제품: up.sh --external-inference <자리표시 주소>  (2) 제품 입구의 CA·포트, step-ca 루트를 꺼내고 이 서버 이름의 일회용 토큰(5분)을 발급
+#  (3) 추론 서버를 별도 프로젝트로(RELEASE_URL=제품 입구)  (4) 실제 추론 서버 주소를 제품(survey-service)에 알린다.
+mkdir -p "$W/pki"; : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
+STEP_IMG=$STEP_CA_IMAGE; SC_IMG=$GATEWAY_IMAGE
+inf_up() { # inf_up <RELEASE_URL> <게이트웨이 CA 파일>: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
+  local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
+    INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal
+    INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
   env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
 }
-chk "추론 서버 기동 (별도 프로젝트 $INF: compose.inference.yaml, 가짜 백엔드는 이 쪽 env 만)" inf_up "https://host.docker.internal:1"
-abort_if_failed
-IPORT=$(port_of "$INF-model-serving-1" 8080)
 export INFERENCE_TOKEN_FILE="$W/inference-token"
 # 운영 모드 overlay(compose.external-inference.yaml)를 이 스크립트의 환경에 둔다: 이후 모든 dc/up.sh/rollback.sh 호출이 같은 제품 구성을 본다(INFERENCE_URL, COMPOSE_EXTRA 를 내보낸다)
-external_inference_setup "https://host.docker.internal:$IPORT"
+external_inference_setup "https://host.docker.internal:1"   # 자리표시: 추론 서버가 뜬 뒤 실제 주소로 바꾼다
 export PROMETHEUS_INFERENCE_METRICS_TARGETS=no-local-inference-targets.yml; export PROMETHEUS_INFERENCE_TARGETS=no-local-inference-targets.yml   # 외부 추론 모드: 제품 안에 model-serving 이 없으니 감시 스택이 그 탐침 대상을 갖지 않는다(config/prometheus/prometheus.yml 주석)
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 chk "시험 사용자를 Keycloak(realm openit)에 만든다 (운영 입구 kcadm, 사람 계정은 OIDC 로그인)" bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$PROJECT"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
 abort_if_failed
-PGW=$(port_of "${PROJECT}-gateway-1" 8080); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS. 제품의 호스트 포트는 gateway 뿐이다
+PGW=$(port_of "${PROJECT}-gateway-1" 8080); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS. 제품의 호스트 포트는 gateway 와 step-ca(추론 서버의 인증서 발급용)뿐이다
 # gateway 의 내부 CA 루트(시험용 CA): 이 시험의 클라이언트(curl --cacert, e2e_sandbox)와 추론 서버가 이것만 신뢰한다. 컨테이너가 방금 떴으므로 인증서가 만들어질 때까지 잠깐 기다린다
 # (컨테이너 안의 파일 경로는 scripts/export-gateway-ca.sh 한 곳만 안다)
 bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$PROJECT" "$W/gateway-ca.crt" >/dev/null || { echo "gateway 내부 CA 루트를 가져오지 못했다"; exit 1; }
 chmod 644 "$W/gateway-ca.crt"   # 공개 인증서다. 추론 서버 컨테이너(uid 10001)가 읽는다
 GWCURL="curl --cacert $W/gateway-ca.crt"
 GWTLS="https://host.docker.internal:$PGWS"   # 추론 서버가 제품 입구를 부르는 주소(다른 호스트의 호출자와 같은 모양)
-chk "추론 서버를 제품 입구로 다시 설정 (RELEASE_URL=게이트웨이 TLS 포트, 게이트웨이 CA, 추론 기계 토큰)" inf_up "$GWTLS" "$W/gateway-ca.crt"
+issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 일회용 토큰을 지휘 쪽 자격(step-ca 비밀번호)으로 발급한다
+  "$DOCKER" run --rm -v "${PROJECT}_pki-root:/r:ro" "$UTIL_REF" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || return 1
+  "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$STEP_CA_PORT" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; return 1; }
+  chmod 644 "$W/tls.ott" "$W/pki/root_ca.crt"
+}
+chk "추론 서버용 일회용 TLS 토큰 발급 (step-ca 게시 포트로, 지휘 쪽 자격)" issue_tls_token
 abort_if_failed
-IPORT=$(port_of "$INF-model-serving-1" 8080)   # 다시 만들면 Docker 배정 호스트 포트가 바뀐다
+chk "추론 서버 기동 (별도 프로젝트 $INF: compose.inference.yaml, 제품 입구로 release-gate 를 읽는다, https)" inf_up "$GWTLS" "$W/gateway-ca.crt"
+abort_if_failed
+IPORT=$(port_of "$INF-model-serving-1" 443)
 external_inference_setup "https://host.docker.internal:$IPORT"
-chk "survey-service 가 다시 만든 추론 서버 주소를 쓴다 (INFERENCE_URL 갱신, up.sh)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
+chk "survey-service 가 추론 서버 주소를 쓴다 (INFERENCE_URL 갱신, up.sh)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 abort_if_failed
 cn() { if [ "$1" = model-serving ]; then echo "$INF-model-serving-1"; else echo "${PROJECT}-$1-1"; fi; }   # 컨테이너 이름: model-serving 은 제품이 아니라 추론 서버 프로젝트의 것이다
 echo "  Docker가 배정한 호스트 포트: gateway=$PGW(평문) gateway-tls=$PGWS 추론서버=$IPORT (제품의 다른 서비스는 호스트 포트가 없다)"
 getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
+getinf() { curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" "https://host.docker.internal:$IPORT$1"; }   # 추론 서버는 https(서비스 TLS 사이드카, step-ca 발급). 이름은 인증서 이름 host.docker.internal
 inpy() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;sys.stdout.write(urllib.request.urlopen('http://127.0.0.1:8080'+sys.argv[1],timeout=5).read().decode())" "$2"; }   # 샌드박스 접근 (b): 컨테이너 안에서 자기 포트를 부른다
 inpy_code() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request,urllib.error
 try:
     r=urllib.request.urlopen('http://127.0.0.1:8080'+sys.argv[1],timeout=5); print(r.status, r.read().decode())
 except urllib.error.HTTPError as e:
     print(e.code, e.read().decode())" "$2"; }
-no_doors() { local bad; bad=$("$DOCKER" ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | tr -d '\r' | grep -- '->' | grep -v "^${PROJECT}-gateway-1 "); [ -z "$bad" ] || { echo "gateway 밖에서 호스트 포트를 게시한 제품 컨테이너: $bad"; return 1; }; echo "호스트 포트를 게시한 제품 컨테이너는 gateway 뿐이다 (시험용 문 0)"; }
+no_doors() { local bad; bad=$("$DOCKER" ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | tr -d '\r' | grep -- '->' | grep -v "^${PROJECT}-gateway-1 " | grep -v "^${PROJECT}-step-ca-1 "); [ -z "$bad" ] || { echo "gateway 밖에서 호스트 포트를 게시한 제품 컨테이너: $bad"; return 1; }; echo "호스트 포트를 게시한 제품 컨테이너는 gateway 뿐이다 (시험용 문 0)"; }
 chk "샌드박스: 제품에 시험용 문이 없다 (호스트 포트는 gateway 뿐, 실행 중 컨테이너 기준)" no_doors
 chk "샌드박스: 제품 compose 정적 점검 (시험용 포트·가짜 백엔드·compose.test.yaml 없음)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_no_test_doors.py"
 for n in gateway question-authoring release-gate ops-feedback-ingest model-registry dataset-store survey-service; do
@@ -301,8 +316,8 @@ for n in gateway question-authoring release-gate ops-feedback-ingest model-regis
   [ "$n" = gateway ] && continue   # gateway /readyz 는 survey-service 를 반영한다(아래에서 따로)
   chk "/readyz $n (컨테이너 안에서)" inpy "$n" /readyz
 done
-chk "/healthz model-serving (추론 서버, 별도 프로젝트)" getj "$IPORT" /healthz
-chk "/readyz model-serving (추론 서버, 별도 프로젝트)" getj "$IPORT" /readyz
+chk "/healthz model-serving (추론 서버, 별도 프로젝트, https)" getinf /healthz
+chk "/readyz model-serving (추론 서버, 별도 프로젝트, https)" getinf /readyz
 survey_noactive() { local o; o=$(inpy_code survey-service /readyz); case "$o" in 503*no_active_release*) echo "활성 릴리스가 없어 503 no_active_release (정상: 아직 게이트에 PASS 릴리스가 없다)";; *) echo "기대와 다름: $o" | cut -c1-200; return 1;; esac; }
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
 gw_mirrors() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' --cacert "$W/gateway-ca.crt" "https://127.0.0.1:$PGWS/readyz"); echo "$o" | grep -q '\[503\]' && ! echo "$o" | grep -q 'survey' && echo "gateway /readyz 는 survey-service 를 반영한다: 활성 릴리스 전 503, 본문에 내부 정보 없음 ($o)"; }
@@ -357,7 +372,7 @@ for s in survey-service question-authoring ops-feedback-ingest release-gate; do 
 tcp_blocked() { ! tcp "$@"; }
 chk "차단: model-registry -> postgres" tcp_blocked model-registry postgres 5432
 chk "차단: 호스트에 postgres 포트 게시 없음" bash -c "[ -z \"\$($DOCKER port ${PROJECT}-postgres-1)\" ]"
-chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "http://host.docker.internal:$IPORT/healthz"
+chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "https://host.docker.internal:$IPORT/healthz"
 chk "도달: 추론 서버 -> 제품 입구(게이트웨이 TLS, 게이트웨이 CA 검증, I4 번들 읽기의 운영 경로 D72)" reachu model-serving "$GWTLS/healthz"
 chk "차단: 추론 서버 -> question-authoring (제품 내부 이름으로는 닿지 않는다)" blocked model-serving question-authoring
 chk "도달: question-authoring -> ops-feedback-ingest (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback-ingest
@@ -391,7 +406,7 @@ if [ "$UPONLY" = 1 ]; then
   sect ""; finish; [ "$FAILS" = 0 ]; exit $?
 fi
 STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-$WORKSPACE/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
+SSL_CERT_FILE="$W/pki/root_ca.crt" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-$WORKSPACE/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/gateway-ca.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 # 단계별 상태(steps.json)를 항목 상태표에 올린다: '단계 N' 이름으로 뒤 항목이 선행으로 쓴다. 단계 안의 SKIP 은 SKIP 개수에 더한다
 if [ -f "$W/work/steps.json" ]; then
@@ -462,7 +477,7 @@ PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 복구 뒤 게이트웨이를 �
 PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
 NEED+=("복구 후 서비스 기동")
 chk_dep "단계 1~8" "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
-  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
+  SSL_CERT_FILE="$W/pki/root_ca.crt" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
 
 fi
 if has_s9 rollback; then
