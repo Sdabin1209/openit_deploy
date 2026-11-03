@@ -64,7 +64,7 @@ class Compose(unittest.TestCase):
             self.assertNotIn("ports", S[n], n)
         for net in ("auth", "db-keycloak"):
             self.assertTrue(C["networks"][net].get("internal"), net)
-        self.assertEqual(S["keycloak"]["networks"], ["auth", "db-keycloak", "pki"]); self.assertEqual(S["oauth2-proxy"]["networks"], ["auth", "pki"])
+        self.assertEqual(S["keycloak"]["networks"], ["auth", "db-keycloak"]); self.assertEqual(S["oauth2-proxy"]["networks"], ["auth"])
         self.assertIn("auth", S["gateway"]["networks"])
         self.assertIn("db-keycloak", S["postgres"]["networks"])
 
