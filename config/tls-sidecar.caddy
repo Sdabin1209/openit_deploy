@@ -5,8 +5,8 @@
 	skip_install_trust
 	persist_config off   # 읽기 전용 루트에서 autosave 를 쓰지 않는다
 	auto_https disable_redirects
-	acme_ca https://step-ca:9000/acme/acme/directory
-	acme_ca_root /etc/openit/pki/root_ca.crt
+	acme_ca {$STEP_CA_ACME_URL:https://step-ca:9000/acme/acme/directory}
+	acme_ca_root {$STEP_CA_ROOT:/etc/openit/pki/root_ca.crt}
 	storage file_system /data/caddy
 	servers {
 		trusted_proxies static private_ranges   # 게이트웨이(같은 사설망)가 붙인 X-Forwarded-* 를 지우지 않는다

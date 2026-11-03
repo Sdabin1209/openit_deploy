@@ -66,6 +66,8 @@ networks:
     internal: true
   db-keycloak:   # keycloak <-> postgres 만
     internal: true
+  db-reload:   # postgres-reload <-> postgres 만
+    internal: true
   db-survey:
     internal: true
   db-qa:
@@ -257,33 +259,34 @@ services:
     networks: [pki]
     depends_on:
       step-ca: {condition: service_healthy}
-  postgres-cert-init:   # postgres 서버 인증서를 처음 한 번 받는 일회성 잡(postgres 가 시작하기 전에 파일이 있어야 한다). 갱신은 postgres-cert
-    restart: "no"
+  postgres-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
+    restart: unless-stopped
     image: ${STEP_CA_IMAGE:?locks/images.lock}
-    user: "0:0"   # 왜 root: 새 볼륨 루트가 root 소유라 비루트는 쓸 수 없다. 권한은 cap_drop ALL 에 CHOWN(키 파일의 그룹을 postgres 그룹으로)만 더한다. 키는 root 소유 0640 + 그룹 999(postgres 가 허용하는 형태)
+    user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    cap_add: ["CHOWN"]
-    environment: {STEPPATH: /tmp}
     read_only: true
     tmpfs: ["/tmp"]
     group_add: *secretgid
-    entrypoint: ["sh", "-c", "step ca certificate postgres /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --san postgres --not-after 24h --force >/dev/null && chgrp 999 /pg-tls/server.crt /pg-tls/server.key && chmod 640 /pg-tls/server.key"]
+    mem_limit: 64m   # 측정 안 함(시작값)
+    cpus: 0.25
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    environment: {STEPPATH: /tmp}
+    entrypoint: ["sh", "-c", "while true; do step ca certificate postgres /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --san postgres --not-after 24h --force >/dev/null 2>&1 && chmod 600 /pg-tls/server.key; sleep 28800; done"]
     secrets: [step-ca-password]
     volumes: ["pg-tls:/pg-tls", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
+    healthcheck: {test: ["CMD", "test", "-s", "/pg-tls/server.key"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
-  postgres-cert:   # postgres 서버 인증서(24시간 수명)를 8시간마다 다시 받고 postgres 에 reload(SIGHUP)를 보낸다(pid 공유; 수명의 1/3 마다 갱신하는 관례)
+  postgres-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
     restart: unless-stopped
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
-    user: "0:0"   # postgres-cert-init 과 같다. KILL: postgres(uid 999)에게 reload 신호를 보낸다
-    pid: "service:postgres"
+    image: ${POSTGRES_IMAGE:?locks/images.lock}
+    user: "999:999"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    cap_add: ["CHOWN", "KILL"]
-    environment: {STEPPATH: /tmp}
     read_only: true
     tmpfs: ["/tmp"]
     group_add: *secretgid
@@ -291,10 +294,10 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    entrypoint: ["sh", "-c", "while true; do sleep 28800; step ca certificate postgres /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --san postgres --not-after 24h --force >/dev/null 2>&1 && chgrp 999 /pg-tls/server.crt /pg-tls/server.key && chmod 640 /pg-tls/server.key && kill -HUP 1; done"]
-    secrets: [step-ca-password]
-    volumes: ["pg-tls:/pg-tls", "pki-root:/etc/openit/pki:ro"]
-    networks: [pki]
+    entrypoint: ["sh", "-c", "while true; do sleep 28860; PGPASSWORD=$$(cat /run/secrets/postgres-password) psql -qAt 'host=postgres user=postgres dbname=postgres sslmode=verify-full sslrootcert=/etc/openit/pki/root_ca.crt' -c 'select pg_reload_conf()' >/dev/null; done"]
+    secrets: [postgres-password]
+    volumes: ["pki-root:/etc/openit/pki:ro"]
+    networks: [db-reload]
     depends_on:
       postgres: {condition: service_healthy}
   survey-service-tls:   # survey-service 의 TLS 사이드카(ADR 0060): https://survey-service 으로 받는다
@@ -358,7 +361,7 @@ services:
       - ${CONFIG_DIR:-./config}/postgres/pg_hba.conf:/etc/openit/pg_hba.conf:ro   # 네트워크 접속은 TLS 만(ADR 0060)
       - pg-tls:/etc/openit/pg-tls:ro   # step-ca 발급 서버 인증서·키(postgres-cert-init)
     tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-survey, db-qa, db-ops, db-gate, db-keycloak]
+    networks: [db-survey, db-qa, db-ops, db-gate, db-keycloak, db-reload]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
     # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
     #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
@@ -395,7 +398,7 @@ services:
       - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     depends_on:
-      postgres-cert-init: {condition: service_completed_successfully}
+      postgres-cert: {condition: service_healthy}
     healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
@@ -575,8 +578,9 @@ services:
       OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"   # 발급자(iss)는 밖에 보이는 주소이고 서버끼리는 내부 주소로 부른다: 주소를 직접 준다
       OAUTH2_PROXY_OIDC_ISSUER_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit
       OAUTH2_PROXY_LOGIN_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit/protocol/openid-connect/auth
-      OAUTH2_PROXY_REDEEM_URL: http://keycloak:8080/auth/realms/openit/protocol/openid-connect/token
-      OAUTH2_PROXY_OIDC_JWKS_URL: http://keycloak:8080/auth/realms/openit/protocol/openid-connect/certs
+      OAUTH2_PROXY_PROVIDER_CA_FILES: /etc/openit/pki/root_ca.crt   # keycloak 사이드카 인증서를 step-ca 루트로 검증(ADR 0060)
+      OAUTH2_PROXY_REDEEM_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/token
+      OAUTH2_PROXY_OIDC_JWKS_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/certs
       OAUTH2_PROXY_REDIRECT_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/oauth2/callback
       OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
       OAUTH2_PROXY_UPSTREAMS: static://202
@@ -837,8 +841,6 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env
     environment: *gate_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
-      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: *gate_secrets
     volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]
     networks: [release, db-gate]

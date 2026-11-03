@@ -27,6 +27,13 @@ if ! "$DOCKER" volume inspect "$V" >/dev/null 2>&1; then
   UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
   "$DOCKER" run --rm --network none --user 0 --cap-drop ALL --cap-add CHOWN -v "$V:/data" "$UTIL" chown 10001:10001 /data >/dev/null || die "gateway-data 볼륨 소유자 설정 실패"
 fi
+# pg-tls 볼륨(postgres 서버 인증서·키, ADR 0060)도 같은 이유로 postgres 의 uid(999)가 쓸 수 있어야 한다
+V="${P}_pg-tls"
+if ! "$DOCKER" volume inspect "$V" >/dev/null 2>&1; then
+  "$DOCKER" volume create --label "com.docker.compose.project=$P" --label "com.docker.compose.volume=pg-tls" "$V" >/dev/null
+  UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
+  "$DOCKER" run --network none --user 0 --cap-drop ALL --cap-add CHOWN --rm -v "$V:/data" "$UTIL" chown 999:999 /data >/dev/null || die "pg-tls 볼륨 소유자 설정 실패"
+fi
 # R7: 컨테이너에 주입하는 환경과 배치하는 설정을 기동 전에 계약(SurveyServiceEnv, OpsFeedbackServerEnv, QuestionAuthoringDeployInterface, OpsFeedbackJobConfig)으로 검증한다. 어기면 기동하지 않는다(값은 출력하지 않는다)
 CFGJ=$(mktemp); CFGE=$(mktemp); trap 'rm -f "$CFGJ" "$CFGE"' EXIT
 # compose 설정을 못 읽으면(필수 변수 누락 등) 그 사유가 계약 점검의 JSON 오류에 묻히지 않게 먼저 보인다
