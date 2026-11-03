@@ -10,7 +10,8 @@
 		trusted_proxies static private_ranges   # 게이트웨이(같은 사설망)가 붙인 X-Forwarded-* 를 지우지 않는다
 	}
 }
-https://{$TLS_NAME} {
+# 같은 호스트에서 localhost 로 부르는 점검(인증서 SAN 에 localhost 가 있을 때)도 이 사이트가 받는다. Host 가 어느 사이트와도 맞지 않으면 Caddy 는 본문 없는 200 을 돌려줘 점검이 헛통과한다(4차 E2E)
+https://{$TLS_NAME}, https://{$TLS_ALT_NAME:localhost} {
 	tls /certs/tls.crt /certs/tls.key
 	reverse_proxy {$TLS_UPSTREAM:127.0.0.1:8080}
 }

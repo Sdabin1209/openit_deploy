@@ -302,7 +302,7 @@ abort_if_failed
 cn() { if [ "$1" = model-serving ]; then echo "$INF-model-serving-1"; else echo "${PROJECT}-$1-1"; fi; }   # 컨테이너 이름: model-serving 은 제품이 아니라 추론 서버 프로젝트의 것이다
 echo "  Docker가 배정한 호스트 포트: gateway=$PGW(평문) gateway-tls=$PGWS 추론서버=$IPORT (제품의 다른 서비스는 호스트 포트가 없다)"
 getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
-getinf() { curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" "https://localhost:$IPORT$1"; }   # 호스트에서는 localhost 로 부른다: 인증서 SAN 에 host.docker.internal 과 localhost 가 함께 있다(토큰·인증서에 --san). 컨테이너 쪽 호출자는 host.docker.internal 그대로
+getinf() { local o; o=$(curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" "https://localhost:$IPORT$1") || return 1; [ -n "$o" ] || { echo "본문이 비었다(사이드카가 Host 를 못 맞췄다?)"; return 1; }; printf "%s" "$o"; }   # 호스트에서는 localhost 로 부른다: 인증서 SAN 에 host.docker.internal 과 localhost 가 함께 있다(토큰·인증서에 --san). 컨테이너 쪽 호출자는 host.docker.internal 그대로
 inpy() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;sys.stdout.write(urllib.request.urlopen('http://127.0.0.1:8080'+sys.argv[1],timeout=5).read().decode())" "$2"; }   # 샌드박스 접근 (b): 컨테이너 안에서 자기 포트를 부른다
 inpy_code() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request,urllib.error
 try:
