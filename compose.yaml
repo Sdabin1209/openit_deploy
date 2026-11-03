@@ -26,7 +26,6 @@ x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공�
   cap_drop: ["ALL"]
   entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(측정함). 인증서가 갱신되면(<서비스>-cert 의 renew 데몬) 60초 안에 caddy reload
   read_only: true
-  group_add: *secretgid   # 설정(configs)을 읽는 모든 서비스에 둔다(ADR 0054 점검). 사이드카는 비밀이 아니라 공개 설정만 읽는다
   tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
   mem_limit: 64m   # 측정 안 함(시작값)
   cpus: 0.25
@@ -43,7 +42,6 @@ x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증�
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
   read_only: true
-  group_add: *secretgid   # 설정(configs)을 읽는 모든 서비스에 둔다(ADR 0054 점검). 사이드카는 비밀이 아니라 공개 설정만 읽는다
   tmpfs: ["/tmp"]
   environment: {STEPPATH: /tmp}
   mem_limit: 64m   # 측정 안 함(시작값)
