@@ -3,7 +3,7 @@
 all:
   vars:
     placement_scheme: https
-    placement_ports: {postgres: 15432, keycloak: 18080, ops-feedback-ingest: 18081, release-gate: 18082}
+    placement_ports: {step-ca: 9000, postgres: 15432, keycloak: 18080, ops-feedback-ingest: 18081, release-gate: 18082}
   hosts:
     data-1:
       ansible_host: 10.0.0.11

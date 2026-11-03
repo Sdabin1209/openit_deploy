@@ -13,8 +13,8 @@ scrape_configs:
     static_configs: [{targets: ['node-exporter:9100']}]
   - job_name: probe-healthz # 살아 있음. gateway 평문 포트 /healthz 는 상류와 무관한 정적 200(Caddyfile)
     metrics_path: /probe
-    params: {module: [http_2xx]}
-    static_configs: [{targets: ['http://gateway:8080/healthz']}]
+    params: {module: [http_2xx_gateway]}   # 게이트웨이 루트로 검증하는 https 프로브(ADR 0060)
+    static_configs: [{targets: ['https://gateway:8443/healthz']}]
     relabel_configs: &blackbox_relabel
       - {source_labels: [__address__], target_label: __param_target}
       - {source_labels: [__param_target], target_label: instance}

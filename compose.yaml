@@ -18,25 +18,39 @@ x-hardening: &hardening
 
 x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0023-compose-resource-limits.md)
 
-x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공식 이미지(GATEWAY_IMAGE 와 같은 digest). 앱의 네트워크 네임스페이스에 붙어(network_mode: service:<앱>) step-ca 에서 ACME 로 서비스 이름 인증서를 받고 TLS 를 끝내 127.0.0.1 의 앱으로 넘긴다
+x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공식 이미지(GATEWAY_IMAGE 와 같은 digest). 앱의 네트워크 네임스페이스에 붙어(network_mode: service:<앱>) <서비스>-cert 가 step-ca 에서 받은 파일 인증서로 TLS 를 끝내 127.0.0.1 의 앱으로 넘긴다(ACME 도전이 아니다: 서버를 나눠도 사이드카 -> step-ca 경로 하나면 된다)
   image: ${GATEWAY_IMAGE:?locks/images.lock}
-  user: "65532:65532"   # 왜: 비루트. ACME 검증이 80/443 으로 오므로 사이드카가 그 포트를 열어야 하고, 추가 capability 대신 앱(네임스페이스 소유자)의 sysctl net.ipv4.ip_unprivileged_port_start=0 을 쓴다
+  user: "1000:1000"   # 왜 1000: <서비스>-cert(step 사용자)가 쓴 키 파일(0600)을 읽어야 한다. 443 은 추가 capability 대신 앱(네임스페이스 소유자)의 sysctl net.ipv4.ip_unprivileged_port_start=0 이 연다
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
-  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(Operation not permitted, 측정함). 사본은 파일 권한이 없다. 443 은 앱 네임스페이스의 sysctl 이 연다
+  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(측정함). 인증서가 갱신되면(<서비스>-cert 의 renew 데몬) 60초 안에 caddy reload
   read_only: true
-  tmpfs: ["/tmp:exec", "/data:uid=65532,gid=65532"]   # 인증서는 24시간짜리라 재기동 때 다시 받는다(저장 불필요)
+  tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
   mem_limit: 64m   # 측정 안 함(시작값)
   cpus: 0.25
   pids_limit: 64
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
   configs: [{source: tls-sidecar, target: /etc/caddy/Caddyfile}]
-  volumes: [pki-root:/etc/openit/pki:ro]
-  healthcheck: {test: ["CMD", "nc", "-z", "127.0.0.1", "443"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
+  healthcheck: {test: ["CMD", "nc", "-z", "127.0.0.1", "443"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}
+
+x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증서 볼륨(/home/step 에 마운트해 소유자 상속)에 쓴다
+  restart: unless-stopped
+  image: ${STEP_CA_IMAGE:?locks/images.lock}
+  user: "1000:1000"
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  tmpfs: ["/tmp"]
+  environment: {STEPPATH: /tmp}
+  mem_limit: 64m   # 측정 안 함(시작값)
+  cpus: 0.25
+  pids_limit: 64
+  logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+  networks: [pki]
+  healthcheck: {test: ["CMD", "test", "-s", "/home/step/tls.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
   depends_on:
-    step-ca: {condition: service_healthy}
-    pki-root: {condition: service_completed_successfully}
+    pki-tokens: {condition: service_completed_successfully}
 
 x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 curl 없음)
   interval: 15s
@@ -85,6 +99,18 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   datasets-data:  # dataset-store: 학습 데이터셋(DatasetManifest + files/). 쓰기는 dataset-store 서버만(D49: 이웃은 볼륨이 아니라 HTTP). 백업 대상(ADR 0032)
   gateway-data:   # gateway(Caddy)의 내부 CA 루트와 발급 인증서(/data/caddy/pki). 비밀키가 들어 있어 백업·유출에 주의
   pki-ca:         # step-ca: 루트·중간 키(암호화됨)와 DB. **비밀 키가 있다. 백업 대상(루트 키 분실 = 모든 인증서 재발급, 사람 보관: docs/runbook.md PKI 절)**
+  pki-tokens:     # 일회용 토큰(OTT). 5분 안에 쓰이지 않으면 무효
+  certs-survey-service:
+  certs-question-authoring:
+  certs-ops-feedback-ingest:
+  certs-release-gate:
+  certs-model-serving:
+  certs-model-registry:
+  certs-dataset-store:
+  certs-admin-console:
+  certs-kiosk-frontend:
+  certs-keycloak:
+  certs-oauth2-proxy:
   pki-root:       # 루트 인증서(공개)만. 모든 호출자가 읽기 전용으로 마운트한다
   pg-tls:         # postgres 서버 인증서·키(step-ca 발급, 24시간 갱신)
   pg-data:        # postgres: 모든 데이터베이스(survey, qa, ops_log, ops_failure, gate). 백업은 볼륨 복사가 아니라 scripts/pg-backup.sh(pg_dump)
@@ -273,20 +299,19 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
-    group_add: *secretgid
     mem_limit: 64m   # 측정 안 함(시작값)
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "while true; do step ca certificate postgres /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --san postgres --not-after 24h --force >/dev/null 2>&1 && chmod 600 /pg-tls/server.key; sleep 28800; done"]
-    secrets: [step-ca-password]
-    volumes: ["pg-tls:/pg-tls", "pki-root:/etc/openit/pki:ro"]
+    entrypoint: ["sh", "-c", "[ -s /pg-tls/server.crt ] || step ca certificate postgres /pg-tls/server.crt /pg-tls/server.key --token \"$$(cat /tokens/postgres.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /pg-tls/server.key; exec step ca renew --daemon --force --expires-in 12h /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["pg-tls:/pg-tls", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     healthcheck: {test: ["CMD", "test", "-s", "/pg-tls/server.key"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
   postgres-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
     restart: unless-stopped
     image: ${POSTGRES_IMAGE:?locks/images.lock}
@@ -306,50 +331,144 @@ services:
     networks: [db-reload]
     depends_on:
       postgres: {condition: service_healthy}
+  pki-tokens:   # 서비스마다 일회용 토큰(OTT, 수명 5분 = step 기본)을 발급해 pki-tokens 볼륨에 둔다. 프로비저너 비밀번호는 이 잡만 읽는다(인증서 컨테이너는 읽지 않는다). 다른 서버의 서비스는 이 토큰 파일을 배치 도구가 그 서버에 전달한다
+    restart: "no"
+    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    user: "1000:1000"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    group_add: *secretgid
+    environment: {STEPPATH: /tmp}
+    entrypoint: ["sh", "-c", "for n in survey-service question-authoring ops-feedback-ingest release-gate model-serving model-registry dataset-store admin-console kiosk-frontend keycloak oauth2-proxy postgres; do step ca token $$n --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt > /home/step/$$n.ott || exit 1; done; chmod 644 /home/step/*.ott"]
+    secrets: [step-ca-password]
+    volumes: ["pki-tokens:/home/step", "pki-root:/etc/openit/pki:ro"]
+    networks: [pki]
+    depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+  survey-service-cert:   # survey-service 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate survey-service /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/survey-service.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-survey-service:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  question-authoring-cert:   # question-authoring 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate question-authoring /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/question-authoring.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-question-authoring:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  ops-feedback-ingest-cert:   # ops-feedback-ingest 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate ops-feedback-ingest /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/ops-feedback-ingest.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-ops-feedback-ingest:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  release-gate-cert:   # release-gate 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate release-gate /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/release-gate.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-release-gate:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  model-serving-cert:   # model-serving 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate model-serving /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/model-serving.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-model-serving:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  model-registry-cert:   # model-registry 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate model-registry /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/model-registry.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-model-registry:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  dataset-store-cert:   # dataset-store 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate dataset-store /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/dataset-store.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-dataset-store:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  admin-console-cert:   # admin-console 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate admin-console /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/admin-console.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-admin-console:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  kiosk-frontend-cert:   # kiosk-frontend 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate kiosk-frontend /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/kiosk-frontend.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-kiosk-frontend:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  keycloak-cert:   # keycloak 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate keycloak /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/keycloak.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-keycloak:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+  oauth2-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+    <<: *certinit
+    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate oauth2-proxy /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/oauth2-proxy.ott)\" --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"]
+    volumes: ["certs-oauth2-proxy:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   survey-service-tls:   # survey-service 의 TLS 사이드카(ADR 0060): https://survey-service 으로 받는다
     <<: *tlssidecar
     network_mode: "service:survey-service"
     environment: {TLS_NAME: survey-service, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-survey-service:/certs:ro"]
+    depends_on:
+      survey-service-cert: {condition: service_healthy}
   question-authoring-tls:   # question-authoring 의 TLS 사이드카(ADR 0060): https://question-authoring 으로 받는다
     <<: *tlssidecar
     network_mode: "service:question-authoring"
     environment: {TLS_NAME: question-authoring, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-question-authoring:/certs:ro"]
+    depends_on:
+      question-authoring-cert: {condition: service_healthy}
   ops-feedback-ingest-tls:   # ops-feedback-ingest 의 TLS 사이드카(ADR 0060): https://ops-feedback-ingest 으로 받는다
     <<: *tlssidecar
     network_mode: "service:ops-feedback-ingest"
     environment: {TLS_NAME: ops-feedback-ingest, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-ops-feedback-ingest:/certs:ro"]
+    depends_on:
+      ops-feedback-ingest-cert: {condition: service_healthy}
   release-gate-tls:   # release-gate 의 TLS 사이드카(ADR 0060): https://release-gate 으로 받는다
     <<: *tlssidecar
     network_mode: "service:release-gate"
     environment: {TLS_NAME: release-gate, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-release-gate:/certs:ro"]
+    depends_on:
+      release-gate-cert: {condition: service_healthy}
   model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): https://model-serving 으로 받는다
     <<: *tlssidecar
     network_mode: "service:model-serving"
     environment: {TLS_NAME: model-serving, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-model-serving:/certs:ro"]
+    depends_on:
+      model-serving-cert: {condition: service_healthy}
   model-registry-tls:   # model-registry 의 TLS 사이드카(ADR 0060): https://model-registry 으로 받는다
     <<: *tlssidecar
     network_mode: "service:model-registry"
     environment: {TLS_NAME: model-registry, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-model-registry:/certs:ro"]
+    depends_on:
+      model-registry-cert: {condition: service_healthy}
   dataset-store-tls:   # dataset-store 의 TLS 사이드카(ADR 0060): https://dataset-store 으로 받는다
     <<: *tlssidecar
     network_mode: "service:dataset-store"
     environment: {TLS_NAME: dataset-store, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-dataset-store:/certs:ro"]
+    depends_on:
+      dataset-store-cert: {condition: service_healthy}
   admin-console-tls:   # admin-console 의 TLS 사이드카(ADR 0060): https://admin-console 으로 받는다
     <<: *tlssidecar
     network_mode: "service:admin-console"
     environment: {TLS_NAME: admin-console, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-admin-console:/certs:ro"]
+    depends_on:
+      admin-console-cert: {condition: service_healthy}
   kiosk-frontend-tls:   # kiosk-frontend 의 TLS 사이드카(ADR 0060): https://kiosk-frontend 으로 받는다
     <<: *tlssidecar
     network_mode: "service:kiosk-frontend"
     environment: {TLS_NAME: kiosk-frontend, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-kiosk-frontend:/certs:ro"]
+    depends_on:
+      kiosk-frontend-cert: {condition: service_healthy}
   keycloak-tls:   # keycloak 의 TLS 사이드카(ADR 0060): https://keycloak 으로 받는다
     <<: *tlssidecar
     network_mode: "service:keycloak"
     environment: {TLS_NAME: keycloak, TLS_UPSTREAM: "127.0.0.1:8080"}
+    volumes: ["certs-keycloak:/certs:ro"]
+    depends_on:
+      keycloak-cert: {condition: service_healthy}
   oauth2-proxy-tls:   # oauth2-proxy 의 TLS 사이드카(ADR 0060): https://oauth2-proxy 으로 받는다
     <<: *tlssidecar
     network_mode: "service:oauth2-proxy"
     environment: {TLS_NAME: oauth2-proxy, TLS_UPSTREAM: "127.0.0.1:4180"}
+    volumes: ["certs-oauth2-proxy:/certs:ro"]
+    depends_on:
+      oauth2-proxy-cert: {condition: service_healthy}
   postgres:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
     <<: *hardening
     mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -444,6 +563,7 @@ services:
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
+      GATEWAY_PROBE_SITE: ${GATEWAY_PROBE_SITE:-gateway:8443}   # 감시(blackbox)가 게이트웨이를 https 로 부르는 사이트 이름. internal 모드에서는 내부 CA 가 이 이름 인증서도 발급한다. files/acme 모드에서는 그 인증서가 이 이름을 포함하거나 감시 대상을 GATEWAY_HOSTS 의 이름으로 바꾼다
       GATEWAY_TLS_MODE: ${GATEWAY_TLS_MODE:-internal}   # 공개 입구 인증서 출처: internal(기본)|files|acme (ADR 0060)
       GATEWAY_ACME_EMAIL: ${GATEWAY_ACME_EMAIL:-internal@invalid.example}
       GATEWAY_ACME_DIRECTORY: ${GATEWAY_ACME_DIRECTORY:-https://acme-v02.api.letsencrypt.org/directory}
@@ -459,6 +579,7 @@ services:
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
+    environment: {KIOSK_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -471,6 +592,7 @@ services:
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
 
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
+    environment: {ADMIN_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     <<: *hardening
     mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -500,6 +622,7 @@ services:
       SURVEY_RESULT_READER_TOKEN_FILE: /run/secrets/survey-result-reader   # 결과 조회 API(result-reader 역할, 병원/의사 시스템용: 게이트웨이에 열지 않는다)
       SURVEY_RISK_SOURCE_TOKEN_FILE: /run/secrets/survey-risk-source       # 위험 신호 입력 API(risk-source 역할, 감지기용: 게이트웨이에 열지 않는다)
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
+      SURVEY_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &survey_secrets [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
@@ -530,6 +653,7 @@ services:
       QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
       QA_FAILURES_TOKEN_FILE: /run/secrets/ops-read-question-authoring
       QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
+      QA_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
@@ -562,6 +686,7 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt
       KC_DB_USERNAME: keycloak
       KC_BOOTSTRAP_ADMIN_USERNAME: kcadmin
+      KC_HTTP_HOST: 127.0.0.1          # 사이드카에게만 닿는다(ADR 0060). 공식 옵션 http-host
       KC_HTTP_ENABLED: "true"          # TLS 는 gateway 가 끝낸다(내부망 auth 안에서만 평문)
       KC_HTTP_RELATIVE_PATH: /auth     # 계약 밖 deploy 규약: gateway 가 /auth/* 를 Keycloak 으로 보낸다
       KC_HOSTNAME: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다}/auth   # 밖에 보이는 주소(토큰의 iss). 뒷길(oauth2-proxy -> keycloak)은 요청 주소를 쓴다
@@ -603,7 +728,7 @@ services:
       OAUTH2_PROXY_REDEEM_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/token
       OAUTH2_PROXY_OIDC_JWKS_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/certs
       OAUTH2_PROXY_REDIRECT_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/oauth2/callback
-      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_HTTP_ADDRESS: 127.0.0.1:4180   # 사이드카에게만 닿는다(ADR 0060)
       OAUTH2_PROXY_UPSTREAMS: static://202
       OAUTH2_PROXY_REVERSE_PROXY: "true"
       OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
@@ -664,6 +789,7 @@ services:
       OPS_REVIEW_TOKENS_FILE: /run/secrets/ops-review-tokens
       OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-app-dsn           # 원본 Trace 로그(PostgreSQL, D85). 앱 계정(DML만, L08)
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn   # 실패 사례(PostgreSQL). 앱 계정
+      OPS_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-app-dsn, db-ops-failure-app-dsn]
@@ -691,6 +817,7 @@ services:
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
       GATE_I3_TOKEN_FILE: /run/secrets/model-registry-read-release-gate
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn   # 릴리스 레지스트리는 PostgreSQL(D85). 번들 파일(releases/)은 gate-data 볼륨 그대로
+      GATE_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &gate_secrets [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
@@ -715,6 +842,7 @@ services:
     environment:
       MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/gate-read-model-serving
+      MODEL_RUNTIME_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [model-runtime-tokens, gate-read-model-serving]
@@ -736,6 +864,7 @@ services:
     environment:
       MODEL_REGISTRY_READ_TOKENS_FILE: /run/secrets/model-registry-read-tokens
       MODEL_REGISTRY_WRITE_TOKENS_FILE: /run/secrets/model-registry-write-tokens
+      MODEL_REGISTRY_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [model-registry-read-tokens, model-registry-write-tokens]
@@ -755,6 +884,7 @@ services:
     environment:
       DATASET_STORE_READ_TOKENS_FILE: /run/secrets/dataset-store-read-tokens
       DATASET_STORE_WRITE_TOKENS_FILE: /run/secrets/dataset-store-write-tokens
+      DATASET_STORE_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
       REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [dataset-store-read-tokens, dataset-store-write-tokens]

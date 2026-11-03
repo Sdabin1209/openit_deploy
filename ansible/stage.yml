@@ -12,7 +12,20 @@
   # compose 는 진행 상황을 표준 오류에 낸다. 새로 만들거나 시작했을 때만 바뀐 것으로 센다
   changed_when: "(up.stderr | default('')) is search('(Created|Started|Recreated|Starting) *$', multiline=True)"
   when: plan.stages[stage_i] | length > 0
+- name: "단계 {{ stage_i }}: 게시된 서비스의 https /readyz (지휘 기계에서, 인증서 이름 = 서비스 이름이라 --resolve 로 이름을 서버 주소에 맞춘다)"
+  ansible.builtin.command:
+    argv: "{{ ['curl', '-fsS', '--max-time', '5', '-o', '/dev/null', '--resolve', item.key ~ ':' ~ item.value ~ ':' ~ (placement_probe_address | default(ansible_host))] + (['--cacert', placement_ca_path] if placement_ca_path is defined else []) + ['https://' ~ item.key ~ ':' ~ (item.value | string) ~ '/readyz'] }}"
+  register: ready_tls
+  until: ready_tls.rc == 0
+  retries: 30
+  delay: 2
+  changed_when: false
+  delegate_to: localhost
+  when: p_scheme == 'https'
+  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'equalto', 'postgres') | list }}"
+  loop_control: {label: "{{ item.key }}"}
 - name: "단계 {{ stage_i }}: 게시된 HTTP 서비스의 /readyz (지휘 기계에서)"
+  when: p_scheme != 'https'
   ansible.builtin.uri:
     url: "{{ p_scheme }}://{{ placement_probe_address | default(ansible_host) }}:{{ item.value }}/readyz"
     status_code: 200

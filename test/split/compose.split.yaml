@@ -3,8 +3,9 @@
 x-stub: &stub
   image: ${SPLIT_IMAGE:-python:3.12-slim}   # 실제 이미지(참조 형식 그대로, 파이썬이 든 이미지)로도 돈다: SPLIT_IMAGE
   command: ["python", "/stub.py"]
-  volumes: ["${CONFIG_DIR:-./config}/stub.py:/stub.py:ro"]
-  healthcheck: {test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"], interval: 2s, timeout: 3s, retries: 15}
+  environment: {STUB_SCHEME: "${SPLIT_SCHEME:-http}"}
+  volumes: ["${CONFIG_DIR:-./config}/stub.py:/stub.py:ro", "${CONFIG_DIR:-./config}/certs:/certs:ro"]
+  healthcheck: {test: ["CMD", "python", "-c", "import urllib.request,ssl,os;urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/healthz',timeout=2,context=ssl._create_unverified_context())"], interval: 2s, timeout: 3s, retries: 15}
 secrets:
   db-survey-dsn:
     file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-dsn

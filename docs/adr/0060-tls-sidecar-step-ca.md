@@ -33,5 +33,18 @@
 - 감수하는 것: 서비스당 컨테이너 하나 증가(자원 한도는 측정 안 함, 시작값 64m/0.25cpu). step-ca 루트 키 분실 = 전 인증서 재발급이므로 `pki-ca` 볼륨은 백업·사람 보관 대상이다. 앱 포트(8080)는 같은 Docker 네트워크 안에서 여전히 닿는다(앱이 0.0.0.0 에 바인드하므로 사이드카만으로 막지 못한다): 앱의 바인드 주소 설정이 필요하면 영역에 변경 요청을 낸다(미해결).
 - `GATEWAY_TLS_MODE=internal` 은 step-ca 가 아니라 게이트웨이 내부 인증기관이다: 기본 사이트 이름(localhost, 127.0.0.1)과 사람용 이름을 step-ca 가 ACME 로 검증할 수 없다. step-ca 로 받으려면 `acme` + `GATEWAY_ACME_DIRECTORY`.
 
+## 추가 결정 (같은 U99, 후속)
+- **앱은 loopback 에 바인드한다.** 사이드카는 앱과 같은 네임스페이스라, 앱이 0.0.0.0 이면 다른 컨테이너가 앱 포트로 평문을 보낼 수 있다. 계약 v3.4.2 의 `*_HOST`(SURVEY_HOST, GATE_HOST, OPS_HOST, QA_HOST, MODEL_RUNTIME_HOST, MODEL_REGISTRY_HOST, DATASET_STORE_HOST)=127.0.0.1, Keycloak `KC_HTTP_HOST`, oauth2-proxy `--http-address` 로 막는다. 정적 시험 `test_sidecar_loopback.py`, 단독 시험에서 다른 컨테이너의 앱 포트 연결 거부를 본다. kiosk-frontend(`KIOSK_HOST`)·admin-console(`ADMIN_HOST`)은 계약 v3.4.3 부터 같은 방식이다.
+- **사이드카·step-ca 는 추가 capability 가 없다.** 포트 8443 으로는 ACME 검증(80/443 으로만 온다)을 받을 수 없어, 앱 네임스페이스의 sysctl `net.ipv4.ip_unprivileged_port_start=0` 으로 443 을 열고, 파일 권한이 붙은 바이너리는 /tmp 사본으로 실행한다(측정함).
+- **감시는 게이트웨이를 https 로 프로브한다.** 게이트웨이 사이트 목록에 `GATEWAY_PROBE_SITE`(기본 gateway:8443)를 더하고, `gateway-root` 일회성 잡이 게이트웨이 루트(내부 CA, 또는 GATEWAY_TLS_ROOT_FILE)를 공개 볼륨으로 복사해 blackbox 가 ca_file 로 쓴다.
+- **백업 저장소는 `rest:https://` 만 받는다**(restic `RESTIC_CACERT` = `BACKUP_CACERT_FILE`).
+- (위 "미해결"이던 원격 호스트 발급은 아래 토큰 방식으로 풀었다.)
+
+## 발급 방식 변경: ACME 도전 -> 일회용 토큰 + renew (같은 U99, 서버를 나누는 배치)
+- **왜 ACME 도전이 아닌가.** ACME(HTTP-01/TLS-ALPN-01)는 step-ca 가 서비스 이름의 80/443 으로 들어와 소유를 검증한다. 서버를 나누면 (a) 한 서버에 서비스가 여럿이라 고정 80/443 을 서비스마다 나눌 수 없고, (b) step-ca 가 다른 서버의 사이드카로 들어오는 경로가 필요하다. 방화벽·게시 포트 규칙이 배치마다 달라진다.
+- **결정.** step-ca 공식 방식인 JWK 프로비저너 + 일회용 토큰(OTT)을 쓴다. 지휘 쪽 `pki-tokens` 잡이 서비스마다 `step ca token <서비스 이름>` 을 발급해 볼륨에 두고(프로비저너 비밀번호는 이 잡만 읽는다), `<서비스>-cert` 컨테이너가 `step ca certificate <이름> --token` 으로 한 번 받은 뒤 `step ca renew --daemon` 이 기존 인증서(mTLS)로 갱신한다. 사이드카 Caddy 는 파일 인증서를 쓰고 갱신된 파일을 60초 안에 `caddy reload` 한다. 필요한 경로는 인증서 컨테이너 -> step-ca 하나뿐이다. postgres 서버 인증서도 같은 방식이다.
+- **이름.** 호출자는 언제나 `https://<서비스 이름>[:<게시 포트>]` 로 부른다. 다른 서버의 서비스는 그 서버를 가리키는 `extra_hosts`(`<서비스 이름>:<서버 주소>`)로 이름을 돌린다(단독 시험 `test-tls-sidecar.sh` 가 서로 다른 Docker 망 두 개로 확인: 같은 이름은 검증 성공, 다른 이름은 거부). 배치 도구가 extra_hosts 와 게시 포트를 계산하는 일은 배치 도구(placement)의 몫이다.
+- **감수.** 토큰은 5분(step 기본) 안에 써야 한다. 컨테이너를 24시간 넘게 멈췄다가 다시 시작하면(인증서 만료) `pki-tokens` 를 다시 돌려야 한다. 키 파일은 사이드카와 인증서 컨테이너가 같은 uid(1000)라 읽는다. 인증서 볼륨은 서비스마다 하나다.
+
 ## 되돌리는 조건
 인증서 발급 실패가 반복되어 서비스 가용성을 해치거나, 앱이 직접 TLS 를 지원하게 되면 사이드카를 앱 내장 TLS 로 대체하는 새 ADR 이 이 ADR 을 대체한다.

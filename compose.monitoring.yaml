@@ -52,6 +52,17 @@ services:
       - alertmanager-data:/alertmanager
     networks: [monitoring]
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"], interval: 15s, timeout: 3s, retries: 5, start_period: 10s}
+  gateway-root:   # 게이트웨이 루트 인증서(공개)를 감시가 읽을 볼륨으로 복사하는 일회성 잡. internal 모드는 Caddy 내부 CA 루트(gateway-data), 다른 모드는 GATEWAY_TLS_ROOT_FILE. root 인 이유: gateway-data 는 uid 10001 의 0700 폴더이고 새 볼륨은 root 소유다(backup-target-perms 와 같은 방식, 상시 컨테이너가 아니다)
+    restart: "no"
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    user: "0:0"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["DAC_OVERRIDE"]
+    read_only: true
+    network_mode: none
+    entrypoint: ["sh", "-c", "i=0; while [ $$i -lt 90 ]; do [ -s /gw/caddy/pki/authorities/local/root.crt ] && cp /gw/caddy/pki/authorities/local/root.crt /out/root.crt && exit 0; [ -s /override.pem ] && cp /override.pem /out/root.crt && exit 0; i=$$((i+1)); sleep 1; done; echo 게이트웨이 루트 인증서를 찾지 못했다 >&2; exit 1"]
+    volumes: ["gateway-data:/gw:ro", "gateway-root:/out", "${GATEWAY_TLS_ROOT_FILE:-./config/gateway-tls/unused.pem}:/override.pem:ro"]
   blackbox-exporter:
     <<: *monhard
     image: ${BLACKBOX_IMAGE:?locks/images.lock}
@@ -60,7 +71,9 @@ services:
     cpus: ${BLACKBOX_CPUS:-0.25}
     pids_limit: ${BLACKBOX_PIDS_LIMIT:-64}
     command: ["--config.file=/etc/blackbox/blackbox.yml"]
-    volumes: ["${CONFIG_DIR:-./config}/prometheus/blackbox.yml:/etc/blackbox/blackbox.yml:ro", "pki-root:/etc/openit/pki:ro"]
+    volumes: ["${CONFIG_DIR:-./config}/prometheus/blackbox.yml:/etc/blackbox/blackbox.yml:ro", "pki-root:/etc/openit/pki:ro", "gateway-root:/etc/openit/gateway-root:ro"]
+    depends_on:
+      gateway-root: {condition: service_completed_successfully}
     networks: [monitoring, serving]
   json-exporter:
     <<: *monhard
@@ -94,6 +107,8 @@ services:
 networks:
   monitoring:
 volumes:
+  gateway-root:   # 게이트웨이 루트 인증서(공개)만
+  gateway-data:   # compose.yaml 이 정의한다(같은 프로젝트). 읽기 전용으로만 쓴다
   pki-root:   # compose.yaml 가 정의한다(같은 프로젝트라 같은 볼륨). 루트 인증서만 있다
   prometheus-data:
   alertmanager-data:

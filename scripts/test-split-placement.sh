@@ -12,11 +12,34 @@ AP="$(dirname "$PY")/ansible-playbook"; [ -x "$AP" ] || { echo "FAIL: ansible-pl
 T=$(mktemp -d); trap 'rc=$?; if [ $rc -ne 0 ]; then for s in a b c; do docker ps -a --filter "label=com.docker.compose.project=deploy-$ID-$s" --format "{{.Names}} {{.Status}}" >&2; for n in $(docker ps -a -q --filter "label=com.docker.compose.project=deploy-$ID-$s"); do docker logs --tail 5 $n >&2 2>&1 || true; done; done; fi; [ "${SPLIT_KEEP:-0}" = 1 ] || { for s in a b c; do docker compose -p "deploy-$ID-$s" down -v --remove-orphans >/dev/null 2>&1 || true; done; rm -rf "$T" "$ROOT/build/placement/split-$$"-* 2>/dev/null; }; exit $rc' EXIT
 ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
 freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
+mkdir -p "$T/config/certs"; cp -r "$ROOT/test/split/config/." "$T/config/"
+if [ "$SCHEME" = https ]; then   # 시험 CA 와 서비스 이름(SAN)을 가진 인증서 하나. 호출자는 CA 로 이름을 검증한다
+"$PY" - "$T/config/certs" <<'PYEOF'
+import sys, datetime, ipaddress
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+d = sys.argv[1]; now = datetime.datetime.now(datetime.timezone.utc)
+def name(cn): return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+ck = ec.generate_private_key(ec.SECP256R1())
+ca = x509.CertificateBuilder().subject_name(name("split-test-ca")).issuer_name(name("split-test-ca")).public_key(ck.public_key()).serial_number(1).not_valid_before(now).not_valid_after(now + datetime.timedelta(hours=2)).add_extension(x509.BasicConstraints(ca=True, path_length=None), True).sign(ck, hashes.SHA256())
+lk = ec.generate_private_key(ec.SECP256R1())
+names = ["postgres", "keycloak", "gateway", "survey-service", "release-gate", "question-authoring"]
+leaf = x509.CertificateBuilder().subject_name(name("stub")).issuer_name(ca.subject).public_key(lk.public_key()).serial_number(2).not_valid_before(now).not_valid_after(now + datetime.timedelta(hours=2)).add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), False).sign(ck, hashes.SHA256())
+open(d + "/ca.pem", "wb").write(ca.public_bytes(serialization.Encoding.PEM))
+open(d + "/stub.crt", "wb").write(leaf.public_bytes(serialization.Encoding.PEM))
+open(d + "/stub.key", "wb").write(lk.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+PYEOF
+chmod 644 "$T/config/certs/"*
+fi
 PORT_GATE=$(freeport); PORT_QA=$(freeport); PORT_PG=$(freeport)
-mkdir -p "$T/secrets/tokens" "$T/r" ; { echo 'UTIL_IMAGE=python:3.12-slim'; [ -z "${SPLIT_IMAGE:-}" ] || echo "SPLIT_IMAGE=$SPLIT_IMAGE"; } > "$T/images.lock"   # 실제 이미지 참조는 잠금 파일(--env-file)로 준다
+mkdir -p "$T/secrets/tokens" "$T/r" ; { echo 'UTIL_IMAGE=python:3.12-slim'; echo "SPLIT_SCHEME=$SCHEME"; [ -z "${SPLIT_IMAGE:-}" ] || echo "SPLIT_IMAGE=$SPLIT_IMAGE"; } > "$T/images.lock"   # 실제 이미지 참조는 잠금 파일(--env-file)로 준다
 printf 'postgresql://survey:x@postgres:5432/survey\n' > "$T/secrets/tokens/db-survey-dsn"
 # 서버 주소: 컨테이너에서 이 PC 를 부르는 이름(host-gateway). 서버가 바뀌어도 이 값만 인벤토리에서 바뀐다
-HOSTADDR=host.docker.internal
+# 서버 주소는 IP 여야 한다(extra_hosts <서비스 이름>:<주소>). 이 PC 에서는 컨테이너가 호스트를 보는 docker 기본 브리지의 게이트웨이 주소
+HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1)   # Docker Desktop(WSL2): host.docker.internal 의 IP
+[ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')   # 그 밖의 리눅스: 기본 브리지의 게이트웨이
 PORTS_YAML="{postgres: $PORT_PG, release-gate: $PORT_GATE, question-authoring: $PORT_QA}"
 inv() { # inv <파일> <a의 서비스> <b> <c>
 cat > "$1" <<YML
@@ -24,11 +47,12 @@ all:
   vars:
     ansible_connection: local
     placement_scheme: $SCHEME
-    placement_probe_address: 127.0.0.1 # 지휘 기계(이 PC)에서 /readyz 를 보는 주소
+    placement_probe_address: 127.0.0.1 # 지휘 기계(이 PC)에서 /readyz 를 보는 주소(https 는 curl --resolve 로 이름을 맞춘다)
     placement_bind_address: 0.0.0.0    # 시험 PC 한 대라 모든 주소(실제 구성은 서버 사이 망의 사설 주소)
     placement_ports: $PORTS_YAML
     placement_compose: $ROOT/test/split/compose.split.yaml
-    placement_config_dir: $ROOT/test/split/config
+    placement_config_dir: $T/config
+    placement_ca_path: $T/config/certs/ca.pem
     placement_lock: $T/images.lock
     placement_secrets_dir: $T/secrets
   hosts:
@@ -69,30 +93,27 @@ export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" AN
 timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -30 "$T/run1.log" >&2; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
 ex() { docker exec "deploy-$ID-$1-$2-1" python -c "$3"; } # ex <서버> <서비스> <파이썬 식>
-H="import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status)"
+H="import urllib.request,ssl,os;print(urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/healthz',timeout=3,context=ssl._create_unverified_context()).status)"
 for pair in a:postgres a:keycloak a:release-gate b:survey-service b:gateway c:question-authoring; do
   [ "$(ex "${pair%%:*}" "${pair#*:}" "$H")" = 200 ] || bad "${pair#*:} 의 /healthz"; done; ok "세 묶음의 /healthz"
-C1="import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/call?env=%s',timeout=8).read().decode())"
+C1="import urllib.request,ssl,os;print(urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/call?env=%s',timeout=8,context=ssl._create_unverified_context()).read().decode())"
 r=$(ex b survey-service "${C1/\%s/SURVEY_RELEASE_READER_URL}"); [ "${r##* }" = 200 ] || bad "survey-service -> release-gate: $r"; ok "묶음 사이 호출 survey-service -> release-gate ($r)"
-case "$r" in "$SCHEME://$HOSTADDR:$PORT_GATE/"*) ok "상대 주소가 인벤토리에서 계산됨($SCHEME, 서버 주소, 게시 포트)";; *) bad "주소 계산: $r";; esac
+case "$r" in "$SCHEME://release-gate:$PORT_GATE/"*) ok "상대 주소 = $SCHEME://<서비스 이름>:<게시 포트>, 이름은 extra_hosts 가 서버 주소로 돌림";; *) bad "주소 계산: $r";; esac
 r=$(ex a release-gate "${C1/\%s/GATE_I1_URL}"); [ "${r##* }" = 200 ] || bad "release-gate -> question-authoring: $r"; ok "묶음 사이 호출 release-gate -> question-authoring, 내부 전용 네트워크의 서비스를 게시 포트로 ($r)"
 # 다른 서버의 postgres: DSN 의 호스트가 인벤토리 값으로 계산되고, 그 게시 포트에 닿는다
 DSN=$(cat "$T/r/b/secrets/tokens/db-survey-dsn")
-case "$DSN" in *"@$HOSTADDR:$PORT_PG/survey"*) ok "survey-service 의 DSN 호스트 = postgres 서버 주소와 게시 포트";; *) bad "DSN 호스트 계산";; esac
+case "$DSN" in *"@postgres:$PORT_PG/survey"*) ok "survey-service 의 DSN 호스트 = 서비스 이름 postgres + 게시 포트(extra_hosts 로 돌림)";; *) bad "DSN 호스트 계산";; esac
 case "$SCHEME" in https) case "$DSN" in *sslmode=verify-full*sslrootcert=*) ok "DSN sslmode=verify-full, sslrootcert";; *) bad "DSN 에 sslmode=verify-full 이 없다";; esac;; *) case "$DSN" in *sslmode*) bad "http 시험인데 DSN 에 sslmode";; esac;; esac
-S="import socket;socket.create_connection(('$HOSTADDR',$PORT_PG),timeout=5);print('connected')"
+S="import socket;socket.create_connection(('postgres',$PORT_PG),timeout=5);print('connected')"
 [ "$(ex b survey-service "$S")" = connected ] || bad "survey-service 가 다른 서버의 postgres 게시 포트에 닿지 않는다"; ok "survey-service -> 다른 서버의 postgres 연결(게시 포트)"
 # 서버를 넘는 기동 순서: postgres < (release-gate, question-authoring) < survey-service < gateway
 st() { docker inspect -f '{{.State.StartedAt}}' "deploy-$ID-$1-$2-1"; }
 P1=$(st a postgres); G1=$(st a release-gate); Q1=$(st c question-authoring); S1=$(st b survey-service); W1=$(st b gateway)
 [[ "$P1" < "$G1" && "$P1" < "$Q1" && "$G1" < "$S1" && "$Q1" < "$S1" && "$S1" < "$W1" ]] || bad "기동 순서가 단계를 따르지 않는다: pg=$P1 gate=$G1 qa=$Q1 survey=$S1 gw=$W1"; ok "서버를 넘는 기동 순서(postgres < gate·qa < survey < gateway)"
 grep -q "/readyz" "$T/run1.log" && ok "게시된 서비스의 /readyz 를 지휘 기계가 기다림"
-# (3) 서로 다른 네트워크: 서비스 이름으로는 닿지 않는다
-N="import socket
-try:
-    socket.getaddrinfo('release-gate',8080); print('resolved')
-except OSError: print('unreachable')"
-[ "$(ex b survey-service "$N")" = unreachable ] || bad "survey-service 가 이름으로 release-gate 를 찾았다(같은 네트워크)"; ok "묶음이 서로 다른 네트워크(이름으로 닿지 않음)"
+# 서로 다른 네트워크: 상대 서비스 이름은 같은 네트워크의 컨테이너가 아니라 extra_hosts 로 서버 주소에 돌려져 있다
+N="import socket;print(socket.getaddrinfo('release-gate',8080)[0][4][0])"
+[ "$(ex b survey-service "$N")" = "$HOSTADDR" ] || bad "survey-service 가 본 release-gate 의 주소가 서버 주소($HOSTADDR)가 아니다(같은 네트워크로 닿고 있다)"; ok "상대 서비스 이름이 서버 주소로 돌려짐(같은 네트워크가 아님)"
 [ "$(docker network ls --filter "name=deploy-$ID-" --format '{{.Name}}' | sed 's/_.*//' | sort -u | wc -l)" -ge 3 ] || bad "네트워크가 3개 미만"; ok "Docker 네트워크 3개 이상"
 # 비밀 권한 640, 다른 서버 몫은 배포되지 않는다
 M=$(stat -c %a "$T/r/b/secrets/tokens/db-survey-dsn"); [ "$M" = 640 ] || bad "비밀 파일 권한 $M"; ok "비밀 파일 640"

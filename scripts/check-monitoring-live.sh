@@ -10,7 +10,7 @@ PP=$(port_of "${P}-prometheus-1" 9090) || true; AP=$(port_of "${P}-alertmanager-
 q(){ curl -s --max-time 5 "http://127.0.0.1:$PP/api/v1/query" --data-urlencode "query=$1" | python3 -c 'import json,sys;d=json.load(sys.stdin);r=d["data"]["result"];print(r[0]["value"][1] if r else "")' 2>/dev/null; }
 want(){ local expr=$1 pred=$2 i v; for i in $(seq 1 60); do v=$(q "$expr"); [ -n "$v" ] && python3 -c "import sys;v=float(sys.argv[1]);sys.exit(0 if $pred else 1)" "$v" && { echo "  ok   $expr = $v"; return 0; }; sleep 3; done; echo "  FAIL $expr (마지막 값 '${v:-없음}', 조건 $pred)"; return 1; }
 rc=0
-want 'probe_success{instance="http://gateway:8080/healthz"}' 'v==1' || rc=1
+want 'probe_success{instance="https://gateway:8443/healthz"}' 'v==1' || rc=1
 want 'probe_success{instance="https://release-gate/readyz"}' 'v==1' || rc=1
 # 외부 추론 모드(D72)에서는 제품 안에 model-serving 이 없다: 이 구성의 감시 대상 http://model-serving:8080 은 존재하지 않으므로 기대하지 않는다(추론 서버 감시는 그 서버 쪽 몫).
 if [ -n "$("$DOCKER" ps -q --filter "name=^${P}-model-serving-1$")" ]; then want 'probe_success{instance="https://model-serving/readyz"}' 'v==1' || rc=1
