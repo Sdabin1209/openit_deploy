@@ -333,7 +333,7 @@ services:
       postgres: {condition: service_healthy}
   pki-tokens:   # 서비스마다 일회용 토큰(OTT, 수명 5분 = step 기본)을 발급해 pki-tokens 볼륨에 둔다. 프로비저너 비밀번호는 이 잡만 읽는다(인증서 컨테이너는 읽지 않는다). 다른 서버의 서비스는 이 토큰 파일을 배치 도구가 그 서버에 전달한다
     restart: "no"
-    image: ${STEP_--ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt_IMAGE:?locks/images.lock}
+    image: ${STEP_CA_IMAGE:?locks/images.lock}
     user: "1000:1000"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
