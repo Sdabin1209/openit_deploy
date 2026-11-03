@@ -31,4 +31,12 @@ chmod 700 "$T/s/tokens"; chmod 600 "$T/s/tokens/postgres-password"; bash "$HERE/
 t "gen-secrets 재실행이 모드를 바로잡는다" 0 "OK" bash "$HERE/check-secret-perms.sh" "$T/s"
 # 값이 출력에 없다
 t "출력에 비밀 값이 없다" 1 "" bash -c "bash '$HERE/check-secret-perms.sh' '$T/s' | grep -F \"\$(cat '$T/s/tokens/postgres-password')\""
+# 다른 호스트의 추론 서버가 읽는 토큰 파일도 640 + 그룹이다(RUNTIME.md R6.3): 644 로 누구나 읽게 하지 않는다
+for nm in model-runtime-tokens gate-read-model-serving external-inference; do
+  [ "$(DEPLOY_NO_DOCKER=1 bash -c 'source "$1/lib.sh"; secret_mode "$2"' _ "$HERE" "$nm")" = 640 ] && echo "  PASS secret_mode $nm = 640" || { echo "  FAIL secret_mode $nm 가 640 이 아니다"; F=$((F+1)); }; N=$((N+1))
+  rm -rf "$T/s2"; mkdir -p "$T/s2/tokens"; chmod 700 "$T/s2" "$T/s2/tokens"; echo x > "$T/s2/tokens/$nm"; chmod 644 "$T/s2/tokens/$nm"
+  t "$nm 가 644 이면 FAIL" 1 "$nm 모드 644" bash "$HERE/check-secret-perms.sh" "$T/s2"
+  chmod 640 "$T/s2/tokens/$nm"; chgrp "${SECRETS_GID:-$(id -g)}" "$T/s2/tokens/$nm" 2>/dev/null
+  t "$nm 가 640 + 그룹이면 통과" 0 "OK 비밀 파일 권한" bash "$HERE/check-secret-perms.sh" "$T/s2"
+done
 echo; [ $F = 0 ] && echo "통과: 비밀 권한 자체 시험 $N건" || { echo "실패: $F건 ($N건)"; exit 1; }

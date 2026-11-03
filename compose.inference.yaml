@@ -118,14 +118,14 @@ services:
     read_only: true
     tmpfs: ["/tmp"]
     environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "[ -s /home/step/tls.crt ] || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
+    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
     secrets: [tls-token]
     extra_hosts: ["host.docker.internal:host-gateway"]   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험). 다른 서버면 배치 값이 step-ca 주소를 준다
     configs:
       - {source: pki-root, target: /etc/openit/pki/root_ca.crt}
     volumes: ["certs:/home/step"]
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    healthcheck: {test: ["CMD", "test", "-s", "/home/step/tls.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
+    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/home/step/tls.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
   model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): 파일 인증서로 TLS 를 끝내 127.0.0.1:8080 으로 넘긴다
     group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}"]   # L02(ADR 0054): 비밀 파일은 640 + 이 그룹이다. 누구나 읽게(644) 하지 않는다
     image: ${INFERENCE_SIDECAR_IMAGE:?INFERENCE_SIDECAR_IMAGE(Caddy 이미지, digest 참조)가 필요하다}

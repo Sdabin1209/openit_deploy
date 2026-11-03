@@ -7,7 +7,7 @@
 # PostgreSQL: tokens/postgres-password(슈퍼유저), tokens/db-<이름>-password(서비스 계정 암호), tokens/db-<이름>-dsn(접속 문자열 한 줄,
 #   postgresql://<계정>:<암호>@postgres:5432/<데이터베이스>). 이름 규칙은 docs/RUN.md 4-1-1. DSN 은 암호가 바뀌면 같이 갱신된다.
 #   --db-only : PostgreSQL 비밀만 만든다(caddy 이미지가 필요 없다. 시험·개발용).  사용: gen-secrets.sh [--db-only] [디렉터리]
-# 권한: 디렉터리 700(호스트 다른 사용자 차단). 파일은 secret_mode(lib.sh): 컨테이너가 읽는 것은 644, 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본)은 600.
+# 권한: 디렉터리 700(호스트 다른 사용자 차단). 파일은 secret_mode(lib.sh): 컨테이너가 읽는 것은 640 + 그룹(추론 서버용 토큰도 같다, RUNTIME.md R6.3), 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본)은 600.
 #   컨테이너가 읽는 파일을 600 으로 만들지 못하는 이유: compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않아(측정함),
 #   uid 10001 인 컨테이너가 호스트 사용자 소유 600 파일을 읽지 못한다. docs/adr/0022-secret-file-permissions.md. 이미 있는 파일의 모드도 실행할 때마다 바로잡는다.
 #   --test-fixtures : 시험 자격(시험 기기 e2e, e2e-a/b/c)을 **더한다**. E2E·데모·자체 시험만 넘긴다. 사람 계정은 비밀 파일이 아니라 Keycloak 에 있다(U82, ADR 0057): 시험 사용자는 E2E·데모가 Keycloak 에 만든다(scripts/idp-test-users.sh).
