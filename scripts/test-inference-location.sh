@@ -160,7 +160,7 @@ socket.getaddrinfo = lambda h, *a, **k: _orig(addr if h == "host.docker.internal
 jar = SB.oidc_login(base, "trainer-e2e", open(pwf).read().strip(), ca=ca)
 print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session")))
 PY
-) || bail "승인자 OIDC 로그인에 실패했다"
+) 2>"$W/oidc.err" || { tail -4 "$W/oidc.err" | sed "s/^/    /" >&2; bail "승인자 OIDC 로그인에 실패했다"; }
 [ -n "$HCOOKIE" ] || bail "승인자 세션 쿠키가 비었다"
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
