@@ -24,7 +24,6 @@ all:
   vars:
     ansible_connection: local
     placement_scheme: $SCHEME
-    placement_check_contracts: false   # 대역 서비스는 영역 계약이 없다(실제 구성은 기본 true)
     placement_probe_address: 127.0.0.1 # 지휘 기계(이 PC)에서 /readyz 를 보는 주소
     placement_bind_address: 0.0.0.0    # 시험 PC 한 대라 모든 주소(실제 구성은 서버 사이 망의 사설 주소)
     placement_ports: $PORTS_YAML
@@ -55,22 +54,28 @@ PORTS_YAML=$SAVE
 "$PY" scripts/placement.py render ansible/inventory.example.yml --host core-1 --out "$T/one" >/dev/null
 grep -qx 'services: {}' "$T/one/compose.placement.yaml" || bad "서버 1개 배치의 override 가 비어 있지 않다"; ok "서버 1개 배치 = 기존 동작(override 없음)"
 "$PY" scripts/placement.py validate ansible/inventory.multi.example.yml >/dev/null && ok "서버 2개 예시 인벤토리(게시 포트 명시) 통과"
+# 계약 점검(제품 compose.yaml + 실제 config/*.env + 실제 비밀 이름): 서버 2개 예시의 서버별 환경을 check_config_contracts 로 검증한다. compose 해석에 필요한 digest 가 잠금에 없으면 자리 값만 더한 임시 잠금을 쓴다(이미지는 받지 않는다)
+{ cat "$ROOT/locks/images.lock"; for n in DATASET_STORE MODEL_REGISTRY MODEL_SERVING; do grep -q "^${n}_DIGEST" "$ROOT/locks/images.lock" || echo "${n}_DIGEST=sha256:$(printf '0%.0s' {1..64})"; done; echo "DEPLOY_REGISTRY=127.0.0.1:5000"; } > "$T/contract.lock"
+for h in data-1 app-1; do
+  "$PY" scripts/placement.py render ansible/inventory.multi.example.yml --host $h --out "$T/c-$h" >/dev/null
+  ( export DEPLOY_LOCK="$T/contract.lock" SECRETS_DIR="$T/secrets" COMPOSE_EXTRA="$T/c-$h/compose.placement.yaml"; source scripts/lib.sh
+    dc deploy config --format json > "$T/c-$h/config.json" 2>"$T/c-$h/err" && "$DEPLOY_PY" -W ignore scripts/check_config_contracts.py --compose-json "$T/c-$h/config.json" >/dev/null 2>"$T/c-$h/err2" ) || { cat "$T/c-$h/err" "$T/c-$h/err2" 2>/dev/null | tail -5 >&2; bad "서버 $h 의 환경이 계약을 어긴다"; }
+  ok "서버 $h 몫의 환경이 계약을 따른다(check_config_contracts, 제품 compose)"
+done
 # 3묶음: postgres 와 survey-service 가 다른 서버, 내부 전용 네트워크의 postgres·question-authoring 을 다른 서버가 부른다
 inv "$T/inv.yml" "$A" "$B" "$C"
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose test/split/compose.split.yaml >/dev/null && ok "인벤토리 점검 통과"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home"
 timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -30 "$T/run1.log" >&2; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
-# 기동 직후 첫 서버 사이 호출은 느릴 수 있다(실제 이미지에서 측정됨: 첫 호출이 대역 서비스의 3초 제한에 걸림). 성공할 때까지 최대 5번
-exr() { local i o; for i in 1 2 3 4 5; do o=$(ex "$@") && [ "${o##* }" = 200 ] && { echo "$o"; return 0; }; sleep 2; done; echo "$o"; }
 ex() { docker exec "deploy-$ID-$1-$2-1" python -c "$3"; } # ex <서버> <서비스> <파이썬 식>
 H="import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status)"
 for pair in a:postgres a:keycloak a:release-gate b:survey-service b:gateway c:question-authoring; do
   [ "$(ex "${pair%%:*}" "${pair#*:}" "$H")" = 200 ] || bad "${pair#*:} 의 /healthz"; done; ok "세 묶음의 /healthz"
 C1="import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/call?env=%s',timeout=8).read().decode())"
-r=$(exr b survey-service "${C1/\%s/SURVEY_RELEASE_READER_URL}"); [ "${r##* }" = 200 ] || bad "survey-service -> release-gate: $r"; ok "묶음 사이 호출 survey-service -> release-gate ($r)"
+r=$(ex b survey-service "${C1/\%s/SURVEY_RELEASE_READER_URL}"); [ "${r##* }" = 200 ] || bad "survey-service -> release-gate: $r"; ok "묶음 사이 호출 survey-service -> release-gate ($r)"
 case "$r" in "$SCHEME://$HOSTADDR:$PORT_GATE/"*) ok "상대 주소가 인벤토리에서 계산됨($SCHEME, 서버 주소, 게시 포트)";; *) bad "주소 계산: $r";; esac
-r=$(exr a release-gate "${C1/\%s/GATE_I1_URL}"); [ "${r##* }" = 200 ] || bad "release-gate -> question-authoring: $r"; ok "묶음 사이 호출 release-gate -> question-authoring, 내부 전용 네트워크의 서비스를 게시 포트로 ($r)"
+r=$(ex a release-gate "${C1/\%s/GATE_I1_URL}"); [ "${r##* }" = 200 ] || bad "release-gate -> question-authoring: $r"; ok "묶음 사이 호출 release-gate -> question-authoring, 내부 전용 네트워크의 서비스를 게시 포트로 ($r)"
 # 다른 서버의 postgres: DSN 의 호스트가 인벤토리 값으로 계산되고, 그 게시 포트에 닿는다
 DSN=$(cat "$T/r/b/secrets/tokens/db-survey-dsn")
 case "$DSN" in *"@$HOSTADDR:$PORT_PG/survey"*) ok "survey-service 의 DSN 호스트 = postgres 서버 주소와 게시 포트";; *) bad "DSN 호스트 계산";; esac
