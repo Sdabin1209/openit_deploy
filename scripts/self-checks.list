@@ -60,3 +60,4 @@ ops-feedback DB 계정 분리 배선 (서버·잡은 앱 접속 문자열과 ver
 게이트웨이가 X-Openit-User 와 함께 X-Openit-Roles 를 붙이고 지운다, QA_USER_ROLES 삭제 (계약 CONVENTIONS 6절 3.4.0) :: python3 "$DEPLOY_ROOT/scripts/test_gateway_roles_header.py"
 IdP(Keycloak·oauth2-proxy) 배선 정적 시험 (realm 그룹=계약 역할 8개, 자가 등록·이벤트 365일, 클라이언트 설정, 비밀은 *_FILE, 호스트 포트 없음, 위조 헤더 삭제, master realm 닫힘, U82·ADR 0057) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_idp_wiring.py"
 compose 일회성 서비스(restart no + service_completed_successfully)는 up --wait 가 성공으로 본다, 실패(1)면 up 이 실패한다 (D7b, ops-feedback-migrate 와 같은 모양) :: bash "$DEPLOY_ROOT/scripts/test-compose-oneshot-wait.sh"
+임시 잠금(E2E)이 compose 가 요구하는 외부 이미지를 모두 옮기고 dc 가 셸 환경 덮어쓰기를 지운다 (D9c: KEYCLOAK_IMAGE·OAUTH2_PROXY_IMAGE 누락으로 E2E 기동이 막혔다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_lock_images.py"

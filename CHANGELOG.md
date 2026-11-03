@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 D9c: E2E 임시 잠금에 keycloak·oauth2-proxy 이미지가 빠져 기동이 막힘
+- 원인: `scripts/e2e.sh` 가 E2E 임시 잠금(`$W/images.lock`)에 옮기는 외부 이미지 목록에 `KEYCLOAK_IMAGE`·`OAUTH2_PROXY_IMAGE` 가 없어 `docker compose config` 가 "required variable OAUTH2_PROXY_IMAGE is missing" 로 빈 출력을 냈고, up.sh 의 계약 점검이 그 빈 출력을 읽다 JSONDecodeError 로 죽었다(오류가 가려졌다). 고침: 목록에 두 이미지를 더하고 `lib.sh` 의 `dc` 가 셸의 같은 이름 변수를 지우게 했다. `up.sh` 는 compose 설정을 못 읽으면 먼저 그 사유(compose 의 오류 마지막 5줄)를 낸다. 시험 `test_e2e_lock_images.py`(compose 가 요구하는 외부 이미지가 임시 잠금에 모두 복사되는지).
+- 참고: `DEPLOY_SKIP_CHECK_ALL=1` 로 점검을 건너뛰고 E2E 환경 변수가 이미 내보내진 셸에서 자체 점검 묶음의 check-all 항목이 돌면 ops-feedback 시험이 E2E 의 OPS_* 변수 때문에 실패한다(정상 경로에서는 사전 점검이 먼저 돌고 그 항목은 건너뛴다).
+
 ## wo-450 D9b: check-exposure 가 authenticated 를 해석, 예외 0
 - 계약 v3.4.0(392d9b9)의 `Exposure.auth.kind` `authenticated`(로그인한 계정이면 역할과 무관)를 지원한다: 인증은 보지만 역할 매처가 없는 입구(`/admin/*`)는 authenticated 로 읽는다. 영역 선언 수정 셋(admin-console 0585b99, survey-service 99c4055, model-lab a751f0e)을 반영해 `config/exposure-known-diffs.json` 을 비웠다(예외 0). 시험 `test_check_exposure.py` 에 authenticated 3건.
 

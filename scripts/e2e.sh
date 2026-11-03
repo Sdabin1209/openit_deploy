@@ -192,7 +192,7 @@ else chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/s
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
 bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
-grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES|RESTIC|REST_SERVER|PROMETHEUS|ALERTMANAGER|BLACKBOX|NODE_EXPORTER|JSON_EXPORTER)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
+grep -E '^(GATEWAY|REGISTRY|UTIL|POSTGRES|RESTIC|REST_SERVER|PROMETHEUS|ALERTMANAGER|BLACKBOX|NODE_EXPORTER|JSON_EXPORTER|KEYCLOAK|OAUTH2_PROXY)_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"
 # 서버 밖 append-only 백업 저장소를 흉내 내는 컨테이너(compose.backup-target.yaml)의 인증 파일: 서버 자격(백업이 쓰는 것)을 만든다. 시험 폴더 안, 시험이 끝나면 지워진다
 BKPW="e2e-backup-target-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 printf '%s\n%s\n' "$BKPW" "$BKPW" | "$DOCKER" run --rm -i "$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n' | sed 's/^/srv:/' > "$W/backup-target.htpasswd"; echo >> "$W/backup-target.htpasswd"; chmod 644 "$W/backup-target.htpasswd"
