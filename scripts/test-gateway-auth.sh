@@ -189,6 +189,9 @@ chkhdr "위조한 X-Openit-User·X-Openit-Roles 는 인증 결과로 덮어쓴�
 chkhdr "위조한 X-Auth-Request-* 는 믿지 않는다(인증 결과로 덮어쓴다)" staff-e2e staff staff-e2e GET /v1/staff/alerts -H "X-Auth-Request-User: attacker" -H "X-Auth-Request-Preferred-Username: attacker" -H "X-Auth-Request-Groups: admin,operator"
 chk401 "위조한 X-Auth-Request-* 만으로는 인증되지 않는다" Bearer - GET /v1/staff/alerts -H "X-Auth-Request-User: staff-e2e" -H "X-Auth-Request-Preferred-Username: staff-e2e" -H "X-Auth-Request-Groups: staff"
 chkhdr "화면 경로(/admin/)에는 신원 머리글을 붙이지 않는다(정적 화면)" "" "" staff-e2e GET /admin/
+# 본문 상한(8MiB)을 Content-Length 로 넘는 요청은 상류로 보내기 전에 413 이다(상류가 TLS 사이드카일 때 본문 읽기 오류가 503 으로 올라왔다, 4차 E2E 5a)
+AN=$((AN+1)); big=$(head -c 9437184 /dev/zero | curl -sk -o /dev/null -m 30 -w '%{http_code}' -X POST --data-binary @- -H 'Content-Type: text/plain' "https://127.0.0.1:$CP/v1/materials?question_set_id=x" 2>/dev/null || true)
+if [ "$big" = 413 ]; then echo "  PASS 8MiB 초과 본문은 413"; else echo "  FAIL 8MiB 초과 본문이 $big (기대 413)"; FAILS=$((FAILS+1)); fi
 # E2E 와 같은 기대표·같은 스크립트(scripts/check-unauth-expectations.sh, test/gateway-oidc/unauth-expectations.txt): 인증 없는 요청의 응답
 AN=$((AN+1)); if out=$(bash "$DEPLOY_ROOT/scripts/check-unauth-expectations.sh" "https://127.0.0.1:$CP" --insecure 2>&1); then echo "  PASS $out"; else echo "  FAIL 인증 없는 요청 기대표: $out"; FAILS=$((FAILS+1)); fi
 # 기기 토큰 경로(공개 API): 토큰이 없거나 틀리면 401 + WWW-Authenticate: Bearer (RFC 6750 3절)
