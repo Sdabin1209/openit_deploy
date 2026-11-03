@@ -36,7 +36,7 @@ waitfor(){ local t=$1 what=$2; shift 2; local i; for i in $(seq 1 "$t"); do v=$(
 v=$(waitfor 40 probe curl -s "http://127.0.0.1:$PP/-/ready") && ok "Prometheus ready" || { no "Prometheus가 준비되지 않았다"; dc_mon logs --tail 15 prometheus | tail -15; exit 1; }
 [ "$(curl -s --max-time 5 "http://127.0.0.1:$AP/-/healthy" -o /dev/null -w '%{http_code}')" = 200 ] && ok "Alertmanager healthy" || no "Alertmanager"
 w(){ waitfor 50 x bash -c "$(declare -f q); PP=$PP; r=\$(q '$1'); [ \"\$r\" = '$2' ] && echo \$r"; }
-w 'probe_success{instance="http://gateway:8080/healthz"}' 1 >/dev/null && ok "탐침: gateway /healthz 성공" || no "탐침 gateway /healthz"
+w 'probe_success{instance="https://gateway:8443/healthz"}' 1 >/dev/null && ok "탐침: gateway /healthz 성공" || no "탐침 gateway /healthz"
 w 'probe_success{instance="https://release-gate/readyz"}' 1 >/dev/null && ok "탐침: release-gate /readyz 성공" || no "탐침 release-gate /readyz"
 w 'probe_success{instance="https://model-serving/readyz"}' 1 >/dev/null && ok "탐침: model-serving /readyz 성공" || no "탐침 model-serving /readyz"
 w 'up{job="survey-service-metrics"}' 1 >/dev/null && ok "수집: survey-service /metrics (monitoring 네트워크)" || no "survey-service /metrics 수집"

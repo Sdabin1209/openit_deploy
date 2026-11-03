@@ -55,7 +55,7 @@ http://:8080 {
 	}
 }
 # HTTPS 사이트(컨테이너 8443). 사이트 이름 목록은 GATEWAY_HOSTS(기본 localhost, 127.0.0.1). 운영에서는 병원 내부 도메인을 적는다(예: kiosk.hospital.local:8443).
-{$GATEWAY_HOSTS:localhost:8443, 127.0.0.1:8443} {
+{$GATEWAY_HOSTS:localhost:8443, 127.0.0.1:8443}, {$GATEWAY_PROBE_SITE:gateway:8443} {   # 뒤의 사이트 이름은 같은 서버의 감시가 부르는 이름이다(GATEWAY_PROBE_SITE, ADR 0060)
 	import gateway_tls   # 인증서 출처는 GATEWAY_TLS_MODE(internal|files|acme)가 고른다: config/gateway-tls/<모드>.caddy. 이 파일을 손으로 고치지 않는다
 	import role_matchers
 	import kiosk_devices
