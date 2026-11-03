@@ -62,6 +62,8 @@ bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_LOCK")
 cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 644 "$W/inference-token"
 export INFERENCE_TOKEN_FILE="$W/inference-token"
+# 다른 호스트의 추론 서버는 이 호스트의 비밀 폴더를 읽지 않는다: 지휘 쪽이 서버 호스트에 두는 토큰 파일을 컨테이너(uid 10001)가 읽을 수 있게 644 사본으로 준다(compose.inference.yaml 머리말). 비밀 폴더의 원본은 640 + 그룹(L02)이라 uid 10001 이 읽지 못한다(SecretError, 측정함)
+cp "$SECRETS_DIR/tokens/model-runtime-tokens" "$W/inf-tokens"; cp "$SECRETS_DIR/tokens/gateway-inference-token" "$W/inf-release-token"; chmod 644 "$W/inf-tokens" "$W/inf-release-token"
 INF_IMAGE=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST" )
 BRIDGE_GW=$("$DOCKER" network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null | tr -d '\r')
 PLACEHOLDER="https://host.docker.internal:1"   # 서버가 뜨기 전 자리표시 주소(아무 포트도 열지 않는다). 서버가 뜬 뒤 실제 주소로 바꿔 survey-service 만 다시 만든다
@@ -71,7 +73,7 @@ reach() {
 }
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   # 이 변수들은 "다른 호스트" 쪽 compose 의 환경이다(제품 쪽에는 없다). fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험 전용 표시, model-runtime ADR 0009)
-  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gateway-inference-token" \
+  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$W/inf-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/inf-release-token" \
   INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$SCP" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott" \
   INFERENCE_CA_FILE="$W/gateway-ca.crt" RELEASE_URL="https://host.docker.internal:$GWPORT" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
