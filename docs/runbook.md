@@ -213,7 +213,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 `scripts/gen-secrets.sh`가 `secrets/`에 만든다(없는 것만). 이미지·리포지토리에 넣지 않는다. 서비스는 compose `secrets:`로 자기 파일만 `/run/secrets`에 받는다(D84, [RUN.md](RUN.md) "비밀 파일").
 
-**권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 644(폴더 700 안; compose가 파일 secrets의 모드를 바꾸지 못하기 때문, [adr/0022-secret-file-permissions.md](adr/0022-secret-file-permissions.md)). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
+**권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 640 + 그룹 `SECRETS_GID`(기본 `id -g`)이고 서비스는 `group_add` 로 읽는다([adr/0054-secret-files-640-group-add.md](adr/0054-secret-files-640-group-add.md); 다른 호스트로 옮기면 그 호스트의 `SECRETS_GID` 로 `gen-secrets.sh` 를 다시 돌린다). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
 
 **직원 계정은 조직이 준다(ADR 0039).** 이 프로젝트는 직원 계정을 발급하지 않고 암호를 만들지 않는다. 조직(병원 정보부서 등)이 `secrets/staff-accounts.conf`(`<계정> <역할[,역할]> <bcrypt 해시>`, 형식은 `config/staff-accounts.conf.example`)를 주고, 게이트웨이는 그 해시를 그대로 Caddy 파일에 넣는다. 해시 만드는 법은 예시 파일 머리말(`docker run --rm -it caddy:2-alpine caddy hash-password`, 암호는 화면에 안 보이고 인자에도 안 남는다). 평문 암호 파일(`account-<id>-password`)은 E2E·데모 시험 계정(`*-e2e`, `gen-secrets.sh --test-fixtures`)만 쓴다.
 

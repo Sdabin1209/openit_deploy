@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 D3 (L02): 비밀 파일 640 + group_add (ADR 0054)
+- 컨테이너가 읽는 비밀은 640 + 그룹 `SECRETS_GID`(기본 `id -g`), 모든 서비스·잡에 `group_add`. 추론 서버 호스트로 옮기는 세 파일만 644. `gen-secrets.sh`·`restore-secrets.sh`·게이트웨이 설정 쓰기가 모드와 그룹을 맞추고 `check-secret-perms.sh` 가 어긋남을 잡는다.
+- 시험: `test-secret-perms.sh`(14건), 새 `test-secret-group-read.sh`(uid 10001 컨테이너가 group_add 로 읽고 없으면 못 읽는다, 모든 서비스에 group_add). 전체 서비스 기동은 E2E 에서만 확인된다(돌리지 않음).
+
 ## wo-450 D2 (U71): 소요 시간 지표 수집과 경보 (ADR 0053)
 - `compose.yaml` 에 `monitoring` 네트워크, survey-service·model-serving 이 붙는다(겹침 파일은 서비스를 건드리지 않는다). Prometheus 수집 작업 `survey-service-metrics`, `model-serving-metrics`(외부 추론 모드는 빈 목록). gateway 는 `/metrics` 를 열지 않는다.
 - 경보: 환자 턴 p95 > 2초 5분, 모델 호출 p95 합 > 1.5초, next_item 덮어쓰기 1시간 증가, 수집 대상 down. `promtool test rules` 경계 시험과 변이 시험, 동적 수집 시험 추가.

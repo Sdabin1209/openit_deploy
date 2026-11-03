@@ -67,7 +67,7 @@ gw_write_accounts() {
     if [ -n "$body" ]; then printf '(authenticate) {\n\tbasic_auth {\n%s\t}\n}\n' "$body"
     else printf '(authenticate) {\n\tbasic_auth {\n\t\tno-accounts %s\n\t}\n}\n' '$2a$14$ThFaB0RPIv4Ii/aJyV6gh.W8lng/OIREUbKeN9IcdNx5hY6xdg5Im'; fi
     printf '(role_matchers) {\n%s}\n' "$roles_body"; } > "$D/gateway-accounts.caddy"
-  chmod 644 "$D/gateway-accounts.caddy"
+  chmod 640 "$D/gateway-accounts.caddy"; chgrp "${SECRETS_GID:-$(id -g)}" "$D/gateway-accounts.caddy" 2>/dev/null || true
 }
 gw_devices() { ls "$1/tokens" 2>/dev/null | sed -n 's/^kiosk-device-\(.*\)$/\1/p'; }
 gw_write_devices() {
@@ -77,10 +77,10 @@ gw_write_devices() {
   { printf '# 생성됨(scripts/gen-secrets.sh, scripts/kiosk-add-device.sh). 기기 토큰 목록이라 비밀이다. 직접 고치지 않는다.\n'
     if [ -n "$vals" ]; then printf '(kiosk_devices) {\n\t@device_ok expression {http.request.header.Authorization} in [%s]\n}\n' "$vals"
     else printf '(kiosk_devices) {\n\t@device_ok expression false\n}\n'; fi; } > "$D/gateway-devices.caddy"
-  chmod 644 "$D/gateway-devices.caddy"
+  chmod 640 "$D/gateway-devices.caddy"; chgrp "${SECRETS_GID:-$(id -g)}" "$D/gateway-devices.caddy" 2>/dev/null || true
   # survey-service 의 기기별 토큰 표(SURVEY_KIOSK_DEVICE_TOKENS, 줄마다 device_id=토큰, D88/U8): gateway 는 검증한 기기 토큰을 그대로 survey 에 넘기고(Authorization 을 바꾸지 않는다)
   # survey 가 같은 표로 검증해 세션을 만든 기기만 그 세션에 접근하게 한다. 비밀이고 기존 secrets 규칙(폴더 700, 파일 644)을 따른다. 기기를 바꾸면 survey-service 도 다시 시작해야 표가 바뀐다.
   : > "$D/tokens/survey-kiosk-device-tokens"
   for id in $(gw_devices "$D"); do [ -s "$D/tokens/kiosk-device-$id" ] && printf '%s=%s\n' "$id" "$(tr -d '\r\n' < "$D/tokens/kiosk-device-$id")" >> "$D/tokens/survey-kiosk-device-tokens"; done
-  chmod 644 "$D/tokens/survey-kiosk-device-tokens"
+  chmod 640 "$D/tokens/survey-kiosk-device-tokens"; chgrp "${SECRETS_GID:-$(id -g)}" "$D/tokens/survey-kiosk-device-tokens" 2>/dev/null || true
 }

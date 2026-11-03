@@ -10,6 +10,6 @@ if [ -d "$DST" ] && [ -n "$(ls -A "$DST" 2>/dev/null)" ]; then die "대상 폴�
 ( umask 077; mkdir -p "$DST" ); DST=$(readlink -f "$DST"); chmod 700 "$DST"
 backup_restic -v "$DST:/target" -- restore "$SNAP:/secrets" --host secrets --target /target --verify >/dev/null || die "restic restore 실패 (스냅샷 $SNAP)"
 chmod 700 "$DST" "$DST/tokens" 2>/dev/null || true
-for f in "$DST"/tokens/*; do [ -f "$f" ] && chmod "$(secret_mode "$(basename "$f")")" "$f"; done   # 모드 바로잡기(값은 건드리지 않는다)
-for f in "$DST"/gateway-*.caddy; do [ -f "$f" ] && chmod 644 "$f"; done; [ ! -d "$DST/kiosk-config" ] || chmod -R u=rwX,go= "$DST/kiosk-config"
+for f in "$DST"/tokens/*; do [ -f "$f" ] && secret_fix "$f"; done   # 모드 바로잡기(값은 건드리지 않는다)
+for f in "$DST"/gateway-*.caddy; do [ -f "$f" ] && { chmod 640 "$f"; chgrp "$SECRETS_GID" "$f" 2>/dev/null || true; }; done; [ ! -d "$DST/kiosk-config" ] || chmod -R u=rwX,go= "$DST/kiosk-config"
 echo "복구: $DST ($(find "$DST" -type f | wc -l)개 파일). 이어서: bash scripts/check-secret-perms.sh $DST"

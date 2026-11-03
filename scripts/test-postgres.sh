@@ -22,7 +22,7 @@ fp() { sql "$1" "$1" "SELECT md5(string_agg(id::text || v, ',' ORDER BY id)) || 
 export P DOCKER SECRETS_DIR PG_DBS; export -f pg_container C pw sql fp
 echo "== 비밀 생성 (--db-only)"
 ok "gen-secrets.sh --db-only" bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --db-only "$SECRETS_DIR"
-ok "DSN 파일이 규칙대로 (survey/qa/ops_log/ops_failure/gate)" bash -c 'for a in survey qa ops_log ops_failure gate; do n=${a//_/-}; f="$1/tokens/db-$n-dsn"; [[ "$(cat $f)" == "postgresql://$a:$(cat $1/tokens/db-$n-password)@postgres:5432/$a" ]] || exit 1; [ "$(stat -c %a $f)" = 644 ]; done' _ "$SECRETS_DIR"
+ok "DSN 파일이 규칙대로 (survey/qa/ops_log/ops_failure/gate)" bash -c 'for a in survey qa ops_log ops_failure gate; do n=${a//_/-}; f="$1/tokens/db-$n-dsn"; [[ "$(cat $f)" == "postgresql://$a:$(cat $1/tokens/db-$n-password)@postgres:5432/$a" ]] || exit 1; [ "$(stat -c %a $f)" = 640 ]; done' _ "$SECRETS_DIR"
 echo "== 기동·초기화"
 dc "$P" config --format json > "$W/cfg.json" 2>"$W/cfg.err"; ok "compose 해석: 호스트 포트 없음, 환경 변수에 암호 없음, 네트워크 db-* 넷만" python3 -I -c 'import json,sys;s=json.load(open(sys.argv[1]))["services"]["postgres"];assert not s.get("ports");assert sorted(s["networks"])==["db-gate","db-ops","db-qa","db-survey"];assert all("PASSWORD" not in k or k.endswith("_FILE") for k in s["environment"])' "$W/cfg.json"
 dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up.log" 2>&1; ok "postgres 가 healthy 로 기동" test -n "$(C)"

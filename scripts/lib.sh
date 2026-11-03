@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # deploy 스크립트 공통. source 해서 쓴다.
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 비밀 파일의 그룹 gid(L02, ADR 0054): 컨테이너가 읽는 비밀은 640 이고 이 그룹이 읽는다. compose 의 x-hardening 이 group_add 로 컨테이너 프로세스에 이 gid 를 더한다.
+# 기본은 비밀을 만드는 호스트 사용자의 주 그룹(id -g): 만들 때 root 가 필요 없다. 다른 호스트로 옮기면 그 호스트의 값으로 SECRETS_GID 를 준다
+export SECRETS_GID="${SECRETS_GID:-$(id -g)}"
 WORKSPACE="$(cd "$DEPLOY_ROOT/.." && pwd)"
 # 작업 트리(git worktree, deploy/build/wt-*)에서는 부모가 deploy/build 라 이웃 영역이 없다: 본 리포(git 공통 폴더의 부모)의 부모를 워크스페이스로 쓴다
 [ -f "$DEPLOY_ROOT/.git" ] && { _c=$(git -C "$DEPLOY_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && WORKSPACE="$(cd "$_c/../.." && pwd)"; }; unset _c
@@ -144,14 +147,20 @@ pg_container() {
 }
 PG_DBS="survey qa ops_log ops_failure gate"   # 데이터베이스 = 계정 이름(config/postgres/initdb/10-roles.sh 의 기본값과 같다)
 
-# 비밀 파일 모드(docs/adr/0022-secret-file-permissions.md). compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않는다
-# (측정함: 호스트 소유자 600 파일은 컨테이너 uid 10001 이 읽지 못한다). 그래서 컨테이너가 읽는 파일(compose.yaml 의 secrets/configs 가 가리키는 이름)은 644(폴더 700 안),
-# 호스트에서만 쓰는 파일(계정 암호·해시, 기기 토큰 원본)은 600 이다. secret_mode <이름> -> 600|644
+# 비밀 파일 모드(docs/adr/0022-secret-file-permissions.md, 0054). compose 의 파일 secrets/configs 는 호스트 소유자·그룹·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않는다.
+# 컨테이너가 읽는 파일(compose.yaml 의 secrets/configs 가 가리키는 이름)은 640 + 파일 그룹 SECRETS_GID, 컨테이너는 group_add 로 그 그룹을 더해 읽는다(0054). 폴더는 700.
+# 다른 호스트로 옮겨 읽는 추론 서버용 파일 셋(model-runtime-tokens, gate-read-model-serving, external-inference)은 그 호스트의 gid 를 모르므로 644 다.
+# 호스트에서만 쓰는 파일(계정 암호·해시, 기기 토큰 원본)은 600 이다. secret_mode <이름> -> 600|640|644
 secret_mode() {
   local n=$1
   if [ -z "${_MOUNTED_SECRETS+x}" ]; then
     _MOUNTED_SECRETS=" $(sed -n 's|^[[:space:]]*file:[[:space:]]*${SECRETS_DIR:-./secrets}/\(tokens/\)\{0,1\}\([A-Za-z0-9._-]*\).*|\2|p' "$DEPLOY_ROOT/compose.yaml" | tr '\n' ' ') "
   fi
-  # compose.inference.yaml / compose.external-inference.yaml 이 가리키는 파일은 다른 호스트로 옮겨져 컨테이너가 읽는다(이름 고정)
-  case "$_MOUNTED_SECRETS $n" in *" $n "*" $n") echo 644;; *) case "$n" in model-runtime-tokens|gate-read-model-serving|external-inference) echo 644;; *) echo 600;; esac;; esac
+  case "$n" in model-runtime-tokens|gate-read-model-serving|external-inference) echo 644; return;; esac
+  case "$_MOUNTED_SECRETS" in *" $n "*) echo 640;; *) echo 600;; esac
+}
+# 비밀 파일 하나의 모드와 그룹을 규칙대로 맞춘다: secret_fix <파일> [이름]. 640 이면 그룹을 SECRETS_GID 로 바꾼다(속한 그룹이면 root 없이 된다. 못 바꾸면 이유를 낸다)
+secret_fix() {
+  local f=$1 n=${2:-$(basename "$1")} m; m=$(secret_mode "$n"); chmod "$m" "$f"
+  if [ "$m" = 640 ] && [ "$(stat -c %g "$f")" != "$SECRETS_GID" ]; then chgrp "$SECRETS_GID" "$f" 2>/dev/null || echo "경고: $n 의 그룹을 $SECRETS_GID 로 바꾸지 못했다(그 그룹의 구성원이어야 한다)" >&2; fi
 }

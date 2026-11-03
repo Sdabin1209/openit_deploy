@@ -5,6 +5,8 @@ name: deploy
 
 # 자원 한도(FAULT 점검 A9·F3·G3): 서비스마다 mem_limit·cpus·pids_limit. 값은 **시작값이며 측정 근거가 없다**(사용자 결정 아님). 환경 변수 <서비스>_MEM_LIMIT/_CPUS/_PIDS_LIMIT 로 바꾼다(config/resource-limits.env.example, ADR 0023).
 # 한도가 너무 낮으면 OOM kill(컨테이너 재시작)으로 드러난다: docs/runbook.md 자원 한도 절.
+x-secretgid: &secretgid ["${SECRETS_GID:?SECRETS_GID(비밀 파일의 그룹 gid). scripts/lib.sh 가 기본값 id -g 를 내보낸다}"]   # L02(ADR 0054): 비밀 파일은 640 이고 이 그룹이 읽는다. uid 는 이미지가 정한 그대로. 비밀을 읽는 모든 서비스·잡이 쓴다
+
 x-hardening: &hardening
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
@@ -12,6 +14,7 @@ x-hardening: &hardening
   read_only: true
   tmpfs: ["/tmp"]
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # 로그는 표준 출력. 회전만 여기서
+  group_add: *secretgid   # L02(ADR 0054)
 
 x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0023-compose-resource-limits.md)
 
@@ -447,6 +450,7 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     logging: *joblog
+    group_add: *secretgid
     tmpfs: ["/tmp", "/data"]
 
   job-survey-purge:             # 보존 정리(D88/U4): 끝난 지 SURVEY_SESSION_RETENTION_DAYS(survey.env, 90일) 지난 세션을 지운다. 지운 개수만 한 줄로 출력한다
@@ -466,6 +470,7 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     logging: *joblog
+    group_add: *secretgid
     tmpfs: ["/tmp", "/data"]
 
   job-question-authoring-purge: # 보존 정리 run-once(question-authoring, D88/U4, 멱등): 처리되지 않은 초안과 고아 원본 자료를 보존 일수 뒤 지운다. 버전·검수는 지우지 않는다
@@ -486,6 +491,7 @@ services:
     read_only: true
     tmpfs: ["/tmp", "/data"]
     logging: *joblog
+    group_add: *secretgid
 
   job-release-gate-prune:       # 보존 정리 run-once(release-gate CR-0008, 멱등). 번들 파일은 gate-data 에서 정리하므로 서버와 같은 볼륨을 쓴다. 미리 보려면 인자 --dry-run
     mem_limit: ${JOB_RELEASE_GATE_PRUNE_MEM_LIMIT:-256m}
@@ -506,6 +512,7 @@ services:
     read_only: true
     tmpfs: ["/tmp"]
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    group_add: *secretgid
 
   job-release-gate-collect:     # 후보 수집기 run-once(D39). I1·I3를 HTTP로 읽어 새 조합을 접수한다
     profiles: ["jobs"]
@@ -527,4 +534,5 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     logging: *joblog
+    group_add: *secretgid
     tmpfs: ["/tmp"]

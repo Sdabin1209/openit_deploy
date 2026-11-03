@@ -56,3 +56,4 @@ publish-image.sh 의 PublishResult 가 내보내기 전에 계약으로 검증�
 Caddyfile 이 읽는 비밀이 gateway 마운트·정의·생성과 일치한다 (원격 추론 서버 기계 토큰 포함, ADR 0049) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_caddy_secret_mounts.py"
 복구 검증의 컨테이너 안 코드 조각을 호스트에서 실행해 JSON 이 나온다 (겹친 중괄호 재발 방지, 4·5차 E2E) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_restore_verify_snippets.py"
 E2E 문진표 시나리오의 요청 모양이 계약 3.4.0·문진 스키마 4.1.0 을 따른다 (SESSION_START 의 question_set_id, 제출 대상 question_sets 목록, DeviceConfig 배치 칸) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_scenario_shapes.py"
+비밀 파일 640 + 그룹을 uid 10001 컨테이너가 group_add 로 읽는다 (대조군: group_add 없이는 못 읽는다, 모든 서비스·잡에 group_add, L02·ADR 0054) :: bash "$DEPLOY_ROOT/scripts/test-secret-group-read.sh"

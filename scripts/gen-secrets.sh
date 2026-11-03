@@ -21,8 +21,8 @@ while [ "${1:-}" = "--db-only" ] || [ "${1:-}" = "--drop-plaintext" ] || [ "${1:
 source "$(dirname "$0")/lib.sh"
 D=${1:-$DEPLOY_ROOT/secrets}; mkdir -p "$D/tokens"; chmod 700 "$D" "$D/tokens"
 rnd() { python3 -c 'import secrets;print(secrets.token_hex(24))'; }
-tok() { [ -s "$D/tokens/$1" ] || ( umask 077; rnd > "$D/tokens/$1" ); chmod "$(secret_mode "$1")" "$D/tokens/$1"; cat "$D/tokens/$1"; }
-putlist() { local f="$D/tokens/$1"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || ( umask 077; printf '%s\n' "$2" > "$f" ); chmod "$(secret_mode "$1")" "$f"; }
+tok() { [ -s "$D/tokens/$1" ] || ( umask 077; rnd > "$D/tokens/$1" ); secret_fix "$D/tokens/$1" "$1"; cat "$D/tokens/$1"; }
+putlist() { local f="$D/tokens/$1"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || ( umask 077; printf '%s\n' "$2" > "$f" ); secret_fix "$f" "$1"; }
 roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="${out:+,}$r=$(tok "$srv-$kind-$r")"; done; echo "$out"; }
 
 # PostgreSQL 계정: 이름 = 데이터베이스 = 계정. 환경 변수 이름은 docs/RUN.md 4-1-1 표(SURVEY_DATABASE_URL 등)
