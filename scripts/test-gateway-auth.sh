@@ -186,6 +186,8 @@ chkhdr "위조한 X-Openit-User·X-Openit-Roles 는 인증 결과로 덮어쓴�
 chkhdr "위조한 X-Auth-Request-* 는 믿지 않는다(인증 결과로 덮어쓴다)" staff-e2e staff staff-e2e GET /v1/staff/alerts -H "X-Auth-Request-User: attacker" -H "X-Auth-Request-Preferred-Username: attacker" -H "X-Auth-Request-Groups: admin,operator"
 chk401 "위조한 X-Auth-Request-* 만으로는 인증되지 않는다" Bearer - GET /v1/staff/alerts -H "X-Auth-Request-User: staff-e2e" -H "X-Auth-Request-Preferred-Username: staff-e2e" -H "X-Auth-Request-Groups: staff"
 chkhdr "화면 경로(/admin/)에는 신원 머리글을 붙이지 않는다(정적 화면)" "" "" staff-e2e GET /admin/
+# E2E 와 같은 기대표·같은 스크립트(scripts/check-unauth-expectations.sh, test/gateway-oidc/unauth-expectations.txt): 인증 없는 요청의 응답
+AN=$((AN+1)); if out=$(bash "$DEPLOY_ROOT/scripts/check-unauth-expectations.sh" "https://127.0.0.1:$CP" --insecure 2>&1); then echo "  PASS $out"; else echo "  FAIL 인증 없는 요청 기대표: $out"; FAILS=$((FAILS+1)); fi
 # 기기 토큰 경로(공개 API): 토큰이 없거나 틀리면 401 + WWW-Authenticate: Bearer (RFC 6750 3절)
 DEVTOK=$(cat "$T/tokens/kiosk-device-auth-1")
 chk401 "기기 토큰 없음 POST /v1/sessions" Bearer - POST /v1/sessions

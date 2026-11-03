@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 D10-1·2: E2E 의 인증 없는 응답 기대와 사람 화면 주소
+- (1) 게이트웨이 인증 없는 요청의 기대값(화면 302 → /oauth2/start, 사람 API 401, 닫힌 면 404, 기기 경로 401)을 `test/gateway-oidc/unauth-expectations.txt` 한 곳에 두고, 그 파일을 읽는 `scripts/check-unauth-expectations.sh` 를 E2E(진짜 게이트웨이)와 `test-gateway-auth.sh`(가짜 oauth2-proxy)가 같이 쓴다.
+- (2) 원인: `e2e.sh` 의 한 줄 `export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT GATEWAY_PUBLIC_URL="$(gateway_public_url)"` 에서 `$(…)` 가 앞의 대입보다 먼저 풀려 기본 포트 8443 이 들어갔다(`GATEWAY_PUBLIC_URL=https://localhost:8443`). 시험 도구(사람 로그인)가 그 주소로 연결해 단계 1·5a·5u 가 연결 거부로 죽었다. 고침: export 를 나누고, E2E 에 "사람 화면 주소 = 게이트웨이 HTTPS 호스트 포트" 점검을 더했다. E2E 밖 점검 `test-e2e-public-url.sh`(e2e.sh·demo.sh 의 그 블록을 꺼내 실행). 살려 둔 3차 스택에서 올바른 주소로 staff 200 / author 403 로그인을 확인했다.
+
 ## wo-450 D9c: E2E 임시 잠금에 keycloak·oauth2-proxy 이미지가 빠져 기동이 막힘
 - 원인: `scripts/e2e.sh` 가 E2E 임시 잠금(`$W/images.lock`)에 옮기는 외부 이미지 목록에 `KEYCLOAK_IMAGE`·`OAUTH2_PROXY_IMAGE` 가 없어 `docker compose config` 가 "required variable OAUTH2_PROXY_IMAGE is missing" 로 빈 출력을 냈고, up.sh 의 계약 점검이 그 빈 출력을 읽다 JSONDecodeError 로 죽었다(오류가 가려졌다). 고침: 목록에 두 이미지를 더하고 `lib.sh` 의 `dc` 가 셸의 같은 이름 변수를 지우게 했다. `up.sh` 는 compose 설정을 못 읽으면 먼저 그 사유(compose 의 오류 마지막 5줄)를 낸다. 시험 `test_e2e_lock_images.py`(compose 가 요구하는 외부 이미지가 임시 잠금에 모두 복사되는지).
 - 참고: `DEPLOY_SKIP_CHECK_ALL=1` 로 점검을 건너뛰고 E2E 환경 변수가 이미 내보내진 셸에서 자체 점검 묶음의 check-all 항목이 돌면 ops-feedback 시험이 E2E 의 OPS_* 변수 때문에 실패한다(정상 경로에서는 사전 점검이 먼저 돌고 그 항목은 건너뛴다).

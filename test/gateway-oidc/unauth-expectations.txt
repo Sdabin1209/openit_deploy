@@ -1,0 +1,14 @@
+# 인증 없는(쿠키·토큰 없음) 요청에 게이트웨이가 주는 응답의 기대값: 한 곳(U82/ADR 0057, 계약 CONVENTIONS 6절). E2E(scripts/e2e.sh, 진짜 게이트웨이)와 자체 시험(scripts/test-gateway-auth.sh, 가짜 oauth2-proxy)이 같은 파일을 읽어 어긋나지 않는다.
+# 형식: <메서드> <경로> <기대 상태> [<Location 접두어>]   (바디는 -d '{}' 로 보낸다)
+# 화면 경로는 로그인으로 302(/oauth2/start), 사람 API(/v1/*)는 401(+ WWW-Authenticate: Bearer), 닫힌 내부 면은 404, 기기 경로는 토큰이 없으면 401.
+POST /v1/turns 404
+GET /staff/ 302 /oauth2/start
+GET /admin/ 302 /oauth2/start
+GET /v1/submissions 401
+POST /v1/activate 401
+GET /v1/cases 401
+POST /v1/traces 404
+GET /v1/staff/alerts 401
+POST /v1/sessions/x/intervention 401
+POST /v1/sessions 401
+GET /v1/question-sets 401
