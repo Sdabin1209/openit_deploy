@@ -14,6 +14,11 @@
 https://{$TLS_NAME}, https://{$TLS_ALT_NAME:localhost} {
 	tls /certs/tls.crt /certs/tls.key
 	reverse_proxy {$TLS_UPSTREAM:127.0.0.1:8080}
+	# 앱에 닿지 못하면(연결 거부·타임아웃) 응답을 만들지 않고 연결을 끊는다. 빈 502 를 돌려주면 호출자(게이트웨이)가 그것을 정상 응답으로 받아 계약 503 UPSTREAM_UNAVAILABLE 을 못 만든다:
+	# 끊김이면 게이트웨이는 상류 프록시 오류로 보고 자기 handle_errors 가 503 + Retry-After 를 낸다(오류 형식은 게이트웨이 한 곳). 서비스 사이 계약 클라이언트는 끊김을 UNAVAILABLE 로 받는다
+	handle_errors {
+		abort
+	}
 }
 # 위 이름이 아닌 Host/SNI 는 421 Misdirected Request(RFC 9110 15.5.20)로 거절한다. 맞는 사이트가 없을 때 Caddy 는 본문 없는 200 을 돌려줘 상태 코드만 보는 점검이 헛통과했다(4차 E2E)
 https:// {

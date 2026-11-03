@@ -31,7 +31,7 @@ ok "루트 인증서가 공개 볼륨에 있다 (키는 없다)" bash -c 'docker
 # 3) 일회용 토큰(OTT): 프로비저너 비밀번호는 이 컨테이너만 읽는다(제품 compose 의 pki-tokens 잡과 같은 명령)
 ok "서비스 이름 일회용 토큰이 발급된다" bash -c 'docker run --rm --network $1 --user 1000:1000 --cap-drop ALL --read-only --tmpfs /tmp -e STEPPATH=/tmp -v $2:/home/step -v $3:/etc/openit/pki:ro -v "$4:/run/secrets/step-ca-password:ro" --entrypoint sh "$5" -c "step ca token $6 --provisioner admin --provisioner-password-file /run/secrets/step-ca-password $7 > /home/step/$6.ott && chmod 644 /home/step/$6.ott && test -s /home/step/$6.ott"' _ $NET $ID-tok $ID-root "$PW" "$CA_IMG" $NAME "$CAARGS"
 # 4) 앱(loopback 8080) + 인증서 컨테이너(토큰으로 1회 발급 + renew 데몬) + 사이드카(같은 네트워크 네임스페이스). 앱의 443 만 호스트에 게시한다(서버를 나눈 배치의 게시 포트)
-docker run -d --name $ID-app --network $NET --network-alias $NAME --sysctl net.ipv4.ip_unprivileged_port_start=0 -p 127.0.0.1::443 "$SC_IMG" caddy respond --listen 127.0.0.1:8080 "hello-from-app" >/dev/null
+docker run -d --name $ID-app --network $NET --network-alias $NAME --sysctl net.ipv4.ip_unprivileged_port_start=0 -p 127.0.0.1::443 "$SC_IMG" sh -c 'caddy respond --listen 127.0.0.1:8080 hello-from-app & sleep 36000' >/dev/null
 docker run -d --name $ID-cert --network $NET --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp -e STEPPATH=/tmp -v $ID-certs:/home/step -v $ID-root:/etc/openit/pki:ro -v $ID-tok:/tokens:ro --entrypoint sh "$CA_IMG" -c \
   "[ -s /home/step/tls.crt ] || step ca certificate $NAME /home/step/tls.crt /home/step/tls.key --token \"\$(cat /tokens/$NAME.ott)\" $CAARGS --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key $CAARGS" >/dev/null
 for i in $(seq 1 30); do docker exec $ID-cert test -s /home/step/tls.crt 2>/dev/null && break; sleep 1; done
@@ -56,6 +56,14 @@ HP=$(docker port $ID-app 443/tcp | head -1 | sed 's/.*://')
 SPLIT='import urllib.request,sys;print(urllib.request.urlopen("https://"+sys.argv[1]+":'$HP'/",timeout=5).read().decode())'
 ok "다른 망의 호출자가 extra_hosts 로 돌린 서비스 이름 + 게시 포트로 https 검증에 성공한다" bash -c '[ "$(docker run --rm --network $1 --add-host $2:host-gateway -e SSL_CERT_FILE=/pki/root_ca.crt -v $3:/pki:ro "$4" python -c "$5" $2)" = hello-from-app ]' _ $NETC $NAME $ID-root "$UTIL" "$SPLIT"
 ok "다른 이름으로 같은 서버를 부르면 인증서 이름 불일치로 거부된다" bash -c '! docker run --rm --network $1 --add-host other-name:host-gateway -e SSL_CERT_FILE=/pki/root_ca.crt -v $2:/pki:ro "$3" python -c "$4" other-name' _ $NETC $ID-root "$UTIL" "$SPLIT"
+# 6b) 앱 프로세스가 죽고 컨테이너는 떠 있을 때: 사이드카는 빈 502 가 아니라 연결을 끊는다(게이트웨이가 상류 오류로 보고 계약 503 UPSTREAM_UNAVAILABLE 을 만들도록)
+docker exec $ID-app sh -c 'kill $(pidof caddy)' >/dev/null 2>&1; sleep 1
+PROBE='import urllib.request,urllib.error;
+try:
+    urllib.request.urlopen("https://'$NAME'/",timeout=5); print("RESPONSE")
+except urllib.error.HTTPError as e: print("HTTP", e.code)
+except Exception as e: print("ABORT", type(e).__name__)'
+ok "앱을 멈추면 사이드카는 연결을 끊는다 (빈 502 응답이 아니다)" bash -c 'o=$(docker run --rm --network $1 -e SSL_CERT_FILE=/pki/root_ca.crt -v $2:/pki:ro "$3" python -c "$4"); echo "$o"; [ "${o%% *}" = ABORT ]' _ $NET $ID-root "$UTIL" "$PROBE"
 # 7) 사이드카 격리 상태(check-containers 와 같은 항목)
 ok "사이드카는 비루트, 읽기 전용, cap_drop ALL, 추가 capability 없음" bash -c 'r=$(docker inspect -f "{{.Config.User}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.CapDrop}}|{{.HostConfig.CapAdd}}" $1); [ "$r" = "1000:1000|true|[ALL]|[]" ]' _ $ID-sc
 [ "$FAILS" = 0 ] && echo "통과: TLS 사이드카 단독 시험" || echo "실패: $FAILS건"
