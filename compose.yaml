@@ -140,6 +140,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-model-serving
   gateway-inference-token:
     file: ${SECRETS_DIR:-./secrets}/tokens/gateway-inference-token
+  gateway-registry-publish-token:   # 학습 서버가 게이트웨이에 내는 게시 기계 토큰(U69, Caddyfile @registrymachine)
+    file: ${SECRETS_DIR:-./secrets}/tokens/gateway-registry-publish-token
+  model-registry-write-model-lab:   # 게이트웨이가 model-registry 에 붙이는 쓰기 토큰(model-registry-write-tokens 목록의 model-lab 항목과 같은 값)
+    file: ${SECRETS_DIR:-./secrets}/tokens/model-registry-write-model-lab
   gate-read-tokens:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-tokens
   gate-write-tokens:
@@ -228,7 +232,7 @@ services:
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
       - {source: gateway-device-tls, target: /etc/caddy/device-tls.caddy}
       - {source: gateway-device-ca, target: /etc/caddy/device-ca.pem}
-    secrets: [qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
+    secrets: [gateway-registry-publish-token, model-registry-write-model-lab, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}
@@ -245,7 +249,7 @@ services:
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_TLS_PORT-8443}:8443"  # HTTPS (D88/U5)
-    networks: [edge, ui, serving, authoring]   # ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
+    networks: [edge, ui, serving, authoring, release]   # release: 학습 서버의 패키지 게시 입구(U69, model-registry). ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
     healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
 
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다

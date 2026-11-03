@@ -153,7 +153,7 @@ def collect(caddy_text, roles):
         t = n["t"]
         # 추론 서버 기계 토큰 경로(@inferencemachine/@inferencedenied, ADR 0049)는 건너뛴다: 계약 Exposure 의 auth.kind(device-token, account, none, denied)에 기계 토큰이 없어 라벨로 선언할 수 없다.
         # 그래서 라벨 대조 밖이다(대조하지 않는다는 뜻이지 통과라는 뜻이 아니다). 이 경로의 시험은 scripts/test-inference-location.sh, 라벨 어휘 요청은 docs/change-requests/CR-D440-exposure-machine-token.md
-        if t and t[0] == "handle" and t[1:2] and t[1] in ("@inferencemachine", "@inferencedenied"): continue
+        if t and t[0] == "handle" and t[1:2] and t[1] in ("@inferencemachine", "@inferencedenied", "@registrymachine", "@registrydenied"): continue   # U69 게시 입구도 같은 종류(machine-token)
         if t and t[0] in ("handle", "handle_path", "redir") and not (t[1:2] and t[1].startswith("@csrf")):
             walk([n], {"paths": None, "methods": [], "auth": None, "roles": []})
     hs = [dict(e, kind="proxy") for e in merge(proxies)] + [dict(x, kind="respond") for x in locals_ + denied]

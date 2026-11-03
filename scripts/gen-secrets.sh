@@ -54,7 +54,7 @@ for t in gate-read-survey-service ops-ingest-survey-service survey-api-kiosk sur
          model-registry-read-release-gate deid-salt gate-read-ops-feedback gate-write-ops-feedback ops-read-question-authoring gate-read-model-serving \
          gate-write-release-approver gate-read-release-approver ops-read-reviewer ops-review-reviewer \
          survey-result-reader survey-risk-source \
-         gateway-inference-token; do   # gateway-inference-token: 다른 호스트의 추론 서버가 게이트웨이에 내는 기계 토큰(Caddyfile @inferencemachine, ADR 0049). 서버 호스트로 옮기는 파일이다
+         gateway-inference-token gateway-registry-publish-token; do   # gateway-registry-publish-token: 학습 서버가 패키지를 게시할 때 게이트웨이에 내는 기계 토큰(U69)   # gateway-inference-token: 다른 호스트의 추론 서버가 게이트웨이에 내는 기계 토큰(Caddyfile @inferencemachine, ADR 0049). 서버 호스트로 옮기는 파일이다
   tok "$t" >/dev/null
 done
 # 목록 값 파일: 서비스가 받는 형식 그대로 한 줄. 토큰이 이미 있으면 내용이 같아서 다시 써도 같다(다르면 갱신한다).

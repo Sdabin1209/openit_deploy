@@ -265,6 +265,32 @@ http://:8080 {
 		header WWW-Authenticate "Bearer"
 		respond "unauthorized: 추론 서버 토큰이 없거나 틀리다" 401
 	}
+	# 학습 서버(model-lab 파이프라인)가 모델 패키지를 게시하는 기계 토큰 입구(U69, D122 와 같은 방식, 계약 Exposure kind machine-token):
+	# 요청의 Bearer 가 파일 gateway-registry-publish-token 의 값과 같을 때만 열고, 상류(model-registry)에는 레지스트리 쓰기 토큰(model-registry-write-model-lab)을 붙인다.
+	# 본문(어댑터 tar, 최대 4GiB)은 response_header_timeout 과 무관하게 흐른다. 사람 계정 경로가 아니므로 X-Openit-User 는 지운다.
+	@registrymachine {
+		method POST
+		path /v1/packages
+		header Authorization "Bearer {file./run/secrets/gateway-registry-publish-token}"
+	}
+	handle @registrymachine {
+		reverse_proxy model-registry:8080 {
+			import proxy_limits 180s
+			header_up Authorization "Bearer {file./run/secrets/model-registry-write-model-lab}"
+			header_up -X-Openit-User
+			header_up -X-Openit-Dn
+			header_up -X-Openit-Device
+			header_down Cache-Control "no-store"
+		}
+	}
+	@registrydenied {
+		method POST
+		path /v1/packages
+	}
+	handle @registrydenied {
+		header WWW-Authenticate "Bearer"
+		respond `{"code":"UNAUTHENTICATED","message":"machine token required"}` 401
+	}
 	# 운영자 경로(D85 E절, admin-console CR-004): 릴리스 운영 화면이 부르는 게이트 경로 넷은 operator 역할 계정 뒤에서만 연다. 아니면 403(인증 없으면 401).
 	# 읽기(GET /v1/active-pointer, GET /v1/releases)는 operator **읽기** 토큰, 변경(POST /v1/activate, /v1/rollback)은 operator **쓰기** 토큰을 붙인다.
 	# X-Openit-User 는 인증된 계정으로 덮어쓰고(release-gate 가 행위자로 기록) Cache-Control 은 no-store 를 유지한다. 열지 않는 것: /v1/releases/* (번들, I9 PUT 포함), 그 밖의 /v1/*.

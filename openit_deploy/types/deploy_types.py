@@ -144,6 +144,11 @@ class ExposureCheckResult(TypedDict):
     services: int
 
 
+class GatewayEnv(TypedDict):
+    GATEWAY_HOSTS: NotRequired[str]
+    GATEWAY_PUBLIC_TLS_PORT: NotRequired[str]
+
+
 class ImageLabelCheckRequest(TypedDict):
     name: NotRequired[str]
     labels: Optional[Dict[str, Any]]

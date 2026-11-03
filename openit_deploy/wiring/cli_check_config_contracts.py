@@ -21,6 +21,7 @@ ENV_SERVICES = {   # compose 서비스 -> (계약 스키마, 환경 문서로 �
     "model-registry": ("ModelRegistryEnv", lambda env: env),
     "dataset-store": ("DatasetStoreEnv", lambda env: env),
     "kiosk-frontend": ("KioskFrontendEnv", lambda env: env),
+    "gateway": ("GatewayEnv", lambda env: env),   # deploy 소유 컨테이너: 내부 스키마 schemas/GatewayEnv(L20). 계약에 같은 이름이 없다
 }
 FILES = {"config/ops-feedback-job.yaml": "OpsFeedbackJobConfig",
          "test/fake-model/question_flow.json": "RuntimeFlowFile"}   # E2E·데모의 가짜 백엔드가 읽는 문항 흐름 파일(compose.fake-model.yaml 이 마운트): deploy 의 시험 설정
@@ -31,6 +32,12 @@ def make_validators(names):
     from jsonschema import Draft202012Validator
     out = {}
     for n in names:
+        local = ROOT / "schemas" / f"{n}.schema.json"
+        if local.exists():   # deploy 내부 스키마(schemas/*.schema.json): 영역 사이 계약이 아닌 deploy 소유 컨테이너(gateway)의 선언. 계약 이름과 겹치지 않게 둔다
+            s = json.loads(local.read_text(encoding="utf-8"))
+            vv = Draft202012Validator(s)
+            out[n] = (lambda v: lambda doc: [("/".join(map(str, e.absolute_path)), f"{e.validator} 위반") for e in sorted(v.iter_errors(doc), key=lambda e: list(map(str, e.absolute_path)))])(vv)
+            continue
         base, _, sub = n.partition("#")
         try:
             if sub:
