@@ -123,10 +123,10 @@ rid() { bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts
 R0=$(rcnt); SID=$(rid)
 ok "서버 자격으로 restic forget 은 403(Forbidden)으로 거부된다" bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- forget $SID 2>&1 | grep -q '403 Forbidden'"
 N=$((N+1)); if [ "$(rcnt)" = "$R0" ]; then echo "  PASS forget 시도 뒤에도 스냅샷이 그대로다 ($R0개)"; else echo "  FAIL forget 으로 스냅샷이 줄었다"; FAILS=$((FAILS+1)); fi
-pyhttp() { "$DOCKER" run --rm --network $RN -e U="srv:srvpw-$ID" "$UTIL" python -c "
+pyhttp() { "$DOCKER" run --rm --network $RN -v "$W/tls/root_ca.crt:/ca.crt:ro" -e SSL_CERT_FILE=/ca.crt -e U="srv:srvpw-$ID" "$UTIL" python -c "
 import base64,os,sys,urllib.request,urllib.error
 m,path=sys.argv[1],sys.argv[2]
-req=urllib.request.Request('http://$RC:8000/openit'+path,data=(b'x' if m=='POST' else None),method=m,headers={'Authorization':'Basic '+base64.b64encode(os.environ['U'].encode()).decode()} if len(sys.argv)<4 else {})
+req=urllib.request.Request('https://$RC:8000/openit'+path,data=(b'x' if m=='POST' else None),method=m,headers={'Authorization':'Basic '+base64.b64encode(os.environ['U'].encode()).decode()} if len(sys.argv)<4 else {})
 try: print(urllib.request.urlopen(req).status)
 except urllib.error.HTTPError as e: print(e.code)" "$@"; }
 SNAPFILE=$("$DOCKER" run --rm -v $RV:/d "$UTIL" ls /d/openit/snapshots | head -1)
