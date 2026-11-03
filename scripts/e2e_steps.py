@@ -1327,7 +1327,8 @@ def step5m():
     # model-runtime 요청 상한(MODEL_RUNTIME_REQUEST_DEADLINE_S 3.5s)과 엔진 멈춤 시 /readyz 503 은 pause 로는 볼 수 없다(컨테이너가 통째로 얼어 /readyz 도 응답하지 못한다).
     # 이 이미지가 그 코드를 가졌는지는 라벨의 model-runtime 태그로만 안다: 태그가 73e79f9(요청 상한) 이후를 포함해야 한다.
     # 감시 스택(Prometheus 규칙, ADR 0037)이 보는 것과 같은 필드를 직접 읽는다: model-serving /readyz 200(엔진 정상), release-gate /readyz 의 judging_loop(연속 실패 3 미만, 인증 실패 아님)
-    assert _c2_ms_call("/readyz", None, None, "GET")[0] == 200, "model-serving /readyz 가 200이 아니다"
+    _rc, _rb, _ = _c2_ms_call("/readyz", None, None, "GET")
+    assert _rc == 200 and json.loads(_rb or "null").get("status") == "ready", ("model-serving /readyz", _rc, (_rb or "")[:120])   # 상태 코드만 보지 않는다: 사이드카가 맞는 사이트를 못 고르면 본문 없는 200 이 올 수 있다(e5779d9)
     gc, gr = SB.readyz("release-gate"); assert gc == 200, ("release-gate /readyz", gc)   # 상태 관찰: 컨테이너 안 /readyz(감시 스택이 보는 같은 필드)
     jl = gr.get("judging_loop")
     assert jl is not None and not jl.get("upstream_auth_failed") and (jl.get("consecutive_failures") or 0) < 3, ("release-gate 판정 루프", jl)
@@ -2480,9 +2481,10 @@ def step5L():
     rid = STATE["pointers"][-1]["release_id"]
     # 1) 추론 서버가 ready(release 도달 포함). 서버는 게이트웨이 HTTPS+CA+기계 토큰으로만 release-gate 에 닿는다
     try:
-        with urllib.request.urlopen(ms + "/readyz", timeout=10) as r: rs = r.status
-    except urllib.error.HTTPError as e: rs = e.code
+        with urllib.request.urlopen(ms + "/readyz", timeout=10) as r: rs, rbody = r.status, r.read().decode(errors="replace")
+    except urllib.error.HTTPError as e: rs, rbody = e.code, ""
     assert rs == 200, f"다른 호스트 역할의 추론 서버 /readyz 가 {rs}"
+    assert json.loads(rbody or "null").get("status") == "ready", f"추론 서버 /readyz 본문이 ready 가 아니다(상태 코드만 보지 않는다): {rbody[:120]!r}"
     # 2) 기계 토큰은 200, 사람 계정(승인자)은 404, 무토큰은 401 — 같은 경로에서
     tok = (pathlib.Path(a.secrets) / "tokens" / "gateway-inference-token").read_text().strip()
     st_m, _, _ = SB.gw_request("GET", "/v1/active-pointer", token=tok); assert st_m == 200, f"기계 토큰 /v1/active-pointer: {st_m}"

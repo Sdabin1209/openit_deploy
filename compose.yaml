@@ -24,7 +24,7 @@ x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공�
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
-  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(측정함). 인증서가 갱신되면(<서비스>-cert 의 renew 데몬) 60초 안에 caddy reload
+  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; f=0; i=0; while sleep 5; do kill -0 $$p 2>/dev/null || exit 1; if nc -z 127.0.0.1 $${TLS_UPSTREAM##*:}; then f=0; else f=$$((f+1)); [ $$f -ge 6 ] && exit 1; fi; i=$$((i+1)); [ $$((i%12)) = 0 ] || continue; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(측정함). 인증서가 갱신되면(<서비스>-cert 의 renew 데몬) 60초 안에 caddy reload. 상류(앱)가 30초 동안 안 닿으면 사이드카가 종료해 restart 정책이 다시 붙인다: 앱 컨테이너가 docker stop/start·OOM 재시작으로 새 네트워크 네임스페이스를 받으면 network_mode: service:<앱> 사이드카는 옛 네임스페이스에 남기 때문이다(ADR 0060)
   read_only: true
   tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
   mem_limit: 64m   # 측정 안 함(시작값)
