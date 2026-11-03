@@ -15,6 +15,13 @@ class T(unittest.TestCase):
         self.assertNotRegex(E2E, r'PGDBS="[a-z_ ]+"', "데이터베이스 이름 목록 하드코딩")
         self.assertNotRegex(E2E, r'PostgreSQL 5개|데이터베이스 5\)|= 8 \]', "개수 하드코딩")
 
+    def test_keycloak_is_verified_after_restore(self):
+        # keycloak 을 백업·복구 목록에 넣은 수정의 완성 조건: 복구 뒤 시험 사용자가 실제로 로그인되고 역할이 그대로임을 본다(선행 실패는 chk_dep 로 건너뛴다)
+        self.assertRegex(E2E, r'chk_dep "복구 후 서비스 기동" "복구 후 Keycloak:[^"]*" \\\n\s+"\$VENV/bin/python" "\$DEPLOY_ROOT/scripts/e2e_verify_keycloak\.py"')
+        self.assertTrue((ROOT / "scripts/e2e_verify_keycloak.py").is_file())
+        tool = (ROOT / "scripts/e2e_verify_keycloak.py").read_text(encoding="utf-8")
+        self.assertIn("oidc_login", tool); self.assertIn("/oauth2/userinfo", tool); self.assertIn("release-approver", tool)
+
 
 if __name__ == "__main__":
     unittest.main()
