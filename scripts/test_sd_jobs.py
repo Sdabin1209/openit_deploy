@@ -15,12 +15,14 @@ LABELS = {"io.openit.jobs": json.dumps(DECL)}
 
 
 def find_image():
-    r = subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"], capture_output=True, text=True)
-    for img in r.stdout.split() if r.returncode == 0 else []:
-        if "dataset-store" not in img: continue
+    # 이미지 ID 로 부른다: 다이제스트로만 받은 이미지는 태그가 <none> 이라 "저장소:<none>" 이름으로는 inspect 가 invalid reference format 으로 실패한다
+    r = subprocess.run(["docker", "images", "--no-trunc", "--format", "{{.ID}} {{.Repository}}"], capture_output=True, text=True)
+    for line in r.stdout.splitlines() if r.returncode == 0 else []:
+        img, _, repo = line.partition(" ")
+        if "dataset-store" not in repo: continue
         lab = subprocess.run(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True).stdout
         # 이미지가 설치된 계약과 같은 MAJOR 로 빌드된 것만 쓴다(옛 계약의 설정 모양을 3.0 설정으로 돌리면 의미 없는 실패가 난다)
-        major = json.loads(lab).get("io.openit.contracts.boundary", "v?").lstrip("v").split(".")[0]
+        major = (json.loads(lab) or {}).get("io.openit.contracts.boundary", "v?").lstrip("v").split(".")[0]
         if "io.openit.jobs" in lab and "io.openit.exposure" in lab and major == PIPELINE_SCHEMA_VERSION.split(".")[0]: return img
     return None
 
