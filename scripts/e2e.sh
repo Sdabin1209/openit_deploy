@@ -446,16 +446,16 @@ printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_REPOSITORY=re
 export BACKUP_CONFIG="$W/backup-test.env"
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
 dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx -e postgres -e backup-target | tr '\n' ' ') >/dev/null 2>&1
-STORES="gate-data models-data datasets-data"; PGDBS="survey qa ops_log ops_failure gate"
+STORES="gate-data models-data datasets-data"; PGDBS="$PG_DBS"; NPG=$(set -- $PGDBS; echo $#)   # 정본은 lib.sh 의 PG_DBS(keycloak 포함): 하드코딩하면 Keycloak(직원 계정·역할)이 백업·복구·지문 검사에서 빠진다
 for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
 for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-before-pg-$d.json"; done
 chk "백업(파일 저장소 3개, restic 스냅샷)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
-chk "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
-repo_clean() { n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = 8 ] || { echo "저장소(host)별 스냅샷이 8개(파일 3 + 데이터베이스 5)가 아니다: $n"; return 1; }
+chk "백업(PostgreSQL ${NPG}개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
+repo_clean() { n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = "$((3+NPG))" ] || { echo "저장소(host)별 스냅샷이 $((3+NPG))개(파일 3 + 데이터베이스 ${NPG})가 아니다: $n"; return 1; }
   ! "$DOCKER" run --rm -v "${PROJECT}_backup-target-data:/d:ro" "$UTIL_REF" sh -c "grep -rqa PGDMP /d" || { echo "저장소에 덤프 평문 표지가 있다"; return 1; }
   [ ! -e "$W/backups" ] || { echo "서버 쪽 로컬 폴더에 저장소가 생겼다"; return 1; }
-  echo "서버 밖(append-only) 저장소: 스냅샷 8개(host별 1개), 덤프 평문 표지 없음, 서버 쪽 로컬 저장소 없음"; return 0; }
-NEED+=("백업(파일 저장소 3개, restic 스냅샷)" "백업(PostgreSQL 5개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)")   # 백업이 실패하면 아래 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
+  echo "서버 밖(append-only) 저장소: 스냅샷 $((3+NPG))개(host별 1개), 덤프 평문 표지 없음, 서버 쪽 로컬 저장소 없음"; return 0; }
+NEED+=("백업(파일 저장소 3개, restic 스냅샷)" "백업(PostgreSQL ${NPG}개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)")   # 백업이 실패하면 아래 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
 chk "백업 산출물은 서버 밖 append-only restic 저장소뿐이다(평문 없음)" repo_clean
 append_only() { local id; id=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json" | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["id"])')
   out=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- forget $id" 2>&1); grep -q '403 Forbidden' <<<"$out" || { echo "서버 자격의 forget 이 거부되지 않았다: $out"; return 1; }
