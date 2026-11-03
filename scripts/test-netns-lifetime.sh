@@ -15,7 +15,7 @@ PW="$T/pw"; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$
 CAARGS="--ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"
 RUN='cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$!; while sleep 60; do kill -0 $p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --force --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done'
 cleanup() {
-  if [ "$FAILS" != 0 ]; then for c in $ID-ca $ID-n1 $ID-a1 $ID-s1 $ID-gw $ID-gw2 $ID-a2 $ID-s2; do echo "--- 로그 $c (끝 10줄)"; docker logs --tail 10 "$c" 2>&1 | cut -c1-220; done; fi
+  if [ "$FAILS" != 0 ]; then for c in $ID-ca $ID-n1 $ID-a1 $ID-s1 $ID-gw $ID-gw2 $ID-gw3 $ID-a2 $ID-s2; do echo "--- 로그 $c (끝 10줄)"; docker logs --tail 10 "$c" 2>&1 | cut -c1-220; done; fi
   docker ps -aq --filter "name=^$ID-" | xargs -r docker rm -f >/dev/null 2>&1; docker volume ls -q --filter "name=^$ID-" | xargs -r docker volume rm >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; rm -rf "$T"
 }
 trap cleanup EXIT
@@ -89,5 +89,10 @@ docker run -d --name $ID-gw2 --network $NET --user 1000:1000 --cap-drop ALL --re
 # 왜 sleep 3: busybox nc 는 입력이 끝나면 곧바로 닫혀 응답을 못 읽는다. 응답을 읽을 때까지 입력을 열어 둔다(준비 대기가 아니다)
 O7=$( { printf 'GET / HTTP/1.0\r\n\r\n'; sleep 3; } | docker exec -i $ID-gw2 nc 127.0.0.1 8081 2>&1)   # 게이트웨이 컨테이너 안 loopback 으로 호출한다(원시 응답: 상태 줄 + 머리글 + 본문)
 ok "(7) R3.8 서비스 인증서가 신뢰 묶음 밖의 루트면 게이트웨이는 503 + Retry-After 2 + application/json + {\"code\":\"UPSTREAM_UNAVAILABLE\"}" bash -c 'echo "$1" | grep -q "^HTTP/1.[01] 503" && echo "$1" | grep -qi "^Retry-After: 2" && echo "$1" | grep -qi "^Content-Type: application/json" && echo "$1" | grep -q "{\"code\":\"UPSTREAM_UNAVAILABLE\"}"' _ "$O7"
+# (8) R3.14: 상류 이름이 풀리지 않으면(이름 해석 실패) 게이트웨이는 503 + Retry-After + {"code":"UPSTREAM_UNAVAILABLE"}
+sed 's#https://app1#https://no-such-name.invalid#' "$T/gw.caddy" > "$T/gw3.caddy"
+docker run -d --name $ID-gw3 --network $NET --user 1000:1000 --cap-drop ALL --read-only --tmpfs /tmp:exec --tmpfs /data:uid=1000,gid=1000 -v "$T/gw3.caddy:/etc/caddy/Caddyfile:ro" -v $ID-root:/pki:ro --entrypoint sh "$SC_IMG" -c 'cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile' >/dev/null; sleep 3
+O8=$( { printf 'GET / HTTP/1.0\r\n\r\n'; sleep 3; } | docker exec -i $ID-gw3 nc 127.0.0.1 8081 2>&1)   # sleep 3: 위 (7) 과 같은 이유(nc 가 응답을 읽을 때까지 입력을 열어 둔다)
+ok "(8) R3.14 이름 해석 실패: 게이트웨이는 503 + Retry-After + application/json + {\"code\":\"UPSTREAM_UNAVAILABLE\"}" bash -c 'echo "$1" | grep -q "^HTTP/1.[01] 503" && echo "$1" | grep -qi "^Retry-After: 2" && echo "$1" | grep -qi "^Content-Type: application/json" && echo "$1" | grep -q "{\"code\":\"UPSTREAM_UNAVAILABLE\"}"' _ "$O8"
 [ "$FAILS" = 0 ] && echo "통과: 네트워크 공간 수명 단독 시험" || echo "실패: $FAILS건"
 exit $FAILS
