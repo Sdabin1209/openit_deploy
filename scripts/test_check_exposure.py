@@ -60,7 +60,7 @@ class T(unittest.TestCase):
 
     def test_caddy_change_is_caught(self):
         self.assertTrue(any("상류 토큰" in d for d in run(caddy=CADDY.replace("gate-write-operator", "gate-write-other"))))
-        self.assertTrue(any("시간 제한" in d for d in run(caddy=CADDY.replace("(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\tdial_timeout 1s", "(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\tdial_timeout 3s"))))
+        self.assertTrue(any("시간 제한" in d for d in run(caddy=CADDY.replace("(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\ttls_trusted_ca_certs /etc/openit/pki/root_ca.crt\n\t\tdial_timeout 1s", "(proxy_limits) {\n\tlb_try_duration 0\n\ttransport http {\n\t\tdial_timeout 3s"))))
 
     def test_oci_user_and_port(self):
         self.assertTrue(any("root" in d for d in run(oci={"exposed_ports": ["8080/tcp"], "user": ""})))

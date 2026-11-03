@@ -62,7 +62,7 @@ def proxy_blocks():
     """config/Caddyfile 의 모든 `reverse_proxy <호스트>:8080 {` 블록 -> [(호스트, 본문, 연결 초, 응답 헤더 초)]. `import proxy_limits N` 은 스니펫의 연결 상한을 쓴다."""
     snippet_dial = secs(re.search(r"\(proxy_limits\)\s*\{.*?dial_timeout\s+([0-9.]+m?s)", CADDY, re.S).group(1))
     out = []
-    for m in re.finditer(r"reverse_proxy ([a-z-]+):8080 \{", CADDY):
+    for m in re.finditer(r"reverse_proxy https://([a-z0-9-]+) \{", CADDY):
         depth, i = 1, m.end()
         while depth:
             depth += {"{": 1, "}": -1}.get(CADDY[i], 0); i += 1
