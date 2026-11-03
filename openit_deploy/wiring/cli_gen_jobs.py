@@ -15,6 +15,18 @@ JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge"
              "job-release-gate-collect": "collect", "job-ops-feedback": "ops-feedback"}
 
 
+# compose 잡 서비스 -> 그 잡을 띄우는 타이머 파일(config/systemd). 주기는 타이머의 OnUnitActiveSec 이고 잡의 시간 상한은 그 주기보다 짧아야 한다(RUNTIME R9.3: 상한이 주기 이상이면 겹침 방지가 다음 주기를 막는다)
+TIMERS = {"job-survey-purge": "openit-survey-purge", "job-question-authoring-purge": "openit-question-authoring-purge", "job-release-gate-prune": "openit-release-gate-prune",
+          "job-release-gate-collect": "openit-release-gate-collector", "job-ops-feedback": "openit-ops-feedback-job"}
+SYSTEMD = pathlib.Path(__file__).resolve().parents[2] / "config" / "systemd"
+
+
+def period_seconds(svc: str):
+    import re
+    m = re.search(r"^OnUnitActiveSec=(\d+)s", (SYSTEMD / f"{TIMERS[svc]}.timer").read_text(encoding="utf-8"), re.M)
+    return int(m.group(1)) if m else None
+
+
 def image_labels(image: str) -> dict:
     """docker 로 이미지 라벨을 읽는다. 로컬에 없으면 받는다(compose run 이 받는 것과 같은 이미지)."""
     r = subprocess.run(["docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True)
@@ -47,6 +59,11 @@ def build(compose: dict, labels_of, validator_of) -> dict:
         job = next((j for j in decl["jobs"] if j["name"] == name), None)
         if job is None:
             problems.append(f"{svc}: 선언에 잡 {name} 가 없다: {[j['name'] for j in decl['jobs']]}")
+            continue
+        per = period_seconds(svc) if svc in TIMERS else None
+        eff = job.get("timeout_seconds", job_overlay.DEFAULT_TIMEOUT_SECONDS)
+        if per is not None and eff >= per:
+            problems.append(f"{svc}: 시간 상한 {eff}초가 실행 주기 {per}초 이상이다(RUNTIME R9.3: 주기보다 짧은 timeout_seconds 를 영역이 선언해야 한다)")
             continue
         jobs.append({"compose_service": svc, "declared": job})
     if problems:

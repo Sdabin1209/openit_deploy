@@ -98,3 +98,4 @@ R1.4 배치 무관: 서버별 override 의 호출 설정 이름·경로·서비�
 배치·내보내기 운영 규칙 (R10.12 호스트 키 확인·배치 한 번에 하나, R1.5 내보내는 파일 SHA-256 대조, 정적) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_placement_ops.py"
 로컬 미러 git 설정(S14)이 git insteadOf 로 원격 주소를 로컬 리포로 푼다 :: python3 "$DEPLOY_ROOT/scripts/test_local_mirrors.py"
 잡 command·시간 한도는 이미지 라벨 io.openit.jobs 에서 온다(S10, R9.2·R9.3, compose 에 python -m 없음) :: python3 "$DEPLOY_ROOT/scripts/test_gen_jobs.py"
+OUT-FILE(루트 PEM·hosts 표·SHA256SUMS, R1.5·R1.7) 내보내기와 대조 :: bash "$DEPLOY_ROOT/scripts/test-out-files.sh"

@@ -13,8 +13,8 @@ COMPOSE = {"services": {"job-survey-purge": {"image": "img/s"}, "job-question-au
                         "job-release-gate-collect": {"image": "img/g"}, "job-ops-feedback": {"image": "img/o"}, "gateway": {"image": "img/gw"}}}
 DECL = {"img/s": {"jobs": [{"name": "session-purge", "argv": ["python", "-m", "survey_service", "purge"], "idempotent": True, "timeout_seconds": 120}]},
         "img/q": {"jobs": [{"name": "purge", "argv": ["qa", "purge"], "idempotent": True}]},
-        "img/g": {"jobs": [{"name": "prune", "argv": ["gate", "prune"], "idempotent": True}, {"name": "collect", "argv": ["gate", "collect"], "idempotent": True}]},
-        "img/o": {"jobs": [{"name": "ops-feedback", "argv": ["ops", "job", "--config", "/config/job.yaml"], "idempotent": True}]}}
+        "img/g": {"jobs": [{"name": "prune", "argv": ["gate", "prune"], "idempotent": True}, {"name": "collect", "argv": ["gate", "collect"], "idempotent": True, "timeout_seconds": 300}]},
+        "img/o": {"jobs": [{"name": "ops-feedback", "argv": ["ops", "job", "--config", "/config/job.yaml"], "idempotent": True, "timeout_seconds": 1800}]}}
 
 
 def labels(img): return {"io.openit.jobs": json.dumps(DECL[img])} if img in DECL else {}
@@ -36,6 +36,18 @@ class T(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             G.build(COMPOSE, lambda i: {"io.openit.jobs": json.dumps(bad[i])} if i in bad else {}, validator)
         self.assertIn("ops-feedback", str(e.exception))
+
+    def test_timeout_not_shorter_than_period_is_refused(self):   # R9.3: 상한은 주기보다 짧아야 한다(수집기 주기 600초, 기본 3600초면 거부)
+        d = json.loads(json.dumps(DECL)); d["img/g"]["jobs"][1].pop("timeout_seconds")
+        with self.assertRaises(SystemExit) as e:
+            G.build(COMPOSE, lambda i: {"io.openit.jobs": json.dumps(d[i])} if i in d else {}, validator)
+        self.assertIn("실행 주기 600초 이상", str(e.exception))
+
+    def test_timers_never_catch_up_missed_runs(self):   # R10.12: 놓친 실행을 몰아서 하지 않는다(Persistent 없음), 잡은 oneshot 이라 겹치지 않는다
+        for t in (ROOT / "config/systemd").glob("*.timer"):
+            self.assertNotRegex(t.read_text(encoding="utf-8"), r"(?m)^Persistent=true", t.name)
+        for sv in (ROOT / "config/systemd").glob("*.service"):
+            self.assertIn("Type=oneshot", sv.read_text(encoding="utf-8"), sv.name)
 
     def test_compose_has_no_hand_written_python_m_for_jobs(self):
         s = (ROOT / "compose.yaml").read_text(encoding="utf-8")
