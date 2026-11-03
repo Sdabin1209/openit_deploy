@@ -12,8 +12,8 @@
 
 - 표준 도구는 Ansible(`ansible-core`). 에이전트 없이 SSH 로 서버에 접속한다. 지휘 기계의 프로젝트 가상환경에 pip 로 설치하고 `requirements-deploy-tools.txt` 에 전이 의존까지 판을 고정한다(ansible-core 2.18.20, 2.18 은 장기 지원 줄기).
 - 배치 정의 = Ansible YAML 인벤토리(`ansible/inventory.example.yml`). 서버마다 `ansible_host`(주소), `placement_region`, `placement_services`(compose 서비스 이름 목록). 공통 변수 `placement_scheme`(기본 https), `placement_ports`.
-- `scripts/placement.py` 가 인벤토리를 스키마(`schemas/Placement.schema.json`)와 compose 의 서비스 목록으로 점검한다: 서비스 이름 일치, 한 서비스는 한 서버에만, 기반 요소(postgres, step-ca, keycloak, gateway) 배치, 배치해야 할 서비스의 누락, DB 접속 비밀을 쓰는 서비스는 postgres 와 같은 서버. 점검은 서버에 닿기 전에 플레이북의 첫 플레이로 돈다.
-- `ansible/site.yml` 은 서버마다 (a) 그 서버 몫의 설정·비밀 파일을 배포(비밀은 640, 그룹은 SECRETS_GID 규칙, ADR 0054; 다른 서버의 비밀은 보내지 않는다) (b) 상대 서비스 주소를 계산한 compose override 를 놓고 (c) `postgres -> step-ca -> keycloak -> 나머지` 단계로 그 서버 몫만 `docker compose up -d --wait <서비스>` 한다. 같은 서버의 상대는 서비스 이름 그대로, 다른 서버의 상대는 `<scheme>://<그 서버 주소>:<게시 포트>` 로 바꾼다. 불리는 서비스는 그 서버에서 호스트 포트를 연다(서버 사이 호출은 게시 포트로만).
+- `scripts/placement.py` 가 인벤토리를 스키마(`schemas/Placement.schema.json`)와 compose 의 서비스 목록으로 점검한다: 서비스 이름 일치, 한 서비스는 한 서버에만, 기반 요소(postgres, step-ca, keycloak, gateway) 배치, 배치해야 할 서비스의 누락, 다른 서버에서 불리는 서비스의 게시 포트 명시 여부. 점검은 서버에 닿기 전에 플레이북의 첫 플레이로 돈다.
+- `ansible/site.yml` 은 서버마다 (a) 그 서버 몫의 설정·비밀 파일을 배포(비밀은 640, 그룹은 SECRETS_GID 규칙, ADR 0054; 다른 서버의 비밀은 보내지 않는다. DB 접속 비밀(db-*-dsn)은 postgres 가 다른 서버면 호스트를 그 서버 주소와 게시 포트로 바꿔 서버마다 새로 만들고, https 배치면 sslmode=verify-full 과 sslrootcert 를 붙인다) (b) 상대 서비스 주소를 계산한 compose override 를 놓고 (c) 서버를 넘나드는 단계(postgres, step-ca, keycloak, 저장소·서버 서비스, survey·model-serving, gateway)로 그 서버 몫만 `docker compose up -d --wait <서비스>` 한다. 다음 단계 전에 앞 단계에서 게시된 서비스가 `/readyz`(postgres 는 TCP)에 응답하는지 지휘 기계에서 `ansible.builtin.uri`(until/retries)로 기다린다. 지휘 기계의 첫 단계에서 서버별 환경을 `check_config_contracts` 로 검증하고 실패면 멈춘다. 같은 서버의 상대는 서비스 이름 그대로, 다른 서버의 상대는 `<scheme>://<그 서버 주소>:<게시 포트>` 로 바꾼다. 다른 서버에서 불리는 서비스는 그 서버에서 호스트 포트를 연다(서버 사이 호출은 게시 포트로만). 게시 포트는 인벤토리 `placement_ports` 에 명시하며 빠지면 점검이 거부한다(순서로 계산하지 않는다). 바인드 주소는 서버별 `placement_bind_address`(없으면 address 가 IP 일 때 그 값). 내부 전용 네트워크에만 붙은 서비스(postgres, model-registry 등)는 게시할 때 override 가 일반 네트워크 `placement-publish` 를 더한다. 게이트웨이만 사람·기기 입구라는 노출 규칙은 그대로이고, 서버 사이 게시 포트는 서비스 토큰 인증 + TLS 이며 인벤토리의 서버 사이 망에만 바인드한다.
 - Docker 전용 Ansible 모듈(`community.docker`)은 쓰지 않고 `command`/`shell` 로 compose 를 부른다. compose 호출은 `scripts/lib.sh` 의 `dc` 를 그대로 쓴다(서버 한 대 배치와 같은 경로).
 - 서버 한 대 배치는 override 가 비어(`services: {}`) 기존 `up.sh` 와 같은 compose 호출이 된다.
 
@@ -34,8 +34,8 @@
 ## 결과
 
 - 얻는 것: 서버·지역 변경은 인벤토리만 고친다. 한 서버 배치와 다서버 배치가 같은 compose 와 같은 경로를 쓴다. 잘못된 배치는 서버에 닿기 전에 거부된다.
-- 감수하는 것: (1) DB 접속 비밀을 쓰는 서비스는 postgres 와 같은 서버에 둔다(postgres 는 내부 네트워크에만 있어 밖에서 닿지 않고 DSN 의 호스트가 서비스 이름이다). 이 제약을 풀려면 DSN 을 서버별로 계산하고 postgres 를 게시해야 하며 아직 하지 않았다. (2) 내부 전용 네트워크(`internal: true`)에만 붙은 서비스(예: model-registry)는 호스트 포트를 열 수 없어 다른 서버에서 부를 서비스로 둘 수 없다. 필요해지면 override 에 외부 네트워크를 더한다(미구현). (3) 서버 사이 준비 순서는 보장하지 않는다(서버 안 순서만). 서비스의 재시도에 맡긴다. (4) 분리 시험은 대역 서비스로 배치만 본다. 실제 이미지의 분리 기동은 확인하지 않았다. 전 구간 https 와 검증 실패 거부는 TLS 작업이 합쳐진 뒤 `SPLIT_SCHEME=https` 로 확인한다(미확인). (5) 서버 사이에서 쓰는 주소의 포트는 컨테이너 안 8080 으로 가정한다.
-- 측정하지 않은 값: 게시 포트 기본값(19000 + compose 서비스 순서)은 임의의 시작값이다. 인벤토리의 `placement_ports` 로 바꾼다.
+- 감수하는 것: (1) 서버 사이 호출의 TLS(https)와 postgres 의 verify-full 연결은 TLS 작업이 합쳐진 뒤에야 확인할 수 있다. 지금 시험은 http 로 돌고 `SPLIT_SCHEME=https` 변수만 열어 두었다(미확인). sslrootcert 가 가리키는 postgres CA 파일의 마운트는 TLS 작업의 몫이다. (2) 분리 시험은 대역 서비스(또는 `SPLIT_IMAGE` 로 준 실제 이미지의 파이썬에 대역 스크립트를 얹은 것)로 배치만 본다. 실제 영역 서비스의 분리 기동은 합친 뒤 주 담당이 실제 이미지·https 로 돈다. (3) 서버 사이 주소의 포트는 컨테이너 안 8080(postgres 는 5432)으로 가정한다. (4) 지휘 기계의 계약 점검은 compose 가 해석되려면 잠금 파일에 모든 이미지 digest 가 있어야 한다.
+- 측정하지 않은 값: 게시 포트에는 기본값이 없다(인벤토리 명시). 기동 단계의 /readyz 대기 한도(30회 x 2초)는 측정하지 않은 시작값이다. 단계 순서는 `scripts/placement.py` 의 STAGES 한 곳이다.
 
 ## 되돌리는 조건
 

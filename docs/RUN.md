@@ -367,11 +367,13 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 4. 비밀은 지휘 기계의 `secrets/` 에 만들어 둔다(`scripts/gen-secrets.sh`). 플레이북이 서버마다 **그 서버 서비스가 쓰는 파일만** 640 으로 보낸다(그룹은 `SECRETS_GID`, 서버마다 `placement_secrets_gid` 로 바꿀 수 있다).
 5. 실행: `.venv/bin/ansible-playbook -i <인벤토리> ansible/site.yml`. 서버마다 설정·비밀 배포, 상대 서비스 주소 계산, `postgres -> step-ca -> keycloak -> 나머지` 순서 기동을 한다. 다시 실행하면 바뀐 것만 바뀐다.
 
-주소 규칙: 같은 서버의 상대는 서비스 이름 그대로, 다른 서버의 상대는 `<placement_scheme>://<그 서버 ansible_host>:<게시 포트>` 이다(스킴 기본 https). 다른 서버에서 불리는 서비스는 그 서버가 호스트 포트를 연다(`placement_ports` 로 지정, 없으면 자동). 방화벽은 서버끼리만 그 포트를 허용하게 한다.
+주소 규칙: 같은 서버의 상대는 서비스 이름 그대로, 다른 서버의 상대는 `<placement_scheme>://<그 서버 ansible_host>:<게시 포트>` 이다(스킴 기본 https). 다른 서버에서 불리는 서비스(postgres 포함)는 그 서버가 호스트 포트를 연다. 게시 포트는 `placement_ports` 에 서비스별로 명시해야 하며(빠지면 validate 가 거부), 바인드 주소는 서버별 `placement_bind_address`(서버 사이 망의 사설 주소)다. 예: `ansible/inventory.multi.example.yml`. DB 접속 비밀의 호스트는 서버마다 계산해 만든다. 방화벽은 서버끼리만 그 포트를 허용하게 한다.
 
-제약(ADR 0060): DB 접속 비밀을 쓰는 서비스는 postgres 와 같은 서버에 둔다. 내부 전용 네트워크에만 붙은 서비스는 다른 서버에서 부를 서비스로 둘 수 없다.
+기동 순서는 서버를 넘나든다: postgres, step-ca, keycloak, 저장소·서버 서비스(release-gate, question-authoring, ops-feedback, model-registry, dataset-store), survey-service·model-serving, gateway 순이며 단계 사이에 게시된 서비스의 `/readyz` 를 지휘 기계가 기다린다. 첫 단계에서 서버별 환경을 계약(`check_config_contracts`)으로 검증하고 실패면 멈춘다.
 
-시험(E2E 밖, 한 PC): `bash scripts/test-split-placement.sh` 는 가상 서버 3개(compose 프로젝트 3개, 서로 다른 네트워크)를 같은 플레이북으로 띄워 묶음별 `/healthz` 와 묶음 사이 호출, 멱등, 잘못된 배치 거부를 확인한다. 대역 서비스를 쓰므로 실제 이미지의 분리 기동은 확인하지 않는다.
+제약(ADR 0060): 서버 사이 TLS(https)와 postgres verify-full 은 TLS 작업이 합쳐진 뒤 확인한다.
+
+시험(E2E 밖, 한 PC): `bash scripts/test-split-placement.sh` 는 가상 서버 3개(compose 프로젝트 3개, 서로 다른 네트워크)를 같은 플레이북으로 띄워 묶음별 `/healthz` 와 묶음 사이 호출, 멱등, 잘못된 배치 거부를 확인한다. 대역 서비스를 쓴다(`SPLIT_IMAGE=<이미지 참조>` 로 실제 이미지의 파이썬을 쓸 수 있다). 실제 영역 서비스의 분리 기동은 확인하지 않는다.
 
 ## 8. 흔한 문제
 

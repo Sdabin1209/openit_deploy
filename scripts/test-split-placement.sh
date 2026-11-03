@@ -61,14 +61,16 @@ inv "$T/inv.yml" "$A" "$B" "$C"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home"
 timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -30 "$T/run1.log" >&2; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
+# 기동 직후 첫 서버 사이 호출은 느릴 수 있다(실제 이미지에서 측정됨: 첫 호출이 대역 서비스의 3초 제한에 걸림). 성공할 때까지 최대 5번
+exr() { local i o; for i in 1 2 3 4 5; do o=$(ex "$@") && [ "${o##* }" = 200 ] && { echo "$o"; return 0; }; sleep 2; done; echo "$o"; }
 ex() { docker exec "deploy-$ID-$1-$2-1" python -c "$3"; } # ex <서버> <서비스> <파이썬 식>
 H="import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3).status)"
 for pair in a:postgres a:keycloak a:release-gate b:survey-service b:gateway c:question-authoring; do
   [ "$(ex "${pair%%:*}" "${pair#*:}" "$H")" = 200 ] || bad "${pair#*:} 의 /healthz"; done; ok "세 묶음의 /healthz"
 C1="import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/call?env=%s',timeout=8).read().decode())"
-r=$(ex b survey-service "${C1/\%s/SURVEY_RELEASE_READER_URL}"); [ "${r##* }" = 200 ] || bad "survey-service -> release-gate: $r"; ok "묶음 사이 호출 survey-service -> release-gate ($r)"
+r=$(exr b survey-service "${C1/\%s/SURVEY_RELEASE_READER_URL}"); [ "${r##* }" = 200 ] || bad "survey-service -> release-gate: $r"; ok "묶음 사이 호출 survey-service -> release-gate ($r)"
 case "$r" in "$SCHEME://$HOSTADDR:$PORT_GATE/"*) ok "상대 주소가 인벤토리에서 계산됨($SCHEME, 서버 주소, 게시 포트)";; *) bad "주소 계산: $r";; esac
-r=$(ex a release-gate "${C1/\%s/GATE_I1_URL}"); [ "${r##* }" = 200 ] || bad "release-gate -> question-authoring: $r"; ok "묶음 사이 호출 release-gate -> question-authoring, 내부 전용 네트워크의 서비스를 게시 포트로 ($r)"
+r=$(exr a release-gate "${C1/\%s/GATE_I1_URL}"); [ "${r##* }" = 200 ] || bad "release-gate -> question-authoring: $r"; ok "묶음 사이 호출 release-gate -> question-authoring, 내부 전용 네트워크의 서비스를 게시 포트로 ($r)"
 # 다른 서버의 postgres: DSN 의 호스트가 인벤토리 값으로 계산되고, 그 게시 포트에 닿는다
 DSN=$(cat "$T/r/b/secrets/tokens/db-survey-dsn")
 case "$DSN" in *"@$HOSTADDR:$PORT_PG/survey"*) ok "survey-service 의 DSN 호스트 = postgres 서버 주소와 게시 포트";; *) bad "DSN 호스트 계산";; esac
