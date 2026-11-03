@@ -15,7 +15,7 @@ PW="$T/pw"; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$
 CAARGS="--ca-url https://step-ca:9000 --root /etc/openit/pki/root_ca.crt"
 RUN='cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$!; while sleep 60; do kill -0 $p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --force --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done'
 cleanup() {
-  if [ "$FAILS" != 0 ]; then for c in $ID-ca $ID-n1 $ID-a1 $ID-s1 $ID-gw $ID-a2 $ID-s2; do echo "--- 로그 $c (끝 10줄)"; docker logs --tail 10 "$c" 2>&1 | cut -c1-220; done; fi
+  if [ "$FAILS" != 0 ]; then for c in $ID-ca $ID-n1 $ID-a1 $ID-s1 $ID-gw $ID-gw2 $ID-a2 $ID-s2; do echo "--- 로그 $c (끝 10줄)"; docker logs --tail 10 "$c" 2>&1 | cut -c1-220; done; fi
   docker ps -aq --filter "name=^$ID-" | xargs -r docker rm -f >/dev/null 2>&1; docker volume ls -q --filter "name=^$ID-" | xargs -r docker volume rm >/dev/null 2>&1; docker network rm $NET >/dev/null 2>&1; rm -rf "$T"
 }
 trap cleanup EXIT
@@ -82,5 +82,14 @@ docker run -d --name $ID-a2 --network $NET --network-alias app2 --sysctl net.ipv
 sidecar $ID-s2 container:$ID-a2 app2 $ID-c2; sleep 5
 docker stop $ID-a2 >/dev/null; docker start $ID-a2 >/dev/null; sleep 3
 ok "(6) 대조: 앱이 공간을 소유하면 앱 재시작 뒤 사이드카와 앱의 네트워크 공간이 달라진다" bash -c '[ "$(docker exec $1 readlink /proc/self/ns/net)" != "$(docker exec $2 readlink /proc/self/ns/net)" ]' _ $ID-s2 $ID-a2
+# (7) R3.8: 게이트웨이가 서비스 인증서를 모르는 루트로 보면(신뢰 묶음에 없음) 503 UPSTREAM_UNAVAILABLE (평문으로 물러서거나 검증을 끄지 않는다)
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/other.key" -out "$T/other_root.crt" -subj "/CN=other-root" -days 1 >/dev/null 2>&1; chmod 644 "$T/other_root.crt"
+sed 's#/pki/root_ca.crt#/other/other_root.crt#' "$T/gw.caddy" > "$T/gw2.caddy"
+docker run -d --name $ID-gw2 --network $NET --user 1000:1000 --cap-drop ALL --read-only --tmpfs /tmp:exec --tmpfs /data:uid=1000,gid=1000 -v "$T/gw2.caddy:/etc/caddy/Caddyfile:ro" -v "$T/other_root.crt:/other/other_root.crt:ro" --entrypoint sh "$SC_IMG" -c 'cp /usr/bin/caddy /tmp/caddy && exec /tmp/caddy run --config /etc/caddy/Caddyfile' >/dev/null; sleep 3
+ok "(7) R3.8 서비스 인증서가 신뢰 묶음 밖의 루트면 게이트웨이는 503 + Retry-After 2 + {\"code\":\"UPSTREAM_UNAVAILABLE\"}" bash -c 'o=$(docker run --rm --network $1 "$2" python -c "
+import urllib.request,urllib.error
+try: r=urllib.request.urlopen(\"http://$3-gw2:8081/\",timeout=10); print(r.status)
+except urllib.error.HTTPError as e: print(\"|\".join([str(e.code),e.headers.get(\"Retry-After\") or \"-\",e.headers.get(\"Content-Type\") or \"-\",e.read().decode()[:40]]))
+" | tail -1); [ "$o" = "503|2|application/json|{\"code\":\"UPSTREAM_UNAVAILABLE\"}" ]' _ $NET "$UTIL" $ID
 [ "$FAILS" = 0 ] && echo "통과: 네트워크 공간 수명 단독 시험" || echo "실패: $FAILS건"
 exit $FAILS
