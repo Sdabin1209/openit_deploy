@@ -4,7 +4,7 @@
 입력·출력·실패 동작을 정한다. 코드 컴포넌트(`openit_deploy/components`)는 `docs/components.md`가 정본이고, 이 문서와 겹치지 않는다. 조항별 대응표는 `docs/RUNTIME-MAP.md`다.
 (파일 이름: 헤드 지시는 `docs/COMPONENTS.md` 였으나 `docs/components.md` 와 대소문자만 달라 대소문자를 가리지 않는 파일시스템에서 충돌한다. 그래서 `RUNTIME-COMPONENTS.md` 로 썼다.)
 
-읽는 법. **확인한 것**(코드·시험으로 확인), **목표**(이 문서가 정하는 것, 구현이 아직 다를 수 있음), **미정**을 구분한다. 구현 상태 칸이 "목표"인 항목은 구현이 이 문서에 맞춰질 때까지 위반으로 센다(위반 목록은 `docs/RUNTIME-MAP.md` 맨 끝).
+읽는 법. **확인한 것**(코드·시험으로 확인), **결정**(이 문서가 정하는 것. 구현이 다르면 위반이다)을 구분한다. 열린 항목은 없다(결정할 수 없는 것은 근거와 함께 결정으로 닫았다). 현재 구현이 결정과 다르면 그 항목은 구현이 이 문서에 맞춰질 때까지 위반으로 센다(위반 목록은 `docs/RUNTIME-MAP.md` 맨 끝).
 
 ## 0. 용어와 공통 규칙
 
@@ -30,7 +30,7 @@
    └──────────────────────┘
 ```
 
-## 2. 네트워크 공간 소유자 `<서비스>-net` (목표. 현재 구현은 "앱이 소유")
+## 2. 네트워크 공간 소유자 `<서비스>-net` (결정. 현재 구현은 "앱이 소유")
 
 **역할.** 서비스 하나의 네트워크 네임스페이스(주소·loopback·Docker 망 가입·DNS 별칭)를 소유하고, 앱과 TLS 종단이 거기에 붙는다.
 
@@ -48,12 +48,12 @@
 | A. 앱이 공간 소유(현재) | 공간이 사라져 종단도 못 뜬다. 게이트웨이가 연결을 못 맺고 시간 초과 504 가 나왔다(5q, 확인함) | 앱은 산다. 종단만 다시 붙이면 된다 | 종단을 다시 붙여야 한다(자동 아님) | 앱 영향 없음 | R3.2·R4.1 위반 |
 | B. TLS 종단이 공간 소유 | 종단이 살아서 502 를 낸다. 종단이 연결을 끊으면 503 을 만들 수 있다 | 앱까지 공간을 잃는다 | 앱만 다시 붙이면 된다 | 앱을 다시 붙여야 한다 | R4.2 위반(종단 재시작이 앱 재시작을 요구) |
 | C. 공간을 나누고 앱이 0.0.0.0 으로 연다 | 이름 해석 실패·연결 거부로 503 | 같음 | 이름·주소가 그대로 | 같음 | 앱 평문 포트가 망에 열린다: R6.1 위반(서비스 사이 평문 경로가 생김) |
-| D. 전용 소유자 `<서비스>-net`(채택 목표) | 소유자가 살아 있어 연결은 맺히고, 종단이 상류 거부를 즉시 연결 종료로 올려 503(R3.2) | 앱은 산다. 소유자는 산다. 503(R3.4) | 앱만 재시작. 종단은 그대로 | 종단만 재시작. 앱은 그대로 | 컨테이너가 서비스당 하나 늘어난다(감수) |
+| D. 전용 소유자 `<서비스>-net`(채택) | 소유자가 살아 있어 연결은 맺히고, 종단이 상류 거부를 즉시 연결 종료로 올려 503(R3.2) | 앱은 산다. 소유자는 산다. 503(R3.4) | 앱만 재시작. 종단은 그대로 | 종단만 재시작. 앱은 그대로 | 컨테이너가 서비스당 하나 늘어난다(감수) |
 | D'. 전용 소유자를 `UTIL_IMAGE` + `sleep` 으로 | D 와 같음 | D 와 같음 | D 와 같음 | D 와 같음 | 새 외부 이미지는 없지만 셸이 있는 이미지가 서비스마다 하나 더 돈다(공격 면 증가). pause 가 더 작고 표준이라 D 를 채택한다 |
 | E. 호스트 네트워크 | — | — | — | — | 격리(R6.2) 불가. 버린다 |
 
 **전제(외부 도구 동작).**
-- P3(=실험 X2·X3): Docker `network_mode: service:X` 는 X 컨테이너의 수명에 묶인다. X 가 멈추면 이를 쓰는 컨테이너는 다시 시작할 수 없고, X 가 다시 시작해 새 네임스페이스를 받으면 기존 컨테이너는 옛 네임스페이스에 남는다(5q 에서 `survey-service-tls` 가 Exited(1)로 남았다, 확인함). 확인하는 단독 시험: **없음(만들 것: `scripts/test-netns-lifetime.sh` — 소유자 유지 중 앱·종단을 각각 멈췄다 시작해 서로 영향 없음 확인)**.
+- P3(=실험 X2·X3): Docker `network_mode: service:X` 는 X 컨테이너의 수명에 묶인다. X 가 멈추면 이를 쓰는 컨테이너는 다시 시작할 수 없고, X 가 다시 시작해 새 네임스페이스를 받으면 기존 컨테이너는 옛 네임스페이스에 남는다(5q 에서 `survey-service-tls` 가 Exited(1)로 남았다, 확인함). 확인하는 단독 시험: **없음(필요한 시험: `scripts/test-netns-lifetime.sh` — 소유자 유지 중 앱·종단을 각각 멈췄다 시작해 서로 영향 없음 확인)**.
 
 ## 3. 앱 (계약 서비스)
 
@@ -70,8 +70,8 @@
 |---|---|
 | 입력 | `/certs/tls.crt`, `/certs/tls.key`(인증서 컨테이너가 쓰는 볼륨, 읽기 전용), 환경 `TLS_NAME`(서비스 이름), `TLS_UPSTREAM`(기본 127.0.0.1:8080), 설정 `config/tls-sidecar.caddy`. |
 | 출력 | 443 에서 `https://<서비스 이름>`. 맞는 Host 는 상류로 전달(응답 상태·헤더·본문 불변, R2.1). 모르는 Host/SNI 는 421(R3.7). 평문 http 는 받지 않는다(R3.9). |
-| 실패 동작 | 상류(앱)가 거부하면 연결을 끊어 호출자가 503 으로 해석하게 한다(빈 502 를 내지 않는다, R3.1·R2.2). 인증서 파일이 새로 바뀌면 일정 주기에 reload 한다(R4.4). 상류가 일정 시간(현재 30초) 안 닿으면 종료하고 restart 정책이 다시 올린다 — 공간 소유자가 별도라면 앱 멈춤 중에도 종단은 살아 있어야 하므로 이 감시의 의미는 2절 구현에서 다시 정한다(**미정**). |
-| 전제 | P1: Caddy 는 맞는 사이트가 없으면 본문 없는 200 을 돌려준다 → 마지막 사이트(catch-all)로 421 을 낸다. 시험: `scripts/test-tls-sidecar.sh`("모르는 Host 는 421"). P2: Caddy 는 사이트 이름이 `localhost` 이면 그 이름에 내부(local) CA 발급 정책을 자동으로 만들어 루트 설치를 시도한다 → 사이트 이름 대신 Host 매처를 쓴다. 시험: **없음(만들 것: `caddy adapt` 결과에 internal 발급 정책이 없음을 보는 정적 시험)**. |
+| 실패 동작 | 상류(앱)가 거부하면 연결을 끊어 호출자가 503 으로 해석하게 한다(빈 502 를 내지 않는다, R3.1·R2.2). 인증서 파일이 새로 바뀌면 일정 주기에 reload 한다(R4.4). 상류가 안 닿는 동안에도 종단은 종료하지 않고 계속 떠서 503 을 낸다(결정: 공간 소유자가 별도이므로 앱이 멈춰도 종단은 산다. 종단이 상류 부재로 스스로 죽으면 앱이 돌아와도 종단을 다시 올려야 해서 R3.4 의 "복구까지 재시작 없음"을 어긴다. 종단 프로세스 자체가 죽는 경우만 restart 정책이 다시 올린다. 현재 구현의 30초 종료 감시는 2절 구현과 함께 없앤다, 위반 목록 참조). |
+| 전제 | P1: Caddy 는 맞는 사이트가 없으면 본문 없는 200 을 돌려준다 → 마지막 사이트(catch-all)로 421 을 낸다. 시험: `scripts/test-tls-sidecar.sh`("모르는 Host 는 421"). P2: Caddy 는 사이트 이름이 `localhost` 이면 그 이름에 내부(local) CA 발급 정책을 자동으로 만들어 루트 설치를 시도한다 → 사이트 이름 대신 Host 매처를 쓴다. 시험: **없음(필요한 시험: `caddy adapt` 결과에 internal 발급 정책이 없음을 보는 정적 시험)**. |
 
 ## 5. 인증서 컨테이너 `<서비스>-cert`, `postgres-cert`
 
@@ -80,7 +80,7 @@
 | 입력 | 일회용 토큰 파일(`pki-tokens` 볼륨 `/tokens/<이름>.ott`), step-ca 루트(`pki-root` 볼륨, 읽기 전용), step-ca 주소(`https://step-ca:<포트>`). |
 | 출력 | `/certs/tls.crt`, `/certs/tls.key`(서비스 이름 SAN). 갱신 데몬(`step ca renew --daemon`)이 만료 전에 같은 파일을 갈아 쓴다(R4.4). |
 | 실패 동작 | 토큰이 없거나 만료(5분)면 시작 실패 → healthcheck 실패 → 종속 컨테이너(TLS 종단)가 뜨지 않는다. 이미 인증서가 있으면 토큰 없이 재시작해 갱신만 한다. 인증기관이 멈춰도 만료 전 인증서로 정상 동작한다(R3.11). |
-| 전제 | P4: `step ca certificate` 는 `--token` 과 `--san` 을 함께 받지 않는다. 인증서 SAN 은 토큰이 정한다. 시험: **직접 시험 없음(만들 것: 토큰 SAN 과 인증서 SAN 이 같음을 보는 단독 시험)**, 간접: `scripts/test-split-pki.sh`, `scripts/test-inference-location.sh`. P5: 토큰은 일회용이고 5분 유효하다. 시험: `scripts/test-split-pki.sh`. |
+| 전제 | P4: `step ca certificate` 는 `--token` 과 `--san` 을 함께 받지 않는다. 인증서 SAN 은 토큰이 정한다. 시험: **직접 시험 없음(필요한 시험: 토큰 SAN 과 인증서 SAN 이 같음을 보는 단독 시험)**, 간접: `scripts/test-split-pki.sh`, `scripts/test-inference-location.sh`. P5: 토큰은 일회용이고 5분 유효하다. 시험: `scripts/test-split-pki.sh`. |
 
 ## 6. `pki-tokens`, `pki-root`, `step-ca`
 
@@ -88,7 +88,7 @@
 |---|---|---|---|---|
 | `step-ca` | `pki-ca` 볼륨(루트·중간 키), 비밀 `step-ca-password`, 환경 `STEP_CA_PORT`·`STEP_CA_DNS_NAMES` | 인증서 서명 API(JWK 프로비저너 `admin`), 루트 인증서 | 멈추면 새 발급·갱신만 실패(R3.11). 첫 기동에 `ca init`. 루트 키 분실 = 전 인증서 재발급(백업 대상) | 시험: `scripts/test-tls-sidecar.sh` |
 | `pki-root` | `pki-ca` 볼륨(읽기 전용) | `pki-root` 볼륨에 `root_ca.crt`(공개, 644) | 일회용(`restart: "no"`). 실패하면 의존 컨테이너가 시작하지 않는다 | `scripts/test-tls-sidecar.sh` |
-| `pki-tokens` | `step-ca`(JWK 비밀번호 파일), 루트 | 서비스 이름마다 `/tokens/<이름>.ott`(5분 유효) | 일회용. 서비스 목록은 이 서비스의 인증서 컨테이너 목록과 같아야 한다(**정적 대조: 없음, 만들 것**) | `scripts/test-split-pki.sh` |
+| `pki-tokens` | `step-ca`(JWK 비밀번호 파일), 루트 | 서비스 이름마다 `/tokens/<이름>.ott`(5분 유효) | 일회용. 서비스 목록은 이 서비스의 인증서 컨테이너 목록과 같아야 한다(정적 대조 없음: 필요, 위반으로 센다) | `scripts/test-split-pki.sh` |
 
 ## 7. 게이트웨이 `gateway` (Caddy)
 
@@ -114,7 +114,7 @@
 | 입력 | 비밀(비밀번호·접속 문자열 `db-*-dsn`), `pg_hba.conf`(TLS 접속만), 서버 인증서(`postgres-cert`가 `/pg-tls` 에 쓴다). |
 | 출력 | 5432 TLS(`sslmode=verify-full`). 서비스마다 계정 분리(ADR 0055). |
 | 실패 동작 | 멈추면 서비스가 계약대로 503 `UNAVAILABLE`(`/readyz` 503, R3.10). 인증서 갱신 뒤 `postgres-reload` 가 주기적으로 `pg_reload_conf()` 로 새 인증서를 읽게 한다(R4.4). |
-| 전제 | P10: PostgreSQL 은 `pg_reload_conf()` 로 서버 인증서를 다시 읽는다. 시험: **없음(만들 것: 갱신 뒤 reload 로 새 인증서가 쓰임을 보는 단독 시험)**. 증거 시험: E2E 5p·5pn. |
+| 전제 | P10: PostgreSQL 은 `pg_reload_conf()` 로 서버 인증서를 다시 읽는다. 시험: **없음(필요한 시험: 갱신 뒤 reload 로 새 인증서가 쓰임을 보는 단독 시험)**. 증거 시험: E2E 5p·5pn. |
 
 ## 10. `backup-target`, 백업·복구
 
@@ -134,6 +134,21 @@
 | 실패 동작 | 의존이 멈춰 있으면 실패가 드러난다(조용히 성공하지 않는다, E2E 5pj). |
 | 시험 | `scripts/test_job_env_matches_server.py`, `scripts/test_sd_jobs.py`, `scripts/test_e2e_job_urls.py`, E2E 4a·6·5pj. |
 
+### 11.1 잡마다 계약 (R9.2)
+
+공통(근거 따라 결정): 입력은 인자·설정 파일·이 표의 키만 받는다(R9.1). 시간 한도는 systemd `TimeoutStartSec=3600`(`config/systemd/openit-*.service`)이다. 한도는 측정하지 않았다 — 가장 긴 주기(1시간, ops-feedback)가 한도 안에 끝난다는 상한이며 정상 실행 시간은 이보다 훨씬 짧다고 가정할 뿐이다(측정하면 이 값을 고친다). 겹침 방지: 잡마다 `Type=oneshot` systemd 서비스이고, 이미 실행 중인 서비스 유닛은 타이머가 다시 시작해도 두 번째가 뜨지 않는다(systemd.service, systemd.timer: 유닛당 한 인스턴스). 그래서 앱 안의 `flock` 을 따로 두지 않는다(대안: 파일 잠금 — 같은 컨테이너 안 중복만 막고 유닛 단위 보장이 이미 있어 이중 장치라 버린다). 백업(`pg-backup.sh`, `backup.sh`)은 호스트 스크립트라 `flock` 을 쓴다. 출력: 종료 코드 0=성공, 0 아님=실패, 마지막 줄은 한 줄 JSON(CONVENTIONS 3절의 `BoundaryError` 형식은 실패 때 쓴다). 멱등이다.
+
+| 잡 | 필수 입력(환경 키·`*_FILE`) | 주기 | 출력(마지막 줄 JSON) |
+|---|---|---|---|
+| `job-survey-purge` | 문진 서비스 서버와 같은 환경(`survey.env`, `*_FILE` 비밀 전부 서버와 같은 YAML 앵커 `survey_env`) | 86400s | 지운 개수 한 줄(compose 주석에서 확인) |
+| `job-question-authoring-purge` | 저작 서버와 같은 환경(`qa_env`) | 86400s | 지운 개수 한 줄(compose 주석에서 확인) |
+| `job-release-gate-prune` | 출고 게이트 서버와 같은 환경(`gate_env`), 인자 `--dry-run` 은 미리보기 | 86400s | 한 줄 JSON(키는 잡 코드가 정한다, 이 문서가 확인하지 않았다) |
+| `job-release-gate-collect` | 출고 게이트 서버와 같은 환경(`gate_env`), I1·I3 읽기 토큰 파일 | 600s | 한 줄 JSON(키는 잡 코드가 정한다, 이 문서가 확인하지 않았다) |
+| `job-ops-feedback` | `OPS_DEID_SALT_FILE`, `OPS_GATE_READ_TOKEN_FILE`, `OPS_GATE_WRITE_TOKEN_FILE`, `OPS_LOG_DATABASE_URL_FILE`, `OPS_FAILURE_DATABASE_URL_FILE`, `SSL_CERT_FILE`, 설정 파일 `/config/job.yaml` | 3600s | 한 줄 JSON(키는 잡 코드가 정한다, 이 문서가 확인하지 않았다) |
+| `ops-feedback-migrate` | 소유자 DSN 파일 한 개(일회성, 주기 없음, 겹침은 compose 가 일회성 서비스로 한 번만 띄운다) | 기동 때 1회 | 종료 코드 |
+
+주기는 `config/systemd/openit-*.timer` 의 `OnUnitActiveSec` 값이다(옛 스케줄러의 간격을 그대로 옮긴 것, 타이머 파일 주석). 각 잡의 환경 키 전체 목록은 서버와 같은 것이라 서버 절을 따른다(복사하지 않는다, `scripts/test_job_env_matches_server.py` 가 같음을 지킨다).
+
 ## 12. 감시 (prometheus, alertmanager, blackbox, exporter)
 
 | 항목 | 내용 |
@@ -143,6 +158,17 @@
 | 실패 동작 | 감시가 멈춰도 제품은 영향받지 않는다. |
 | 시험 | `scripts/test-monitoring.sh`, `scripts/check-monitoring-live.sh`. |
 
+### 12.1 경보 목록 (R8.2)
+
+| 경보 | 조건(결정) | 근거 | 현재 구현 |
+|---|---|---|---|
+| 인증서 발급·갱신 실패 | `<서비스>-cert` 컨테이너가 종료·재시작 반복하거나 갱신 로그가 실패(지표: 인증서 파일 갱신 시각이 수명의 2/3 지난 뒤에도 안 바뀜) | step-ca 갱신 데몬은 수명의 2/3 지점에 갱신한다(smallstep 문서) | 규칙 없음: 위반으로 센다 |
+| 인증서 남은 수명 < 1/3 | 서비스 `:443` 인증서 `notAfter` 까지 남은 시간 / 전체 수명 < 1/3 (blackbox `probe_ssl_earliest_cert_expiry`) | RUNTIME R8.2 | 규칙 없음: 위반으로 센다 |
+| 디스크 사용률 80% 이상 | 기존 `DiskUsageWarning`(80%), `DiskUsageCritical`(90%) | RUNTIME R8.2 | 있음(`config/prometheus/rules/openit.yml`) |
+| 상류 `/readyz` 실패 | `ProbeDown`(`probe_success == 0`) | RUNTIME R8.2 | 있음 |
+| 시계 오차 | node exporter `node_timex_offset_seconds` 절댓값 > 0.5초, `node_timex_sync_status == 0`(NTP 비동기) | Kerberos 등 관례 5분은 인증서·토큰에 느슨하다. 0.5초는 측정 근거 없이 정한 상한이며 측정하면 고친다(R1.6) | 규칙 없음: 위반으로 센다 |
+
+로그 크기 상한은 compose 의 `logging` 옵션(`max-size`, `max-file`)으로 둔다(Docker 문서 json-file 드라이버).
 ## 13. 배치 도구 `placement` (Ansible 인벤토리·플레이북)
 
 | 항목 | 내용 |
@@ -150,7 +176,7 @@
 | 입력 | 인벤토리(`ansible/inventory*.yml`), compose, 비밀 폴더. |
 | 출력 | 서버별 `compose.placement.yaml`, `plan.json`(기동 단계), 필요한 비밀 이름, 게시 포트. 다른 서버의 서비스는 `https://<서비스 이름>:<게시 포트>` + `extra_hosts`(R1.4). |
 | 실패 동작 | 잘못된 배치(서비스 누락·중복·게시 포트 누락·인증서 이름 불일치)는 `validate` 가 거부한다. 서버를 나눠도 R1~R6 이 같다(R7.1). |
-| 전제 | 인벤토리에는 앱만 적고 TLS 종단·인증서·pg 짝은 자동으로 따라간다(`leaders`). 소유자 `<서비스>-net` 도입 시 이 규칙이 소유자를 따라가도록 바뀐다(**미정**). 시험: `scripts/test-split-placement.sh`, `scripts/test-split-pki.sh`, `scripts/test-split-pki-playbook.sh`. |
+| 전제 | 인벤토리에는 앱만 적고 TLS 종단·인증서·pg 짝은 자동으로 따라간다(`leaders`). 소유자 `<서비스>-net` 은 앱과 같은 서버에 둔다(결정: `network_mode: service:X` 는 같은 Docker 호스트의 컨테이너끼리만 가능하다, Docker 문서). 그래서 `leaders` 규칙은 소유자를 앱 짝에 포함한다. 시험: `scripts/test-split-placement.sh`, `scripts/test-split-pki.sh`, `scripts/test-split-pki-playbook.sh`. |
 
 ## 14. 시험 컴포넌트 (E2E, 단독 시험)
 
@@ -161,20 +187,22 @@
 | 실패 동작 | 간헐 실패는 재시도로 덮지 않고 원인을 찾는다. 시험끼리 공용 자원(venv·이미지 태그)을 공유하지 않는다(`scripts/test_no_pip_outside_setup.py`). |
 | 전제 | P8: Docker Desktop 의 엔진은 호스트 루프백 게시 포트에 닿지 못한다(시험은 `pick_bind`). P9: 컨테이너가 다시 만들어지면 IP 가 바뀐다(이름으로만 부른다). P12: 공용 `.venv` 에 설치하는 단계가 동시에 돌면 서로 깨뜨린다. 시험: `scripts/test-publish.sh`, `scripts/test_no_pip_outside_setup.py`. |
 
+R9.1 (시험·잡 입력 명시): 단독 시험은 E2E 가 내보낸 값을 상속하지 않는다. 사전 점검은 시험마다 `env -i` 와 필요한 이름만 넘겨 돌고(`scripts/e2e.sh`), 시험은 잠금 파일·비밀 폴더 같은 입력을 스스로 정한다(`scripts/test_selfcheck_clean_env.py`가 정적으로 지킨다). 잡은 위 11.1 표의 키만 읽는다. 실제로 `DEPLOY_LOCK` 상속이 분리 배치 플레이북 시험을 E2E 안에서만 실패시킨 것을 재현으로 확인했다.
+
 ## 15. 전제(외부 도구 동작) 모음과 확인 시험
 
 | # | 전제 | 확인한 것 | 단독 시험 |
 |---|---|---|---|
 | P1 | Caddy: 맞는 사이트가 없으면 본문 없는 200 | 예(4차 E2E) | `scripts/test-tls-sidecar.sh` (모르는 Host 421) |
-| P2 | Caddy: 사이트 이름 `localhost` 는 local CA 정책을 자동 생성(루트 설치 시도) | 예(`caddy adapt` 로 확인) | 없음(만들 것) |
-| P3 | Docker: `network_mode: service:X` 는 X 의 수명에 묶임 | 예(5q) | 없음(만들 것: `scripts/test-netns-lifetime.sh`) |
+| P2 | Caddy: 사이트 이름 `localhost` 는 local CA 정책을 자동 생성(루트 설치 시도) | 예(`caddy adapt` 로 확인) | 없음(필요, 위반으로 센다) |
+| P3 | Docker: `network_mode: service:X` 는 X 의 수명에 묶임 | 예(5q) | 없음(필요한 시험: `scripts/test-netns-lifetime.sh`) |
 | P4 | step: `--token` 과 `--san` 은 함께 못 받음(SAN 은 토큰이 정함) | 예(오류 메시지) | 직접 없음(간접 `test-split-pki.sh`) |
 | P5 | step: 일회용 토큰 5분 | 예 | `scripts/test-split-pki.sh` |
 | P6 | Docker restart 정책(`unless-stopped`)의 재시작 조건 | 부분(공간 소유자가 멈춘 동안 불가) | 정책 존재만: `scripts/test_compose_restart_policy.py` |
 | P7 | Caddy reverse_proxy: 연결 실패 502, 시간 초과 504, TLS 상류의 본문 읽기 오류는 502 | 예 | `scripts/test-gateway-auth.sh` |
 | P8 | Docker Desktop: 엔진이 호스트 루프백 게시 포트에 못 닿음 | 예 | E2E `pick_bind`(단독 시험 없음) |
 | P9 | Docker DNS: 재생성 시 IP 변경 | 예 | E2E 5q 복구 |
-| P10 | PostgreSQL: `pg_reload_conf()` 가 서버 인증서를 다시 읽음 | 아니오(문서 근거만) | 없음(만들 것) |
+| P10 | PostgreSQL: `pg_reload_conf()` 가 서버 인증서를 다시 읽음 | 아니오(문서 근거만) | 없음(필요, 위반으로 센다) |
 | P11 | Keycloak optimized image 가 읽기 전용 루트로 기동 | 예(3차 스모크) | `scripts/test-idp-smoke.sh`(현재 TLS 구성에서 실패) |
 | P12 | 공용 venv 설치 동시 실행 경합 | 예 | `scripts/test_no_pip_outside_setup.py` |
 | P13 | Caddy: Content-Length 로 사전 413 | 예 | `scripts/test-gateway-auth.sh` |
