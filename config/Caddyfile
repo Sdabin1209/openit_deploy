@@ -138,6 +138,26 @@ http://:8080 {
 				}
 			}
 		}
+		# 의사(clinician)는 푸시 설정·구독 경로만 더 쓸 수 있다(계약 3.4.0 U92: topics results 는 clinician 만). 직원 API 의 나머지(알림 목록·개입 등)는 계속 staff 전용이다
+		@clinicianpush path /v1/staff/push-config /v1/staff/push-subscriptions /v1/staff/push-subscriptions/unsubscribe
+		handle @role_clinician {
+			handle @clinicianpush {
+				reverse_proxy survey-service:8080 {
+					header_up -X-Openit-Dn
+					header_up -X-Openit-Device
+					header_up Authorization "Bearer {file./run/secrets/survey-api-staff}"
+					header_up X-Openit-User "{http.auth.user.id}"
+					lb_try_duration 0
+					transport http {
+						dial_timeout 1s
+						response_header_timeout 55s
+					}
+				}
+			}
+			handle {
+				respond "forbidden: staff 역할이 아니다" 403
+			}
+		}
 		handle {
 			respond "forbidden: staff 역할이 아니다" 403
 		}

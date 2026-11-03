@@ -122,6 +122,14 @@ chk403 "reviewer 계정 -> 롤백 POST /v1/rollback" reviewer-e2e POST /v1/rollb
 chk403 "trainer(release-approver) 계정 -> 검토 게시 POST /v1/cases/c1/review" trainer-e2e POST /v1/cases/c1/review
 chk403 "author 계정 -> 활성화 POST /v1/activate" author-e2e POST /v1/activate
 chkpass "staff 계정 -> 직원 API" staff-e2e GET /v1/staff/alerts
+# U92(3.4.0): clinician 은 푸시 설정·구독 경로만 더 쓴다. 알림 목록·개입 같은 직원 API 는 계속 403
+chkpass "clinician 계정 -> 푸시 설정 GET /v1/staff/push-config" clinician-e2e GET /v1/staff/push-config
+chkpass "clinician 계정 -> 푸시 구독 POST /v1/staff/push-subscriptions" clinician-e2e POST /v1/staff/push-subscriptions
+chkpass "clinician 계정 -> 푸시 해지 POST /v1/staff/push-subscriptions/unsubscribe" clinician-e2e POST /v1/staff/push-subscriptions/unsubscribe
+chk403 "clinician 계정 -> 직원 알림 목록 GET /v1/staff/alerts" clinician-e2e GET /v1/staff/alerts
+chk403 "clinician 계정 -> 직원 개입 POST /v1/sessions/s1/intervention" clinician-e2e POST /v1/sessions/s1/intervention
+chk403 "operator 계정 -> 푸시 설정 GET /v1/staff/push-config" operator-e2e GET /v1/staff/push-config
+chkpass "staff 계정 -> 푸시 설정 GET /v1/staff/push-config" staff-e2e GET /v1/staff/push-config
 chkpass "operator 계정 -> 활성화" operator-e2e POST /v1/activate
 chkpass "release-approver 계정 -> 승인 결정" trainer-e2e POST /v1/approvals
 chkpass "reviewer 계정 -> 검토 목록" reviewer-e2e GET /v1/cases
