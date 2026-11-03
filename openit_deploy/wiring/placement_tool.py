@@ -318,7 +318,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
         q = ""
         mode = p.get("db_sslmode", "verify-full" if scheme == "https" else "")
         if mode:
-            q = "?sslmode=%s&sslrootcert=%s" % (mode, p.get("db_sslrootcert", "/run/secrets/postgres-ca.pem"))
+            q = "?sslmode=%s&sslrootcert=%s" % (mode, p.get("db_sslrootcert", "/etc/openit/pki/root_ca.crt"))
         for f in files:
             if DSN_RE.match(os.path.basename(f)):
                 src = open(os.path.join(secrets_dir, f), encoding="utf-8").read()
@@ -338,7 +338,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     stage_tokens = []
     for st in stages:
         stage_tokens.append(sorted(n[:-5] for n in st if n.endswith("-cert") and ca_host and ca_host != host))
-    plan = {"host": host, "step_ca_host": ca_host, "stage_tokens": stage_tokens, "region": servers[host]["region"], "services": local, "stages": stages,
+    plan = {"host": host, "oneshots": sorted(one & localset), "step_ca_host": ca_host, "stage_tokens": stage_tokens, "region": servers[host]["region"], "services": local, "stages": stages,
             "secrets": secrets, "configs": configs, "secret_files": sorted(set(files)), "generated_secret_files": generated,
             "published": {n: ports[n] for n in sorted(published)}}
     return "\n".join(lines) + "\n", plan

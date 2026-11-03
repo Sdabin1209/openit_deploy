@@ -22,7 +22,7 @@
     source scripts/lib.sh
     dc "{{ ca_project }}" run --rm pki-tokens >/dev/null 2>&1
     UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ ca_dir }}/locks/images.lock")
-    docker run --rm --network none -v "{{ ca_project }}_pki-tokens:/t:ro" -v "{{ ca_project }}_pki-root:/r:ro" "$UTIL" python -c 'import json,sys;print(json.dumps({"root":open("/r/root_ca.crt").read(),"tokens":{n:open("/t/%s.ott"%n).read().strip() for n in sys.argv[1:]}}))' {{ missing.stdout_lines | join(' ') }}
+    docker run --rm --network none -v "{{ ca_project }}_pki-tokens:/t:ro" -v "{{ ca_project }}_pki-root:/r:ro" "$UTIL" python -c 'import json,sys;import base64;print(base64.b64encode(json.dumps({"root":open("/r/root_ca.crt").read(),"tokens":{n:open("/t/%s.ott"%n).read().strip() for n in sys.argv[1:]}}).encode()).decode())' {{ missing.stdout_lines | join(' ') }}
   args: {executable: /bin/bash}
   vars:
     ca_dir: "{{ hostvars[plan.step_ca_host].placement_remote_dir | default('/opt/openit-deploy') }}"
@@ -52,12 +52,13 @@
     cd "{{ p_dir }}"
     export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ p_dir }}/secrets" SECRETS_GID="{{ gid }}" COMPOSE_EXTRA="{{ p_dir }}/compose.placement.yaml" CONFIG_DIR="{{ p_dir }}/config"
     source scripts/lib.sh
-    dc "{{ p_project }}" up -d --wait {{ plan.stages[stage_i] | join(' ') }}
+    dc "{{ p_project }}" up -d --wait {{ plan.stages[stage_i] | difference(plan.oneshots) | join(' ') }}
   args: {executable: /bin/bash}
   register: up
   # compose 는 진행 상황을 표준 오류에 낸다. 새로 만들거나 시작했을 때만 바뀐 것으로 센다
   changed_when: "(up.stderr | default('')) is search('(Created|Started|Recreated|Starting) *$', multiline=True)"
-  when: plan.stages[stage_i] | length > 0
+  # 일회성 서비스(pki-tokens, ...)는 그것을 기다리는 서비스의 depends_on 으로 함께 돈다. 목록에 직접 넣으면 --wait 가 정상 종료(0)를 실패로 센다
+  when: plan.stages[stage_i] | difference(plan.oneshots) | length > 0
 - name: "단계 {{ stage_i }}: 게시된 서비스의 https /readyz (지휘 기계에서, 인증서 이름 = 서비스 이름이라 --resolve 로 이름을 서버 주소에 맞춘다)"
   ansible.builtin.command:
     argv: "{{ ['curl', '-fsS', '--max-time', '5', '-o', '/dev/null', '--resolve', item.key ~ ':' ~ item.value ~ ':' ~ (placement_probe_address | default(ansible_host))] + (['--cacert', placement_ca_path] if placement_ca_path is defined else []) + ['https://' ~ item.key ~ ':' ~ (item.value | string) ~ '/readyz'] }}"
@@ -68,7 +69,7 @@
   changed_when: false
   delegate_to: localhost
   when: p_scheme == 'https'
-  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'equalto', 'postgres') | list }}"
+  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'in', ['postgres', 'step-ca']) | list }}"
   loop_control: {label: "{{ item.key }}"}
 - name: "단계 {{ stage_i }}: 게시된 HTTP 서비스의 /readyz (지휘 기계에서)"
   when: p_scheme != 'https'
@@ -84,12 +85,12 @@
   delay: 2
   changed_when: false
   delegate_to: localhost
-  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'equalto', 'postgres') | list }}"
+  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'in', ['postgres', 'step-ca']) | list }}"
   loop_control: {label: "{{ item.key }}"}
-- name: "단계 {{ stage_i }}: postgres 게시 포트(TCP)"
+- name: "단계 {{ stage_i }}: postgres·step-ca 게시 포트(TCP. HTTP /readyz 서비스가 아니다)"
   ansible.builtin.wait_for:
     host: "{{ placement_probe_address | default(ansible_host) }}"
-    port: "{{ plan.published.postgres }}"
+    port: "{{ plan.published[item] }}"
     timeout: 60
   delegate_to: localhost
-  when: "'postgres' in plan.published and 'postgres' in plan.stages[stage_i]"
+  loop: "{{ ['postgres', 'step-ca'] | select('in', plan.published) | select('in', plan.stages[stage_i]) | list }}"
