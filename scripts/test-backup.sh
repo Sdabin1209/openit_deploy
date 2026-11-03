@@ -14,12 +14,13 @@ trap cleanup EXIT
 FAILS=0; N=0
 ok() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $name"; else echo "  FAIL $name :: $(echo "$out" | tail -2 | tr '\n' ' ' | cut -c1-220)"; FAILS=$((FAILS+1)); fi; }
 rc() { N=$((N+1)); local name=$1 want=$2; shift 2; out=$("$@" 2>&1); local r=$?; if [ $r = "$want" ]; then echo "  PASS $name"; else echo "  FAIL $name :: 종료 $r (기대 $want) $(echo "$out" | tail -1 | cut -c1-200)"; FAILS=$((FAILS+1)); fi; }
-C() { pg_container "$P"; }
+C() { pg_container "$P" "$(pg_service_of "${1:-survey}")"; }   # 영역마다 자기 DB 컨테이너: 인자 = 데이터베이스(계정) 이름, 기본 survey
+export -f pg_container pg_service_of; export DOCKER
 echo "== 준비: 비밀, postgres, 시험용 restic 암호 파일(시험 폴더 안, 시험 뒤 삭제)"
 ok "gen-secrets.sh --db-only" bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --db-only "$SECRETS_DIR"
-dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up.log" 2>&1; ok "postgres healthy" test -n "$(C)"
+dc "$P" up -d --wait --wait-timeout 120 $PG_SERVICES >"$W/up.log" 2>&1; ok "영역 DB healthy" test -n "$(C survey)" -a -n "$(C gate)"
 ( umask 077; echo "bktest-password-$ID-not-a-secret" > "$W/backup.pass" )
-for a in $PG_DBS; do "$DOCKER" exec "$(C)" psql -U "$a" -d "$a" -qc "CREATE TABLE items(id int PRIMARY KEY, v text); INSERT INTO items SELECT g, md5(g::text) FROM generate_series(1,500) g" >/dev/null 2>&1; done
+for a in $PG_DBS; do "$DOCKER" exec "$(C "$a")" psql -U "$a" -d "$a" -qc "CREATE TABLE items(id int PRIMARY KEY, v text); INSERT INTO items SELECT g, md5(g::text) FROM generate_series(1,500) g" >/dev/null 2>&1; done
 fp() { bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" "$1"; }
 cfg() { printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$W/backups" "$W/backup.pass" > "$W/backup.env"; }
 cfg; export BACKUP_CONFIG="$W/backup.env"
@@ -69,7 +70,7 @@ if "$DOCKER" image inspect "$UTIL" >/dev/null 2>&1 || "$DOCKER" pull -q "$UTIL" 
 else echo "  SKIP 파일 저장소 시험: 유틸 이미지($UTIL)를 받지 못했다(확인 못 함, 통과 아님)"; fi
 echo "== 정기 복원 시험 스크립트(임시 저장소로 사슬 왕복 + 실제 저장소 무결성)"
 ok "backup-restore-test.sh" bash "$DEPLOY_ROOT/scripts/backup-restore-test.sh"
-ok "임시 데이터베이스(rt_*)가 남지 않았다" bash -c "[ -z \"\$('$DOCKER' exec '$(C)' psql -U postgres -d postgres -Atqc \"SELECT datname FROM pg_database WHERE datname LIKE 'rt\\_%'\")\" ]"
+ok "임시 데이터베이스(rt_*)가 남지 않았다" bash -c "for a in $PG_DBS; do [ -z \"\$('$DOCKER' exec \"\$(pg_container '$P' \"\$(pg_service_of \$a)\")\" psql -U postgres -d postgres -Atqc \"SELECT datname FROM pg_database WHERE datname LIKE 'rt\\_%'\")\" ] || exit 1; done"
 echo "== 저장소가 손상되면 복원 시험이 실패한다"
 cp -r "$W/backups/restic" "$W/restic.good"
 f=$(find "$W/backups/restic/data" -type f | head -1); chmod u+w "$f"; printf 'x' >> "$f"   # restic 은 데이터 파일을 0400 으로 쓴다

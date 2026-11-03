@@ -27,10 +27,10 @@ chmod 644 "$T/s/tokens/db-survey-dsn"; chmod 755 "$T/s/tokens"
 t "폴더가 755 이면 FAIL" 1 "700 이어야" bash "$HERE/check-secret-perms.sh" "$T/s"
 t "비밀 폴더가 없으면 2" 2 "비밀 폴더가 없다" bash "$HERE/check-secret-perms.sh" "$T/none"
 # gen-secrets 는 이미 있는 잘못된 모드를 바로잡는다
-chmod 700 "$T/s/tokens"; chmod 600 "$T/s/tokens/postgres-password"; bash "$HERE/gen-secrets.sh" --db-only "$T/s" >/dev/null 2>&1
+chmod 700 "$T/s/tokens"; chmod 600 "$T/s/tokens/pg-superuser-survey"; bash "$HERE/gen-secrets.sh" --db-only "$T/s" >/dev/null 2>&1
 t "gen-secrets 재실행이 모드를 바로잡는다" 0 "OK" bash "$HERE/check-secret-perms.sh" "$T/s"
 # 값이 출력에 없다
-t "출력에 비밀 값이 없다" 1 "" bash -c "bash '$HERE/check-secret-perms.sh' '$T/s' | grep -F \"\$(cat '$T/s/tokens/postgres-password')\""
+t "출력에 비밀 값이 없다" 1 "" bash -c "bash '$HERE/check-secret-perms.sh' '$T/s' | grep -F \"\$(cat '$T/s/tokens/pg-superuser-survey')\""
 # 다른 호스트의 추론 서버가 읽는 토큰 파일도 640 + 그룹이다(RUNTIME.md R6.3): 644 로 누구나 읽게 하지 않는다
 for nm in model-runtime-tokens gate-read-model-serving external-inference; do
   [ "$(DEPLOY_NO_DOCKER=1 bash -c 'source "$1/lib.sh"; secret_mode "$2"' _ "$HERE" "$nm")" = 640 ] && echo "  PASS secret_mode $nm = 640" || { echo "  FAIL secret_mode $nm 가 640 이 아니다"; F=$((F+1)); }; N=$((N+1))

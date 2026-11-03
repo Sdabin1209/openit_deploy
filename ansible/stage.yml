@@ -6,7 +6,7 @@
   ansible.builtin.shell: |
     UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ p_dir }}/locks/images.lock")
     for n in {{ plan.stage_tokens[stage_i] | join(' ') }}; do
-      if [ "$n" = postgres ]; then v={{ p_project }}_pg-tls; f=server.crt; else v={{ p_project }}_certs-$n; f=tls.crt; fi
+      case "$n" in *-db) v={{ p_project }}_$n-pgtls; f=server.crt;; *) v={{ p_project }}_certs-$n; f=tls.crt;; esac # else v={{ p_project }}_certs-$n; f=tls.crt; fi
       if docker volume inspect "$v" >/dev/null 2>&1 && docker run --rm --network none -v "$v:/c:ro" "$UTIL" test -s "/c/$f"; then continue; fi
       echo "$n"
     done
@@ -73,7 +73,7 @@
   delegate_to: "{{ plan.step_ca_host | default(inventory_hostname, true) }}"
   register: rootpem
   changed_when: false
-  when: p_scheme == 'https' and plan.step_ca_host and placement_ca_path is not defined and (plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'in', ['postgres', 'step-ca']) | list | length) > 0
+  when: p_scheme == 'https' and plan.step_ca_host and placement_ca_path is not defined and (plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'match', '^(step-ca|.*-db)$') | list | length) > 0
 - name: "단계 {{ stage_i }}: 루트 파일 쓰기(지휘 기계)"
   ansible.builtin.copy:
     content: "{{ rootpem.stdout }}\n"
@@ -91,7 +91,7 @@
   changed_when: false
   delegate_to: localhost
   when: p_scheme == 'https'
-  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'in', ['postgres', 'step-ca']) | list }}"
+  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'match', '^(step-ca|.*-db)$') | list }}"
   loop_control: {label: "{{ item.key }}"}
 - name: "단계 {{ stage_i }}: 게시된 HTTP 서비스의 /readyz (지휘 기계에서)"
   when: p_scheme != 'https'
@@ -107,12 +107,12 @@
   delay: 2
   changed_when: false
   delegate_to: localhost
-  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'in', ['postgres', 'step-ca']) | list }}"
+  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'match', '^(step-ca|.*-db)$') | list }}"
   loop_control: {label: "{{ item.key }}"}
-- name: "단계 {{ stage_i }}: postgres·step-ca 게시 포트(TCP. HTTP /readyz 서비스가 아니다)"
+- name: "단계 {{ stage_i }}: 영역 DB(<서비스>-db)·step-ca 게시 포트(TCP. HTTP /readyz 서비스가 아니다)"
   ansible.builtin.wait_for:
     host: "{{ placement_probe_address | default(ansible_host) }}"
     port: "{{ plan.published[item] }}"
     timeout: 60
   delegate_to: localhost
-  loop: "{{ ['postgres', 'step-ca'] | select('in', plan.published) | select('in', plan.stages[stage_i]) | list }}"
+  loop: "{{ plan.published | dict2items | selectattr('key', 'match', '^(step-ca|.*-db)$') | map(attribute='key') | select('in', plan.stages[stage_i]) | list }}"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # 분리 배치의 인증서·DB 경로를 실제 플레이북(ansible/site.yml, stage.yml)으로 시험한다(ADR 0060, 0061). E2E 밖, 단독.
 # 가상 서버 2개 = compose 프로젝트 2개(서로 다른 Docker 망). 제품 compose.yaml 에서 아래 서비스만 뽑은 compose 로 돈다(제품 정의 그대로, 서비스 수만 줄임).
-#   data 서버: step-ca, pki-root, pki-tokens, postgres, postgres-cert, postgres-reload   (실제 잠금 이미지)
+#   data 서버: step-ca, pki-root, pki-tokens, release-gate-db, release-gate-db-cert, release-gate-db-reload   (실제 잠금 이미지)
 #   app 서버 : release-gate(응답만 하는 대역 앱), release-gate-cert, release-gate-tls(실제 인증서 컨테이너·사이드카)
 # 확인: (1) 토큰 전달 단계가 돌아 app 서버 토큰 볼륨에 release-gate.ott 가 640 으로 있다 (2) app 서버 -cert 가 extra_hosts step-ca:<호스트> + 게시 포트(STEP_CA_PORT)로 다른 망의 step-ca 에서
-#       서비스 이름 인증서를 받았다 (3) app 서버의 DSN(sslmode=verify-full)로 다른 망의 postgres 에 접속하고 pg-tls 소유자는 999 다 (4) 2회차 changed=0
-# 고정 포트가 없다: step-ca 와 postgres 의 게시 포트는 빈 포트를 골라 인벤토리에 넣는다(step-ca 는 STEP_CA_PORT 로 안팎 같은 값). 다른 시험과 동시에 돌 수 있다.
+#       서비스 이름 인증서를 받았다 (3) app 서버의 DSN(sslmode=verify-full)로 다른 망의 release-gate-db 에 접속하고 pg-tls 소유자는 999 다 (4) 2회차 changed=0
+# 고정 포트가 없다: step-ca 와 release-gate-db 의 게시 포트는 빈 포트를 골라 인벤토리에 넣는다(step-ca 는 STEP_CA_PORT 로 안팎 같은 값). 다른 시험과 동시에 돌 수 있다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD; ID="splitpki-$$"
@@ -26,7 +26,7 @@ mkdir -p "$T/secrets"; DEPLOY_NO_DOCKER=1 bash scripts/gen-secrets.sh --db-only 
 "$PY" - "$ROOT/compose.yaml" "$T/compose.subset.yaml" <<'PYEOF'
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-keep = ["step-ca", "pki-root", "pki-tokens", "postgres", "postgres-cert", "postgres-reload", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-tls"]
+keep = ["step-ca", "pki-root", "pki-tokens", "release-gate-db", "release-gate-db-cert", "release-gate-db-reload", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-tls"]
 svc = {k: c["services"][k] for k in keep}
 rg = svc["release-gate"]
 for k in ("env_file", "environment", "volumes", "stop_grace_period"):
@@ -60,13 +60,13 @@ all:
     placement_secrets_dir: $T/secrets
     placement_probe_address: 127.0.0.1
     placement_bind_address: 0.0.0.0
-    placement_ports: {step-ca: $SCP, postgres: $PGP, release-gate: $RGP}
+    placement_ports: {step-ca: $SCP, release-gate-db: $PGP, release-gate: $RGP}
   hosts:
-    $ID-data: {ansible_host: $HOSTADDR, placement_region: r1, placement_project: deploy-$ID-data, placement_remote_dir: $T/r/data, placement_services: [step-ca, postgres, survey-service]}
+    $ID-data: {ansible_host: $HOSTADDR, placement_region: r1, placement_project: deploy-$ID-data, placement_remote_dir: $T/r/data, placement_services: [step-ca, release-gate-db, survey-service]}
     $ID-app: {ansible_host: $HOSTADDR, placement_region: r2, placement_project: deploy-$ID-app, placement_remote_dir: $T/r/app, placement_services: [release-gate]}
 YML
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose "$T/compose.subset.yaml" >/dev/null || bad "인벤토리 점검"
-ok "인벤토리 점검 통과 (step-ca·postgres 는 data 서버, release-gate 는 app 서버)"
+ok "인벤토리 점검 통과 (step-ca·release-gate-db 는 data 서버, release-gate 는 app 서버)"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home" UTIL_IMAGE="$UTIL"
 timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -40 "$T/run1.log" >&2; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
@@ -100,7 +100,7 @@ PROBE() { docker run --rm --network "$1" "$UTIL" python -c "import socket,sys
 try:
     socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=3); print('reachable')
 except Exception: print('blocked')" "$2" "$3"; }
-[ "$(PROBE ${D}_pki postgres 5432)" = blocked ] && ok "(R6.2) 인증서 발급 망(pki)에서 postgres 에 닿지 않는다" || bad "R6.2: pki 망에서 postgres 에 닿는다"
+[ "$(PROBE ${D}_pki release-gate-db 5432)" = blocked ] && ok "(R6.2) 인증서 발급 망(pki)에서 release-gate-db 에 닿지 않는다" || bad "R6.2: pki 망에서 release-gate-db 에 닿는다"
 [ "$(PROBE ${D}_db-keycloak step-ca $SCP)" = blocked ] && ok "(R6.2) DB 망에서 step-ca 에 닿지 않는다" || bad "R6.2: DB 망에서 step-ca 에 닿는다"
 # R1.5·R1.7: compose 밖 호출자는 내보낸 루트 + hosts 표 + 서비스 토큰만으로 부른다(배포 내부 구조를 모른다). 기본 브리지의 새 컨테이너로 시험한다
 EXP="$T/export"; docker run --rm --network none -v ${D}_pki-root:/r:ro "$UTIL" cat /r/root_ca.crt > "$T/root.pem"
@@ -110,12 +110,12 @@ XADDR=$(awk '$2=="release-gate"{print $1}' "$EXP/hosts"); XPORT=$(awk -F'\t' '$1
 XC="import urllib.request;print(urllib.request.urlopen('https://release-gate:$XPORT/',timeout=8).read().decode())"
 [ "$(docker run --rm --add-host release-gate:$XADDR -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "$XC" 2>&1)" = ok ] && ok "(R1.5) compose 밖 호출자가 내보낸 루트 + hosts 표만으로 https 검증을 통과해 앱 응답을 받는다" || bad "R1.5: 내보낸 파일만으로 호출 실패"
 docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/null 2>&1 && bad "R1.5: 루트 없이 호출이 통과했다" || ok "(R1.5) 루트 없이는 검증 실패(변이 확인)"
-O=$(docker run --rm --network none -v ${D}_pg-tls:/p:ro "$UTIL" stat -c %u /p/server.key); [ "$O" = 999 ] || bad "pg-tls 의 server.key 소유자 $O"; ok "(3) postgres-cert 의 pg-tls 소유자 999"
-DSN="$T/r/app/secrets/tokens/db-gate-dsn"; grep -q "@postgres:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
-ok "(3) app 서버 DSN = postgres:$PGP, sslmode=verify-full"
-R=$(docker run --rm --network ${A}_serving --add-host postgres:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 postgres 에 verify-full 접속 실패"; }
-[ "$R" = 1 ] && ok "(3) 다른 망의 postgres 에 sslmode=verify-full 로 접속했다(서버 인증서 이름 postgres, step-ca 루트 검증)"
-R=$(docker run --rm --network ${A}_serving --add-host postgres:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(sed "s/verify-full/disable/" /dsn)" -qAt -c "select 1"' 2>&1) && bad "TLS 없는 접속이 통과했다" || ok "(3) TLS 없는 접속은 거부된다(hostssl 만)"
+O=$(docker run --rm --network none -v ${D}_release-gate-db-pgtls:/p:ro "$UTIL" stat -c %u /p/server.key); [ "$O" = 999 ] || bad "release-gate-db-pgtls 의 server.key 소유자 $O"; ok "(3) release-gate-db-cert 의 pg-tls 소유자 999"
+DSN="$T/r/app/secrets/tokens/db-gate-dsn"; grep -q "@release-gate-db:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
+ok "(3) app 서버 DSN = release-gate-db:$PGP, sslmode=verify-full"
+R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 release-gate-db 에 verify-full 접속 실패"; }
+[ "$R" = 1 ] && ok "(3) 다른 망의 release-gate-db 에 sslmode=verify-full 로 접속했다(서버 인증서 이름 release-gate-db, step-ca 루트 검증)"
+R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(sed "s/verify-full/disable/" /dsn)" -qAt -c "select 1"' 2>&1) && bad "TLS 없는 접속이 통과했다" || ok "(3) TLS 없는 접속은 거부된다(hostssl 만)"
 timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -25 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
 if grep -aE '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 '; then bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi
 ok "(4) 플레이북 2회차 changed=0"

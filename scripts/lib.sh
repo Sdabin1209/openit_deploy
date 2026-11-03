@@ -45,9 +45,9 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.6}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
-DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.16}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
-DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.12}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.7}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.17}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.13}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
@@ -97,17 +97,15 @@ gateway_public_url() {
 export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
 export GATEWAY_HOST_NAMES="$(gateway_host_names)"   # 직접 compose 를 부르는 스크립트(down 등)용 기본값. dc 는 부를 때마다 다시 계산한다(E2E 가 GATEWAY_HOSTS 를 source 뒤에 바꾼다)
 # pg-tls 볼륨(postgres 서버 인증서·키, ADR 0060)은 postgres 의 uid(999)가 쓸 수 있어야 한다(새 이름 있는 볼륨은 root 소유). gateway-data 와 같은 방식으로 처음 한 번 소유자를 맞춘다. dc 가 up/run 때 부른다
-ensure_pg_tls_volume() { # ensure_pg_tls_volume <프로젝트>
-  local V="${1}_pg-tls" UTIL
-  "$DOCKER" volume inspect "$V" >/dev/null 2>&1 && return 0
-  "$DOCKER" volume create --label "com.docker.compose.project=$1" --label "com.docker.compose.volume=pg-tls" "$V" >/dev/null || return 1
-  UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
-  "$DOCKER" run --network none --user 0 --cap-drop ALL --cap-add CHOWN --rm -v "$V:/data" "$UTIL" chown 999:999 /data >/dev/null || die "pg-tls 볼륨 소유자 설정 실패"
-}
-gen_jobs_overlay() { # gen_jobs_overlay <프로젝트>: 이미지 라벨 io.openit.jobs 로 잡 command·시간 한도 덧씌우기 파일(JOBS_OVERLAY)을 만든다(S10)
-  local out=${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}
-  rm -f "$out"   # 이전 덧씌우기가 config 입력에 섞이지 않게 한다
-  dc "$1" --profile jobs config --format json | "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-jobs.py" --out "$out" >/dev/null || return 1
+ensure_pg_tls_volume() { # ensure_pg_tls_volume <프로젝트>: 영역 DB 마다 서버 인증서 볼륨(<서비스>-pgtls)의 소유자를 postgres(999)로 맞춘다
+  local svc V UTIL
+  for svc in survey-db question-authoring-db ops-feedback-db release-gate-db keycloak-db; do
+    V="${1}_${svc}-pgtls"
+    "$DOCKER" volume inspect "$V" >/dev/null 2>&1 && continue
+    "$DOCKER" volume create --label "com.docker.compose.project=$1" --label "com.docker.compose.volume=${svc}-pgtls" "$V" >/dev/null || return 1
+    UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
+    "$DOCKER" run --network none --user 0 --cap-drop ALL --cap-add CHOWN --rm -v "$V:/data" "$UTIL" chown 999:999 /data >/dev/null || die "$svc 서버 인증서 볼륨 소유자 설정 실패"
+  done
 }
 dc() { # dc <project> <compose args...>
   local project=$1; shift
@@ -187,9 +185,12 @@ for _ in range(200):
         s.close()
 PY
 }
-# PostgreSQL 서버 컨테이너 이름: pg_container <프로젝트>. 떠 있지 않으면 빈 문자열
+# 영역마다 자기 DB 컨테이너(<서비스>-db)가 있다: 데이터베이스(=계정 이름) -> compose 서비스 이름. 다른 영역의 DB 와 섞이지 않는다
+pg_service_of() { case "$1" in survey) echo survey-db;; qa) echo question-authoring-db;; ops_log|ops_failure) echo ops-feedback-db;; gate) echo release-gate-db;; keycloak) echo keycloak-db;; *) return 1;; esac; }
+PG_SERVICES="survey-db question-authoring-db ops-feedback-db release-gate-db keycloak-db"
+# 영역 DB 서버 컨테이너 이름: pg_container <프로젝트> <DB 서비스 이름>. 떠 있지 않으면 빈 문자열
 pg_container() {
-  "$DOCKER" ps -q --filter "label=com.docker.compose.project=$1" --filter "label=com.docker.compose.service=postgres" --filter status=running | head -1 | tr -d '\r'
+  "$DOCKER" ps -q --filter "label=com.docker.compose.project=$1" --filter "label=com.docker.compose.service=${2:?DB 서비스 이름}" --filter status=running | head -1 | tr -d '\r'
 }
 PG_APP_DBS="ops_log ops_failure"   # 앱 계정(<이름>_app, DML만, L08)을 따로 두는 데이터베이스: 소유자 계정은 스키마를 만드는 admin migrate 전용
 PG_DBS="survey qa ops_log ops_failure gate keycloak"   # 데이터베이스 = 계정 이름(config/postgres/initdb/10-roles.sh 의 기본값과 같다)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# postgres 서비스 단독 자체 시험(서비스 컨테이너·E2E 없이). 사용: bash scripts/test-postgres.sh
+# 영역 DB(<서비스>-db) 단독 자체 시험(서비스 컨테이너·E2E 없이). 사용: bash scripts/test-postgres.sh
 # 임시 프로젝트(deploy-pgtest-*)에서 postgres 만 띄워 확인한다: 기동·초기화·최소 권한·비밀 비노출·백업·복구 왕복·볼륨을 잃은 뒤의 복구.
 # 암호 값은 출력하지 않는다. 끝나면 컨테이너·볼륨·임시 폴더를 지운다.
 set -uo pipefail
@@ -14,24 +14,31 @@ trap cleanup EXIT
 FAILS=0; N=0
 ok() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $name"; else echo "  FAIL $name :: $(echo "$out" | tail -2 | tr '\n' ' ' | cut -c1-200 | sed -E 's/[0-9a-f]{32,}/<값>/g')"; FAILS=$((FAILS+1)); fi; }
 no() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  FAIL $name :: 성공하면 안 된다"; FAILS=$((FAILS+1)); else echo "  PASS $name"; fi; }
-C() { pg_container "$P"; }
+C() { pg_container "$P" "$(pg_service_of "${1:-survey}")"; }   # 영역마다 자기 DB 컨테이너: 계정(데이터베이스) 이름으로 그 컨테이너를 고른다
 pw() { cat "$SECRETS_DIR/tokens/db-${1//_/-}-password"; }
-sql() { local role=$1 db=$2 q=$3; "$DOCKER" exec -e PGPASSWORD="$(pw "$role")" "$(C)" psql -h 127.0.0.1 -U "$role" -d "$db" -Atqc "$q"; }   # TCP + 암호(서비스가 접속하는 방식)
+sql() { local role=$1 db=$2 q=$3; "$DOCKER" exec -e PGPASSWORD="$(pw "$role")" "$(C "${role%_app}")" psql -h 127.0.0.1 -U "$role" -d "$db" -Atqc "$q"; }   # TCP + 암호(서비스가 접속하는 방식)
 fp() { sql "$1" "$1" "SELECT md5(string_agg(id::text || v, ',' ORDER BY id)) || ':' || count(*) FROM items"; }
 
-export P DOCKER SECRETS_DIR PG_DBS; export -f pg_container C pw sql fp
+export P DOCKER SECRETS_DIR PG_DBS; roles_of() { sql_su "$1" "SELECT string_agg(rolname, ',' ORDER BY rolname) FROM pg_roles WHERE rolcanlogin AND rolname <> 'postgres'"; }
+sql_su() { "$DOCKER" exec "$(C "$1")" psql -U postgres -d postgres -Atqc "$2" | tr -d "\r"; }   # 영역 DB 의 슈퍼유저(컨테이너 안 소켓)
+export -f pg_container pg_service_of C pw sql fp sql_su roles_of
 echo "== 비밀 생성 (--db-only)"
 ok "gen-secrets.sh --db-only (소유자와 앱 계정 비밀)" bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --db-only "$SECRETS_DIR"
-ok "DSN 파일이 규칙대로 (survey/qa/ops_log/ops_failure/gate)" bash -c 'for a in survey qa ops_log ops_failure gate; do n=${a//_/-}; f="$1/tokens/db-$n-dsn"; [[ "$(cat $f)" == "postgresql://$a:$(cat $1/tokens/db-$n-password)@postgres:5432/$a" ]] || exit 1; [ "$(stat -c %a $f)" = 640 ]; done' _ "$SECRETS_DIR"
+ok "DSN 파일이 규칙대로 (survey/qa/ops_log/ops_failure/gate, 호스트는 영역 DB)" bash -c 'for a in survey qa ops_log ops_failure gate; do n=${a//_/-}; f="$1/tokens/db-$n-dsn"; [[ "$(cat $f)" == "postgresql://$a:$(cat $1/tokens/db-$n-password)@$(pg_service_of $a):5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt" ]] || exit 1; [ "$(stat -c %a $f)" = 640 ]; done' _ "$SECRETS_DIR"
 echo "== 기동·초기화"
-dc "$P" config --format json > "$W/cfg.json" 2>"$W/cfg.err"; ok "compose 해석: 호스트 포트 없음, 환경 변수에 암호 없음, 네트워크 db-* 넷만" python3 -I -c 'import json,sys;s=json.load(open(sys.argv[1]))["services"]["postgres"];assert not s.get("ports");assert sorted(s["networks"])==["db-gate","db-ops","db-qa","db-survey"];assert all("PASSWORD" not in k or k.endswith("_FILE") for k in s["environment"])' "$W/cfg.json"
-dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up.log" 2>&1; ok "postgres 가 healthy 로 기동" test -n "$(C)"
+dc "$P" config --format json > "$W/cfg.json" 2>"$W/cfg.err"; ok "compose 해석: 호스트 포트 없음, 환경 변수에 암호 없음, 네트워크 db-* 넷만" python3 -I -c 'import json,sys;S=json.load(open(sys.argv[1]))["services"];own={"survey-db":"db-survey","question-authoring-db":"db-qa","ops-feedback-db":"db-ops","release-gate-db":"db-gate","keycloak-db":"db-keycloak"}
+for n,net in own.items():
+    s=S[n];assert not s.get("ports"),n;assert sorted(s["networks"])==sorted([net,"reload-"+n]),(n,list(s["networks"]));assert all("PASSWORD" not in k or k.endswith("_FILE") for k in s["environment"]),n' "$W/cfg.json"
+dc "$P" up -d --wait --wait-timeout 120 $PG_SERVICES >"$W/up.log" 2>&1; ok "영역 DB 5개가 healthy 로 기동" test -n "$(C survey)" -a -n "$(C qa)" -a -n "$(C ops_log)" -a -n "$(C gate)" -a -n "$(C keycloak)"
+# test -n "$(C)"
 ok "호스트 포트를 게시하지 않음" bash -c "[ -z \"\$('$DOCKER' port '$(C)')\" ]"
 ok "비루트(uid 999)로 실행" bash -c "[ \"\$('$DOCKER' exec '$(C)' id -u | tr -d '\r')\" = 999 ]"
-ok "환경 변수에 POSTGRES_PASSWORD 평문 없음, *_FILE 만" bash -c "e=\$('$DOCKER' inspect '$(C)' --format '{{range .Config.Env}}{{println .}}{{end}}'); echo \"\$e\" | grep -q '^POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password\$' && ! echo \"\$e\" | grep -q '^POSTGRES_PASSWORD='"
-ok "초기화 로그에 암호 값이 없음" bash -c "! '$DOCKER' logs '$(C)' 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/postgres-password)\" && ! '$DOCKER' logs '$(C)' 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/db-survey-password)\""
+ok "환경 변수에 POSTGRES_PASSWORD 평문 없음, *_FILE 만" bash -c "e=\$('$DOCKER' inspect '$(C)' --format '{{range .Config.Env}}{{println .}}{{end}}'); echo \"\$e\" | grep -q '^POSTGRES_PASSWORD_FILE=/run/secrets/pg-superuser-survey\$' && ! echo \"\$e\" | grep -q '^POSTGRES_PASSWORD='"
+ok "초기화 로그에 암호 값이 없음" bash -c "! '$DOCKER' logs '$(C)' 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/pg-superuser-survey)\" && ! '$DOCKER' logs '$(C)' 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/db-survey-password)\""
 ok "check-secrets-hidden 정적+동적 검사" bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" "$P"
-ok "check-containers.sh: 떠 있는 postgres 가 실제로 비root·읽기 전용·cap_drop ALL·한도 있음" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$P"
+ok "check-containers.sh: 떠 있는 영역 DB 가 실제로 비root·읽기 전용·cap_drop ALL·한도 있음" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$P"
+for a in $PG_DBS; do want=$a; case $a in ops_log|ops_failure) want="ops_failure,ops_failure_app,ops_log,ops_log_app";; esac
+  ok "$a 의 DB 컨테이너에는 자기 영역의 로그인 계정($want)만 있다(다른 영역의 DB 계정이 없다)" bash -c "[ \"\$(roles_of $a)\" = '$want' ]"; done
 echo "== 최소 권한"
 for a in $PG_DBS; do
   ok "$a 계정이 자기 데이터베이스에 접속·쓰기" sql "$a" "$a" "CREATE TABLE items(id int PRIMARY KEY, v text); INSERT INTO items SELECT g, md5(g::text) FROM generate_series(1,2000) g"
@@ -74,10 +81,10 @@ ok "복구 survey" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" survey latest --yes
 N=$((N+1)); if [ "$(fp survey)" = "$FP_survey" ] && [ "$(bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" survey)" = "$PF_before" ]; then echo "  PASS 복구 후 지문 일치 survey (행 지문 pg-fingerprint.sh 포함)"; else echo "  FAIL 복구 후 지문 불일치 survey"; FAILS=$((FAILS+1)); fi
 echo "== 볼륨을 잃은 뒤 복구 (down -v -> 새 볼륨 -> 초기화 -> 복구)"
 dc "$P" down -v >/dev/null 2>&1
-dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up2.log" 2>&1; ok "새 볼륨에서 다시 기동·초기화" test -n "$(C)"
+dc "$P" up -d --wait --wait-timeout 120 $PG_SERVICES >"$W/up2.log" 2>&1; ok "새 볼륨에서 다시 기동·초기화" test -n "$(C)"
 no "새 볼륨에는 데이터가 없다" fp survey
 for a in survey gate; do ok "복구 $a" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" $a latest --yes; done
 for a in survey gate; do want=FP_$a; N=$((N+1)); if [ "$(fp $a)" = "${!want}" ]; then echo "  PASS 볼륨 상실 후 지문 일치 $a"; else echo "  FAIL 지문 불일치 $a"; FAILS=$((FAILS+1)); fi; done
 ok "pg-roles.sh sync 멱등" bash "$DEPLOY_ROOT/scripts/pg-roles.sh" sync
 ok "sync 뒤에도 접속" sql survey survey "SELECT 1"
-echo; [ $FAILS = 0 ] && echo "통과: postgres 자체 시험 $N건" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }
+echo; [ $FAILS = 0 ] && echo "통과: 영역 DB 자체 시험 $N건" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }

@@ -4,7 +4,9 @@
 #       로컬 소켓의 trust 는 컨테이너 안(docker exec)에서만 닿는 것이므로 허용으로 센다. 종료 코드 0 통과, 1 어긋남.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
-C=$(pg_container "${DEPLOY_PROJECT:-deploy}"); [ -n "$C" ] || die "postgres 컨테이너가 떠 있지 않다"
+# 영역마다 자기 DB 컨테이너다: 이 스크립트는 DB 서비스 하나를 받아 점검한다(인자 없으면 떠 있는 모든 영역 DB 를 차례로 점검하고 하나라도 없으면 거부)
+if [ $# -eq 0 ]; then rc=0; n=0; for s in $PG_SERVICES; do [ -n "$(pg_container "${DEPLOY_PROJECT:-deploy}" "$s")" ] || continue; n=$((n+1)); echo "== $s"; bash "$0" "$s" || rc=1; done; [ $n -gt 0 ] || die "떠 있는 영역 DB 컨테이너가 없다"; exit $rc; fi
+C=$(pg_container "${DEPLOY_PROJECT:-deploy}" "$1"); [ -n "$C" ] || die "$1 컨테이너가 떠 있지 않다"
 q() { "$DOCKER" exec "$C" psql -U postgres -d postgres -Atqc "$1" | tr -d '\r'; }
 bad=0
 want() { local k=$1 w=$2 got; got=$(q "SHOW $k"); if [ "$got" = "$w" ]; then echo "OK   $k = $got"; else echo "FAIL $k = '$got' (기대 '$w')"; bad=$((bad+1)); fi; }

@@ -13,6 +13,9 @@ from compose_nets import nets  # noqa: E402   # network_mode 를 따라가 앱�
 S = C.S
 # 계약이 정한 호출 중 compose 서비스 사이에서 일어나지 않는 것(오프 컴포즈 호출자: model-lab, synthetic-data 는 compose 서비스가 아니다). 현재 없음.
 EXTRA = set()
+DB_OF = {"survey": "survey-db", "qa": "question-authoring-db", "ops_log": "ops-feedback-db", "ops_failure": "ops-feedback-db", "gate": "release-gate-db", "keycloak": "keycloak-db"}   # DB 계정 -> 영역 DB 서비스
+
+
 def scope(svcs):
     apps = {n[:-4] for n in svcs if n.endswith("-tls")}   # TLS 종단을 둔 앱(<서비스>-tls 의 <서비스>)
     return sorted(apps | {"gateway"})
@@ -43,12 +46,14 @@ def missing_paths(svcs):
     miss = []
     for a, hits in C.callers(svcs).items():
         cmd = " ".join(str(x) for x in (svcs[a].get("command") or []))
-        if a.startswith("job-") and ("purge" in cmd or "prune" in cmd): continue   # 보존 정리 잡은 서버와 같은 환경(R7.2)을 받을 뿐 DB 밖의 서비스를 부르지 않는다
+        if a.startswith("job-") and ("purge" in a or "prune" in a): continue   # 이름으로 정한다: 잡 명령은 이미지 라벨에서 오므로 compose 의 command 로는 알 수 없다(S10)   # 보존 정리 잡은 서버와 같은 환경(R7.2)을 받을 뿐 DB 밖의 서비스를 부르지 않는다
         for b in hits:
             if b in svcs and not (set(nets(svcs, a)) & set(nets(svcs, b))): miss.append((a, b, "호출"))
     for n, sv in svcs.items():
-        if any(str(x).startswith("db-") and str(x).endswith("-dsn") for x in (sv.get("secrets") or [])) and "postgres" in svcs and not n.startswith("job-"):
-            if not (set(nets(svcs, n)) & set(nets(svcs, "postgres"))): miss.append((n, "postgres", "DSN"))
+        for x in (sv.get("secrets") or []):   # 영역마다 자기 DB 컨테이너: DSN 비밀(db-<계정>-dsn)을 가진 서비스는 그 계정의 DB 와 공통 망이 있어야 한다
+            if str(x).startswith("db-") and str(x).endswith("-dsn") and not n.startswith("job-"):
+                db = DB_OF.get(str(x)[3:].replace("-app-dsn", "").replace("-dsn", "").replace("-", "_"))
+                if db in svcs and not (set(nets(svcs, n)) & set(nets(svcs, db))): miss.append((n, db, "DSN"))
         if n.endswith("-cert") and "step-ca" in svcs and not (set(nets(svcs, n)) & set(nets(svcs, "step-ca"))): miss.append((n, "step-ca", "인증서 발급"))
     for net, targets in OFF_COMPOSE_RUNNERS.items():
         for t in targets:

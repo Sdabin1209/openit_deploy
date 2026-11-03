@@ -15,9 +15,10 @@ P=${DEPLOY_PROJECT:-deploy}; DBS=${*:-$PG_DBS}
 CFG=${BACKUP_CONFIG:-$DEPLOY_ROOT/config/backup.env}
 [ -f "$CFG" ] || { echo "CRIT: 백업 설정 파일이 없다: $CFG" >&2; exit 2; }
 ( BACKUP_CHECK_ONLY=1; BACKUP_CONFIG=$CFG; backup_load_config ) || exit 2
-C=$(pg_container "$P"); [ -n "$C" ] || { echo "FAIL: 프로젝트 $P 의 postgres 컨테이너가 떠 있지 않다" >&2; exit 1; }
+C=""   # 영역마다 자기 DB 컨테이너다: 데이터베이스마다 아래 루프에서 고른다
+for db in $DBS; do c=$(pg_container "$P" "$(pg_service_of "$db")"); [ -n "$c" ] || { echo "FAIL: 프로젝트 $P 의 $(pg_service_of "$db") 컨테이너가 떠 있지 않다" >&2; exit 1; }; done
 T=$(mktemp -d); chmod 700 "$T"; RT=""
-cleanup() { for d in $RT; do "$DOCKER" exec "$C" psql -U postgres -d postgres -qc "DROP DATABASE IF EXISTS $d" >/dev/null 2>&1; done; rm -rf "$T"; }
+cleanup() { for e in $RT; do "$DOCKER" exec "${e%%|*}" psql -U postgres -d postgres -qc "DROP DATABASE IF EXISTS ${e##*|}" >/dev/null 2>&1; done; rm -rf "$T"; }
 trap cleanup EXIT
 FAILS=0; fail() { echo "FAIL: $*" >&2; FAILS=$((FAILS+1)); }
 
@@ -38,11 +39,11 @@ restore_into() { # restore_into <db> <임시 db>: 임시 저장소의 최신 덤
 }
 echo "== 1) 도구 사슬 왕복 (restic, 임시 암호·임시 저장소, 임시 데이터베이스)"
 for db in $DBS; do
-  ok=0
+  ok=0; C=$(pg_container "$P" "$(pg_service_of "$db")")
   for try in 1 2 3; do
     before=$(fp "$db" "$db")
     BACKUP_CONFIG="$T/backup.env" DEPLOY_PROJECT="$P" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" "$db" >/dev/null 2>"$T/err" || { fail "$db 백업 실패: $(tail -1 "$T/err")"; break; }
-    rt="rt_${db}_$$"; RT="$RT $rt"
+    rt="rt_${db}_$$"; RT="$RT $C|$rt"
     "$DOCKER" exec "$C" psql -U postgres -d postgres -qc "CREATE DATABASE $rt" >/dev/null 2>&1 || { fail "$db 임시 데이터베이스를 만들지 못했다"; break; }
     restore_into "$db" "$rt" || { fail "$db 복원(restic dump | pg_restore) 실패: $(tail -1 "$T/err")"; break; }
     after=$(fp "$db" "$db"); got=$(fp postgres "$rt")

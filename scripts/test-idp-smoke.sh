@@ -20,8 +20,8 @@ V="${P}_gateway-data"; "$DOCKER" volume create --label "com.docker.compose.proje
 bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "$SECRETS_DIR/keycloak-realm.json" >/dev/null
 FAILS=0; N=0
 ok() { N=$((N+1)); local n=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $n"; else echo "  FAIL $n :: $(echo "$out" | tail -2 | tr '\n' ' ' | cut -c1-220)"; FAILS=$((FAILS+1)); fi; }
-echo "== 기동 (postgres -> keycloak -> oauth2-proxy -> gateway)"
-dc "$P" up -d --wait --wait-timeout 120 postgres >"$W/up1.log" 2>&1; ok "postgres healthy" test -n "$(pg_container "$P")"
+echo "== 기동 (keycloak-db -> keycloak -> oauth2-proxy -> gateway)"
+dc "$P" up -d --wait --wait-timeout 120 keycloak-db >"$W/up1.log" 2>&1; ok "keycloak-db healthy" test -n "$(pg_container "$P" keycloak-db)"
 dc "$P" up -d --wait --wait-timeout 300 --no-deps keycloak keycloak-cert keycloak-tls >"$W/up2.log" 2>&1; ok "keycloak healthy (realm openit 가져오기 포함)" bash -c "dc() { :; }; docker inspect --format '{{.State.Health.Status}}' ${P}-keycloak-1 | grep -q healthy"
 dc "$P" up -d --wait --wait-timeout 180 --no-deps oauth2-proxy oauth2-proxy-cert oauth2-proxy-tls gateway >"$W/up3.log" 2>&1; ok "oauth2-proxy·gateway 기동" bash -c "docker inspect --format '{{.State.Running}}' ${P}-oauth2-proxy-1 ${P}-gateway-1 | grep -vc true | grep -q '^0$'"
 ok "keycloak 로그에 암호·비밀 값이 없다" bash -c "! docker logs ${P}-keycloak-1 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/db-keycloak-password)\" && ! docker logs ${P}-keycloak-1 2>&1 | grep -qF \"\$(cat $SECRETS_DIR/tokens/oauth2-proxy-client-secret)\""

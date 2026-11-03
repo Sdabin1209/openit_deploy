@@ -44,8 +44,16 @@ class T(unittest.TestCase):
         self.assertIn("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES", sh)
         self.assertIn("ALTER DEFAULT PRIVILEGES FOR ROLE", sh)
         self.assertNotRegex(sh, r"GRANT (ALL|CREATE)[^\n]*TO :\"app\"")
-        pg = secrets_of("postgres")
+        pg = secrets_of("ops-feedback-db")
         self.assertTrue({"db-ops-log-app-password", "db-ops-failure-app-password"} <= pg)
+
+    def test_each_area_has_its_own_db_and_no_other_areas_account(self):   # 구조 규칙 1·R6.2: 영역마다 자기 DB 컨테이너, 다른 영역의 DB 계정·암호가 없다
+        own = {"survey-db": {"db-survey-password"}, "question-authoring-db": {"db-qa-password"}, "release-gate-db": {"db-gate-password"},
+               "keycloak-db": {"db-keycloak-password"},
+               "ops-feedback-db": {"db-ops-log-password", "db-ops-failure-password", "db-ops-log-app-password", "db-ops-failure-app-password"}}
+        for svc, want in own.items():
+            got = {x for x in secrets_of(svc) if x.startswith("db-")}
+            self.assertEqual(got, want, f"{svc}: 자기 영역 계정 암호만 받아야 한다")
 
 
 if __name__ == "__main__":

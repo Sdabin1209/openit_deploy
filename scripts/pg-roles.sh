@@ -5,5 +5,9 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 [ "${1:-}" = sync ] || die "사용: pg-roles.sh sync"
-C=$(pg_container "${DEPLOY_PROJECT:-deploy}"); [ -n "$C" ] || die "postgres 컨테이너가 떠 있지 않다"
-"$DOCKER" exec -u postgres -e PG_INIT_ACCOUNTS="${PG_INIT_ACCOUNTS:-$PG_DBS}" "$C" bash /docker-entrypoint-initdb.d/10-roles.sh
+for db in ${PG_INIT_ACCOUNTS:-$PG_DBS}; do   # 영역마다 자기 DB 컨테이너: 계정마다 그 영역의 컨테이너에서만 돌린다
+  svc=$(pg_service_of "$db") || die "알 수 없는 데이터베이스: $db"
+  C=$(pg_container "${DEPLOY_PROJECT:-deploy}" "$svc"); [ -n "$C" ] || die "$svc 컨테이너가 떠 있지 않다"
+  app=""; case " $PG_APP_DBS " in *" $db "*) app=$db;; esac
+  "$DOCKER" exec -u postgres -e PG_INIT_ACCOUNTS="$db" -e PG_APP_ACCOUNTS="$app" "$C" bash /docker-entrypoint-initdb.d/10-roles.sh
+done

@@ -9,7 +9,7 @@ ck() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  P
 S="$T/secrets"; bash "$HERE/gen-secrets.sh" --db-only "$S" >/dev/null 2>&1
 python3 -c 'import secrets;print(secrets.token_hex(24))' > "$S/tokens/deid-salt"; chmod 644 "$S/tokens/deid-salt"
 mkdir -p "$S/kiosk-config"; echo '{"device_token":"x"}' > "$S/kiosk-config/e2e.json"
-SALT_SHA=$(sha256sum "$S/tokens/deid-salt" | cut -d' ' -f1); PW_SHA=$(sha256sum "$S/tokens/postgres-password" | cut -d' ' -f1)
+SALT_SHA=$(sha256sum "$S/tokens/deid-salt" | cut -d' ' -f1); PW_SHA=$(sha256sum "$S/tokens/pg-superuser-survey" | cut -d' ' -f1)
 SALT=$(cat "$S/tokens/deid-salt")
 ( umask 077; echo "sectest-password-$$-not-a-secret" > "$T/backup.pass" )
 printf 'BACKUP_DIR=%s/bk\nBACKUP_RETENTION_DAYS=14\nBACKUP_PASSWORD_FILE=%s\n' "$T" "$T/backup.pass" > "$T/backup.env"
@@ -30,7 +30,7 @@ ck "salt 가 없어졌다" test ! -e "$S/tokens/deid-salt"
 t "틀린 암호로는 복구할 수 없다" 1 env BACKUP_CONFIG="$T/bw.env" bash "$HERE/restore-secrets.sh" latest "$T/dst-wrong" --yes
 t "restore-secrets.sh" 0 bash "$HERE/restore-secrets.sh" latest "$S" --yes
 ck "deid-salt 가 같은 값으로 돌아왔다" bash -c "[ \"\$(sha256sum '$S/tokens/deid-salt' | cut -d' ' -f1)\" = '$SALT_SHA' ]"
-ck "postgres 암호도 같다" bash -c "[ \"\$(sha256sum '$S/tokens/postgres-password' | cut -d' ' -f1)\" = '$PW_SHA' ]"
+ck "영역 DB 슈퍼유저 암호도 같다" bash -c "[ \"\$(sha256sum '$S/tokens/pg-superuser-survey' | cut -d' ' -f1)\" = '$PW_SHA' ]"
 ck "kiosk-config 도 돌아왔다" test -s "$S/kiosk-config/e2e.json"
 t "복구 뒤 권한 점검 통과" 0 bash "$HERE/check-secret-perms.sh" "$S"
 t "비어 있지 않은 대상에는 덮어쓰지 않는다" 1 bash "$HERE/restore-secrets.sh" latest "$S" --yes

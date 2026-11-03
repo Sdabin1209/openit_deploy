@@ -69,7 +69,7 @@ class Compose(unittest.TestCase):
             self.assertTrue(C["networks"][net].get("internal"), net)
         self.assertEqual(nets(S, "keycloak"), ["auth", "db-keycloak"]); self.assertEqual(nets(S, "oauth2-proxy"), ["auth"])
         self.assertIn("auth", S["gateway"]["networks"])
-        self.assertIn("db-keycloak", S["postgres"]["networks"])
+        self.assertIn("db-keycloak", S["keycloak-db"]["networks"])
 
     def test_secrets_are_files_not_env_values(self):
         for n in ("keycloak", "oauth2-proxy"):
@@ -101,7 +101,7 @@ class Compose(unittest.TestCase):
         self.assertNotIn("keycloak", (ROOT / "scripts/check-containers.sh").read_text(encoding="utf-8").split("루트 파일시스템")[0].split("\n")[-1])
 
     def test_keycloak_db_account_exists(self):
-        self.assertIn("db-keycloak-password", S["postgres"]["secrets"]); self.assertEqual(S["keycloak"]["environment"]["KC_DB_USERNAME"], "keycloak")
+        self.assertIn("db-keycloak-password", S["keycloak-db"]["secrets"]); self.assertEqual(S["keycloak"]["environment"]["KC_DB_USERNAME"], "keycloak")
 
 
 class Gateway(unittest.TestCase):

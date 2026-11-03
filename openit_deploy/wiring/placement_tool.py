@@ -13,16 +13,37 @@ from jsonschema import Draft202012Validator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # 리포 루트(openit_deploy/wiring/ 의 두 단계 위)
-FOUNDATION = ["postgres", "step-ca", "keycloak", "gateway"]   # 기반 요소(명세 "배치" 행). compose 에 있는 것만 요구한다
-# 기동 순서(명세): postgres -> step-ca -> keycloak -> 나머지. 각 단계는 그 서버에 있는 서비스만 올린다
+FOUNDATION = ["step-ca", "keycloak", "gateway"]   # 기반 요소(명세 "배치" 행). compose 에 있는 것만 요구한다
+# 기동 순서(명세): 영역 DB(<서비스>-db) -> step-ca -> keycloak -> 나머지. 각 단계는 그 서버에 있는 서비스만 올린다
 # 서버를 넘나드는 기동 단계(ADR 0061): 앞 단계가 준비된 뒤에 다음 단계를 올린다. 목록에 없는 서비스는 3단계(저장소·서버 서비스)에 든다
-STAGES = [["step-ca"], ["postgres"], ["keycloak"],   # step-ca 가 먼저: 모든 서비스의 인증서(postgres-cert 포함)를 받으려면 CA 가 떠 있어야 한다(ADR 0060)
+STAGES = [["step-ca"], ["@db"], ["keycloak"],   # "@db": 이름이 -db 로 끝나는 영역 DB 전부(영역마다 자기 DB 컨테이너)
+   # step-ca 가 먼저: 모든 서비스의 인증서(postgres-cert 포함)를 받으려면 CA 가 떠 있어야 한다(ADR 0060)
          
           ["release-gate", "question-authoring", "ops-feedback-migrate", "ops-feedback-ingest", "model-registry", "dataset-store"],
           ["survey-service", "model-serving"],
           ["oauth2-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3
-CONTAINER_PORT = {"postgres": 5432}   # 나머지는 8080(이미지 규칙, HTTP.md)
+def container_port(n):
+    return 5432 if n.endswith("-db") else 8080   # 영역 DB 는 PostgreSQL 5432, 나머지는 8080(이미지 규칙, HTTP.md)
+
+
+def stage_key(k):
+    return "@db" if k.endswith("-db") else k
+
+
+def db_services(compose):
+    return sorted(n for n in compose["services"] if n.endswith("-db"))
+
+
+def dsn_db(compose, secret_name):
+    """DSN 비밀(db-<계정>[-app]-dsn)이 가리키는 영역 DB 서비스: 그 계정의 암호 비밀(db-<계정>-password)을 받는 DB"""
+    m = re.match(r"^db-(.+?)(-app)?-dsn$", secret_name)
+    if not m:
+        return None
+    for d in db_services(compose):
+        if "db-%s-password" % m.group(1) in names(compose["services"][d].get("secrets")):
+            return d
+    return None
 STEP_CA_BOUND = ("pki-root", "pki-tokens")   # step-ca 서버에서만 돈다: pki-tokens 는 프로비저너 비밀(step-ca-password)을 읽고 pki-root 는 키가 든 pki-ca 볼륨을 읽는다. 둘 다 step-ca 서버 밖으로 나가지 않는다(ADR 0061)
 PUBLISH_NET = "placement-publish"      # 내부 전용 네트워크에만 붙은 서비스가 호스트 포트를 열 수 있게 더하는 일반 네트워크
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -107,9 +128,9 @@ def leaders(compose):
     for n in STEP_CA_BOUND:
         if n in compose["services"]:
             out[n] = "step-ca"
-    for n in ("postgres-cert", "postgres-reload"):
-        if n in compose["services"]:
-            out[n] = "postgres"
+    for n in compose["services"]:   # <DB 서비스>-reload 는 그 DB 의 서버 인증서를 다시 읽게 하는 짝이다
+        if n.endswith("-db-reload") and n[:-7] in compose["services"]:
+            out[n] = n[:-7]
     return out
 
 
@@ -205,8 +226,11 @@ def call_targets(p, compose, n, srv, owner):
         m = URL_RE.match(v)
         if m and m.group(2) in owner and owner[m.group(2)] != srv:
             out.add(m.group(2))
-    if "postgres" in owner and owner["postgres"] != srv and any(DSN_RE.match(x) for x in names(svc.get("secrets"))):
-        out.add("postgres")
+    for x in names(svc.get("secrets")):
+        if DSN_RE.match(x):
+            d = dsn_db(compose, x)
+            if d in owner and owner[d] != srv:
+                out.add(d)
     if "step-ca" in owner and owner["step-ca"] != srv and n != "step-ca" and uses_step_ca(svc):
         out.add("step-ca")
     return out
@@ -306,7 +330,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     for n in sorted(published):
         h = holder_of(compose, n)
         if not compose["services"][h].get("ports"):
-            ov.setdefault(h, {})["ports"] = "%s:%d:%d" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else CONTAINER_PORT.get(n, 8080)))
+            ov.setdefault(h, {})["ports"] = "%s:%d:%d" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else container_port(n)))
     lines = ["# 생성 파일(scripts/placement.py render): 서버 %s 의 배치 override. 손으로 고치지 않는다." % host, "services:"]
     for n in sorted(ov):
         lines.append("  %s:" % n)
@@ -347,16 +371,16 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
                 files.append(f[len(pre):])
     # DB 접속 비밀(db-*-dsn)의 호스트: postgres 가 다른 서버면 그 서버 주소와 게시 포트로 바꿔 이 서버용 파일을 새로 만든다(원본은 그대로)
     generated = []
-    pg = owner.get("postgres")
-    if pg and pg != host and out and secrets_dir:
+    if out and secrets_dir:
         q = ""
         mode = p.get("db_sslmode", "verify-full" if scheme == "https" else "")
         if mode:
             q = "?sslmode=%s&sslrootcert=%s" % (mode, p.get("db_sslrootcert", "/etc/openit/pki/root_ca.crt"))
         for f in files:
-            if DSN_RE.match(os.path.basename(f)):
+            dbn = dsn_db(compose, os.path.basename(f)) if DSN_RE.match(os.path.basename(f)) else None
+            if dbn and owner.get(dbn) and owner[dbn] != host:   # 그 계정의 영역 DB 가 다른 서버에 있을 때만 호스트 포트로 바꾼다
                 src = open(os.path.join(secrets_dir, f), encoding="utf-8").read()
-                dst = src.replace("@postgres:5432/", "@postgres:%d/" % ports["postgres"]).rstrip("\n")
+                dst = src.replace("@%s:5432/" % dbn, "@%s:%d/" % (dbn, ports[dbn])).rstrip("\n")
                 if "?" not in dst:   # gen-secrets 가 이미 sslmode=verify-full&sslrootcert 를 넣는다(TLS 작업). 없을 때만 더한다
                     dst += q
                 dst += "\n"
@@ -369,7 +393,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     stages = []
     lead = leaders(compose)   # 따라가는 서비스는 앞선 서비스와 같은 단계
     for i in range(len(STAGES)):
-        stages.append([n for n in local if ((lambda k: STAGES[i].count(k) or (k not in sum(STAGES, []) and i == DEFAULT_STAGE))(lead.get(n, n)))])
+        stages.append([n for n in local if ((lambda k: STAGES[i].count(k) or (k not in sum(STAGES, []) and i == DEFAULT_STAGE))(stage_key(lead.get(n, n))))])
     # 다른 서버의 step-ca 에서 받아 올 일회용 토큰: 이 서버의 <서비스>-cert 마다 <서비스>.ott (단계별. 수명 5분이라 그 단계 기동 직전에 받는다)
     ca_host = owner.get("step-ca")
     stage_tokens = []

@@ -27,12 +27,13 @@ def build(groups):
         p["ports"][n] = 21000 + k
     return p
 
+DBS = [s for s in ALL if s.endswith("-db")]   # 영역마다 자기 DB 컨테이너(<서비스>-db)
 SPLITS = {
     "multi-example": None,
     "edge-vs-core": {"edge": ["gateway", "oauth2-proxy", "keycloak", "kiosk-frontend", "admin-console"],
                      "core": [s for s in ALL if s not in ("gateway", "oauth2-proxy", "keycloak", "kiosk-frontend", "admin-console")]},
-    "db-alone": {"db": ["postgres", "step-ca"], "rest": [s for s in ALL if s not in ("postgres", "step-ca")]},
-    "three-way": {"a": ["postgres", "step-ca", "keycloak", "oauth2-proxy"],
+    "db-alone": {"db": DBS + ["step-ca"], "rest": [s for s in ALL if s not in DBS + ["step-ca"]]},
+    "three-way": {"a": DBS + ["step-ca", "keycloak", "oauth2-proxy"],
                   "b": ["release-gate", "question-authoring", "ops-feedback-ingest", "model-registry", "dataset-store"],
                   "c": ["survey-service", "model-serving", "gateway", "kiosk-frontend", "admin-console"]},
 }
@@ -54,7 +55,7 @@ for label, groups in SPLITS.items():
         for f in plan["secret_files"]:   # DSN 만 내용이 필요하다. 가짜 값(비밀 아님)
             if re.match(r"^db-.*-dsn$", os.path.basename(f)):
                 os.makedirs(os.path.dirname(os.path.join(sd, f)), exist_ok=True)
-                open(os.path.join(sd, f), "w").write("postgresql://u:x@postgres:5432/d?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt\n")
+                open(os.path.join(sd, f), "w").write("postgresql://u:x@%s:5432/d?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt\n" % pt.dsn_db(compose, os.path.basename(f)))
         text, plan = pt.render(p, compose, host, CD, sd, os.path.join(tmp, "out"))
         cur = None
         for n_ in plan["services"]:   # P3: <서비스>-net 은 앱과 같은 서버에 선다
@@ -86,8 +87,8 @@ for label, groups in SPLITS.items():
             checked += 1
             body = open(os.path.join(tmp, "out", "secrets", f)).read()
             hm = re.search(r"@([^:/]+):(\d+)/", body)
-            if not hm or hm.group(1) != "postgres":
-                fails.append("%s/%s: %s 의 DSN 호스트가 서비스 이름 postgres 가 아니다" % (label, host, f))
+            if not hm or hm.group(1) != pt.dsn_db(compose, os.path.basename(f)):
+                fails.append("%s/%s: %s 의 DSN 호스트가 그 계정의 영역 DB 서비스 이름이 아니다" % (label, host, f))
 for f in fails:
     print("FAIL: " + f, file=sys.stderr)
 if fails or checked == 0:

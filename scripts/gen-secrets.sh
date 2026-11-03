@@ -4,8 +4,8 @@
 # secrets/tokens/<이름> : 비밀 값 하나가 파일 하나(개별 토큰, 서버가 받는 목록 값 "역할=토큰,...", salt, 콘솔 암호).
 #   compose.yaml 의 최상위 secrets 가 이 파일을 /run/secrets/<이름> 에 마운트하고, 서비스는 NAME_FILE 경로로만 읽는다(D84).
 #   예전 방식 secrets/<서비스>.env(환경 변수로 토큰 주입)는 없앴다: 남아 있으면 지워도 된다(아래에서 알려 준다).
-# PostgreSQL: tokens/postgres-password(슈퍼유저), tokens/db-<이름>-password(서비스 계정 암호), tokens/db-<이름>-dsn(접속 문자열 한 줄,
-#   postgresql://<계정>:<암호>@postgres:5432/<데이터베이스>). 이름 규칙은 docs/RUN.md 4-1-1. DSN 은 암호가 바뀌면 같이 갱신된다.
+# PostgreSQL: tokens/pg-superuser-<영역>(영역 DB 의 슈퍼유저), tokens/db-<이름>-password(서비스 계정 암호), tokens/db-<이름>-dsn(접속 문자열 한 줄,
+#   postgresql://<계정>:<암호>@<서비스>-db:5432/<데이터베이스>). 이름 규칙은 docs/RUN.md 4-1-1. DSN 은 암호가 바뀌면 같이 갱신된다.
 #   --db-only : PostgreSQL 비밀만 만든다(caddy 이미지가 필요 없다. 시험·개발용).  사용: gen-secrets.sh [--db-only] [디렉터리]
 # 권한: 디렉터리 700(호스트 다른 사용자 차단). 파일은 secret_mode(lib.sh): 컨테이너가 읽는 것은 640 + 그룹(추론 서버용 토큰도 같다, RUNTIME.md R6.3), 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본)은 600.
 #   컨테이너가 읽는 파일을 600 으로 만들지 못하는 이유: compose 의 파일 secrets 는 호스트 소유자·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않아(측정함),
@@ -26,16 +26,18 @@ roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="$
 
 # PostgreSQL 계정: 이름 = 데이터베이스 = 계정. 환경 변수 이름은 docs/RUN.md 4-1-1 표(SURVEY_DATABASE_URL 등)
 gen_db() {
-  tok postgres-password >/dev/null
-  local a n
+  # 영역마다 자기 DB 컨테이너(<서비스>-db)와 자기 슈퍼유저 암호를 가진다: 다른 영역의 DB 계정·접속은 없다(RUNTIME R6.2, 구조 규칙 1)
+  for su in survey qa ops gate keycloak; do tok "pg-superuser-$su" >/dev/null; done
+  local a n h
+  dbhost() { case "$1" in survey) echo survey-db;; qa) echo question-authoring-db;; ops_log|ops_failure) echo ops-feedback-db;; gate) echo release-gate-db;; keycloak) echo keycloak-db;; esac; }
   for a in survey qa ops_log ops_failure gate keycloak; do
     n=${a//_/-}; tok "db-$n-password" >/dev/null
-    putlist "db-$n-dsn" "postgresql://$a:$(cat "$D/tokens/db-$n-password")@postgres:5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
+    putlist "db-$n-dsn" "postgresql://$a:$(cat "$D/tokens/db-$n-password")@$(dbhost "$a"):5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
   done
   # L08: 스키마를 만드는 소유자 계정(위 db-$n-*, admin migrate 잡만 쓴다)과 DML만 가진 앱 계정(<이름>_app, 서버·잡이 쓴다)을 나눈다. 앱 계정 비밀은 db-$n-app-*
   for a in $PG_APP_DBS; do
     n=${a//_/-}; tok "db-$n-app-password" >/dev/null
-    putlist "db-$n-app-dsn" "postgresql://${a}_app:$(cat "$D/tokens/db-$n-app-password")@postgres:5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
+    putlist "db-$n-app-dsn" "postgresql://${a}_app:$(cat "$D/tokens/db-$n-app-password")@$(dbhost "$a"):5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
   done
 }
 gen_db

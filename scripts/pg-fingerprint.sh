@@ -4,7 +4,8 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 DB=${1:?데이터베이스}; [[ "$DB" =~ ^[a-z][a-z0-9_]*$ ]] || die "데이터베이스 이름 규칙 위반: $DB"
-C=$(pg_container "${DEPLOY_PROJECT:-deploy}"); [ -n "$C" ] || die "postgres 컨테이너가 떠 있지 않다"
+SVC=$(pg_service_of "$DB") || die "알 수 없는 데이터베이스: $DB"
+C=$(pg_container "${DEPLOY_PROJECT:-deploy}" "$SVC"); [ -n "$C" ] || die "$SVC 컨테이너가 떠 있지 않다"
 S=$("$DOCKER" exec "$C" pg_dump -U "$DB" -d "$DB" --schema-only --no-owner | grep -v '^--\|^\\restrict\|^\\unrestrict' | sha256sum | cut -c1-64)
 R=$("$DOCKER" exec "$C" pg_dump -U "$DB" -d "$DB" --data-only --inserts --no-owner | { grep '^INSERT' || true; } | sort | sha256sum | cut -c1-64)
 N=$("$DOCKER" exec "$C" pg_dump -U "$DB" -d "$DB" --data-only --inserts --no-owner | { grep -c '^INSERT' || true; })
