@@ -61,9 +61,29 @@
   changed_when: "(up.stderr | default('')) is search('Container (?!\\S*(pki-tokens|pki-root|-migrate)-)\\S+ +(Created|Recreated|Started) *$', multiline=True)"   # 일회성 서비스는 depends_on 으로 매번 다시 돈다. 그것만으로는 바뀐 것이 아니다
   # 일회성 서비스(pki-tokens, ...)는 그것을 기다리는 서비스의 depends_on 으로 함께 돈다. 목록에 직접 넣으면 --wait 가 정상 종료(0)를 실패로 센다
   when: plan.stages[stage_i] | difference(plan.oneshots) | length > 0
+# 게시된 서비스의 https /readyz 를 지휘 기계에서 보려면 step-ca 루트(공개 인증서)가 필요하다: step-ca 서버의 pki-root 볼륨에서 읽어 지휘 기계에 둔다. 인벤토리에 placement_ca_path 가 있으면 그것을 쓴다
+- name: "단계 {{ stage_i }}: step-ca 루트(공개)를 지휘 기계로"
+  ansible.builtin.shell: |
+    UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ ca_dir }}/locks/images.lock")
+    docker run --rm --network none -v "{{ ca_project }}_pki-root:/r:ro" "$UTIL" cat /r/root_ca.crt
+  args: {executable: /bin/bash}
+  vars:
+    ca_dir: "{{ hostvars[plan.step_ca_host].placement_remote_dir | default('/opt/openit-deploy') }}"
+    ca_project: "{{ hostvars[plan.step_ca_host].placement_project | default('deploy') }}"
+  delegate_to: "{{ plan.step_ca_host | default(inventory_hostname, true) }}"
+  register: rootpem
+  changed_when: false
+  when: p_scheme == 'https' and plan.step_ca_host and placement_ca_path is not defined and (plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'in', ['postgres', 'step-ca']) | list | length) > 0
+- name: "단계 {{ stage_i }}: 루트 파일 쓰기(지휘 기계)"
+  ansible.builtin.copy:
+    content: "{{ rootpem.stdout }}\n"
+    dest: "{{ playbook_dir }}/../build/placement/{{ inventory_hostname }}-root_ca.crt"
+    mode: "0644"
+  delegate_to: localhost
+  when: rootpem is not skipped
 - name: "단계 {{ stage_i }}: 게시된 서비스의 https /readyz (지휘 기계에서, 인증서 이름 = 서비스 이름이라 --resolve 로 이름을 서버 주소에 맞춘다)"
   ansible.builtin.command:
-    argv: "{{ ['curl', '-fsS', '--max-time', '5', '-o', '/dev/null', '--resolve', item.key ~ ':' ~ item.value ~ ':' ~ (placement_probe_address | default(ansible_host))] + (['--cacert', placement_ca_path] if placement_ca_path is defined else []) + ['https://' ~ item.key ~ ':' ~ (item.value | string) ~ '/readyz'] }}"
+    argv: "{{ ['curl', '-fsS', '--max-time', '5', '-o', '/dev/null', '--resolve', item.key ~ ':' ~ item.value ~ ':' ~ (placement_probe_address | default(ansible_host))] + (['--cacert', placement_ca_path] if placement_ca_path is defined else (['--cacert', playbook_dir ~ '/../build/placement/' ~ inventory_hostname ~ '-root_ca.crt'] if plan.step_ca_host else [])) + ['https://' ~ item.key ~ ':' ~ (item.value | string) ~ '/readyz'] }}"
   register: ready_tls
   until: ready_tls.rc == 0
   retries: 30

@@ -93,8 +93,14 @@ def leaders(compose):
     out = {}
     for n, s in compose["services"].items():
         nm = str(s.get("network_mode") or "")
-        if nm.startswith("service:"):
-            out[n] = nm.split(":", 1)[1]
+        if not nm.startswith("service:"):
+            continue
+        holder = nm.split(":", 1)[1]
+        base = holder[:-4] if holder.endswith("-net") and holder[:-4] in compose["services"] else holder
+        if holder != base:
+            out[holder] = base   # <서비스>-net(pause)은 서비스를 따라가 같은 서버에 선다(RUNTIME.md R3.2)
+        if n != base:
+            out[n] = base        # 사이드카·앱 자신 외에 그 네임스페이스를 쓰는 서비스는 서비스와 같은 서버
     for n in compose["services"]:   # <서비스>-cert 는 <서비스> 의 인증서를 받는 짝이다(ADR 0060): 같은 서버에서 앱보다 먼저 올라온다
         if n.endswith("-cert") and n[:-5] in compose["services"] and n not in out:
             out[n] = n[:-5]
@@ -104,6 +110,23 @@ def leaders(compose):
     for n in ("postgres-cert", "postgres-reload"):
         if n in compose["services"]:
             out[n] = "postgres"
+    return out
+
+
+def holder_of(compose, n):
+    """서비스 n 의 망·게시 포트·extra_hosts 를 가진 서비스: network_mode: service:<X> 면 X(<서비스>-net), 아니면 자기 자신"""
+    nm = str(compose["services"][n].get("network_mode") or "")
+    return nm.split(":", 1)[1] if nm.startswith("service:") else n
+
+
+def has_sidecar(compose):
+    """TLS 사이드카가 있는 서비스(게시는 사이드카의 443). 앱과 같은 <서비스>-net 을 쓰는 다른 서비스가 있으면 사이드카가 있는 것"""
+    out = set()
+    for n in compose["services"]:
+        h = holder_of(compose, n)
+        base = h[:-4] if h.endswith("-net") and h[:-4] in compose["services"] else h
+        if h != n and n != base:
+            out.add(base)
     return out
 
 
@@ -218,7 +241,7 @@ def env_of(svc, compose_dir):
 
 
 def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
-    sidecared = set(leaders(compose).values()) - {"postgres", "step-ca"}   # step-ca 는 pki-root·pki-tokens 의 짝일 뿐 TLS 사이드카가 없다(자기 포트 9000)
+    sidecared = has_sidecar(compose)   # step-ca 는 pki-root·pki-tokens 의 짝일 뿐 TLS 사이드카가 없다(자기 포트 9000)
     servers = p["servers"]
     if host not in servers:
         fail(["서버 '%s' 는 인벤토리에 없다" % host])
@@ -251,8 +274,12 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
         if new:
             ov.setdefault(n, {})["environment"] = new
         hosts_ = sorted(call_targets(p, compose, n, host, owner))
-        if hosts_ and compose["services"][n].get("network_mode") is None:   # 사이드카(network_mode)는 extra_hosts 를 받지 못한다. 부르는 쪽은 앱이다
-            ov.setdefault(n, {})["extra_hosts"] = ["%s:%s" % (t, servers[owner[t]]["address"]) for t in hosts_]
+        if hosts_:   # 이름을 서버 주소로 돌리는 extra_hosts 는 망을 가진 서비스(<서비스>-net)에 둔다
+            hh = ov.setdefault(holder_of(compose, n), {}).setdefault("extra_hosts", [])
+            for t in hosts_:
+                e = "%s:%s" % (t, servers[owner[t]]["address"])
+                if e not in hh:
+                    hh.append(e)
     # 이 서버의 서비스를 다른 서버가 부르면 호스트 포트를 연다(서버 사이 호출은 게시 포트로만, 바인드 주소는 인벤토리 값)
     published = remote_called(p, compose) & localset
     # depends_on 은 이 서버에 있는 것만 남긴다(다른 서버의 준비는 플레이북의 단계 순서와 /readyz 확인이 맡는다)
@@ -269,12 +296,19 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     # 다른 서버를 부르는 서비스도 같다: internal 네트워크에만 붙어 있으면 호스트 밖으로 나가지 못한다(예: pki 망의 <서비스>-cert 가 다른 서버의 step-ca 에 닿으려면)
     callers = {n for n in local if call_targets(p, compose, n, host, owner)}
     for n in sorted(published | callers):
-        sn = compose["services"][n].get("networks") or []
-        sn = list(sn) if not isinstance(sn, dict) else list(sn)
-        if sn and all((nets.get(x) or {}).get("internal") for x in sn):
-            addnet.add(n); ov.setdefault(n, {})["networks"] = sn + [PUBLISH_NET]
+        h = holder_of(compose, n)
+        sn = compose["services"][h].get("networks") or []
+        sm = {k: (v or {}) for k, v in sn.items()} if isinstance(sn, dict) else {k: {} for k in sn}
+        if sm and all((nets.get(x) or {}).get("internal") for x in sm):
+            sm[PUBLISH_NET] = {}
+            addnet.add(h); ov.setdefault(h, {})["networks"] = sm
+    # 게시 포트도 망을 가진 서비스에 둔다
+    for n in sorted(published):
+        h = holder_of(compose, n)
+        if not compose["services"][h].get("ports"):
+            ov.setdefault(h, {})["ports"] = "%s:%d:%d" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else CONTAINER_PORT.get(n, 8080)))
     lines = ["# 생성 파일(scripts/placement.py render): 서버 %s 의 배치 override. 손으로 고치지 않는다." % host, "services:"]
-    for n in sorted(set(ov) | published):
+    for n in sorted(ov):
         lines.append("  %s:" % n)
         if "environment" in ov.get(n, {}):
             lines.append("    environment:")
@@ -293,11 +327,11 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
                 lines.append("      - %s" % json.dumps(h))
         if "networks" in ov.get(n, {}):
             lines.append("    networks: !override")
-            for x in ov[n]["networks"]:
-                lines.append("      - %s" % x)
-        if n in published and not (compose["services"][n].get("ports")):
+            for x, cfg in ov[n]["networks"].items():
+                lines.append("      %s: %s" % (x, json.dumps(cfg)))
+        if "ports" in ov.get(n, {}):
             lines.append("    ports:")
-            lines.append("      - \"%s:%d:%d\"" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else CONTAINER_PORT.get(n, 8080))))   # 사이드카가 있는 서비스는 사이드카의 443, step-ca 는 안팎이 같은 STEP_CA_PORT, 나머지는 8080(postgres 5432)
+            lines.append("      - \"%s\"" % ov[n]["ports"])
     if addnet:
         lines += ["networks:", "  %s: {}" % PUBLISH_NET]
     if len(lines) == 2:

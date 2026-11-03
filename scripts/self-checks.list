@@ -87,6 +87,7 @@ rollback.sh: 서비스 digest 가 SERVICES 전부 있는 잠금만 후보, 키 �
 호출 관계 밖의 서비스 쌍은 공통 망이 없다(허용 목록 = compose 환경·설정에서 뽑은 호출 관계 + 계약 EXTRA; 예외 표 없음) (R6.2) :: python3 "$DEPLOY_ROOT/scripts/test_service_pair_isolation.py"
 게이트웨이 자신의 /healthz·/readyz 본문이 JSON HealthStatus(status)이고 읽는 쪽(감시·E2E)도 본문을 본다 (R2.3·R5.1) :: python3 "$DEPLOY_ROOT/scripts/test_gateway_health_body.py"
 e2e_steps.py 의 time.sleep 은 이유 주석이 있거나 wait()/settled() 안에 있다 (R4.3: 복구를 고정 대기로 흉내 내지 않는다, 변이 확인 포함) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_no_blind_sleep.py"
+R1.4 배치 무관: 서버별 override 의 호출 설정 이름·경로·서비스 이름이 한 서버 배치와 같다 (정적, 주소는 서비스 이름 + extra_hosts) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_placement_names.py"
 네트워크 공간 수명: 앱·사이드카 stop/start·프로세스 kill 뒤 게이트웨이 503/200 (pause <서비스>-net, ADR 0060) :: bash "$DEPLOY_ROOT/scripts/test-netns-lifetime.sh"
 인증서 컨테이너는 검증으로 발급 여부를 정한다(만료 뒤 복구, RUNTIME.md R4.4, ADR 0060) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_cert_entrypoint.py"
 사이드카 설정은 평문 리스너·local CA·ACME 가 없다 (RUNTIME.md R1.2·R3.9, ADR 0060) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_sidecar_caddyfile.py"
