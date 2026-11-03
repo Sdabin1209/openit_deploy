@@ -297,7 +297,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
                 lines.append("      - %s" % x)
         if n in published and not (compose["services"][n].get("ports")):
             lines.append("    ports:")
-            lines.append("      - \"%s:%d:%d\"" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else CONTAINER_PORT.get(n, 8080))   # step-ca 는 안팎 포트가 같다(STEP_CA_PORT, 인증서 발급 명령이 같은 값을 쓴다)))   # 사이드카가 있는 서비스는 사이드카의 443 을 연다(앱 포트는 사이드카 뒤 loopback)
+            lines.append("      - \"%s:%d:%d\"" % (bind, ports[n], 443 if n in sidecared else (ports[n] if n == "step-ca" else CONTAINER_PORT.get(n, 8080))))   # 사이드카가 있는 서비스는 사이드카의 443, step-ca 는 안팎이 같은 STEP_CA_PORT, 나머지는 8080(postgres 5432)
     if addnet:
         lines += ["networks:", "  %s: {}" % PUBLISH_NET]
     if len(lines) == 2:
