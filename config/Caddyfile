@@ -120,6 +120,8 @@ http://:8080 {
 	# 직원 API와 개입: 개별 계정 인증 + staff 역할 뒤에만 staff 서비스 토큰을 붙인다. 인증된 계정 ID 를 X-Openit-User 로 붙이고(개입 기록의 staff_id, 클라이언트가 보낸 값은 덮어씀) 본문 값은 믿지 않는다.
 	# SSE는 버퍼링을 끄고 읽기 제한 시간을 길게, Last-Event-ID와 id는 그대로 전달한다.
 	@staffapi path /v1/staff/* /v1/sessions/*/intervention
+	# 의사(clinician)에게 더 여는 푸시 경로(아래 @staffapi 안): 매처는 사이트 최상위에 둔다(check_exposure 의 구문 분석기가 최상위 매처만 읽는다)
+	@clinicianpush path /v1/staff/push-config /v1/staff/push-subscriptions /v1/staff/push-subscriptions/unsubscribe
 	handle @staffapi {
 		import authenticate
 		handle @role_staff {
@@ -139,7 +141,6 @@ http://:8080 {
 			}
 		}
 		# 의사(clinician)는 푸시 설정·구독 경로만 더 쓸 수 있다(계약 3.4.0 U92: topics results 는 clinician 만). 직원 API 의 나머지(알림 목록·개입 등)는 계속 staff 전용이다
-		@clinicianpush path /v1/staff/push-config /v1/staff/push-subscriptions /v1/staff/push-subscriptions/unsubscribe
 		handle @role_clinician {
 			handle @clinicianpush {
 				reverse_proxy survey-service:8080 {

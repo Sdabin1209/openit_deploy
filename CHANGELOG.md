@@ -2,6 +2,7 @@
 
 ## wo-450 D1 (U92): 기준표 계약 v3.4.0·link v0.4.6, clinician 푸시 경로
 - `DEPLOY_BC_TAG` v3.4.0, `DEPLOY_LINK_TAG` v0.4.6. 게이트웨이: clinician 역할에 `/v1/staff/push-config`, `/v1/staff/push-subscriptions`, `.../unsubscribe` 를 허용(나머지 직원 API 는 staff 전용 그대로). 상류에는 staff 서비스 토큰과 `X-Openit-User` 를 붙인다(서비스가 clinician 별도 토큰을 받는지는 확인하지 못했다). `test-gateway-auth.sh` 에 줄 추가.
+- ops-feedback 보존: `failed_raw_days: 30` 명시(L19 사용자 결정 2026-11-03). 게이트웨이 clinician 푸시 매처는 최상위에 둔다(check_exposure 구문 분석기가 최상위 매처만 읽는다).
 
 ## wo-450: 문진표 여러 개 활성 (계약 3.3.0, 문진 스키마 4.0.0, ADR 0052)
 - 기준표: `DEPLOY_BC_TAG` v3.3.0, `DEPLOY_SS_TAG` survey-schema-v4.0.0. release-gate 가 지원하는 정수 버전(`GATE_SUPPORTED_RUNTIME_CONTRACT_VERSION`)와 E2E 의 시험 매니페스트 `runtime_contract_version` 은 1 그대로(헤드 확인: 모델 입출력 불변). model-runtime v0.11.12, link v0.4.5.
