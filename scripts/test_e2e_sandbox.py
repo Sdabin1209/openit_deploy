@@ -65,7 +65,7 @@ class T(unittest.TestCase):
 
     def test_inference_url(self):
         self.f.stdout = "127.0.0.1:40001\n"
-        self.assertEqual(S.inference_url(), "http://127.0.0.1:40001")
+        self.assertEqual(S.inference_url(), "https://localhost:40001")
         self.assertEqual(self.last(), ["docker", "port", "P1-inf-model-serving-net-1", "443/tcp"])
         self.f.rc = 1; self.assertIsNone(S.inference_url())
 
