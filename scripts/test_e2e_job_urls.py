@@ -55,7 +55,7 @@ class T(unittest.TestCase):
             host, = re.fullmatch(r"https://([a-z-]+)", url).groups()
             self.assertIn(host, comp, f"{const}: compose 에 서비스 {host} 가 없다")
             hc = " ".join(comp[host].get("healthcheck", {}).get("test", []))
-            self.assertIn(f"{host}-tls", comp, f"{const}: {host} 의 TLS 사이드카({host}-tls)가 없다(ADR 0060)")
+            self.assertTrue(f"{host}-gw" in comp or f"{host}-tls" in comp, f"{const}: {host} 의 영역 게이트웨이({host}-gw)나 TLS 사이드카({host}-tls)가 없다(ADR 0060)")
             net = nets["DS_JOB_NETWORK"] if const == "DS_JOB_URL" else nets["SD_RUN_NETWORK"]
             self.assertIn(net, nets_of(comp, host), f"{const}: 잡 네트워크 {net} 에 {host} 가 붙어 있지 않다")
 

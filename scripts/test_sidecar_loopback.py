@@ -8,7 +8,7 @@ BIND = {"survey-service": "SURVEY_HOST", "question-authoring": "QA_HOST", "ops-f
         "model-registry": "MODEL_REGISTRY_HOST", "dataset-store": "DATASET_STORE_HOST", "keycloak": "KC_HTTP_HOST", "oauth2-proxy": "OAUTH2_PROXY_HTTP_ADDRESS", "kiosk-frontend": "KIOSK_HOST", "admin-console": "ADMIN_HOST"}
 KNOWN_GAP = set()   # 계약 v3.4.3 부터 kiosk-frontend(KIOSK_HOST)·admin-console(ADMIN_HOST)도 바인드 주소를 환경에서 받는다
 S = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
-SIDECARED = {n[:-4] for n in S if n.endswith("-tls")}
+SIDECARED = {n[:-3] if n.endswith("-gw") else n[:-4] for n in S if n.endswith(("-gw", "-tls"))}   # 영역 게이트웨이(-gw) 또는 TLS 사이드카(-tls)
 
 
 class Loopback(unittest.TestCase):
@@ -22,7 +22,7 @@ class Loopback(unittest.TestCase):
 
     def test_sidecar_shares_namespace_of_app(self):
         for n in SIDECARED:
-            self.assertEqual(S[n + "-tls"]["network_mode"], f"service:{n}-net"); self.assertEqual(S[n]["network_mode"], f"service:{n}-net")
+            self.assertEqual(S[n + ("-gw" if n + "-gw" in S else "-tls")]["network_mode"], f"service:{n}-net"); self.assertEqual(S[n]["network_mode"], f"service:{n}-net")
 
 
 if __name__ == "__main__":

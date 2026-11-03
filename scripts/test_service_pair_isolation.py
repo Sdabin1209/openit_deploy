@@ -17,14 +17,18 @@ DB_OF = {"survey": "survey-db", "qa": "question-authoring-db", "ops_log": "ops-f
 
 
 def scope(svcs):
-    apps = {n[:-4] for n in svcs if n.endswith("-tls")}   # TLS 종단을 둔 앱(<서비스>-tls 의 <서비스>)
+    apps = {n[:-3] if n.endswith("-gw") else n[:-4] for n in svcs if n.endswith(("-gw", "-tls"))}   # 영역 게이트웨이(<서비스>-gw)나 TLS 종단(<서비스>-tls)을 둔 앱
     return sorted(apps | {"gateway"})
 
 
 def allowed(svcs):
     edges = set(EXTRA)
     for a, hits in C.callers(svcs).items():
-        a = a[len("job-"):] if a.startswith("job-") else a
+        nm = str((svcs.get(a) or {}).get("network_mode") or "")
+        if a.startswith("job-") and nm.startswith("service:") and nm.endswith("-net"):
+            a = nm[len("service:"):-4]   # 영역 pod 안에서 도는 잡의 호출은 그 영역의 호출이다(영역 게이트웨이 출구는 pod 안에 있다)
+        else:
+            a = a[len("job-"):] if a.startswith("job-") else a
         for b in hits: edges.add(frozenset((a, b)))
     return edges
 

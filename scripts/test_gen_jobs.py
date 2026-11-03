@@ -14,7 +14,7 @@ COMPOSE = {"services": {"job-survey-purge": {"image": "img/s"}, "job-question-au
 DECL = {"img/s": {"jobs": [{"name": "session-purge", "argv": ["python", "-m", "survey_service", "purge"], "idempotent": True, "timeout_seconds": 120}]},
         "img/q": {"jobs": [{"name": "purge", "argv": ["qa", "purge"], "idempotent": True}]},
         "img/g": {"jobs": [{"name": "prune", "argv": ["gate", "prune"], "idempotent": True}, {"name": "collect", "argv": ["gate", "collect"], "idempotent": True, "timeout_seconds": 300}]},
-        "img/o": {"jobs": [{"name": "ops-feedback", "argv": ["ops", "job", "--config", "/config/job.yaml"], "idempotent": True, "timeout_seconds": 1800}]}}
+        "img/o": {"jobs": [{"name": "ops-feedback-job", "argv": ["ops", "job", "--config", "/config/job.yaml"], "idempotent": True, "timeout_seconds": 1800}]}}
 
 
 def labels(img): return {"io.openit.jobs": json.dumps(DECL[img])} if img in DECL else {}
@@ -35,7 +35,7 @@ class T(unittest.TestCase):
         bad = json.loads(json.dumps(DECL)); bad["img/o"]["jobs"][0]["name"] = "other"
         with self.assertRaises(SystemExit) as e:
             G.build(COMPOSE, lambda i: {"io.openit.jobs": json.dumps(bad[i])} if i in bad else {}, validator)
-        self.assertIn("ops-feedback", str(e.exception))
+        self.assertIn("ops-feedback-job", str(e.exception))
 
     def test_timeout_not_shorter_than_period_is_refused(self):   # R9.3: 상한은 주기보다 짧아야 한다(수집기 주기 600초, 기본 3600초면 거부)
         d = json.loads(json.dumps(DECL)); d["img/g"]["jobs"][1].pop("timeout_seconds")

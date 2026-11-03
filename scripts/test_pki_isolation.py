@@ -17,7 +17,7 @@ CERT_ONLY = ("step-ca", "pki-root", "pki-tokens", "postgres-cert")
 
 
 def sidecared_apps(svcs):
-    return sorted(n[:-4] for n in svcs if n.endswith("-tls"))
+    return sorted(n[:-3] if n.endswith("-gw") else n[:-4] for n in svcs if n.endswith(("-gw", "-tls")))
 
 
 def apps_on_pki(svcs):

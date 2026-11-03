@@ -19,11 +19,12 @@ class T(unittest.TestCase):
 
     def test_each_upstream_is_waited_for_healthy(self):
         for n in UPSTREAMS:
-            self.assertIn(f"{n}-tls", S, f"{n}: TLS 사이드카가 없다")
-            self.assertEqual(DEPS.get(f"{n}-tls", {}).get("condition"), "service_healthy", f"gateway 가 {n}-tls 를 service_healthy 로 기다리지 않는다")
+            side = f"{n}-gw" if f"{n}-gw" in S else f"{n}-tls"   # 영역 게이트웨이(-gw) 또는 TLS 사이드카(-tls)
+            self.assertIn(side, S, f"{n}: 영역 게이트웨이/TLS 사이드카가 없다")
+            self.assertEqual(DEPS.get(side, {}).get("condition"), "service_healthy", f"gateway 가 {side} 를 service_healthy 로 기다리지 않는다")
             # 앱 자체의 준비는 앱의 healthcheck 이거나(없으면) 사이드카의 healthcheck 가 상류를 본다
             app_ok = DEPS.get(n, {}).get("condition") == "service_healthy" and S[n].get("healthcheck")
-            side_checks_app = "127.0.0.1" in str(S[f"{n}-tls"].get("healthcheck", {}).get("test", "")) and n == "oauth2-proxy" and "/ping" in str(S[f"{n}-tls"]["healthcheck"]["test"])
+            side_checks_app = "127.0.0.1" in str(S[side].get("healthcheck", {}).get("test", "")) and n == "oauth2-proxy" and "/ping" in str(S[side]["healthcheck"]["test"])
             self.assertTrue(app_ok or side_checks_app, f"{n}: 앱의 healthcheck 가 없고 사이드카도 상류를 보지 않는다 / gateway 가 service_healthy 로 기다리지 않는다")
 
     def test_no_started_only_dependency_on_an_upstream_without_check(self):
@@ -31,7 +32,7 @@ class T(unittest.TestCase):
         for n, c in DEPS.items():
             if c.get("condition") == "service_started":
                 self.assertIn(n, UPSTREAMS, f"{n}: 이유 없이 service_started")
-                self.assertEqual(DEPS[f"{n}-tls"]["condition"], "service_healthy")
+                self.assertEqual((DEPS.get(f"{n}-gw") or DEPS.get(f"{n}-tls") or {}).get("condition"), "service_healthy", f"{n}: 앱을 service_started 로만 기다리면 사이드카/영역 게이트웨이가 healthy 여야 한다")
 
 
 if __name__ == "__main__":

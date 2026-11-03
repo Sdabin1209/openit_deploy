@@ -57,6 +57,10 @@ areas:
     image: [dataset-store]   # I2 서버 이미지(D100). 잡(import·run)은 이미지가 아니라 호스트 실행이다
     tests: {kind: pytest}
     e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
+  platform:
+    image: [area-gateway]
+    tests: {kind: pytest}
+    e2e: auto   # 영역 게이트웨이는 모든 서비스의 입구·출구다: 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   deploy:
     image: []
     tests:

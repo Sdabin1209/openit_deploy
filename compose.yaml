@@ -18,6 +18,24 @@ x-hardening: &hardening
 
 x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}   # job-* 는 hardening 앵커를 쓰지 않아 로그 회전을 따로 둔다(감사 A6). 값 근거: 상시 서비스와 같은 값(adr/0023-compose-resource-limits.md)
 
+x-common-env: &commonenv   # CommonEnv(계약): 모든 영역 컨테이너가 받는 공통 환경. OPENIT_EGRESS_PROXY 는 자기 영역 게이트웨이의 loopback CONNECT 출구다(서비스 이름 주소 금지, R1.8)
+  OPENIT_EGRESS_PROXY: "http://127.0.0.1:3128"
+
+x-area-gateway: &areagw   # 영역 게이트웨이(platform 이미지, ADR 0063): 영역마다 하나를 그 영역의 네트워크 공간(<서비스>-net)에 둔다. 들어오는 쪽 443(서비스 이름 인증서)과 나가는 쪽 loopback 3128(CONNECT, 허용 목록은 영역 Exposure.egress). 설정은 이미지가 시작할 때 마운트된 Exposure 선언에서 만든다(deploy 는 라벨을 파일로 건넬 뿐이다)
+  image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/area-gateway@${AREA_GATEWAY_DIGEST:?locks/images.lock}
+  user: "101:101"
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  tmpfs: ["/tmp"]
+  mem_limit: ${AREA_GATEWAY_MEM_LIMIT:-128m}   # 측정 안 함(시작값)
+  cpus: 0.5
+  pids_limit: 128
+  logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+  group_add: *secretgid
+  healthcheck: {test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/443"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}
+
 x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공식 이미지(GATEWAY_IMAGE 와 같은 digest). 앱의 네트워크 네임스페이스에 붙어(network_mode: service:<앱>) <서비스>-cert 가 step-ca 에서 받은 파일 인증서로 TLS 를 끝내 127.0.0.1 의 앱으로 넘긴다(ACME 도전이 아니다: 서버를 나눠도 사이드카 -> step-ca 경로 하나면 된다)
   image: ${GATEWAY_IMAGE:?locks/images.lock}
   user: "1000:1000"   # 왜 1000: <서비스>-cert(step 사용자)가 쓴 키 파일(0600)을 읽어야 한다. 443 은 추가 capability 대신 앱(네임스페이스 소유자)의 sysctl net.ipv4.ip_unprivileged_port_start=0 이 연다
@@ -386,67 +404,67 @@ services:
     <<: *certinit
     entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate oauth2-proxy /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/oauth2-proxy.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
     volumes: ["certs-oauth2-proxy:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
-  survey-service-tls:   # survey-service 의 TLS 사이드카(ADR 0060): https://survey-service 으로 받는다
-    <<: *tlssidecar
+  survey-service-gw:   # survey-service 의 영역 게이트웨이(platform 이미지): https://survey-service 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:survey-service-net"
-    environment: {TLS_NAME: survey-service, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-survey-service:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-survey-service:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/survey-service/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       survey-service-cert: {condition: service_healthy}
-  question-authoring-tls:   # question-authoring 의 TLS 사이드카(ADR 0060): https://question-authoring 으로 받는다
-    <<: *tlssidecar
+  question-authoring-gw:   # question-authoring 의 영역 게이트웨이(platform 이미지): https://question-authoring 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:question-authoring-net"
-    environment: {TLS_NAME: question-authoring, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-question-authoring:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-question-authoring:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/question-authoring/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       question-authoring-cert: {condition: service_healthy}
-  ops-feedback-ingest-tls:   # ops-feedback-ingest 의 TLS 사이드카(ADR 0060): https://ops-feedback-ingest 으로 받는다
-    <<: *tlssidecar
+  ops-feedback-ingest-gw:   # ops-feedback-ingest 의 영역 게이트웨이(platform 이미지): https://ops-feedback-ingest 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:ops-feedback-ingest-net"
-    environment: {TLS_NAME: ops-feedback-ingest, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-ops-feedback-ingest:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-ops-feedback-ingest:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/ops-feedback-ingest/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       ops-feedback-ingest-cert: {condition: service_healthy}
-  release-gate-tls:   # release-gate 의 TLS 사이드카(ADR 0060): https://release-gate 으로 받는다
-    <<: *tlssidecar
+  release-gate-gw:   # release-gate 의 영역 게이트웨이(platform 이미지): https://release-gate 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:release-gate-net"
-    environment: {TLS_NAME: release-gate, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-release-gate:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-release-gate:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/release-gate/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       release-gate-cert: {condition: service_healthy}
-  model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): https://model-serving 으로 받는다
-    <<: *tlssidecar
+  model-serving-gw:   # model-serving 의 영역 게이트웨이(platform 이미지): https://model-serving 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:model-serving-net"
-    environment: {TLS_NAME: model-serving, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-model-serving:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-model-serving:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/model-serving/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       model-serving-cert: {condition: service_healthy}
-  model-registry-tls:   # model-registry 의 TLS 사이드카(ADR 0060): https://model-registry 으로 받는다
-    <<: *tlssidecar
+  model-registry-gw:   # model-registry 의 영역 게이트웨이(platform 이미지): https://model-registry 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:model-registry-net"
-    environment: {TLS_NAME: model-registry, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-model-registry:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-model-registry:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/model-registry/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       model-registry-cert: {condition: service_healthy}
-  dataset-store-tls:   # dataset-store 의 TLS 사이드카(ADR 0060): https://dataset-store 으로 받는다
-    <<: *tlssidecar
+  dataset-store-gw:   # dataset-store 의 영역 게이트웨이(platform 이미지): https://dataset-store 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:dataset-store-net"
-    environment: {TLS_NAME: dataset-store, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-dataset-store:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-dataset-store:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/dataset-store/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       dataset-store-cert: {condition: service_healthy}
-  admin-console-tls:   # admin-console 의 TLS 사이드카(ADR 0060): https://admin-console 으로 받는다
-    <<: *tlssidecar
+  admin-console-gw:   # admin-console 의 영역 게이트웨이(platform 이미지): https://admin-console 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:admin-console-net"
-    environment: {TLS_NAME: admin-console, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-admin-console:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-admin-console:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/admin-console/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       admin-console-cert: {condition: service_healthy}
-  kiosk-frontend-tls:   # kiosk-frontend 의 TLS 사이드카(ADR 0060): https://kiosk-frontend 으로 받는다
-    <<: *tlssidecar
+  kiosk-frontend-gw:   # kiosk-frontend 의 영역 게이트웨이(platform 이미지): https://kiosk-frontend 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+    <<: *areagw
     network_mode: "service:kiosk-frontend-net"
-    environment: {TLS_NAME: kiosk-frontend, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-kiosk-frontend:/certs:ro"]
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-kiosk-frontend:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/kiosk-frontend/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       kiosk-frontend-cert: {condition: service_healthy}
   keycloak-tls:   # keycloak 의 TLS 사이드카(ADR 0060): https://keycloak 으로 받는다
@@ -1008,19 +1026,19 @@ services:
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:   # 게이트웨이가 상류로 부르는 서비스는 모두 준비된 뒤에 뜬다: 앱과 그 TLS 사이드카가 둘 다 healthy (준비 전 요청은 503 이 된다, 정적 점검이 지킨다)
       kiosk-frontend: {condition: service_healthy}
-      kiosk-frontend-tls: {condition: service_healthy}
+      kiosk-frontend-gw: {condition: service_healthy}
       survey-service: {condition: service_healthy}
-      survey-service-tls: {condition: service_healthy}
+      survey-service-gw: {condition: service_healthy}
       admin-console: {condition: service_healthy}
-      admin-console-tls: {condition: service_healthy}
+      admin-console-gw: {condition: service_healthy}
       release-gate: {condition: service_healthy}
-      release-gate-tls: {condition: service_healthy}
+      release-gate-gw: {condition: service_healthy}
       ops-feedback-ingest: {condition: service_healthy}
-      ops-feedback-ingest-tls: {condition: service_healthy}
+      ops-feedback-ingest-gw: {condition: service_healthy}
       question-authoring: {condition: service_healthy}
-      question-authoring-tls: {condition: service_healthy}
+      question-authoring-gw: {condition: service_healthy}
       model-registry: {condition: service_healthy}
-      model-registry-tls: {condition: service_healthy}
+      model-registry-gw: {condition: service_healthy}
       keycloak: {condition: service_healthy}
       keycloak-tls: {condition: service_healthy}
       oauth2-proxy-tls: {condition: service_healthy}   # 사람 인증(forward_auth): 사이드카의 healthcheck 가 oauth2-proxy 의 /ping 을 본다
@@ -1058,7 +1076,7 @@ services:
     networks:
       ui-kiosk: {aliases: [kiosk-frontend]}
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
-    environment: {KIOSK_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
+    environment: {<<: *commonenv, KIOSK_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
     <<: *hardening
     mem_limit: ${KIOSK_FRONTEND_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${KIOSK_FRONTEND_CPUS:-0.5}
@@ -1084,7 +1102,7 @@ services:
     networks:
       ui-admin: {aliases: [admin-console]}
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
-    environment: {ADMIN_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
+    environment: {<<: *commonenv, ADMIN_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
     <<: *hardening
     mem_limit: ${ADMIN_CONSOLE_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${ADMIN_CONSOLE_CPUS:-0.5}
@@ -1122,6 +1140,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
     environment: &survey_env   # 비밀은 파일 경로만(D84)
+      <<: *commonenv
       SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 2.x 호환(선택, 3.0.0에서 없어진다): 기기 토큰(Bearer)을 쓰는 기기만. 2.3.0 의 기기 인증은 게이트웨이가 붙이는 X-Openit-Device 이고 survey 는 헤더가 있으면 헤더를 쓴다(ADR 0040). 토큰 기기가 없으면 빈 파일이다
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
@@ -1171,6 +1190,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/question-authoring.env          # QA_FAILURES_URL (개선 신호 수신함이 읽는 I7). 비밀 아님
     environment: &qa_env
+      <<: *commonenv
       QA_AUTHOR_TOKENS_FILE: /run/secrets/qa-author-tokens
       QA_GATEWAY_TOKENS_FILE: /run/secrets/qa-gateway-tokens   # gateway 경유 저자 경로의 서비스 토큰(X-Openit-User 를 신뢰하는 유일한 토큰)
       QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
@@ -1340,6 +1360,7 @@ services:
       logs: {aliases: [ops-feedback-ingest]}
       authoring: {aliases: [ops-feedback-ingest]}
       db-ops: {aliases: [ops-feedback-ingest]}
+      gate-ops: {aliases: [ops-feedback-ingest]}   # 잡(job-ops-feedback)이 영역 pod 안에서 release-gate 를 부른다
   ops-feedback-ingest:
     <<: *hardening
     mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -1350,6 +1371,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
     environment:
+      <<: *commonenv
       OPS_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
       OPS_READ_TOKENS_FILE: /run/secrets/ops-read-tokens
       OPS_REVIEW_TOKENS_FILE: /run/secrets/ops-review-tokens
@@ -1395,6 +1417,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/release-gate.env                # GATE_I1/I3 팩토리와 URL(서비스 이름). 비밀 아님
     environment: &gate_env
+      <<: *commonenv
       GATE_READ_TOKENS_FILE: /run/secrets/gate-read-tokens
       GATE_WRITE_TOKENS_FILE: /run/secrets/gate-write-tokens
       GATE_I1_TOKEN_FILE: /run/secrets/qa-read-release-gate
@@ -1437,6 +1460,7 @@ services:
     env_file:
       - ${CONFIG_DIR:-./config}/model-serving.env
     environment:
+      <<: *commonenv
       MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/gate-read-model-serving
       MODEL_RUNTIME_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
@@ -1472,6 +1496,7 @@ services:
     pids_limit: ${MODEL_REGISTRY_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/model-registry@${MODEL_REGISTRY_DIGEST:?locks/images.lock}
     environment:
+      <<: *commonenv
       MODEL_REGISTRY_READ_TOKENS_FILE: /run/secrets/model-registry-read-tokens
       MODEL_REGISTRY_WRITE_TOKENS_FILE: /run/secrets/model-registry-write-tokens
       MODEL_REGISTRY_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
@@ -1505,6 +1530,7 @@ services:
     pids_limit: ${DATASET_STORE_PIDS_LIMIT:-256}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/dataset-store@${DATASET_STORE_DIGEST:?locks/images.lock}
     environment:
+      <<: *commonenv
       DATASET_STORE_READ_TOKENS_FILE: /run/secrets/dataset-store-read-tokens
       DATASET_STORE_WRITE_TOKENS_FILE: /run/secrets/dataset-store-write-tokens
       DATASET_STORE_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
@@ -1528,6 +1554,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]   # 잡 명령은 이미지 라벨 io.openit.jobs 에서 온다(S10). 덧씌우기가 없으면 서버가 아니라 이 오류로 멈춘다
     environment:
+      <<: *commonenv
       OPS_DEID_SALT_FILE: /run/secrets/deid-salt
       OPS_GATE_READ_TOKEN_FILE: /run/secrets/gate-read-ops-feedback
       OPS_GATE_WRITE_TOKEN_FILE: /run/secrets/gate-write-ops-feedback
@@ -1542,7 +1569,7 @@ services:
     volumes:
       - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
-    networks: [logs, gate-ops, db-ops]
+    network_mode: "service:ops-feedback-ingest-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -1622,7 +1649,7 @@ services:
     environment: *gate_env   # 12-Factor XII(관리 프로세스): 일회성 관리 작업은 상시 프로세스와 같은 환경·비밀로 실행한다. 서버와 갈라지면 계약 Env 선언(토큰 anyOf 등)이 잡을 거부했다(3차 E2E 보존 정리 잡)
     secrets: *gate_secrets
     volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]
-    networks: [release-mr, release-qa, db-gate]
+    network_mode: "service:release-gate-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true

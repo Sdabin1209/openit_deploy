@@ -114,7 +114,7 @@ mkdir -p "$DEPLOY_ROOT/build/hostwheels/survey-schema"; "$PIP" wheel -q --no-dep
 # 빌드 단계는 deploy .venv 를 바꾸지 않는다(12-Factor V: 빌드·릴리스·실행 분리. 설치는 scripts/prepare-host.sh 몫). 예전엔 여기서 pip --force-reinstall 해서, 같은 venv 를 쓰는 다른 실행(E2E 단계, 자체 점검)이 도중에 "No module named boundary_contracts" 로 깨졌다(4차 E2E).
 # 판이 다르면 고칠 방법을 말하고 멈춘다. (같은 버전 번호로 태그만 다시 찍은 경우는 prepare-host.sh 가 --force-reinstall 로 맞춘다)
 have=$("$PY" -c 'import importlib.metadata as m;print(m.version("boundary-contracts"))' 2>/dev/null || echo 없음)
-[ "v$have" = "$BC" ] || die "deploy .venv 의 계약 판이 $have 이다(기준표 $BC): bash scripts/prepare-host.sh"
+[ "v$have" = "$BC" ] || die "deploy .venv 의 계약 판이 $have 이다(기준표 $BC): bash scripts/prepare-host.sh wheels (처음이면 venv 다음에). 의존 리포는 원격이 동결된 동안 GIT_CONFIG_GLOBAL=build/gitconfig-local-mirrors (scripts/write-local-mirrors.sh)"
 
 for svc in $SERVICES; do want "$svc" && build_one "$svc"; done
 

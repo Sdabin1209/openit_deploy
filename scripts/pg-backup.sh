@@ -26,7 +26,7 @@ SET_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 dump_one() { # 병렬로 도는 한 데이터베이스: pg_dump -> restic --stdin. 결과 코드와 restic 요약(JSON)을 파일로 남긴다
   # 왜 이렇게: 서버 밖 append-only 저장소에서는 서버가 스냅샷을 지울 수 없으므로(D112), 불완전한 덤프의 스냅샷은 **만들어지면 안 된다**. restic 은 입력 끝(EOF)을 보면 스냅샷을 만든다.
   # 그래서 pg_dump 의 종료 코드를 알 때까지 파이프를 열어 두고(서브셸이 stdout 을 쥔다), 실패면 EOF 를 주기 전에 restic 컨테이너를 죽인다(업로드된 조각은 스냅샷이 없는 미사용 데이터로 남고 저장소 쪽 prune 이 치운다).
-  local db=$1 name="pgbk-$db-$$" C; C=$(pg_container "$P" "$(pg_service_of "$db")")
+  local db=$1 name="pgbk-$db-$$" C="" svc; svc=$(pg_service_of "$db") && C=$(pg_container "$P" "$svc")   # 이름을 모르는 데이터베이스는 C 가 비어 이 덤프만 실패한다
   {
     local rc=0; "$DOCKER" exec "$C" pg_dump -Fc -U "$db" -d "$db" 2>"$W/$db.err" || rc=$?   # set -e 로 서브셸이 여기서 끝나면 아래 kill 이 실행되지 않아 EOF 가 가고 빈 스냅샷이 만들어진다
     echo $rc > "$W/$db.dumprc"

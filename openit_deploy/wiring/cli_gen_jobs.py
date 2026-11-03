@@ -12,7 +12,7 @@ from openit_deploy.wiring.call import call
 
 # compose 잡 서비스 -> 이미지 라벨 안의 잡 이름. 잡 이름은 영역이 선언한다(영역이 바꾸면 여기 한 곳이 바뀐다). 여기 없는 job-* 서비스는 거부한다
 JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge": "purge", "job-release-gate-prune": "prune",
-             "job-release-gate-collect": "collect", "job-ops-feedback": "ops-feedback"}
+             "job-release-gate-collect": "collect", "job-ops-feedback": "ops-feedback-job"}
 
 
 # compose 잡 서비스 -> 그 잡을 띄우는 타이머 파일(config/systemd). 주기는 타이머의 OnUnitActiveSec 이고 잡의 시간 상한은 그 주기보다 짧아야 한다(RUNTIME R9.3: 상한이 주기 이상이면 겹침 방지가 다음 주기를 막는다)

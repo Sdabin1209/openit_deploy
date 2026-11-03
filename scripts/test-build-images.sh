@@ -67,9 +67,9 @@ export DOCKER="$T/docker" FAKE_OUT="$T/req"
 run() { ( cd "$D" && env DEPLOY_ROOT="" bash scripts/build-images.sh "$@" ) ; }
 echo "== 전체 빌드"
 # 실패하면 출력 끝을 보인다(예전엔 /dev/null 로 버려, 동시에 돌 때만 나는 간헐 실패의 사유가 남지 않았다. 재시도로 덮지 않는다)
-ok "build-images.sh (서비스 9개)" bash -c "cd '$D' && bash scripts/build-images.sh >'$T/bi.out' 2>&1 || { tail -n 8 '$T/bi.out'; exit 1; }"
-ok "images.env 에 서비스 9개가 기록됐다" bash -c "[ \$(grep -vc '^model-serving-gpu ' '$D/build/images.env') = 9 ]"
-ok "서비스 -> 리포 대응(요청을 받은 리포: survey-service question-authoring ops-feedback release-gate model-lab synthetic-data model-runtime kiosk-frontend admin-console)" bash -c "cd '$T/req' && ls | sed 's/.json//' | sort | tr '\n' ' ' | grep -q '^admin-console kiosk-frontend model-lab model-runtime ops-feedback question-authoring release-gate survey-service synthetic-data \$'"
+ok "build-images.sh (서비스 10개)" bash -c "cd '$D' && bash scripts/build-images.sh >'$T/bi.out' 2>&1 || { tail -n 8 '$T/bi.out'; exit 1; }"
+ok "images.env 에 서비스 10개가 기록됐다" bash -c "[ \$(grep -vc '^model-serving-gpu ' '$D/build/images.env') = 10 ]"
+ok "서비스 -> 리포 대응(요청을 받은 리포: survey-service question-authoring ops-feedback release-gate model-lab synthetic-data model-runtime kiosk-frontend admin-console)" bash -c "cd '$T/req' && ls | sed 's/.json//' | sort | tr '\n' ' ' | grep -q '^admin-console kiosk-frontend model-lab model-runtime ops-feedback platform question-authoring release-gate survey-service synthetic-data \$'"
 rq() { python3 -c "import json,sys;d=json.load(open('$T/req/$1.json'));print(eval(sys.argv[1]))" "$2"; }
 ok "요청: revision 은 리포 HEAD(model-runtime 은 기준표 태그) 짧은 해시" bash -c "[ \"\$(python3 -c \"import json;print(json.load(open('$T/req/survey-service.json'))['revision'])\")\" = \"\$(git -C $T/survey-service rev-parse --short HEAD)\" ] && [ \"\$(python3 -c \"import json;print(json.load(open('$T/req/model-runtime.json'))['revision'])\")\" = \"\$(git -C $T/model-runtime rev-parse --short $MR^{commit})\" ]"
 ok "요청: versions 가 lib.sh 기준표(boundary, model_runtime, survey_schema=vX.Y.Z)다" bash -c "[ \"\$(python3 -c \"import json;d=json.load(open('$T/req/survey-service.json'))['versions'];print(d['boundary'],d['model_runtime'],d['survey_schema'])\")\" = '$BC $MR ${SSTAG#survey-schema-}' ]"
