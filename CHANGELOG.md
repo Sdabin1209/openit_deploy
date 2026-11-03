@@ -1,5 +1,18 @@
 # 변경 이력
 
+## wo-450 D10-E4: 잡 환경 = 서버 환경의 범위
+- 합친 compose(`dc config --format json`)에 `check_config_contracts` 를 실제로 돌려 통과했다(서버 + 정리 잡 4개 포함 11문서).
+- ops-feedback 의 `job-ops-feedback`(별도 프로그램 ops_feedback.job: 게이트 토큰·비식별 salt 필요)와 `ops-feedback-migrate`(소유자 계정 DSN, ADR 0055)는 서버와 일부러 다른 환경·비밀이다. 서버 앵커로 묶으면 서버에 없는 비밀을 서버에 주거나 소유자 DSN 을 서버에 줘 최소 권한이 깨진다. 12-Factor XII 는 "같은 앱의 관리 작업"에 해당하므로 정리 잡만 묶었다.
+
+## wo-450 D10-5: publish 가 사용자 Docker 자격증명 도우미에 기대지 않는다
+- 원인: `docker push` 는 ~/.docker/config.json 의 credsStore(WSL 의 Windows 도우미)를 먼저 불러 레지스트리 자격을 찾고, 응답이 없으면 "error getting credentials … accept4 failed 110" 으로 죽는다. 로컬 레지스트리에는 인증이 없다. (헤드의 127.0.0.1 `-p` 임시 레지스트리 "connection refused"는 다른 현상이다: Docker Desktop 엔진은 호스트 루프백 게시 포트에 닿지 못해 시험은 0.0.0.0 바인드를 쓴다 — compose.registry.yaml 머리말.)
+- 고침: push 한 번에만 빈 `DOCKER_CONFIG`(공식 환경 변수)를 쓴다. 사용자 설정을 읽거나 고치라고 요구하지 않는다. 인증 레지스트리는 `PUBLISH_DOCKER_CONFIG`. 시험 `test-publish.sh` 가 죽은 도우미 설정을 만들어 재현하고 자체 점검 목록에 있다.
+- check-compose: 로컬 빌드 이름 `openit-*`(Keycloak optimized image)는 digest 검사에서 제외하고 그 기반 digest 는 잠금에서 검사한다.
+
+## wo-450 D10-7·8: Keycloak optimized image, 세션 시간 근거
+- (7) 기동 실패 원인: Dockerfile 의 `kc.sh build --cache=local` (`--cache` 는 런타임 옵션이라 build 가 거부). 고침과 함께 읽기 전용 루트 + tmpfs 로 `test-idp-smoke` 통과, check-containers 의 Keycloak 예외 삭제. kcadm 설정은 `--config /tmp/kcadm.config`. ADR 0058.
+- (8) 쿠키 절대 만료 12h -> 8h(OWASP 세션 관리, 업무일), 갱신 5m(Keycloak 액세스 토큰 기본 수명). ADR 0058.
+
 ## wo-450 D10-3·4·잡 환경: 비밀을 프로세스 환경에서 뺀다, 선행 실패 연쇄, 잡 환경 = 서버 환경
 - (3) Keycloak 은 비밀을 환경 변수가 아니라 `--config-file`(secrets/keycloak-secrets.conf: db-password, bootstrap-admin-password)과 비밀 파일 realm 가져오기(secrets/keycloak-realm.json, 640)로 받는다. 엔트리포인트 래퍼 삭제. 점검: `test_no_secret_in_environment.py`(compose environment 의 비밀 이름은 *_FILE, config 셸의 export 금지), `test-idp-smoke.sh`(keycloak /proc/1/environ 에 값 없음, 로그인 흐름 전부 통과).
 - (4) 복구 확인 FAIL 은 단계 1 실패(work/state.json 없음)의 연쇄였다. 그 항목을 `chk_dep "단계 1~8"` 로 바꾸고 `test_e2e_sh_deps.py` 로 같은 모양을 잡는다.

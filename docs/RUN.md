@@ -124,7 +124,7 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 
 - **401과 403(계약 CONVENTIONS.md 6절, RFC 9110 15.5.2·11.6.1, RFC 6750 3절).** 사람 경로에서 인증이 없으면 `/v1/*`는 401 + `WWW-Authenticate: Bearer realm="openit"`, 화면 경로(`/staff/`, `/admin/`)는 `/oauth2/start`로 302(로그인)이다. 기기 토큰 경로는 401 + `Bearer`. 인증은 됐는데 역할이 모자라면 403, 그룹이 하나도 없으면 403 `ACCOUNT_PENDING_APPROVAL`이다. `scripts/test-gateway-auth.sh`(가짜 oauth2-proxy)가 경로별로, `scripts/test-idp-smoke.sh`(진짜 Keycloak·oauth2-proxy)가 로그인 흐름을 확인한다.
 - 역할별 경로는 그대로다: `staff`(직원 콘솔 `/staff/`, `/v1/staff/*`, 개입), `operator`(`GET /v1/active-pointer`, `GET /v1/releases`, `POST /v1/activate`, `POST /v1/rollback`), `release-approver`(출고 승인 경로), `reviewer`(실패 사례 검토), `author`/`clinical-reviewer`(저작), `clinician`(결과 읽기·확인 표시, 푸시 설정·구독). operator 경로 네 개는 operator 뒤에서만 열린다(읽기 둘은 게이트의 operator 읽기 토큰 `gate-read-operator`, 변경 둘은 쓰기 토큰 `gate-write-operator`). 응답은 `Cache-Control: no-store`. `/v1/releases/*`(번들, I9)와 그 밖의 `/v1/*`는 404.
-- **세션 길이.** oauth2-proxy 쿠키는 12시간 유효하고 5분마다 Keycloak에 다시 물어 그룹(역할) 변경·계정 정지를 반영한다(시작값, 측정·결정 전). Keycloak SSO 유휴 시간(기본 30분)을 넘기면 다시 로그인한다.
+- **세션 길이.** oauth2-proxy 쿠키는 8시간 유효하고 5분마다 Keycloak에 다시 물어 그룹(역할) 변경·계정 정지를 반영한다(시작값, 측정·결정 전). Keycloak SSO 유휴 시간(기본 30분)을 넘기면 다시 로그인한다.
 - **로그아웃.** admin-console은 `/oauth2/sign_out?rd=<URL 인코딩한 /auth/realms/openit/protocol/openid-connect/logout?client_id=openit-gateway&post_logout_redirect_uri=<origin>/>`로 보낸다. `rd`가 `/`로 시작하는 상대 경로라 oauth2-proxy가 막지 않는다(`test-idp-smoke.sh`가 확인). 로그아웃 뒤 URI는 클라이언트의 허용 목록(`https://<호스트>/`)에 있다.
 
 ## 4-2. 버전 표 (드리프트 점검)
@@ -356,6 +356,24 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 - 첫 호출은 항상 혼자 보내므로 문법 컴파일 같은 첫 호출 비용이 이후 중앙값과 분리되어 보인다(재시작 직후에 쓴다).
 - 자체 시험: `python3 scripts/test_probe_serving.py`(일부러 OUTPUT_INVALID를 섞은 가짜 응답과 가짜 서버로 집계를 확인). GPU 측정 절차는 `docs/GPU_HOLE.md` H4.
 - 한계: 이 PC에서는 가짜 백엔드(출력 고정)에만 돌려 봤다. 실제 모델의 OUTPUT_INVALID 분포는 측정 전이다.
+
+## 7-3. 여러 서버에 배치 (Ansible, ADR 0061)
+
+서버 한 대면 지금처럼 `scripts/up.sh` 하나로 끝난다(Ansible 이 필요 없다). 서비스를 여러 서버에 나눌 때만 아래를 쓴다. 서버에는 SSH, python3, Docker 만 있으면 된다(새 OS 패키지 없음).
+
+1. 지휘 기계(이 저장소를 가진 PC)에 도구를 설치한다: `.venv/bin/pip install -r requirements-deploy-tools.txt` (ansible-core, 판 고정). 서버에는 설치하지 않는다.
+2. 배치 정의를 쓴다: `ansible/inventory.example.yml` 을 복사해 서버 이름, `ansible_host`(다른 서버가 이 서버를 부르는 주소), `placement_region`, `placement_services`(compose 서비스 이름 목록)를 채운다. 서버나 지역이 바뀌면 이 파일만 고친다.
+3. 점검: `.venv/bin/python scripts/placement.py validate <인벤토리>`. 서비스 이름이 compose 와 같은지, 한 서비스가 한 서버에만 있는지, 기반 요소(postgres, step-ca, keycloak, gateway)가 놓였는지 본다.
+4. 비밀은 지휘 기계의 `secrets/` 에 만들어 둔다(`scripts/gen-secrets.sh`). 플레이북이 서버마다 **그 서버 서비스가 쓰는 파일만** 640 으로 보낸다(그룹은 `SECRETS_GID`, 서버마다 `placement_secrets_gid` 로 바꿀 수 있다).
+5. 실행: `.venv/bin/ansible-playbook -i <인벤토리> ansible/site.yml`. 서버마다 설정·비밀 배포, 상대 서비스 주소 계산, `postgres -> step-ca -> keycloak -> 나머지` 순서 기동을 한다. 다시 실행하면 바뀐 것만 바뀐다.
+
+주소 규칙: 같은 서버의 상대는 서비스 이름 그대로, 다른 서버의 상대는 `<placement_scheme>://<그 서버 ansible_host>:<게시 포트>` 이다(스킴 기본 https). 다른 서버에서 불리는 서비스(postgres 포함)는 그 서버가 호스트 포트를 연다. 게시 포트는 `placement_ports` 에 서비스별로 명시해야 하며(빠지면 validate 가 거부), 바인드 주소는 서버별 `placement_bind_address`(서버 사이 망의 사설 주소)다. 예: `ansible/inventory.multi.example.yml`. DB 접속 비밀의 호스트는 서버마다 계산해 만든다. 방화벽은 서버끼리만 그 포트를 허용하게 한다.
+
+기동 순서는 서버를 넘나든다: postgres, step-ca, keycloak, 저장소·서버 서비스(release-gate, question-authoring, ops-feedback, model-registry, dataset-store), survey-service·model-serving, gateway 순이며 단계 사이에 게시된 서비스의 `/readyz` 를 지휘 기계가 기다린다. 첫 단계에서 서버별 환경을 계약(`check_config_contracts`)으로 검증하고 실패면 멈춘다.
+
+제약(ADR 0061): 서버 사이 TLS(https)와 postgres verify-full 은 TLS 작업이 합쳐진 뒤 확인한다.
+
+시험(E2E 밖, 한 PC): `bash scripts/test-split-placement.sh` 는 가상 서버 3개(compose 프로젝트 3개, 서로 다른 네트워크)를 같은 플레이북으로 띄워 묶음별 `/healthz` 와 묶음 사이 호출, 멱등, 잘못된 배치 거부를 확인한다. 대역 서비스를 쓴다(`SPLIT_IMAGE=<이미지 참조>` 로 실제 이미지의 파이썬을 쓸 수 있다). 실제 영역 서비스의 분리 기동은 확인하지 않는다.
 
 ## 8. 흔한 문제
 

@@ -90,6 +90,13 @@ class Compose(unittest.TestCase):
         self.assertTrue({"keycloak-secrets.conf", "keycloak-realm.json"} <= set(srcs))
         self.assertFalse((ROOT / "config/keycloak/entrypoint.sh").exists())
 
+    def test_keycloak_is_optimized_and_read_only(self):
+        k = S["keycloak"]
+        self.assertTrue(k.get("read_only"), "읽기 전용 루트 예외 없음(ADR 0058)")
+        self.assertIn("--optimized", k["command"])
+        self.assertTrue((ROOT / "images/keycloak/Dockerfile").exists())
+        self.assertNotIn("keycloak", (ROOT / "scripts/check-containers.sh").read_text(encoding="utf-8").split("루트 파일시스템")[0].split("\n")[-1])
+
     def test_keycloak_db_account_exists(self):
         self.assertIn("db-keycloak-password", S["postgres"]["secrets"]); self.assertEqual(S["keycloak"]["environment"]["KC_DB_USERNAME"], "keycloak")
 

@@ -8,7 +8,8 @@ for f in compose.yaml compose.registry.yaml compose.external-inference.yaml comp
   while IFS= read -r line; do
     ref=$(echo "$line" | sed 's/^[[:space:]]*image:[[:space:]]*//')
     # 허용: ${VAR} 로 시작하는 참조(잠금 파일이 digest를 채운다). 그 변수는 아래에서 잠금 파일이 digest인지 검사한다.
-    case "$ref" in *'@${'*|'${'*|'"${'*) ;; *) echo "digest가 아닌 이미지 참조: $f: $line"; bad=1;; esac
+    # 허용 둘째: 로컬 빌드 이름 openit-*(compose build: 로 만든다). 그 이미지의 기반은 build args 로 잠금 파일의 digest(KEYCLOAK_IMAGE)를 받고 아래에서 digest 검사한다(ADR 0058)
+    case "$ref" in openit-*) ;; *'@${'*|'${'*|'"${'*) ;; *) echo "digest가 아닌 이미지 참조: $f: $line"; bad=1;; esac
   done < <(grep -E '^[[:space:]]*image:' "$DEPLOY_ROOT/$f" || true)
 done
 LOCK=${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}

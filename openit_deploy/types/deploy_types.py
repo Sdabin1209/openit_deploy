@@ -292,6 +292,24 @@ class LinkPinCheckResult(TypedDict):
     areas: List[Area2]
 
 
+Service = str
+
+
+class Servers(TypedDict):
+    address: str
+    region: str
+    services: List[Service]
+    bind: NotRequired[Optional[str]]
+
+
+class Placement(TypedDict):
+    scheme: NotRequired[Literal['http', 'https']]
+    ports: NotRequired[Dict[str, int]]
+    servers: Dict[str, Servers]
+    db_sslmode: NotRequired[Literal['disable', 'require', 'verify-ca', 'verify-full']]
+    db_sslrootcert: NotRequired[str]
+
+
 class ProbeRecord(TypedDict):
     status: Union[
         int,

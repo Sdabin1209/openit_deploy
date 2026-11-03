@@ -1,0 +1,30 @@
+# 분리 배치 시험 전용 compose(대역 서비스, test/split/config/stub.py). 제품 compose.yaml 이 아니다: 이 시험은 배치(주소·게시 포트·네트워크 분리)만 본다.
+# 서비스 이름은 제품과 같다(영역 이름 규칙 확인용). 이미지는 로컬의 python:3.12-slim 하나.
+x-stub: &stub
+  image: ${SPLIT_IMAGE:-python:3.12-slim}   # 실제 이미지(참조 형식 그대로, 파이썬이 든 이미지)로도 돈다: SPLIT_IMAGE
+  command: ["python", "/stub.py"]
+  volumes: ["${CONFIG_DIR:-./config}/stub.py:/stub.py:ro"]
+  healthcheck: {test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"], interval: 2s, timeout: 3s, retries: 15}
+secrets:
+  db-survey-dsn:
+    file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-dsn
+networks:
+  db: {internal: true}
+  inner: {internal: true}
+services:
+  postgres: {<<: *stub, networks: [db]}   # 내부 전용 네트워크: 게시하려면 배치가 일반 네트워크를 더해야 한다
+  keycloak: {<<: *stub, depends_on: {postgres: {condition: service_healthy}}}
+  gateway: {<<: *stub}
+  survey-service:
+    <<: *stub
+    env_file: ["${CONFIG_DIR:-./config}/survey.env"]
+    secrets: [db-survey-dsn]
+    depends_on: {postgres: {condition: service_healthy}, release-gate: {condition: service_healthy}}
+  release-gate:
+    <<: *stub
+    env_file: ["${CONFIG_DIR:-./config}/release-gate.env"]
+    depends_on: {question-authoring: {condition: service_healthy}}
+  question-authoring:
+    <<: *stub
+    networks: [inner]
+    env_file: ["${CONFIG_DIR:-./config}/question-authoring.env"]

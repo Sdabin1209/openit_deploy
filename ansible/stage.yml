@@ -1,0 +1,36 @@
+---
+# 한 단계: 이 서버의 서비스 중 stage_i 단계에 든 것을 올리고(이미 떠 있으면 바뀌지 않는다), 다른 서버가 부를 서비스(게시 포트)는 지휘 기계에서 /readyz 로 기다린다.
+- name: "단계 {{ stage_i }}: 기동 {{ plan.stages[stage_i] | join(' ') }}"
+  ansible.builtin.shell: |
+    set -e
+    cd "{{ p_dir }}"
+    export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ p_dir }}/secrets" SECRETS_GID="{{ gid }}" COMPOSE_EXTRA="{{ p_dir }}/compose.placement.yaml" CONFIG_DIR="{{ p_dir }}/config"
+    source scripts/lib.sh
+    dc "{{ p_project }}" up -d --wait {{ plan.stages[stage_i] | join(' ') }}
+  args: {executable: /bin/bash}
+  register: up
+  # compose 는 진행 상황을 표준 오류에 낸다. 새로 만들거나 시작했을 때만 바뀐 것으로 센다
+  changed_when: "(up.stderr | default('')) is search('(Created|Started|Recreated|Starting) *$', multiline=True)"
+  when: plan.stages[stage_i] | length > 0
+- name: "단계 {{ stage_i }}: 게시된 HTTP 서비스의 /readyz (지휘 기계에서)"
+  ansible.builtin.uri:
+    url: "{{ p_scheme }}://{{ placement_probe_address | default(ansible_host) }}:{{ item.value }}/readyz"
+    status_code: 200
+    validate_certs: "{{ placement_validate_certs | default(true) | bool }}"
+    ca_path: "{{ placement_ca_path | default(omit) }}"
+    timeout: 5
+  register: ready
+  until: ready.status == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+  delegate_to: localhost
+  loop: "{{ plan.published | dict2items | selectattr('key', 'in', plan.stages[stage_i]) | rejectattr('key', 'equalto', 'postgres') | list }}"
+  loop_control: {label: "{{ item.key }}"}
+- name: "단계 {{ stage_i }}: postgres 게시 포트(TCP)"
+  ansible.builtin.wait_for:
+    host: "{{ placement_probe_address | default(ansible_host) }}"
+    port: "{{ plan.published.postgres }}"
+    timeout: 60
+  delegate_to: localhost
+  when: "'postgres' in plan.published and 'postgres' in plan.stages[stage_i]"
