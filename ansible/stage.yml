@@ -56,7 +56,7 @@
   args: {executable: /bin/bash}
   register: up
   # compose 는 진행 상황을 표준 오류에 낸다. 새로 만들거나 시작했을 때만 바뀐 것으로 센다
-  changed_when: "(up.stderr | default('')) is search('(Created|Started|Recreated|Starting) *$', multiline=True)"
+  changed_when: "(up.stderr | default('')) is search('Container (?!\\S*(pki-tokens|pki-root|-migrate)-)\\S+ +(Created|Recreated|Started) *$', multiline=True)"   # 일회성 서비스는 depends_on 으로 매번 다시 돈다. 그것만으로는 바뀐 것이 아니다
   # 일회성 서비스(pki-tokens, ...)는 그것을 기다리는 서비스의 depends_on 으로 함께 돈다. 목록에 직접 넣으면 --wait 가 정상 종료(0)를 실패로 센다
   when: plan.stages[stage_i] | difference(plan.oneshots) | length > 0
 - name: "단계 {{ stage_i }}: 게시된 서비스의 https /readyz (지휘 기계에서, 인증서 이름 = 서비스 이름이라 --resolve 로 이름을 서버 주소에 맞춘다)"
