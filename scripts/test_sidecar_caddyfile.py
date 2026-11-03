@@ -5,18 +5,18 @@
 import pathlib, re, unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TXT = "\n".join(l for l in (ROOT / "config/tls-sidecar.caddy").read_text(encoding="utf-8").splitlines() if not l.lstrip().startswith("#"))
-SITES = re.findall(r"^(\S[^\n{]*)\{\s*$", TXT, re.M)
+SITES = re.findall(r"^(\S.*?)\s*\{\s*$", TXT, re.M)   # 들여쓰지 않은 줄의 사이트 블록(전역 옵션 블록 `{` 는 제외)
 
 
 class T(unittest.TestCase):
     def test_no_plaintext_listener(self):
         self.assertIn("auto_https off", TXT)
         self.assertNotRegex(TXT, r"http://|:80\b|http_port")
-        for s in SITES[1:]:
+        for s in SITES:
             self.assertTrue(s.strip().startswith("https://"), f"사이트 {s!r}: https:// 가 아니다")
 
     def test_sites_are_service_name_and_catch_all_only(self):
-        sites = [s.strip() for s in SITES[1:]]   # 첫 항목은 전역 옵션 블록
+        sites = [s.strip() for s in SITES]
         self.assertEqual(sites, ["https://{$TLS_NAME}", "https://"], sites)
         self.assertIn("@local host {$TLS_ALT_NAME:localhost}", TXT)
 
