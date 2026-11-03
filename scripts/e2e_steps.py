@@ -947,7 +947,7 @@ def step5():
 # (a) 게이트웨이(HTTPS): 사람 역할은 계정, 키오스크는 기기 토큰. (b) 제품 컨테이너 안(_c2_in): 운영에서 그 일을 하는 주체(위험 신호 감지기, 병원 결과 조회, 이웃 읽기)가 제품 네트워크 안에 있는 호출.
 # (c) 추론 서버는 다른 호스트 역할이라 SB.inference_url(). 왜 따로 _c2_ 도우미를 두나: 다른 범위의 옛 도우미(URL/http/gws/kiosk)는 내부 포트를 전제로 했고, 이 범위가 그 모양에 기대지 않게 한다.
 _C2_ADMIN, _C2_OPERATOR, _C2_REVIEWER = "trainer-e2e", "operator-e2e", "reviewer-e2e"   # 계정 ID(비밀 폴더 tokens/account-<ID>-password, gen-secrets.sh 의 시험 계정)
-_C2_STAFF, _C2_AUTHOR, _C2_CLINICAL = "staff-e2e", "author-e2e", "clinical-e2e"
+_C2_STAFF, _C2_AUTHOR, _C2_CLINICAL, _C2_CLINICIAN = "staff-e2e", "author-e2e", "clinical-e2e", "clinician-e2e"   # clinician: 문진 결과를 보는 의사(U83)
 
 def _c2_dec(raw):
     if isinstance(raw, str): raw = raw.encode()
@@ -1481,7 +1481,7 @@ def step5n():
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
     rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, 실효 한도 {N} = min(/readyz max_consecutive, 문항 세트 ask/confirm/unrecognized 한도)): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
 
-@step('5r', repos=('survey-service', 'kiosk-frontend') + _GW, deps=('4',),
+@step('5r', repos=('survey-service', 'kiosk-frontend', 'admin-console') + _GW, deps=('4',),
       why="STATE['pointers'] 를 읽는다. " + _P4)
 def step5r():
     title("5r", "환자 세션 -> 외부 위험 신호 -> 직원 확인·개입 -> 결과 조회 (D85 A~F절, 가짜 모델)")
@@ -1527,11 +1527,20 @@ def step5r():
     c, lst = svc_call("GET", f"/v1/results?subject_ref={subj}", RES()); assert c == 200 and any(x["session_id"] == sid for x in lst["items"]), (c, str(lst)[:150])
     for lab, tk in (("kiosk", _c2_kdev()), ("staff", TOK("survey-api-staff")), ("risk-source", RSK())):
         assert svc_call("GET", f"/v1/results/{sid}", tk)[0] == 403, f"{lab} 토큰(맞는 토큰, 다른 역할)으로 결과 조회가 열림"
+    # (G) 의사 결과 보기(U83, 3.2.0 PUBLIC_API B절): 게이트웨이는 clinician 역할 계정에만 결과 읽기·확인 표시를 연다. 다른 역할 403, 무인증 401
     for pth in (f"/v1/results/{sid}", f"/v1/results?subject_ref={subj}"):
-        assert _c2_raw("GET", pth, basic=_C2_STAFF)[0] == 404 and _c2_raw("GET", pth, basic=_C2_OPERATOR)[0] == 404, f"결과 조회 {pth} 가 게이트웨이에 열려 있다"
+        assert _c2_raw("GET", pth, basic=_C2_STAFF)[0] == 403 and _c2_raw("GET", pth, basic=_C2_OPERATOR)[0] == 403, f"결과 조회 {pth} 가 clinician 아닌 역할에 열려 있다"
+        assert _c2_raw("GET", pth)[0] == 401, f"결과 조회 {pth} 가 인증 없이 열려 있다"
+    c, rs_c, _ = _c2_raw("GET", f"/v1/results/{sid}", basic=_C2_CLINICIAN); assert c == 200, (c, str(rs_c)[:150]); validate_survey("SessionResult", rs_c)
+    assert rs_c["session_id"] == sid and not rs_c.get("acknowledged_by"), rs_c.get("acknowledged_by")
+    c, lst_c, _ = _c2_raw("GET", f"/v1/results?status={rs_c['status']}", basic=_C2_CLINICIAN); assert c == 200 and any(x["session_id"] == sid for x in lst_c["items"]), (c, str(lst_c)[:150])
+    c, ak1, _ = _c2_raw("POST", f"/v1/results/{sid}/ack", {}, basic=_C2_CLINICIAN, headers={"X-Openit-User": "spoofed-doctor"}); assert c == 200, (c, str(ak1)[:150]); validate_survey("SessionResult", ak1)
+    assert ak1.get("acknowledged_by") == _C2_CLINICIAN and ak1.get("acknowledged_at"), ("확인 표시가 인증 계정으로 기록되지 않았다", ak1.get("acknowledged_by"))
+    c, ak2, _ = _c2_raw("POST", f"/v1/results/{sid}/ack", {}, basic=_C2_CLINICIAN); assert c == 200 and ak2.get("acknowledged_at") == ak1["acknowledged_at"], ("확인 표시 재호출이 멱등이 아니다", c)
+    assert _c2_raw("POST", f"/v1/results/{sid}/ack", {}, basic=_C2_STAFF)[0] == 403
     # 접근 기록: 읽는 공개 경로가 없다(DB 를 열지 않는다). 기록을 못 남기면 데이터를 주지 않는 설계(fail-closed)라 위 조회 성공이 기록 쓰기 성공을 뜻한다. /readyz 에 접근 기록 항목이 있으면 함께 본다
     c, rz = _c2_ready(); acc = {k: v for k, v in (rz or {}).items() if "access" in k.lower()}
-    rec("5r", "REAL", f"세션 시작(기기 토큰, subject_ref) -> 발화 -> POST /v1/sessions/{{id}}/risk-signals(risk-source 토큰, 서비스에 직접: 201 PAUSED_RISK, 재전송 200 같은 alert_id, 다른 역할 토큰·게이트웨이 경유는 거부) -> 직원 알림 목록(RISK_STOP, OPEN) -> GET /v1/staff/sessions/{{id}}(직원 계정, 게이트웨이 경유, StaffSessionView 스키마, subject_ref·turns, alerts[].rule_id e2e-detector:TEST_RISK) -> 개입 RESUME(위조 X-Openit-User 무시, alerts[].resolved_by={_C2_STAFF}) -> GET /v1/results/{{id}}·/v1/results?subject_ref(result-reader 토큰, SessionResult 스키마, 발화 원문 없음, 게이트웨이에는 404). 접근 기록: 읽는 경로가 없어 간접 확인(조회 성공 = 기록 성공, /readyz 접근 항목 {sorted(acc) or '없음'}). SSE 수신은 확인하지 않았다(목록으로 확인).")
+    rec("5r", "REAL", f"의사 결과 보기(U83): clinician 계정으로 GET /v1/results/{{id}}·목록 200, POST ack 200 acknowledged_by=인증 계정(위조 헤더 무시)·재호출 멱등, staff·operator 403, 무인증 401. 세션 시작(기기 토큰, subject_ref) -> 발화 -> POST /v1/sessions/{{id}}/risk-signals(risk-source 토큰, 서비스에 직접: 201 PAUSED_RISK, 재전송 200 같은 alert_id, 다른 역할 토큰·게이트웨이 경유는 거부) -> 직원 알림 목록(RISK_STOP, OPEN) -> GET /v1/staff/sessions/{{id}}(직원 계정, 게이트웨이 경유, StaffSessionView 스키마, subject_ref·turns, alerts[].rule_id e2e-detector:TEST_RISK) -> 개입 RESUME(위조 X-Openit-User 무시, alerts[].resolved_by={_C2_STAFF}) -> GET /v1/results/{{id}}·/v1/results?subject_ref(result-reader 토큰, SessionResult 스키마, 발화 원문 없음, 게이트웨이에는 404). 접근 기록: 읽는 경로가 없어 간접 확인(조회 성공 = 기록 성공, /readyz 접근 항목 {sorted(acc) or '없음'}). SSE 수신은 확인하지 않았다(목록으로 확인).")
 
 @step('5s', repos=('survey-service', 'model-runtime') + _GW, deps=('4',),
       why="step5s 는 STATE['containers_before_swap'],['releases'](step4)를 읽는다(e2e_steps.py step5s 앞부분)",
