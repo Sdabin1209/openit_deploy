@@ -10,6 +10,15 @@
   connection: local
   gather_facts: false
   tasks:
+    # R10.12: 배치는 한 번에 하나만 돈다. 잠금 폴더가 있으면 멈춘다(다른 배치가 도는 중이거나 앞선 배치가 중간에 죽었다: 확인 뒤 폴더를 지운다)
+    - name: 배치 잠금(한 번에 하나)
+      ansible.builtin.command:
+        argv: ["mkdir", "{{ playbook_dir }}/../build/placement.lock"]
+        creates: ""
+      register: lock
+      failed_when: lock.rc != 0
+      changed_when: false
+      when: placement_no_lock is not defined
     - name: 인벤토리 형식·서비스 이름·한 서비스 한 서버·기반 요소 점검
       ansible.builtin.command:
         argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/../scripts/placement.py", "validate", "{{ ansible_inventory_sources[0] }}", "--compose", "{{ placement_compose | default(playbook_dir + '/../compose.yaml') }}"]
@@ -135,3 +144,14 @@
       ansible.builtin.include_tasks: stage.yml
       loop: "{{ range(0, 6) | list }}"
       loop_control: {loop_var: stage_i}
+
+- name: 배치 잠금 풀기
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: 잠금 폴더 지우기
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../build/placement.lock"
+        state: absent
+      when: placement_no_lock is not defined

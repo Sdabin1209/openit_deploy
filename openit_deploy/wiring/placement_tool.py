@@ -383,12 +383,13 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["validate", "render"])
+    ap.add_argument("cmd", choices=["validate", "render", "export"])
     ap.add_argument("inventory")
     ap.add_argument("--compose", default=os.path.join(ROOT, "compose.yaml"))
     ap.add_argument("--host")
     ap.add_argument("--out")
     ap.add_argument("--secrets-dir")
+    ap.add_argument("--root-ca", help="export: 내보낼 루트 인증서 파일(공개). 교체 병행 기간에는 옛·새 루트를 이어 붙인 파일")
     a = ap.parse_args(argv)
     compose = load_compose(a.compose)
     p = load_inventory(a.inventory)
@@ -399,6 +400,26 @@ def main(argv=None):
         fail(errs)
     if a.cmd == "validate":
         print("OK: 서버 %d개, 서비스 %d개 배치" % (len(p["servers"]), sum(len(d["services"]) for d in p["servers"].values())))
+        return
+    if a.cmd == "export":
+        # R1.5·R1.7·R10.12: compose 밖 호출자에게 루트 인증서와 서비스 이름->주소 표(hosts 형식)와 게시 포트 표를 내보내고 SHA-256 목록을 붙인다
+        import hashlib, shutil
+        if not a.out or not a.root_ca:
+            fail(["export 에는 --out 과 --root-ca 가 필요하다"])
+        os.makedirs(a.out, exist_ok=True)
+        owner = {s_: srv for srv, d in p["servers"].items() for s_ in d["services"]}
+        called = sorted(remote_called(p, compose) | {n for n in (p.get("ports") or {}) if n in owner})
+        shutil.copyfile(a.root_ca, os.path.join(a.out, "root_ca.crt"))
+        with open(os.path.join(a.out, "hosts"), "w", encoding="utf-8") as f:
+            for n in called:
+                f.write("%s %s\n" % (p["servers"][owner[n]]["address"], n))
+        with open(os.path.join(a.out, "ports.tsv"), "w", encoding="utf-8") as f:
+            for n in called:
+                f.write("%s\t%d\n" % (n, (p.get("ports") or {})[n]))
+        with open(os.path.join(a.out, "SHA256SUMS"), "w", encoding="utf-8") as f:
+            for fn in ("root_ca.crt", "hosts", "ports.tsv"):
+                f.write("%s  %s\n" % (hashlib.sha256(open(os.path.join(a.out, fn), "rb").read()).hexdigest(), fn))
+        print("OK: %s 에 root_ca.crt, hosts, ports.tsv, SHA256SUMS" % a.out)
         return
     if not a.host or not a.out:
         fail(["render 에는 --host 와 --out 이 필요하다"])
