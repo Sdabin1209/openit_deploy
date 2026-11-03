@@ -7,7 +7,19 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; 
 ok() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $name"; else echo "  FAIL $name :: $(echo "$out" | tail -2 | tr '\n' ' ' | cut -c1-200)"; F=$((F+1)); fi; }
 no() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  FAIL $name :: 성공하면 안 된다"; F=$((F+1)); else echo "  PASS $name"; fi; }
 D="$T/deploy"; mkdir -p "$D/build"; cp -r "$HERE" "$D/scripts"; cp -r "$HERE/../locks" "$D/locks" 2>/dev/null; VS="$HERE/../.venv"; [ -x "$VS/bin/python" ] || VS="$(git -C "$HERE" rev-parse --git-common-dir 2>/dev/null)/../.venv"   # worktree 에는 .venv 가 없다: 주 작업 트리의 것을 쓴다
-ln -s "$(cd "$VS" 2>/dev/null && pwd)" "$D/.venv" 2>/dev/null
+# 왜 공용 .venv 를 심볼릭 링크로 쓰지 않나: build-images.sh 는 서비스를 빌드하기 전에 deploy venv 에 계약을 pip --force-reinstall 한다. 공용 venv 를 링크하면 이 시험이 동시에 여러 개 돌 때(E2E 사전 점검과 run-self-checks)
+# 서로의 site-packages 를 지워 "No module named boundary_contracts" 로 간헐 실패했다(4차 E2E, 3개 동시 3회 재현). 그래서 읽기만 하는 python·lib 는 링크하고 pip 만 이 시험 몫의 가짜로 둔다(설치는 하지 않는다, wheel 은 빈 파일).
+VR="$(cd "$VS" 2>/dev/null && pwd)"; mkdir -p "$D/.venv/bin"; ln -s "$VR/bin/python" "$D/.venv/bin/python"; ln -s "$VR/lib" "$D/.venv/lib"; cp "$VR/pyvenv.cfg" "$D/.venv/pyvenv.cfg"
+cat > "$D/.venv/bin/pip" <<'FP'
+#!/usr/bin/env bash
+# 가짜 pip: wheel -w <폴더> <소스> -> 빈 wheel 파일, install -> 아무것도 안 한다
+case "$1" in
+  wheel) out=""; src=""; shift; while [ $# -gt 0 ]; do case "$1" in -w) out=$2; shift 2;; -q|--no-deps|--no-build-isolation) shift;; *) src=$1; shift;; esac; done
+         mkdir -p "$out"; case "$src" in *schema*) : > "$out/openit_survey_schema-0.0.1-py3-none-any.whl";; *) : > "$out/boundary_contracts-0.0.0-py3-none-any.whl";; esac;;
+esac
+exit 0
+FP
+chmod +x "$D/.venv/bin/pip"
 [ -x "$D/.venv/bin/python" ] || { echo "SKIP: deploy .venv 가 없다(계약 validator 필요)"; exit 0; }
 DEPLOY_NO_DOCKER=1; source "$D/scripts/lib.sh"; BC=$DEPLOY_BC_TAG; MR=$DEPLOY_MR_TAG; SSTAG=$DEPLOY_SS_TAG
 G='git -c user.name=t -c user.email=t@t'
