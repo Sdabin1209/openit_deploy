@@ -357,6 +357,22 @@ bash scripts/demo.sh swap-adapters --adapter-a DIR --adapter-b DIR --prompt-a FI
 - 자체 시험: `python3 scripts/test_probe_serving.py`(일부러 OUTPUT_INVALID를 섞은 가짜 응답과 가짜 서버로 집계를 확인). GPU 측정 절차는 `docs/GPU_HOLE.md` H4.
 - 한계: 이 PC에서는 가짜 백엔드(출력 고정)에만 돌려 봤다. 실제 모델의 OUTPUT_INVALID 분포는 측정 전이다.
 
+## 7-3. 여러 서버에 배치 (Ansible, ADR 0060)
+
+서버 한 대면 지금처럼 `scripts/up.sh` 하나로 끝난다(Ansible 이 필요 없다). 서비스를 여러 서버에 나눌 때만 아래를 쓴다. 서버에는 SSH, python3, Docker 만 있으면 된다(새 OS 패키지 없음).
+
+1. 지휘 기계(이 저장소를 가진 PC)에 도구를 설치한다: `.venv/bin/pip install -r requirements-deploy-tools.txt` (ansible-core, 판 고정). 서버에는 설치하지 않는다.
+2. 배치 정의를 쓴다: `ansible/inventory.example.yml` 을 복사해 서버 이름, `ansible_host`(다른 서버가 이 서버를 부르는 주소), `placement_region`, `placement_services`(compose 서비스 이름 목록)를 채운다. 서버나 지역이 바뀌면 이 파일만 고친다.
+3. 점검: `.venv/bin/python scripts/placement.py validate <인벤토리>`. 서비스 이름이 compose 와 같은지, 한 서비스가 한 서버에만 있는지, 기반 요소(postgres, step-ca, keycloak, gateway)가 놓였는지 본다.
+4. 비밀은 지휘 기계의 `secrets/` 에 만들어 둔다(`scripts/gen-secrets.sh`). 플레이북이 서버마다 **그 서버 서비스가 쓰는 파일만** 640 으로 보낸다(그룹은 `SECRETS_GID`, 서버마다 `placement_secrets_gid` 로 바꿀 수 있다).
+5. 실행: `.venv/bin/ansible-playbook -i <인벤토리> ansible/site.yml`. 서버마다 설정·비밀 배포, 상대 서비스 주소 계산, `postgres -> step-ca -> keycloak -> 나머지` 순서 기동을 한다. 다시 실행하면 바뀐 것만 바뀐다.
+
+주소 규칙: 같은 서버의 상대는 서비스 이름 그대로, 다른 서버의 상대는 `<placement_scheme>://<그 서버 ansible_host>:<게시 포트>` 이다(스킴 기본 https). 다른 서버에서 불리는 서비스는 그 서버가 호스트 포트를 연다(`placement_ports` 로 지정, 없으면 자동). 방화벽은 서버끼리만 그 포트를 허용하게 한다.
+
+제약(ADR 0060): DB 접속 비밀을 쓰는 서비스는 postgres 와 같은 서버에 둔다. 내부 전용 네트워크에만 붙은 서비스는 다른 서버에서 부를 서비스로 둘 수 없다.
+
+시험(E2E 밖, 한 PC): `bash scripts/test-split-placement.sh` 는 가상 서버 3개(compose 프로젝트 3개, 서로 다른 네트워크)를 같은 플레이북으로 띄워 묶음별 `/healthz` 와 묶음 사이 호출, 멱등, 잘못된 배치 거부를 확인한다. 대역 서비스를 쓰므로 실제 이미지의 분리 기동은 확인하지 않는다.
+
 ## 8. 흔한 문제
 
 | 증상 | 원인·조치 |
