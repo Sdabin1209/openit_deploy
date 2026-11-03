@@ -71,3 +71,15 @@
 | V6 | survey-service 의 503 UNAVAILABLE 로그에 예외 종류·위치가 없었다(포매터가 트레이스를 버림) | R8.1 | survey 담당에 넘김. 해소 확인 전 |
 | V7 | 인증서 갱신 뒤 사이드카 감시 루프의 `caddy reload` 가 설정이 같으면 reload 를 건너뛰어 갱신된 인증서를 서빙하지 않는다(실험 C6, 헤드 전달). 24시간 인증서가 만료되면 서비스 사이 호출이 실패한다 | **R4.4** | 구현 대상: `compose.yaml`·`compose.inference.yaml` 의 감시 루프(`caddy reload --force`) + `scripts/test-tls-sidecar.sh`, 단독 시험 "수명 5분 갱신 뒤 서빙 serial 변경"(`scripts/test-cert-renewal.sh`, 만들 것). 코드 수정은 헤드 지시 대기 |
 | V8 | (해소) 호출 관계 없이 같은 망에 있던 앱 쌍 5개: admin-console↔kiosk-frontend(ui 공유 -> ui-kiosk/ui-admin 으로 분리), gateway↔model-serving(gateway 가 serving 망에 있었음 -> gateway 는 edge·release-mr·release-qa 로만 survey/gate/QA/MR 에 닿음), model-registry↔question-authoring(release 공유 -> release-mr/release-qa 분리), model-serving↔ops-feedback-ingest·ops-feedback-ingest↔release-gate(serving 공유 -> serving-ops 분리) | **R6.2** | 해소(이 커밋). 허용 목록 점검 `scripts/test_service_pair_isolation.py` 예외 표 없음 |
+
+## 준수 조정 현황 (계약 607f567, 03:30 시점에 확인한 것만)
+
+| 조항 | 상태 | 근거 |
+|---|---|---|
+| R10.3 (tar 묶음 300초) | 반영: `config/model-serving.env` 에 `MODEL_RUNTIME_RELEASE_READ_TIMEOUT_S=300`. 이름은 계약 `ModelServingEnv` 스키마에 있다 | `scripts/test-split-placement.sh` 의 check_config_contracts 단계 통과 |
+| R10.11 (`/metrics` 를 게이트웨이에 열지 않음) | 확인: `config/Caddyfile` 에 `metrics` 경로가 없다(grep 0건). 시험은 아직 없음 | 위반 아님, 정적 시험 필요 |
+| R10.12 (놓친 실행을 몰아서 하지 않음) | 확인: `config/systemd/*.timer` 에 `Persistent` 가 없다(`OnUnitActiveSec` 만). 잡 겹침은 systemd oneshot 유닛 | 정적 시험 필요 |
+| R10.12 (백업·잡 실패·누락 경보) | 잡: `JobFailed`·`JobStale` 있음(`rules/openit.yml`). 백업 경보 규칙은 확인하지 못했다 | 미확인 |
+| R10.4 (게이트웨이 속도 제한은 로그인·가입·기기 등록만) | 미확인·미구현: Caddyfile 에 `rate_limit` 이 없다 | 마감 안에 못 함 |
+| R3.12 (인증 확인 시간 한도 → 503) | 미확인: `gateway-auth.caddy` 의 forward_auth 시간 한도를 확인하지 못했다 | 마감 안에 못 함 |
+| R5.3, R9.1, R9.2, R2.1, R3.1~R3.6 | 앞 단계에서 반영·시험함(위 행들과 `RUNTIME-COMPONENTS.md` 11.1·12.1) | 해당 커밋 참조 |
