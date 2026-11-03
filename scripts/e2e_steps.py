@@ -244,7 +244,7 @@ def step1():
 # 뒤 단계가 같은 이름으로 부르므로 시그니처를 유지한 채 내용만 바꾼다.
 import base64, e2e_sandbox as SB
 
-_C1_AUTHOR, _C1_CLINICAL = "author-e2e", "clinical-e2e"            # 저자 / 임상 근거 검수자 계정(config/gateway-accounts.test.conf)
+_C1_AUTHOR, _C1_CLINICAL = "author-e2e", "clinical-e2e"            # 저자 / 임상 근거 검수자 계정(Keycloak 시험 사용자: test/gateway-oidc/accounts.test.conf 를 scripts/idp-test-users.sh 가 만든다)
 _C1_APPROVER, _C1_OPERATOR = "trainer-e2e", "operator-e2e"         # release-approver / operator 계정. 게이트웨이가 계정 ID 를 X-Openit-User 로 붙인다(행위자 기록)
 _C1_CODE = {400: "INVALID_RECORD", 401: "PERMISSION_DENIED", 403: "PERMISSION_DENIED", 404: "NOT_FOUND", 409: "CONFLICT"}
 _C1_RH = {}   # 제출 -> 처음 읽은 보고서 해시(결정 뒤에는 보고서 상태가 달라질 수 있어 같은 제출의 재전송·번복은 처음 값을 쓴다)
@@ -652,7 +652,7 @@ def step3():
 def decisions_for(gate_read, subj):   # gate_read 는 옛 인자(직접 클라이언트): 이제 판정은 survey-service 컨테이너 안에서 읽는다. 호출하는 뒤 단계의 시그니처를 유지한다
     return _c1_decisions(subj)
 
-ADMIN = lambda: (_C1_APPROVER, None)   # 개별 계정(config/gateway-accounts.test.conf, 시험 계정, D85 E절). (계정 ID, 암호): 암호는 접근 계층(e2e_sandbox)이 안다
+ADMIN = lambda: (_C1_APPROVER, None)   # 개별 계정(Keycloak 시험 사용자: test/gateway-oidc/accounts.test.conf 를 scripts/idp-test-users.sh 가 만든다, 시험 계정, D85 E절). (계정 ID, 암호): 암호는 접근 계층(e2e_sandbox)이 안다
 OPERATOR = lambda: (_C1_OPERATOR, None)   # 역할 operator: /v1/activate, /v1/rollback
 REVIEWER = lambda: ("reviewer-e2e", None)   # 실패 사례 검토 화면 계정(역할 reviewer)
 
@@ -1668,7 +1668,7 @@ def trace_env(release_id, n):
 # ---- 단계 6 이후의 제품 접근 도우미 (wo-444). 드라이버가 제품에 닿는 길은 e2e_sandbox(SB)의 셋뿐이다:
 #   (a) 게이트웨이(사람 계정·기기·기계 토큰), (b) 제품 네트워크 안(compose exec/run), (c) 별도 호스트의 추론 서버. 내부 서비스의 호스트 포트는 없다.
 import e2e_sandbox as SB
-_C3_ACCT = {"approver": "trainer-e2e", "operator": "operator-e2e", "reviewer": "reviewer-e2e", "author": "author-e2e", "clinical": "clinical-e2e", "staff": "staff-e2e"}   # config/gateway-accounts.test.conf 의 시험 계정(역할 이름 -> 계정 ID)
+_C3_ACCT = {"approver": "trainer-e2e", "operator": "operator-e2e", "reviewer": "reviewer-e2e", "author": "author-e2e", "clinical": "clinical-e2e", "staff": "staff-e2e"}   # Keycloak 시험 사용자: test/gateway-oidc/accounts.test.conf 를 scripts/idp-test-users.sh 가 만든다 의 시험 계정(역할 이름 -> 계정 ID)
 _C3_SVC = {"qa": "question-authoring", "gate": "release-gate", "ops": "ops-feedback-ingest", "survey": "survey-service"}   # 단계가 쓰는 짧은 이름 -> compose 서비스
 
 def _c3_tok(name):   # 시험 비밀 폴더의 토큰 파일(값은 출력하지 않는다, D84)
