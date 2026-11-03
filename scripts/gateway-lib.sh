@@ -7,7 +7,7 @@
 #  gw_write_devices <비밀 폴더>   : tokens/kiosk-device-<id> 파일마다 한 기기. secrets/gateway-devices.caddy 의 (kiosk_devices) 가 @device_ok 를 정의한다.
 #                                   기기 토큰 파일을 지우고 다시 쓰면 그 기기는 폐기된다(게이트웨이를 다시 시작해야 반영: Caddy 는 설정을 읽을 때 한 번 치환한다).
 # 파일은 같은 inode 로 덮어쓴다(compose configs 가 파일을 바인드 마운트하므로 새 파일로 바꾸면 컨테이너가 못 본다).
-GW_ROLES="staff operator release-approver reviewer author clinical-reviewer"
+GW_ROLES="staff operator release-approver reviewer author clinical-reviewer clinician"   # clinician: 문진 결과를 보는 의사(U83, 3.2.0 PUBLIC_API B절)
 gw_rnd() { python3 -c 'import secrets;print(secrets.token_hex(24))'; }
 gw_accounts_conf() { echo "${GATEWAY_ACCOUNTS_CONF:-${GW_SECRETS_DIR:-${SECRETS_DIR:-$DEPLOY_ROOT/secrets}}/staff-accounts.conf}"; }   # 조직이 주는 직원 계정 파일(해시가 있어 secrets/ 에 둔다, 커밋하지 않는다)
 gw_test_accounts_conf() { echo "${GATEWAY_TEST_ACCOUNTS_CONF:-$DEPLOY_ROOT/config/gateway-accounts.test.conf}"; }   # 시험 계정: GW_TEST_FIXTURES=1 일 때만 더해 읽는다

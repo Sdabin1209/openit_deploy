@@ -232,7 +232,7 @@ services:
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
       - {source: gateway-device-tls, target: /etc/caddy/device-tls.caddy}
       - {source: gateway-device-ca, target: /etc/caddy/device-ca.pem}
-    secrets: [gateway-registry-publish-token, model-registry-write-model-lab, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
+    secrets: [gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:
       kiosk-frontend: {condition: service_healthy}

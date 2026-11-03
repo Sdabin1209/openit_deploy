@@ -386,7 +386,51 @@ http://:8080 {
 			respond "forbidden: author 또는 clinical-reviewer 역할이 아니다" 403
 		}
 	}
-	@internalsurvey path /v1/sessions/*/risk-signals /v1/results /v1/results/*
+	# 문진 결과(U83, 3.2.0 PUBLIC_API B절): 의사(clinician 역할 계정)가 결과 목록·상세를 보고 확인 표시를 한다. 상류에는 result-reader 토큰을 붙이고 인증 계정을 X-Openit-User 로 넘긴다(접근 기록·acknowledged_by).
+	@clinicianread {
+		method GET
+		path /v1/results /v1/results/*
+	}
+	@clinicianack {
+		method POST
+		path /v1/results/*/ack
+	}
+	handle @clinicianread {
+		import authenticate
+		handle @role_clinician {
+			reverse_proxy survey-service:8080 {
+				import proxy_limits 60s
+				header_up Authorization "Bearer {file./run/secrets/survey-result-reader}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_up -X-Openit-Dn
+				header_up -X-Openit-Device
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: clinician 역할이 아니다" 403
+		}
+	}
+	handle @clinicianack {
+		import authenticate
+		request_body {
+			max_size 16KiB
+		}
+		handle @role_clinician {
+			reverse_proxy survey-service:8080 {
+				import proxy_limits 60s
+				header_up Authorization "Bearer {file./run/secrets/survey-result-reader}"
+				header_up X-Openit-User "{http.auth.user.id}"
+				header_up -X-Openit-Dn
+				header_up -X-Openit-Device
+				header_down Cache-Control "no-store"
+			}
+		}
+		handle {
+			respond "forbidden: clinician 역할이 아니다" 403
+		}
+	}
+	@internalsurvey path /v1/sessions/*/risk-signals
 	handle @internalsurvey {
 		respond "not found" 404
 	}

@@ -122,7 +122,7 @@ guide() {
  주소 (Docker가 배정한 포트): https://$host:$gw
    키오스크 화면      주소는 $(demo_kiosk_url "$gw" "$host") 에 있다(기기 토큰이 URL 조각 #device= 에 들어 있어 터미널에 출력하지 않는다. cat 해서 브라우저에 붙여 넣는다)
    직원 콘솔          https://$host:$gw/staff/      계정 staff-e2e (역할 staff)
-   승인·실패 사례 검토 https://$host:$gw/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
+   승인·실패 사례 검토·문진 결과 https://$host:$gw/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 의사 계정 clinician-e2e(문진 결과 탭) / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
  (HTTPS: 내부 CA 가 발급한 인증서라 브라우저가 경고한다. 루트 인증서는 $W/gateway-ca.crt 이고 신뢰시키려면 docs/runbook.md TLS 절. 시험용이다. 원격 서버면: ssh -L $gw:127.0.0.1:$gw <서버>  로 터널을 열고 https://127.0.0.1:$gw 로 본다)
 
  암호: 값은 출력하지 않는다. 비밀 파일을 열어 본다 (폴더 700, 저장소 밖 $W/secrets):
@@ -130,6 +130,7 @@ guide() {
    operator-e2e     $W/secrets/tokens/account-operator-e2e-password
    trainer-e2e      $W/secrets/tokens/account-trainer-e2e-password
    reviewer-e2e     $W/secrets/tokens/account-reviewer-e2e-password
+   clinician-e2e    $W/secrets/tokens/account-clinician-e2e-password
    예: cat $W/secrets/tokens/account-staff-e2e-password
  키오스크 기기 인증(D85 F절·D88/U8): 제품 기본 경로(게이트웨이 기기 토큰 목록 + 시작 URL 조각 #device=)를 그대로 쓴다. 데모 전용 게이트웨이 설정은 없다(U75). mTLS 를 켠 운영에서는 기기 인증서로 대신한다(config/device-tls.mtls.caddy.example).
  모델 서빙: LoRA-A/LoRA-B 자리만 모방 백엔드(MODEL_RUNTIME_BACKEND=mimic, 시험 전용). 흐름 파일: $DEMO_MIMIC_FLOW_FILE (--mimic-flow-file 로 바꾼다). 나머지는 진짜 코드다.
