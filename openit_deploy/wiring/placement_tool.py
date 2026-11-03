@@ -23,6 +23,7 @@ STAGES = [["step-ca"], ["postgres"], ["keycloak"],   # step-ca 가 먼저: 모�
           ["oauth2-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3
 CONTAINER_PORT = {"postgres": 5432, "step-ca": 9000}   # 나머지는 8080(이미지 규칙, HTTP.md)
+STEP_CA_BOUND = ("pki-root", "pki-tokens")   # step-ca 서버에서만 돈다: pki-tokens 는 프로비저너 비밀(step-ca-password)을 읽고 pki-root 는 키가 든 pki-ca 볼륨을 읽는다. 둘 다 step-ca 서버 밖으로 나가지 않는다(ADR 0061)
 PUBLISH_NET = "placement-publish"      # 내부 전용 네트워크에만 붙은 서비스가 호스트 포트를 열 수 있게 더하는 일반 네트워크
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 DSN_RE = re.compile(r"^db-.*-dsn$")
@@ -97,6 +98,9 @@ def leaders(compose):
     for n in compose["services"]:   # <서비스>-cert 는 <서비스> 의 인증서를 받는 짝이다(ADR 0060): 같은 서버에서 앱보다 먼저 올라온다
         if n.endswith("-cert") and n[:-5] in compose["services"] and n not in out:
             out[n] = n[:-5]
+    for n in STEP_CA_BOUND:
+        if n in compose["services"]:
+            out[n] = "step-ca"
     for n in ("postgres-cert", "postgres-reload"):
         if n in compose["services"]:
             out[n] = "postgres"
@@ -227,12 +231,13 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     bind = servers[host].get("bind") or servers[host]["address"]
     # 따라오는 일회성 서비스(예: 마이그레이션)
     one = oneshots(compose)
+    localset0 = set(local)   # 이 서버에 인벤토리가 놓은 서비스(따라가는 일회성 서비스를 더하기 전)
     todo, seen = list(local), set(local)
     while todo:
         n = todo.pop()
         dep = compose["services"][n].get("depends_on") or {}
         for d in (dep if isinstance(dep, dict) else {k: {} for k in dep}):
-            if d in one and d not in seen:
+            if d in one and d not in seen and not (d in STEP_CA_BOUND and "step-ca" not in localset0):
                 seen.add(d); local.append(d); todo.append(d)
     localset = set(local)
     ov, published = {}, set()
@@ -328,7 +333,12 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     lead = leaders(compose)   # 따라가는 서비스는 앞선 서비스와 같은 단계
     for i in range(len(STAGES)):
         stages.append([n for n in local if ((lambda k: STAGES[i].count(k) or (k not in sum(STAGES, []) and i == DEFAULT_STAGE))(lead.get(n, n)))])
-    plan = {"host": host, "region": servers[host]["region"], "services": local, "stages": stages,
+    # 다른 서버의 step-ca 에서 받아 올 일회용 토큰: 이 서버의 <서비스>-cert 마다 <서비스>.ott (단계별. 수명 5분이라 그 단계 기동 직전에 받는다)
+    ca_host = owner.get("step-ca")
+    stage_tokens = []
+    for st in stages:
+        stage_tokens.append(sorted(n[:-5] for n in st if n.endswith("-cert") and ca_host and ca_host != host))
+    plan = {"host": host, "step_ca_host": ca_host, "stage_tokens": stage_tokens, "region": servers[host]["region"], "services": local, "stages": stages,
             "secrets": secrets, "configs": configs, "secret_files": sorted(set(files)), "generated_secret_files": generated,
             "published": {n: ports[n] for n in sorted(published)}}
     return "\n".join(lines) + "\n", plan

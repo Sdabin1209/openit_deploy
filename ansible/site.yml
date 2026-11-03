@@ -74,6 +74,7 @@
       loop:
         - {src: "{{ p_compose }}", dest: compose.yaml}
         - {src: "{{ p_root }}/scripts/lib.sh", dest: scripts/lib.sh}
+        - {src: "{{ p_root }}/ansible/files/put-tokens.py", dest: scripts/put-tokens.py}
         - {src: "{{ placement_lock | default(p_root + '/locks/images.lock') }}", dest: locks/images.lock}
     - name: 레지스트리 주소(state/registry.env, 있으면)
       ansible.builtin.copy:
