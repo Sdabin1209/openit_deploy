@@ -81,3 +81,4 @@ sslrootcert 를 쓰는 모든 서비스가 pki-root 를 그 경로에 마운트�
 인증서 발급 컨테이너만 pki 망에 붙는다: 사이드카를 둔 앱이 pki 망에 있으면 서비스 사이 차단이 깨진다 (4차 E2E survey-service -> question-authoring 도달) :: python3 "$DEPLOY_ROOT/scripts/test_pki_isolation.py"
 https /healthz·/readyz 확인은 상태 코드만이 아니라 본문까지 읽는다 (사이드카의 빈 200 헛통과, 4차 E2E) :: python3 "$DEPLOY_ROOT/scripts/test_health_checks_read_body.py"
 E2E 의 PostgreSQL 목록은 PG_DBS 정본이다(하드코딩 금지, keycloak 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_pg_dbs.py"
+deploy .venv 에 pip install 은 설치 스크립트(prepare-host.sh, prepare-areas.sh)에만 있다: 빌드·시험이 공용 venv 를 바꾸면 다른 실행이 깨진다 (4차 E2E build-images.sh force-reinstall) :: python3 "$DEPLOY_ROOT/scripts/test_no_pip_outside_setup.py"
