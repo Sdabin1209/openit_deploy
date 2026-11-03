@@ -77,7 +77,13 @@ inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
 
 STEP_IMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$DEPLOY_LOCK"); SC_IMG=$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")
-SCP=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')   # 빈 포트(고정 포트 금지). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml)
+# 빈 포트(고정 포트 금지). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml). 호스트 쪽 제외 포트 범위(WSL/Windows)에 걸리면 Docker 가 게시를 거부하므로(측정함) 실제로 게시해 보고 고른다
+SCP=""
+for _try in 1 2 3 4 5 6 7 8; do
+  _p=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+  if "$DOCKER" run --rm --network none -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then SCP=$_p; break; fi
+done
+[ -n "$SCP" ] || bail "게시할 수 있는 빈 포트를 찾지 못했다"
 export STEP_CA_PORT=$SCP STEP_CA_DNS_NAMES=host.docker.internal COMPOSE_EXTRA="${COMPOSE_EXTRA:-} $DEPLOY_ROOT/compose.step-ca-publish.yaml"
 mkdir -p "$W/pki"
 OK=0
@@ -123,9 +129,11 @@ gw_code() { # gw_code <경로> [curl 인자...] -> HTTP 코드 (본문은 $W/bod
 gw_inf() { gw_code "$1" -H "Authorization: Bearer $(tr -d '\r\n' < "$INF_TOK_FILE")"; }   # 토큰은 인자 목록에 값으로 들어가므로 프로세스 목록에 보인다: 시험 샌드박스의 시험 토큰이라 허용한다
 is() { [ "$(eval "$1")" = "$2" ]; }
 
+# 추론 서버의 사이드카 인증서는 이름(host.docker.internal) 하나다: IP 로 부르면 SNI 가 맞는 사이트가 없어 TLS 가 끊긴다(측정함: tlsv1 alert internal error). 이름으로 부르고 --resolve 로 게시 주소를 준다
+MS_HOST=$([ "$BIND" = 0.0.0.0 ] && echo 127.0.0.1 || echo "$BIND")
+MSURL="https://host.docker.internal:$IPORT"; MSRES="host.docker.internal:$IPORT:$MS_HOST"
 echo "== 1. 추론 서버 /readyz: release 도달"
-READY=$(curl -sS --max-time 10 "https://$BIND:$IPORT/readyz" --cacert "$W/pki/root_ca.crt" 2>&1 || true)
-[ "$BIND" = 0.0.0.0 ] && READY=$(curl -sS --max-time 10 "http://127.0.0.1:$IPORT/readyz" 2>&1 || true)
+READY=$(curl -sS --max-time 10 "$MSURL/readyz" --resolve "$MSRES" --cacert "$W/pki/root_ca.crt" 2>&1 || true)
 echo "  /readyz: $(echo "$READY" | cut -c1-300)"
 chk "추론 서버가 게이트웨이(HTTPS, 신뢰 CA)로 release 에 닿는다 (/readyz 에 release 도달 실패 사유가 없다)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);t=json.dumps(d,ensure_ascii=False);sys.exit(1 if \"닿지 못한다\" in t else 0)"' _ "$READY"
 
@@ -140,9 +148,22 @@ chk "추론 토큰으로 POST /v1/activate 는 사람 인증 블록에 막힌다
 chk "추론 토큰으로 GET /v1/releases (목록)는 열리지 않는다(사람 인증 블록 401)" is "gw_inf /v1/releases" 401
 
 echo "== 3. 음성 확인"
-APPROVER_PW=$(tr -d '\r\n' < "$SECRETS_DIR/tokens/account-trainer-e2e-password")
-chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404" is "gw_code /v1/releases/does-not-exist -u trainer-e2e:$APPROVER_PW" 404
-chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -u trainer-e2e:$APPROVER_PW" 404
+# (ㄱ) 사람 세션: E2E 단계 5u·test-idp-smoke.sh 와 같은 OIDC 로그인 도우미(scripts/e2e_sandbox.py oidc_login: Keycloak 로그인 -> _openit_session 쿠키)로 승인자 계정 세션을 만든다
+bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$P" >/dev/null 2>&1 || bail "시험 사용자(Keycloak)를 만들지 못했다"
+HCOOKIE=$("$DEPLOY_ROOT/.venv/bin/python" -W ignore - "$GW" "$CA" "$MS_HOST" "$SECRETS_DIR/tokens/idp-test-trainer-e2e-password" <<'PY'
+import os, socket, sys
+sys.path.insert(0, os.path.join(os.environ["DEPLOY_ROOT"], "scripts"))
+import e2e_sandbox as SB
+base, ca, addr, pwf = sys.argv[1:5]
+_orig = socket.getaddrinfo
+socket.getaddrinfo = lambda h, *a, **k: _orig(addr if h == "host.docker.internal" else h, *a, **k)   # 시험 호스트가 이 이름을 풀지 못해도 게시 주소로 간다(curl --resolve 와 같다)
+jar = SB.oidc_login(base, "trainer-e2e", open(pwf).read().strip(), ca=ca)
+print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_session")))
+PY
+) 2>"$W/oidc.err" || { tail -4 "$W/oidc.err" | sed "s/^/    /" >&2; bail "승인자 OIDC 로그인에 실패했다"; }
+[ -n "$HCOOKIE" ] || bail "승인자 세션 쿠키가 비었다"
+chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
+chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄴ) 토큰 없이 GET /v1/releases/{id}/bundle 은 401" is "gw_code /v1/releases/does-not-exist/bundle" 401
 chk "(ㄴ) 토큰 없이 GET /v1/active-pointer 는 401" is "gw_code /v1/active-pointer" 401
 chk "(ㄴ) 틀린 토큰으로 GET /v1/releases/{id} 는 401" is "gw_code /v1/releases/does-not-exist -H 'Authorization: Bearer wrong'" 401
@@ -152,11 +173,10 @@ echo "== 4. 추론 서버 자신의 클라이언트가 게이트웨이(HTTPS + �
 # 왜 없는 릴리스인가: 서버는 적재 신호(PUT /v1/releases/{id})를 받으면 계약 클라이언트로 GET /v1/releases/{id}(/bundle)를 한다. 릴리스를 만들려면 문항 세트·모델 패키지·승인·활성화가 필요한데
 # 운영 compose 에 시험용 문 없이는 게이트웨이로 할 수 없다(릴리스 생성은 e2e.sh 단계 1~4 가 덮는다). 그래서 이 시험은 번들이 실제로 적재되는 것까지는 보지 않는다(미확인).
 # 없는 ID 면 release-gate 의 NOT_FOUND 가 서버의 FAILED(code NOT_FOUND)로 돌아온다. TLS 검증 실패·토큰 거부·경로 차단이면 다른 코드(UNAVAILABLE/PERMISSION_DENIED 등)가 나오므로 구별된다.
-MS_HOST=$([ "$BIND" = 0.0.0.0 ] && echo 127.0.0.1 || echo "$BIND")
 MS_TOK=$(sed 's/^[^=]*=//; s/,.*//' "$SECRETS_DIR/tokens/model-runtime-tokens" | tr -d '\r\n')
-curl -sS --max-time 15 -X PUT -H "Authorization: Bearer $MS_TOK" "https://$MS_HOST:$IPORT/v1/releases/rel-loc-test-none" --cacert "$W/pki/root_ca.crt" >/dev/null 2>&1
+curl -sS --max-time 15 -X PUT -H "Authorization: Bearer $MS_TOK" "$MSURL/v1/releases/rel-loc-test-none" --resolve "$MSRES" --cacert "$W/pki/root_ca.crt" >/dev/null 2>&1
 sleep 3
-ST=$(curl -sS --max-time 10 -H "Authorization: Bearer $MS_TOK" "https://$MS_HOST:$IPORT/v1/releases/rel-loc-test-none" --cacert "$W/pki/root_ca.crt" 2>&1)
+ST=$(curl -sS --max-time 10 -H "Authorization: Bearer $MS_TOK" "$MSURL/v1/releases/rel-loc-test-none" --resolve "$MSRES" --cacert "$W/pki/root_ca.crt" 2>&1)
 echo "  서버의 상태: $(echo "$ST" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('state'), (d.get('error') or {}).get('code'), (d.get('error') or {}).get('details'))" 2>&1)"
 chk "서버가 release-gate 의 NOT_FOUND 를 받았다(FAILED, code NOT_FOUND: 게이트웨이 TLS·토큰·경로가 모두 통과)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get(\"state\")==\"FAILED\" and d[\"error\"][\"code\"]==\"NOT_FOUND\" else 1)"' _ "$ST"
 chk "게이트웨이 접근 기록에 서버의 GET /v1/releases/{id}/bundle 이 있다(Python-urllib, 상태 404)" bash -c '"$1" logs "$2" 2>&1 | grep -q "\"uri\":\"/v1/releases/rel-loc-test-none/bundle\".*Python-urllib"' _ "$DOCKER" "$P-gateway-1"
