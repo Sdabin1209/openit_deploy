@@ -4,11 +4,9 @@
 # 필수 변수 (이 다섯이면 `docker compose -f compose.inference.yaml config` 가 데몬 없이 병합된다):
 #   변수                 뜻
 #   INFERENCE_IMAGE      이미지 전체 참조, digest 로 고정(예: <레지스트리>/openit/model-serving@sha256:...). GPU 변형 이미지도 여기에 둔다
-#   RELEASE_URL          **게이트웨이의 HTTPS 주소**(예: https://kiosk.hospital.local:443). 서버는 이 주소로 GET /v1/active-pointer, /v1/releases/{id}, /v1/releases/{id}/bundle 을 읽는다.
-#                        release-gate 를 직접 부르지 않는다(운영 compose 는 release-gate 를 호스트에 게시하지 않는다). 게이트웨이의 기계 토큰 경로: config/Caddyfile @inferencemachine, ADR 0049
+#   INFERENCE_RELEASE_ADDR  **주 서버의 release-gate 영역 게이트웨이(들어오는 쪽 443)에 닿는 주소**(IP). 추론 서버는 `https://release-gate`(443)를 부르고 이름은 이 주소로 풀린다(OUT-FILE hosts 표의 `<주소> release-gate` 줄, RUNTIME R1.5). 공개 입구가 아니라 받는 영역(release-gate)의 게이트웨이로 바로 간다
 #   INFERENCE_TOKENS_FILE         파일 경로(값이 아니다). 내용: <호출자>=<토큰>[,...] 한 줄 (MODEL_RUNTIME_TOKENS, D84)
-#   INFERENCE_RELEASE_TOKEN_FILE  파일 경로(값이 아니다). 내용: **게이트웨이 추론 토큰** 하나(deploy 의 secrets/tokens/gateway-inference-token). 예전과 달리 release-gate 읽기 토큰이 아니다.
-#                        게이트웨이가 이 토큰을 확인하고 자기가 가진 release-gate 읽기 토큰으로 바꿔 붙인다(MODEL_RUNTIME_RELEASE_TOKEN 으로 전달)
+#   INFERENCE_RELEASE_TOKEN_FILE  파일 경로(값이 아니다). 내용: release-gate 읽기 토큰 하나(deploy 의 secrets/tokens/gate-read-model-serving). 받는 영역(release-gate)이 직접 대조한다(공개 입구의 기계 토큰 경로는 내보내지 않는다, 계약 3.4.7)
 #   INFERENCE_PKI_ROOT_FILE  파일 경로. deploy step-ca 의 루트 인증서(공개, 비밀 아님; deploy 호스트의 pki-root 볼륨 root_ca.crt). 사이드카가 ACME 서버를 검증하는 데 쓴다(ADR 0060)
 #   INFERENCE_STEP_CA_URL        deploy step-ca 주소(https://<step-ca 주소>:9000). 이 서버 -> step-ca 경로만 있으면 된다(도전 없음)
 #   INFERENCE_TLS_TOKEN_FILE     파일 경로. 지휘 쪽이 `step ca token <INFERENCE_TLS_NAME>` 으로 발급한 일회용 토큰(5분). 인증서의 SAN 은 토큰이 정한다(step 은 --token 과 --san 을 함께 받지 않는다): 같은 호스트에서 localhost 로도 부르려면 토큰을 `--san <이름> --san localhost` 로 발급한다
@@ -18,8 +16,7 @@
 #   INFERENCE_GATEWAY_IMAGE  platform 영역 게이트웨이 이미지(area-gateway, digest 참조; 잠금의 AREA_GATEWAY_DIGEST): 들어오는 쪽 TLS 종단 + 나가는 쪽 loopback CONNECT 출구
 #   INFERENCE_EXPOSURE_FILE  파일 경로. 추론 서버 이미지의 라벨 io.openit.exposure 를 꺼낸 파일(deploy 의 scripts/gen-gateways.py 가 만든 state/gateways/model-serving/exposure.json)
 #   SECRETS_GID          토큰 파일들의 그룹 gid(제품 compose 와 같은 변수, scripts/lib.sh 의 기본값은 id -g). 파일은 640 이고 이 그룹이다
-#   INFERENCE_CA_FILE    파일 경로. 게이트웨이의 CA 루트 인증서(공개 인증서, 비밀 아님): deploy 호스트에서 scripts/export-gateway-ca.sh 로 꺼낸다. 공인 인증서를 쓰면 시스템 신뢰 저장소로 충분하다 -- 그래도 파일은 필요하니 공인 CA 번들을 준다
-#                        configs 로 /etc/openit/gateway-ca.crt 에 넣고 SSL_CERT_FILE 이 가리킨다(계약 클라이언트에 CA 인자가 없고 Python 기본 SSL 컨텍스트가 이 변수를 읽는다). 검증을 끄지 않는다
+#   INFERENCE_CA_FILE    파일 경로. 주 서버가 내보낸 OUT-FILE 의 root_ca.crt(step-ca 루트, 공개 인증서). SHA256SUMS 로 대조한 뒤 쓴다(R1.5). configs 로 /etc/openit/gateway-ca.crt 에 넣고 SSL_CERT_FILE 이 가리킨다(계약 클라이언트에 CA 인자가 없고 Python 기본 SSL 컨텍스트가 이 변수를 읽는다)
 #                        토큰 파일 두 개와 TLS 토큰 파일은 모드 640 + 그룹 SECRETS_GID 다(제품 compose 와 같은 규칙, 컨테이너는 group_add 로 읽는다; 비밀을 둔 폴더는 700). 토큰은 환경 변수로 넣지 않는다.
 # 선택 변수:
 #   INFERENCE_CONFIG_ENV_FILE  (비밀 아닌) 모델 설정 env 파일 경로(프로파일 등). 토큰을 넣지 않는다. 기본 /dev/null
@@ -30,7 +27,7 @@
 #                        host 모드에서는 ports 게시가 무시되고 서버가 INFERENCE_LISTEN_HOST(기본 0.0.0.0):8080 에 직접 열린다 -- 밖에 열지 않으려면 INFERENCE_LISTEN_HOST=127.0.0.1 을 같이 준다
 #   INFERENCE_PORT       호스트 포트. 기본 8080. 빈 값(INFERENCE_PORT=)이면 Docker 가 배정한다(`docker port` 로 읽는다)
 # 사용 (추론 서버를 둘 호스트에서):
-#   INFERENCE_IMAGE=... RELEASE_URL=https://... INFERENCE_TOKENS_FILE=... INFERENCE_RELEASE_TOKEN_FILE=... INFERENCE_CA_FILE=... docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
+#   INFERENCE_IMAGE=... INFERENCE_RELEASE_ADDR=<IP> INFERENCE_TOKENS_FILE=... INFERENCE_RELEASE_TOKEN_FILE=... INFERENCE_CA_FILE=... docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
 name: deploy-inference
 
 x-hardening: &hardening
@@ -50,7 +47,7 @@ secrets:
 configs:
   exposure: {file: "${INFERENCE_EXPOSURE_FILE:?INFERENCE_EXPOSURE_FILE(영역 Exposure 선언 파일 경로)이 필요하다}"}
   pki-root: {file: "${INFERENCE_PKI_ROOT_FILE:?INFERENCE_PKI_ROOT_FILE(step-ca 루트 인증서 파일 경로)이 필요하다}"}
-  gateway-ca: {file: "${INFERENCE_CA_FILE:?INFERENCE_CA_FILE(게이트웨이 CA 루트 인증서 파일 경로, scripts/export-gateway-ca.sh)가 필요하다}"}
+  gateway-ca: {file: "${INFERENCE_CA_FILE:?INFERENCE_CA_FILE(OUT-FILE 의 root_ca.crt 경로, scripts/export-out-files.sh)가 필요하다}"}
 
 volumes:
   certs:            # model-serving-cert 가 쓰고 사이드카가 읽는 서버 인증서·키
@@ -71,7 +68,9 @@ services:
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카가 추가 capability 없이 443 을 연다(ADR 0060)
     network_mode: ${INFERENCE_NETWORK_MODE:-bridge}
-    extra_hosts: ["host.docker.internal:host-gateway"]   # 게이트가 같은 호스트의 다른 컴포즈 프로젝트에 있을 때(시험·단일 서버)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험)
+      - "release-gate:${INFERENCE_RELEASE_ADDR:?INFERENCE_RELEASE_ADDR(주 서버 release-gate 게이트웨이 주소)이 필요하다}"   # OUT-FILE hosts 표의 한 줄
     ports:
       - "${INFERENCE_BIND:-127.0.0.1}:${INFERENCE_PORT-443}:443"   # 밖에 열리는 것은 TLS 사이드카(443)뿐이다. 앱의 8080 은 게시하지 않는다(ADR 0060)
   model-serving:
@@ -90,7 +89,7 @@ services:
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/model-runtime-release-token
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}
       MODEL_RUNTIME_ALLOW_FAKE: "${INFERENCE_ALLOW_FAKE:-}"   # fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험·개발 전용). vllm 에는 필요 없다
-      MODEL_RUNTIME_RELEASE_URL: ${RELEASE_URL:?RELEASE_URL(release-gate 주소)이 필요하다}
+      MODEL_RUNTIME_RELEASE_URL: https://release-gate   # 계약 R1.5: compose 밖 호출자는 받는 영역의 게이트웨이로 바로 간다. 이름은 extra_hosts(OUT-FILE hosts 표), 영역 게이트웨이의 나가는 쪽 허용 목록(egress)이 release-gate:443 이다
       MODEL_RUNTIME_EXTRACT_DEADLINE_S: "20.0"   # 요청 상한: 계약 CONVENTIONS 시간표(D125) extract 20.0초·respond 25.0초. 서버 기본 respond 2.0초에 잘리지 않게 명시한다(config/model-serving.env 와 같은 값, scripts/test_time_chain.py 가 대조)
       MODEL_RUNTIME_RESPOND_DEADLINE_S: "25.0"
     # 읽기 전용 루트의 캐시·홈 위치와 원격 측정 차단은 model-runtime v0.5.3 부터 이미지 ENV 기본값이다(여기서 다시 정하지 않는다).

@@ -1,4 +1,4 @@
-# 변경 요청: 추론 서버가 release-gate 를 부르는 길(영역 게이트웨이 나가는 쪽)
+# (닫음) 변경 요청: 추론 서버가 release-gate 를 부르는 길(영역 게이트웨이 나가는 쪽)
 
 작성: deploy, 2026-11-04. 받는 곳: 헤드(영역 사이 계약).
 
@@ -13,3 +13,6 @@ model-runtime 이미지의 Exposure(`io.openit.exposure`)의 egress 는 `["relea
 
 ## 지금 상태
 `compose.inference.yaml` 은 platform 이미지(area-gateway, step-ca cert)로 바꿨지만 `RELEASE_URL` 이 공개 입구 주소라서 위 불일치가 남아 있다. E2E 의 추론 서버 단계(`INFERENCE_*` 호출)도 같은 값을 쓴다. 결정 전에는 E2E 를 돌리지 않는다.
+
+## 결정 (헤드, 2026-11-04)
+계약 R1.5 그대로다: compose 밖 호출자는 공개 입구가 아니라 받는 영역의 게이트웨이로 바로 간다. `MODEL_RUNTIME_RELEASE_URL=https://release-gate`(443), 이름 해석은 OUT-FILE hosts 표, 루트 인증서도 OUT-FILE. egress `["release-gate"]` 와 맞는다. `compose.inference.yaml` 을 이 결정에 맞췄고 `scripts/test_inference_egress.py` 가 통과한다(변이 유지). 이 요청은 닫는다.

@@ -71,9 +71,9 @@ reach() {
 }
 inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   # 이 변수들은 "다른 호스트" 쪽 compose 의 환경이다(제품 쪽에는 없다). fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험 전용 표시, model-runtime ADR 0009)
-  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gateway-inference-token" \
+  INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" \
   INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$SCP" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_GATEWAY_IMAGE="$SC_IMG" INFERENCE_EXPOSURE_FILE="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/model-serving/exposure.json" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott" \
-  INFERENCE_CA_FILE="$W/gateway-ca.crt" RELEASE_URL="https://host.docker.internal:$GWPORT" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
+  INFERENCE_CA_FILE="$W/gateway-ca.crt" INFERENCE_RELEASE_ADDR="$BRIDGE_GW" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" "$@" ); }
 
 PAUSE_IMG=$(sed -n 's/^PAUSE_IMAGE=//p' "$DEPLOY_LOCK"); STEP_IMG=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/step-ca@$STEP_CA_DIGEST" ); SC_IMG=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/area-gateway@$AREA_GATEWAY_DIGEST" )

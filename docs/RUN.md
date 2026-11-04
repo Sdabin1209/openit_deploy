@@ -214,10 +214,10 @@ HTTPS(내부 CA)·OIDC 로그인이지만 시험용 대체 데이터다. `DEMO_B
 | 변수 | 필수 | 뜻 |
 | --- | --- | --- |
 | `INFERENCE_IMAGE` | 필수 | model-serving 이미지 전체 참조(digest 고정). GPU 변형 이미지도 여기에 둔다 |
-| `RELEASE_URL` | 필수 | **게이트웨이의 HTTPS 주소**(예: `https://kiosk.hospital.local:443`). release-gate를 직접 부르지 않는다 |
+| `INFERENCE_RELEASE_ADDR` | 필수 | 주 서버의 **release-gate 영역 게이트웨이(들어오는 쪽 443)에 닿는 IP**. 추론 서버는 `https://release-gate`(443)를 부르고 이름은 이 주소로 풀린다(OUT-FILE hosts 표의 `<주소> release-gate` 줄, R1.5). 주 서버는 배치 인벤토리의 `placement_ports: {release-gate: 443}` 로 그 포트를 게시한다 |
 | `INFERENCE_TOKENS_FILE` | 필수 | 파일 경로(값이 아니다). 내용 `<호출자>=<토큰>[,...]` 한 줄(`MODEL_RUNTIME_TOKENS`, D84) |
-| `INFERENCE_RELEASE_TOKEN_FILE` | 필수 | 파일 경로. 내용: **게이트웨이 추론 토큰**(위 1의 `gateway-inference-token`). 예전과 달리 release-gate 읽기 토큰이 아니다 |
-| `INFERENCE_CA_FILE` | 필수 | 파일 경로. 게이트웨이 CA 루트(위 2). `configs`로 `/etc/openit/gateway-ca.crt`에 들어가고 `SSL_CERT_FILE`이 가리킨다 |
+| `INFERENCE_RELEASE_TOKEN_FILE` | 필수 | 파일 경로. 내용: release-gate 읽기 토큰(`secrets/tokens/gate-read-model-serving`). 받는 영역이 직접 대조한다(공개 입구의 기계 토큰 경로는 내보내지 않는다) |
+| `INFERENCE_CA_FILE` | 필수 | 파일 경로. OUT-FILE 의 `root_ca.crt`(`scripts/export-out-files.sh`, SHA256SUMS 로 대조). `configs`로 `/etc/openit/gateway-ca.crt`에 들어가고 `SSL_CERT_FILE`이 가리킨다 |
 | `INFERENCE_CONFIG_ENV_FILE` | 선택 | (비밀이 아닌) 모델 설정 env 파일(프로파일 등). 기본 `/dev/null`. 토큰을 넣지 않는다 |
 | `INFERENCE_BACKEND` | 선택 | 기본 `fake`. GPU 변형은 model-runtime이 정한 값. fake는 `INFERENCE_ALLOW_FAKE=1`일 때만 시작한다(시험·개발 전용) |
 | `INFERENCE_BIND` / `INFERENCE_PORT` | 선택 | 호스트 바인드(기본 127.0.0.1: 다른 호스트가 닿게 하려면 사설 인터페이스 주소나 0.0.0.0을 명시하고 방화벽으로 호출자만 허용한다) / 포트(기본 8080, 빈 값이면 Docker 배정 -> `docker port`로 읽는다) |
@@ -228,8 +228,8 @@ HTTPS(내부 CA)·OIDC 로그인이지만 시험용 대체 데이터다. `DEMO_B
 ```
 # INFERENCE_BIND 기본은 127.0.0.1 이라 다른 호스트의 호출자가 닿으려면 아래처럼 명시한다(방화벽으로 호출자만 허용)
 INFERENCE_IMAGE=<레지스트리>/openit/model-serving@sha256:... \
-RELEASE_URL=https://<게이트웨이 도메인>:<TLS 포트> \
-INFERENCE_TOKENS_FILE=/안전한/경로/model-runtime-tokens INFERENCE_RELEASE_TOKEN_FILE=/안전한/경로/gateway-inference-token \
+INFERENCE_RELEASE_ADDR=<주 서버 release-gate 게이트웨이 IP> \
+INFERENCE_TOKENS_FILE=/안전한/경로/model-runtime-tokens INFERENCE_RELEASE_TOKEN_FILE=/안전한/경로/gate-read-model-serving \
 INFERENCE_CA_FILE=/안전한/경로/openit-root.crt \
 INFERENCE_BIND=<이 서버의 사설 인터페이스 주소> \
 docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
