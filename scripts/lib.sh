@@ -111,7 +111,7 @@ ensure_pg_tls_volume() { # ensure_pg_tls_volume <프로젝트>: 영역 DB 마다
 gen_stack_files() {
   local project=$1 cfg
   cfg=$(mktemp); rm -f "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}"   # 이전 덧씌우기가 아래 config 입력에 섞이지 않게
-  GEN_STACK_ACTIVE=1 dc "$project" --profile jobs config --format json > "$cfg" || { rm -f "$cfg"; return 1; }
+  GEN_STACK_ACTIVE=1 dc "$project" --profile jobs --profile local-inference config --format json > "$cfg"   # local-inference: 외부 추론 모드에서 꺼진 model-serving 의 선언도 만든다(다른 호스트의 추론 서버가 같은 선언을 쓴다) || { rm -f "$cfg"; return 1; }
   mkdir -p "$DEPLOY_ROOT/state"
   "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-jobs.py" --out "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}" --compose-json "$cfg" >/dev/null || { rm -f "$cfg"; return 1; }
   "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-gateways.py" --out "${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}" --compose-json "$cfg" >/dev/null || { rm -f "$cfg"; return 1; }

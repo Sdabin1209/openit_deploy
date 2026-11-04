@@ -5,8 +5,8 @@
 #   --clean    이 시험이 만든 자원(deploy-e2e-loc* 프로젝트, state/loc-test)만 지운다
 # 구성(샌드박스 방식: 운영 compose 에 시험용 문을 내지 않는다):
 #   (가) 제품 = compose.yaml + compose.external-inference.yaml (운영 모드 그대로. compose.test.yaml 을 쓰지 않는다). 게이트웨이 TLS 포트만 호스트에 게시한다(Docker 배정).
-#   (나) 다른 호스트 = compose.inference.yaml 을 별도 프로젝트로. RELEASE_URL 은 게이트웨이 HTTPS 주소, CA 는 scripts/export-gateway-ca.sh 로 꺼낸 파일, 토큰은 게이트웨이 추론 토큰.
-# 확인: (1) 추론 서버 /readyz 가 release 도달 OK (2) 게이트웨이의 기계 토큰 경로가 release-gate 까지 닿는다(Caddy 의 404/401 이 아니라 release-gate 의 응답)
+#   (나) 다른 호스트 = compose.inference.yaml + compose.inference.samehost.yaml 을 별도 프로젝트로. 길은 R1.5: release-gate 영역 게이트웨이로 바로(외부 망 <P>_inference-in 의 별칭 release-gate), 루트는 OUT-FILE, 토큰은 release-gate 읽기 토큰.
+# 확인: (1) 추론 서버 /readyz 가 release 도달 OK (2) 추론 서버와 같은 망에서 https://release-gate 가 release-gate 의 응답을 낸다(200/404 JSON, 토큰 없음·틀린 토큰 401)
 #       (3) 음성: 사람 계정(승인자)의 GET /v1/releases/* 는 404, 토큰 없음·틀린 토큰은 401  (4) 서버 자신의 클라이언트가 HTTPS+추론 토큰으로 게이트웨이를 거쳐 release-gate 의 응답(NOT_FOUND)까지 받는다. 실제 번들 적재는 이 시험이 릴리스를 만들지 않아 확인하지 않는다(미확인)
 # 바인드: 컨테이너가 host.docker.internal(host-gateway)로 호스트 게시 포트에 닿아야 한다. 127.0.0.1 -> docker 기본 브리지 게이트웨이 주소 -> 0.0.0.0 순으로 시도하고, 닿는 가장 좁은 것을 쓴다.
 #   넓은 쪽으로 올라가면 사유를 출력한다. 열려 있는 것은 시험이 도는 동안뿐이다(trap 이 프로젝트를 지운다). 호스트 포트는 Docker 가 배정한다(이 스크립트가 고르지 않는다; 임시 레지스트리만 registry.sh 방식).
@@ -73,7 +73,7 @@ inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
   # 이 변수들은 "다른 호스트" 쪽 compose 의 환경이다(제품 쪽에는 없다). fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험 전용 표시, model-runtime ADR 0009)
   INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" \
   INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$SCP" INFERENCE_TLS_NAME=host.docker.internal INFERENCE_GATEWAY_IMAGE="$SC_IMG" INFERENCE_EXPOSURE_FILE="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/model-serving/exposure.json" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott" \
-  INFERENCE_CA_FILE="$W/gateway-ca.crt" INFERENCE_RELEASE_NETWORK="${P}_inference-in" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
+  INFERENCE_CA_FILE="$W/pki/root_ca.crt" INFERENCE_RELEASE_NETWORK="${P}_inference-in" INFERENCE_BACKEND=fake INFERENCE_ALLOW_FAKE=1 INFERENCE_PORT= INFERENCE_BIND=$BIND \
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/compose.inference.samehost.yaml" "$@" ); }
 
 PAUSE_IMG=$(sed -n 's/^PAUSE_IMAGE=//p' "$DEPLOY_LOCK"); STEP_IMG=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/step-ca@$STEP_CA_DIGEST" ); SC_IMG=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/area-gateway@$AREA_GATEWAY_DIGEST" )
@@ -132,12 +132,10 @@ chk "release-gate 는 호스트에 게시되지 않는다" test -z "$("$DOCKER" 
 # ---- 확인. 호스트에서 게이트웨이 TLS 포트를 CA 로 검증해 부른다(--resolve: 인증서 이름 host.docker.internal 을 게시 주소로)
 CA="$W/gateway-ca.crt"; GW="https://host.docker.internal:$GWPORT"; RES="host.docker.internal:$GWPORT:$BIND"
 [ "$BIND" = 0.0.0.0 ] && RES="host.docker.internal:$GWPORT:127.0.0.1"
-INF_TOK_FILE="$SECRETS_DIR/tokens/gateway-inference-token"
 gw_code() { # gw_code <경로> [curl 인자...] -> HTTP 코드 (본문은 $W/body)
   local path=$1; shift
   curl -sS --max-time 20 --cacert "$CA" --resolve "$RES" -o "$W/body" -w '%{http_code}' "$@" "$GW$path" 2>/dev/null
 }
-gw_inf() { gw_code "$1" -H "Authorization: Bearer $(tr -d '\r\n' < "$INF_TOK_FILE")"; }   # 토큰은 인자 목록에 값으로 들어가므로 프로세스 목록에 보인다: 시험 샌드박스의 시험 토큰이라 허용한다
 is() { [ "$(eval "$1")" = "$2" ]; }
 
 # 추론 서버의 사이드카 인증서는 이름(host.docker.internal) 하나다: IP 로 부르면 SNI 가 맞는 사이트가 없어 TLS 가 끊긴다(측정함: tlsv1 alert internal error). 이름으로 부르고 --resolve 로 게시 주소를 준다
@@ -148,15 +146,25 @@ READY=$(curl -sS --max-time 10 "$MSURL/readyz" --resolve "$MSRES" --cacert "$W/p
 echo "  /readyz: $(echo "$READY" | cut -c1-300)"
 chk "추론 서버가 게이트웨이(HTTPS, 신뢰 CA)로 release 에 닿는다 (/readyz 에 release 도달 실패 사유가 없다)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);t=json.dumps(d,ensure_ascii=False);sys.exit(1 if \"닿지 못한다\" in t else 0)"' _ "$READY"
 
-echo "== 2. 기계 토큰 경로가 release-gate 까지 닿는다"
-C=$(gw_inf /v1/active-pointer); echo "  GET /v1/active-pointer (추론 토큰) -> $C"
+echo "== 2. 추론 서버 길: release-gate 영역 게이트웨이로 바로(R1.5, 외부 망 inference-in 의 별칭 release-gate)"
+RGTOK=$(tr -d '\r\n' < "$SECRETS_DIR/tokens/gate-read-model-serving")
+rg_code() { # rg_code <경로> [토큰] -> HTTP 코드(본문은 $W/body). 추론 서버와 같은 망(${P}_inference-in)의 컨테이너에서 https://release-gate 를 OUT-FILE 루트로 검증해 부른다
+  "$DOCKER" run --rm --network "${P}_inference-in" -v "$W/pki/root_ca.crt:/root_ca.crt:ro" -e SSL_CERT_FILE=/root_ca.crt -e RGTOK="${2:-}" "$UTIL" python -c "
+import os, sys, urllib.request, urllib.error
+r = urllib.request.Request('https://release-gate' + sys.argv[1])
+if os.environ.get('RGTOK'): r.add_header('Authorization', 'Bearer ' + os.environ['RGTOK'])
+try: resp = urllib.request.urlopen(r, timeout=15); code, body = resp.status, resp.read()
+except urllib.error.HTTPError as e: code, body = e.code, e.read()
+open('/dev/stderr', 'wb').write(body[:2000]); print(code)" "$1" 2>"$W/body" | tail -1
+}
+C=$(rg_code /v1/active-pointer "$RGTOK"); echo "  GET /v1/active-pointer (release-gate 읽기 토큰) -> $C"
 chk "active-pointer 가 release-gate 에서 온다(200, 또는 활성 릴리스가 없으면 release-gate 의 404 JSON)" bash -c '[ "$1" = 200 ] || { [ "$1" = 404 ] && python3 -c "import json,sys;json.load(open(sys.argv[1]))" "$2"; }' _ "$C" "$W/body"
-C=$(gw_inf /v1/releases/does-not-exist); echo "  GET /v1/releases/does-not-exist (추론 토큰) -> $C"
-chk "릴리스 조회가 release-gate 에서 온다(404 이고 본문이 JSON: Caddy 의 평문 404 가 아니다)" bash -c '[ "$1" = 404 ] && python3 -c "import json,sys;json.load(open(sys.argv[1]))" "$2"' _ "$C" "$W/body"
-C=$(gw_inf /v1/releases/does-not-exist/bundle); echo "  GET /v1/releases/does-not-exist/bundle (추론 토큰) -> $C"
+C=$(rg_code /v1/releases/does-not-exist "$RGTOK"); echo "  GET /v1/releases/does-not-exist -> $C"
+chk "릴리스 조회가 release-gate 에서 온다(404 이고 본문이 JSON)" bash -c '[ "$1" = 404 ] && python3 -c "import json,sys;json.load(open(sys.argv[1]))" "$2"' _ "$C" "$W/body"
+C=$(rg_code /v1/releases/does-not-exist/bundle "$RGTOK"); echo "  GET /v1/releases/does-not-exist/bundle -> $C"
 chk "번들 조회가 release-gate 에서 온다(404 JSON)" bash -c '[ "$1" = 404 ] && python3 -c "import json,sys;json.load(open(sys.argv[1]))" "$2"' _ "$C" "$W/body"
-chk "추론 토큰으로 POST /v1/activate 는 사람 인증 블록에 막힌다(401)" is "gw_code /v1/activate -X POST -H \"Authorization: Bearer \$(tr -d '\\r\\n' < $INF_TOK_FILE)\" -H 'Content-Type: application/json' -d '{}'" 401
-chk "추론 토큰으로 GET /v1/releases (목록)는 열리지 않는다(사람 인증 블록 401)" is "gw_inf /v1/releases" 401
+chk "토큰 없이는 release-gate 가 401 로 거절한다(받는 영역이 직접 대조)" is "rg_code /v1/active-pointer" 401
+chk "틀린 토큰은 401" is "rg_code /v1/active-pointer wrong" 401
 
 echo "== 3. 음성 확인"
 # (ㄱ) 사람 세션: E2E 단계 5u·test-idp-smoke.sh 와 같은 OIDC 로그인 도우미(scripts/e2e_sandbox.py oidc_login: Keycloak 로그인 -> _openit_session 쿠키)로 승인자 계정 세션을 만든다
@@ -171,14 +179,12 @@ print("; ".join(f"{k}={v}" for k, v in jar.items() if k.startswith("_openit_sess
 PY
 ) 2>"$W/oidc.err" || { tail -4 "$W/oidc.err" | sed "s/^/    /" >&2; echo "  로그인 대상 $GATEWAY_PUBLIC_URL, 게시 포트 $GWPORT, 컨테이너 상태:" >&2; "$DOCKER" ps -a --filter "label=com.docker.compose.project=$P" --format "    {{.Names}} {{.Status}}" 2>&1 | grep -E "gateway-1|oauth2-proxy-1|keycloak-1" >&2; "$DOCKER" logs --tail 5 "$P-gateway-1" 2>&1 | cut -c1-240 | sed "s/^/    gw: /" >&2; bail "승인자 OIDC 로그인에 실패했다"; }
 [ -n "$HCOOKIE" ] || bail "승인자 세션 쿠키가 비었다"
-chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
+chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404(공개 입구가 내보내지 않는다)" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
-chk "(ㄴ) 토큰 없이 GET /v1/releases/{id}/bundle 은 401" is "gw_code /v1/releases/does-not-exist/bundle" 401
-chk "(ㄴ) 토큰 없이 GET /v1/active-pointer 는 401" is "gw_code /v1/active-pointer" 401
-chk "(ㄴ) 틀린 토큰으로 GET /v1/releases/{id} 는 401" is "gw_code /v1/releases/does-not-exist -H 'Authorization: Bearer wrong'" 401
-chk "다른 기계 토큰(기기 토큰 형식 아닌 임의 값)으로 active-pointer 는 401" is "gw_code /v1/active-pointer -H 'Authorization: Bearer 0000'" 401
+chk "(ㄴ) 공개 입구에는 기계 토큰 경로가 없다: 읽기 토큰을 붙여도 GET /v1/active-pointer 는 404(3.4.7: 받는 영역이 직접 대조한다)" is "gw_code /v1/active-pointer -H 'Authorization: Bearer $RGTOK'" 404
+chk "(ㄴ) 토큰 없이 GET /v1/releases/{id}/bundle 도 404 (경로 자체가 없다)" is "gw_code /v1/releases/does-not-exist/bundle" 404
 
-echo "== 4. 추론 서버 자신의 클라이언트가 게이트웨이(HTTPS + 추론 토큰)를 거쳐 release-gate 까지 간다"
+echo "== 4. 추론 서버 자신의 클라이언트가 release-gate 영역 게이트웨이(HTTPS, 읽기 토큰)로 release-gate 까지 간다"
 # 왜 없는 릴리스인가: 서버는 적재 신호(PUT /v1/releases/{id})를 받으면 계약 클라이언트로 GET /v1/releases/{id}(/bundle)를 한다. 릴리스를 만들려면 문항 세트·모델 패키지·승인·활성화가 필요한데
 # 운영 compose 에 시험용 문 없이는 게이트웨이로 할 수 없다(릴리스 생성은 e2e.sh 단계 1~4 가 덮는다). 그래서 이 시험은 번들이 실제로 적재되는 것까지는 보지 않는다(미확인).
 # 없는 ID 면 release-gate 의 NOT_FOUND 가 서버의 FAILED(code NOT_FOUND)로 돌아온다. TLS 검증 실패·토큰 거부·경로 차단이면 다른 코드(UNAVAILABLE/PERMISSION_DENIED 등)가 나오므로 구별된다.
@@ -188,7 +194,6 @@ sleep 3
 ST=$(curl -sS --max-time 10 -H "Authorization: Bearer $MS_TOK" "$MSURL/v1/releases/rel-loc-test-none" --resolve "$MSRES" --cacert "$W/pki/root_ca.crt" 2>&1)
 echo "  서버의 상태: $(echo "$ST" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('state'), (d.get('error') or {}).get('code'), (d.get('error') or {}).get('details'))" 2>&1)"
 chk "서버가 release-gate 의 NOT_FOUND 를 받았다(FAILED, code NOT_FOUND: 게이트웨이 TLS·토큰·경로가 모두 통과)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get(\"state\")==\"FAILED\" and d[\"error\"][\"code\"]==\"NOT_FOUND\" else 1)"' _ "$ST"
-chk "게이트웨이 접근 기록에 서버의 GET /v1/releases/{id}/bundle 이 있다(Python-urllib, 상태 404)" bash -c '"$1" logs "$2" 2>&1 | grep -q "\"uri\":\"/v1/releases/rel-loc-test-none/bundle\".*Python-urllib"' _ "$DOCKER" "$P-gateway-1"
 echo "  (미확인) 실제 번들 적재: 이 시험은 릴리스를 만들지 않는다. 활성 릴리스가 있는 환경에서는 docs/runbook.md 의 원격 추론 서버 절 확인 순서로 본다"
 echo; echo "위치 독립 시험: PASS $PASS / FAIL $FAIL (게시 바인드 $BIND)"
 [ $KEEP = 1 ] && echo "(--keep: 자원을 남겼다. 지우기: scripts/test-inference-location.sh --clean)"

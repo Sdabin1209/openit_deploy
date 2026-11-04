@@ -4,11 +4,18 @@
 overlay)도 사이드카를 둔 앱 서비스에 이 키를 두면 안 된다 — <서비스>-net 에 둔다. 사용: python3 scripts/test_overlay_netns_keys.py"""
 import glob, pathlib, unittest
 import yaml
+
+
+class _L(yaml.SafeLoader):   # compose 의 !reset 태그를 읽는다
+    pass
+
+
+_L.add_constructor("!reset", lambda l, n: None)
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FORBIDDEN = ("networks", "ports", "extra_hosts", "dns", "hostname", "mac_address", "sysctls")
-STANDALONE = {"compose.inference.yaml", "compose.registry.yaml", "compose.backup-target.yaml", "test/split/compose.split.yaml"}   # compose.yaml 에 겹치지 않는 독립 파일(자기 서비스 정의)
+STANDALONE = {"compose.inference.yaml", "compose.inference.samehost.yaml", "compose.inference.remote.yaml", "compose.registry.yaml", "compose.backup-target.yaml", "test/split/compose.split.yaml"}   # compose.yaml 에 겹치지 않는 독립 파일(자기 서비스 정의)
 BASE = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
-APPS = sorted(n[:-4] for n in BASE if n.endswith("-tls"))
+APPS = sorted(n[:-3] if n.endswith("-gw") else n[:-4] for n in BASE if n.endswith(("-gw", "-tls")))   # 영역 게이트웨이(-gw) 또는 TLS 사이드카(-tls)를 둔 앱
 
 
 class T(unittest.TestCase):
@@ -22,7 +29,7 @@ class T(unittest.TestCase):
             if str(pathlib.Path(f).relative_to(ROOT)) in STANDALONE:
                 continue
             try:
-                d = yaml.safe_load(open(f, encoding="utf-8")) or {}
+                d = yaml.load(open(f, encoding="utf-8"), Loader=_L) or {}
             except yaml.YAMLError:
                 continue
             for n, v in (d.get("services") or {}).items():

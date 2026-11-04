@@ -9,6 +9,13 @@ import pathlib, re, sys
 
 import yaml
 
+
+class _L(yaml.SafeLoader):   # compose 의 !reset 태그(compose.inference.samehost.yaml)를 읽는다
+    pass
+
+
+_L.add_constructor("!reset", lambda l, n: None)
+
 ROOT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parents[1]
 PORT_OK = {("compose.yaml", "gateway"), ("compose.inference.yaml", "model-serving-net"), ("compose.step-ca-publish.yaml", "step-ca")}   # step-ca 게시는 서버를 나눌 때만 더하는 overlay(ADR 0060)
 # 운영자용 관찰 면(헤드 결정 2026-11-01): 시험용 문이 아니라 운영자가 보는 화면·도구다. 파일·서비스를 이름으로 허용하고, 바인드가 127.0.0.1 이어야 한다(조건 검사).
@@ -25,7 +32,7 @@ NO_FAKE = ("compose.yaml", "compose.external-inference.yaml")
 
 
 def load(p: pathlib.Path) -> dict:
-    d = yaml.safe_load(p.read_text(encoding="utf-8"))
+    d = yaml.load(p.read_text(encoding="utf-8"), Loader=_L)
     return d if isinstance(d, dict) else {}
 
 
