@@ -108,3 +108,4 @@ run-self-checks 집계 (77=SKIP 은 PASS 가 아니고 묶음을 0 으로 끝내
 영역 백업·복구 잡 6개 판정 도구(BackupJobResult, 변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_backup_jobs.py"
 시험 드라이버의 영역 호출은 같은 망 클라이언트 컨테이너(exec_py): 망·토큰 파일·*_FILE 환경만·SELF 치환·정리, 다른 망은 도달 안 됨 (Docker 필요) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_exec_py_docker.py"
 공개 입구 루트 인증서는 출력 마운트(INGRESS_ROOT_EXPORT_DIR 의 볼륨)에서 읽는다, 이미지 부명령 호출 없음 (Docker 필요) :: bash "$DEPLOY_ROOT/scripts/test-export-gateway-ca.sh"
+시험 사용자 등록 설정이 계약 IdentityUsersConfig 를 통과하고 암호 값이 설정에 없다 (변이: 모르는 그룹·암호 파일 없음) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_idp_users_config.py"

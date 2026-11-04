@@ -12,7 +12,8 @@ from openit_deploy.wiring.call import call
 
 # compose 잡 서비스 -> 이미지 라벨 안의 잡 이름. 잡 이름은 영역이 선언한다(영역이 바꾸면 여기 한 곳이 바뀐다). 여기 없는 job-* 서비스는 거부한다
 # 선언에 config 가 있는 잡이 마운트할 호스트 쪽 설정 파일(deploy 가 정한다. 컨테이너 안 경로는 영역이 선언한다)
-CONFIG_SOURCES = {"job-ops-feedback": "${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}"}
+CONFIG_SOURCES = {"job-ops-feedback": "${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}",
+                  "job-identity-register-users": "${IDENTITY_USERS_CONFIG:-./state/identity-users.json}"}
 JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge": "purge", "job-release-gate-prune": "prune",
              "job-release-gate-collect": "collect", "job-ops-feedback": "ops-feedback-job",
              "job-survey-backup": "backup", "job-question-authoring-backup": "backup", "job-release-gate-backup": "backup", "job-ops-feedback-backup": "ops-feedback-backup",
@@ -21,7 +22,8 @@ JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge"
              "job-survey-restore": "restore", "job-question-authoring-restore": "restore", "job-release-gate-restore": "restore", "job-ops-feedback-restore": "ops-feedback-restore",
              "job-model-registry-restore": "restore", "job-dataset-store-restore": "dataset-restore",
              # 상시 서비스의 일회성 선행 서비스(depends_on service_completed_successfully)도 명령은 이미지 선언에서 온다
-             "ops-feedback-migrate": "ops-feedback-migrate"}
+             "ops-feedback-migrate": "ops-feedback-migrate",
+             "job-identity-register-users": "register-users"}
 
 
 # compose 잡 서비스 -> 그 잡을 띄우는 타이머 파일(config/systemd). 주기는 타이머의 OnUnitActiveSec 이고 잡의 시간 상한은 그 주기보다 짧아야 한다(RUNTIME R9.3: 상한이 주기 이상이면 겹침 방지가 다음 주기를 막는다)
