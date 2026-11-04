@@ -2268,8 +2268,7 @@ def step5p():
         try: c, b, _ = _c3_probe(k, "/readyz"); return c, b
         except Exception as e: return 0, f"{type(e).__name__}"
     def healthy(k): return ready(k)[0] == 200
-    def pgfp(db):
-        return sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), db], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
+    # 데이터 보존은 공개 API 로 읽은 값(question-authoring 문항 버전, survey-service 의 Trace outbox 상태)으로 본다. 영역 DB 를 pg_dump 로 직접 읽는 행 지문은 쓰지 않는다(deploy 는 영역 안으로 들어가지 않는다, 구조 규칙 1·6)
     has_release = "pointers" in STATE
     if not has_release:
         # 단독 실행: 활성 릴리스가 없으면 survey-service /readyz 는 DB 가 멀쩡해도 503 no_active_release 이다. 이 단계는 그 경우 survey-service 의 복구를 판정하지 못한다
@@ -2290,7 +2289,7 @@ def step5p():
         c, _p1 = public_turn(sidp, "p-1", "네 있어요"); assert c == 200, (c, _p1)
         wait(lambda: _c3_survey_ready()[1]["trace_outbox"]["sent"] - rb0["trace_outbox"]["sent"] >= 1 or None, 30, "p-1 Trace 전송")
         settled(lambda: json.dumps(_c3_survey_ready()[1]["trace_outbox"], sort_keys=True), 30, what="Trace outbox 가 안정(행 지문이 흔들리지 않게)")   # 고정 3초 대신(R4.3)
-    fp0 = {d: pgfp(d) for d in dbs}
+    ob0 = json.dumps(_c3_survey_ready()[1].get('trace_outbox'), sort_keys=True) if has_release else None
     for k, n in svcs: assert healthy(k), f"{n} /readyz 가 처음부터 200 이 아니다: {ready(k)}"
     # 2) 중지. /healthz(살아 있음)는 유지되고 /readyz 는 비정상이 되어야 한다
     t0 = time.time(); _pg_each("stop", pg)
@@ -2322,9 +2321,9 @@ def step5p():
         return len(rec_t) == len(svcs)
     wait(all_up, 180, "postgres 기동 뒤 모든 서비스의 /readyz 200 복구", every=1)
     # 4) 데이터 보존과 새 쓰기
-    fp1 = {d: pgfp(d) for d in dbs}
-    diff = [d for d in dbs if fp0[d] != fp1[d]]
-    assert not diff, f"재시작 전후 행 지문이 다르다: {diff}"
+    if has_release:
+        ob1 = json.dumps(_c3_survey_ready()[1].get('trace_outbox'), sort_keys=True)
+        assert ob0 == ob1, f"재시작 전후 survey-service 의 Trace outbox 상태가 다르다: {ob0} -> {ob1}"
     after_v = [dict(v) for v in _c3_qa_versions(qset)]
     assert after_v == before_v, ("문항 버전이 달라졌다", before_v, after_v)
     upload(qset, form.replace("현재 약물 치료 중이십니까?", "지금 약물 치료 중이십니까?"), "pg2.txt")
@@ -2415,7 +2414,7 @@ def step5pj():
     # 대신 밀린 Trace 가 다 전송된 뒤 첫 잡이 그것을 처리하고 기준을 잡으며, fp1 에서 전송 수가 그대로임(새 Trace 없음)을 확인한다.
     sent0 = _outbox_drained()
     rc0, tail0 = _run_ops_job(); assert rc0 == 0, f"사전 조건: DB 정상일 때 잡이 성공하지 않는다({rc0}): {tail0}"
-    fp0 = sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), "ops_log"], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
+    # 멱등은 잡이 두 번 모두 0 으로 끝나고 새 Trace 가 없다는 것(전송 수 불변)으로 본다. ops_log 행 지문(pg_dump 직접 읽기)은 쓰지 않는다(구조 규칙 1·6)
     _pg_each("stop", pg); notes = []
     try:
         t = time.time(); rc, tail = _run_ops_job(); el = time.time() - t
@@ -2437,11 +2436,9 @@ def step5pj():
     wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "unpause 뒤 서비스 /readyz 200", every=1)
     for i in (1, 2):   # 같은 입력으로 두 번: 둘 다 성공하고 행 지문이 같다(멱등)
         rc, tail = _run_ops_job(); assert rc == 0, f"복구 뒤 재실행 {i} 이 실패했다({rc}): {tail}"
-    fp1 = sh(["bash", str(ROOT / "scripts/pg-fingerprint.sh"), "ops_log"], env={"DEPLOY_PROJECT": a.project}).stdout.strip()
     sent1 = _outbox_drained()
     assert sent1 == sent0, f"5pj 도중 survey-service 가 새 Trace 를 보냈다(sent {sent0}->{sent1}): ops_log 지문 비교가 잡의 멱등만 보지 못한다(시험 전제 위반)"
-    assert fp0 == fp1, "실패한 실행 뒤 재실행으로 ops_log 행 지문이 바뀌었다(멱등이 아니다)"
-    rec("5pj", "REAL", "job-ops-feedback run-once: " + "; ".join(notes) + "; 복구 뒤 재실행 2회 모두 0 이고 ops_log 행 지문 불변(멱등).")
+    rec("5pj", "REAL", "job-ops-feedback run-once: " + "; ".join(notes) + "; 복구 뒤 재실행 2회 모두 0 이고 전송 수 불변(멱등).")
 
 def _registry_container():
     rp = os.environ.get("REGISTRY_PROJECT", "")

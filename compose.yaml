@@ -578,7 +578,6 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: survey-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["survey-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
@@ -620,7 +619,6 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: question-authoring-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["question-authoring-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
@@ -662,7 +660,6 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: ops-feedback-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["ops-feedback-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
@@ -704,7 +701,6 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: release-gate-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["release-gate-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
@@ -746,7 +742,6 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["identity-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
@@ -1137,7 +1132,7 @@ services:
     pids_limit: ${OPS_FEEDBACK_MIGRATE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
-    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]   # 명령은 이미지 라벨 io.openit.jobs 의 잡 ops-feedback-migrate 에서 온다(영역이 앎, CONVENTIONS 13절 3.4.17)
+    # 명령은 이미지 라벨 io.openit.jobs 의 잡 ops-feedback-migrate 에서 온 덧씌우기 파일(scripts/gen-jobs.py)이 준다: deploy 가 영역 명령을 적지 않는다(CONVENTIONS 13절 3.4.17)
     environment:
       OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn           # 소유자 계정(DDL)
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn
