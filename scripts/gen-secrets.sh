@@ -46,7 +46,7 @@ gen_idp
 # 한 영역의 자격으로 다른 영역의 저장소를 읽지 못하게 암호가 다르다. 저장소 쪽 htpasswd 는 이 자격들에서 만든다(아래, docker 가 있을 때)
 gen_backup() {
   local a
-  for a in survey qa ops gate models datasets gateway pki; do
+  for a in survey qa ops gate models datasets gateway pki identity; do
     [ -s "$D/tokens/backup-$a-credentials" ] || ( umask 077; printf '%s:%s\n' "$a" "$(python3 -c 'import secrets;print(secrets.token_hex(24),end="")')" > "$D/tokens/backup-$a-credentials" ); secret_fix "$D/tokens/backup-$a-credentials" "backup-$a-credentials"
     tok "backup-$a-repo-password" >/dev/null
   done

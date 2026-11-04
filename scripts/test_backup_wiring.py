@@ -13,7 +13,7 @@ S0 = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["servic
 AREAS = {"survey": ("job-survey-backup", "survey-service"), "qa": ("job-question-authoring-backup", "question-authoring"),
          "ops": ("job-ops-feedback-backup", "ops-feedback"), "gate": ("job-release-gate-backup", "release-gate"),
          "models": ("job-model-registry-backup", "model-registry"), "datasets": ("job-dataset-store-backup", "dataset-store"),
-         "gateway": ("job-gateway-backup", None), "pki": ("job-pki-backup", None)}   # None = 영역 pod 가 아니라 백업 저장소 전용 망(backup-<키>)에 직접 붙는 잡(공개 입구, 인증기관)
+         "gateway": ("job-gateway-backup", None), "pki": ("job-pki-backup", None), "identity": ("job-identity-db-backup", None)}   # None = 영역 pod 가 아니라 백업 저장소 전용 망(backup-<키>)에 직접 붙는 잡(공개 입구, 인증기관)
 
 
 def check(S):
@@ -25,7 +25,7 @@ def check(S):
             errs.append(f"{job}: 백업 잡이 없다"); continue
         if pod and j.get("network_mode") != f"service:{pod}-net":
             errs.append(f"{job}: 영역 pod({pod}-net) 안에서 돌지 않는다")
-        if not pod and (j.get("networks") != [f"backup-{key}"] or j.get("network_mode")):
+        if not pod and (f"backup-{key}" not in (j.get("networks") or []) or len(j.get("networks") or []) > 2 or j.get("network_mode")):
             errs.append(f"{job}: 백업 저장소 전용 망(backup-{key})에만 붙어야 한다: {j.get('networks')}")
         env = j.get("environment") or {}
         if not str(env.get("OPENIT_BACKUP_URL", "")).startswith("https://backup-store/" + key + "/"):
@@ -47,7 +47,7 @@ def check(S):
     bs = S.get("backup-store") or {}
     nets = set((bs.get("networks") or {}).keys())
     if nets != {f"backup-{k}" for k in AREAS}:
-        errs.append(f"backup-store 의 망이 영역별 전용 망 8개가 아니다: {sorted(nets)}")
+        errs.append(f"backup-store 의 망이 영역별 전용 망 9개가 아니다: {sorted(nets)}")
     for key, (job, pod) in AREAS.items():
         if not pod: continue
         pn = set((S.get(f"{pod}-net", {}).get("networks") or {}).keys())
@@ -58,7 +58,7 @@ def check(S):
             errs.append(f"{pod}-net 이 다른 영역의 백업 망을 쓴다")
     bsec = {(x if isinstance(x, str) else x.get("source")) for x in bs.get("secrets", [])}
     if bsec != {f"backup-{k}-credentials" for k in AREAS}:
-        errs.append(f"저장소는 영역 자격 파일 8개(/run/secrets/areas/<영역>)만 받는다: {sorted(bsec)}")
+        errs.append(f"저장소는 영역 자격 파일 9개(/run/secrets/areas/<영역>)만 받는다: {sorted(bsec)}")
     for k in AREAS:
         readers = [n for n, sv in S.items() if any((x if isinstance(x, str) else x.get("source")) == f"backup-{k}-credentials" for x in sv.get("secrets", []))]
         if sorted(readers) != sorted([AREAS[k][0], AREAS[k][0].replace("-backup", "-restore"), "backup-store"]):

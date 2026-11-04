@@ -107,6 +107,8 @@ networks:
     internal: true
   backup-pki:   # 백업 저장소 <-> 인증기관 백업 잡 만
     internal: true
+  backup-identity:   # 백업 저장소 <-> 사람 인증 DB 백업 잡 만
+    internal: true
   mon-survey-service:   # 감시(prometheus·blackbox·json)가 survey-service 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
     internal: true
   mon-question-authoring:   # 감시(prometheus·blackbox·json)가 question-authoring 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
@@ -215,6 +217,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/backup-pki-credentials
   backup-pki-repo-password:
     file: ${SECRETS_DIR:-./secrets}/tokens/backup-pki-repo-password
+  backup-identity-credentials:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-identity-credentials
+  backup-identity-repo-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-identity-repo-password
   pg-superuser-survey:
     file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-survey
   pg-superuser-qa:
@@ -784,6 +790,7 @@ services:
       - {source: backup-datasets-credentials, target: areas/datasets}
       - {source: backup-gateway-credentials, target: areas/gateway}
       - {source: backup-pki-credentials, target: areas/pki}
+      - {source: backup-identity-credentials, target: areas/identity}
     volumes: ["backup-store-data:/data", "certs-backup-store:/run/tls:ro"]   # /run/secrets/areas/<영역>: 내용 '<영역>:<암호>', 파일 이름 = 사용자 이름(platform 입력)
     networks:
       backup-survey: {aliases: [backup-store]}
@@ -794,6 +801,7 @@ services:
       backup-datasets: {aliases: [backup-store]}
       backup-gateway: {aliases: [backup-store]}
       backup-pki: {aliases: [backup-store]}
+      backup-identity: {aliases: [backup-store]}
     depends_on:
       backup-store-cert: {condition: service_healthy}
 
@@ -1697,6 +1705,42 @@ services:
     environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/pki/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-pki-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-pki-repo-password, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, STEP_CA_HOME: /home/step}
     secrets: [backup-pki-credentials, backup-pki-repo-password]
     networks: [backup-pki]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp"]
+
+  job-identity-db-backup:   # 사람 인증 DB(identity-db)의 백업 잡(RUNTIME R10.1, platform identity-db 이미지의 잡 backup, needs postgres): 접속 문자열 파일(IDENTITY_DB_URL_FILE)로 DB 에 닿고 백업 저장소 전용 망(backup-identity)으로 직접 닿는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 에서 온다
+    profiles: ["jobs"]
+    mem_limit: ${JOB_IDENTITY_DB_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-db@${IDENTITY_DB_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, IDENTITY_DB_URL_FILE: /run/secrets/identity-db-url, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
+    secrets: [identity-db-url, backup-identity-credentials, backup-identity-repo-password]
+    networks: [db-identity, backup-identity]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp"]
+
+  job-identity-db-restore:   # 사람 인증 DB(identity-db)의 복구 잡(RUNTIME R10.1, platform identity-db 이미지의 잡 restore, needs postgres): 접속 문자열 파일(IDENTITY_DB_URL_FILE)로 DB 에 닿고 백업 저장소 전용 망(backup-identity)으로 직접 닿는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 에서 온다; 복구는 identity 를 멈춘 뒤 사람이 돌린다(주기 없음)
+    profiles: ["jobs"]
+    mem_limit: ${JOB_IDENTITY_DB_RESTORE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-db@${IDENTITY_DB_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, IDENTITY_DB_URL_FILE: /run/secrets/identity-db-url, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
+    secrets: [identity-db-url, backup-identity-credentials, backup-identity-repo-password]
+    networks: [db-identity, backup-identity]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true

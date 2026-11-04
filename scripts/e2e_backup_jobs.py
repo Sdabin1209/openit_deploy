@@ -10,7 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # 영역 -> compose 잡 서비스 이름 뒤쪽(job-<이름>-backup / -restore). 잡 이름은 영역이 선언하고 compose 서비스 이름은 deploy 가 정한다(gen-jobs.py JOB_NAMES)
 AREAS = {"survey-service": "survey", "question-authoring": "question-authoring", "ops-feedback": "ops-feedback", "release-gate": "release-gate",
          "model-lab": "model-registry", "synthetic-data": "dataset-store",
-         "public-ingress": "gateway", "step-ca": "pki"}   # platform 의 데이터 주인 잡: gateway-data(공개 입구), pki-ca(인증기관)
+         "public-ingress": "gateway", "step-ca": "pki", "identity-db": "identity-db"}   # platform 의 데이터 주인 잡: gateway-data(공개 입구), pki-ca(인증기관)
 NO_E2E_RESTORE = {"public-ingress", "step-ca"}
 # E2E 의 복구는 영역 데이터 볼륨을 지우고 스택을 다시 올린 뒤 돌린다. 인증기관·공개 입구는 지우면 루트가 새로 만들어져(복구 전에 이미 발급이 일어난다) 이 흐름으로는 복구를 검증할 수 없어 복구 잡을 이 도구의 기본 목록에서 뺀다(--areas 로 지정하면 돌린다). 백업 잡은 모두 돈다
 

@@ -26,7 +26,7 @@ class T(unittest.TestCase):
         for kind in seen:
             J.main([kind], runner=lambda svc, kind=kind: (seen[kind].append(svc), fake()(svc))[1])
         self.assertIn("job-gateway-backup", seen["backup"]); self.assertIn("job-pki-backup", seen["backup"])
-        self.assertNotIn("job-gateway-restore", seen["restore"]); self.assertEqual(len(seen["restore"]), 6)
+        self.assertNotIn("job-gateway-restore", seen["restore"]); self.assertEqual(len(seen["restore"]), 7)
 
     def test_unknown_area_is_usage_error(self): self.assertEqual(J.main(["backup", "--areas", "nope"], runner=fake()), 2)
 

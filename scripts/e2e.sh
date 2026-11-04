@@ -494,17 +494,18 @@ if has_s9 backup; then
 sect "단계 9: 영역 백업·복구 (영역이 자기 백업·복구 잡을 돌린다, RUNTIME R10.1·DATA_OWNERSHIP)"
 # deploy 는 영역 데이터를 직접 꺼내지 않는다(구조 규칙 1·6, 계약 3.4.16): 영역의 백업·복구 잡(io.openit.jobs, compose job-*-backup / job-*-restore)을 돌리고 결과는 마지막 줄의 BackupJobResult(계약 검증)로 판정한다.
 # 복구한 데이터는 공개 API 로 다시 읽어 대조한다(e2e_verify_restore.py). 영역 DB 를 직접 읽는 지문(pg-fingerprint.sh)·docker exec psql 은 쓰지 않는다.
-# 범위: survey-service, question-authoring, ops-feedback, release-gate(DB 영역 4개), model-lab(models-data), synthetic-data(datasets-data), 백업은 platform 의 공개 입구(gateway-data)·인증기관(pki-ca)도 돈다(그 둘의 복구는 이 흐름에서 검증할 수 없다: e2e_backup_jobs.py NO_E2E_RESTORE). identity(Keycloak) DB 는 platform 이 백업 잡을 선언하면 더한다(아직 선언이 없어 이 구간 밖이다).
-chk "백업 잡 8개(영역 6 + 공개 입구·인증기관) (BackupJobResult status=ok)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_backup_jobs.py" backup --project "$PROJECT"
-NEED+=("백업 잡 8개(영역 6 + 공개 입구·인증기관) (BackupJobResult status=ok)")   # 백업이 실패하면 아래 데이터 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
+# 범위: survey-service, question-authoring, ops-feedback, release-gate(DB 영역 4개), model-lab(models-data), synthetic-data(datasets-data), 백업은 platform 의 공개 입구(gateway-data)·인증기관(pki-ca)도 돈다(그 둘의 복구는 이 흐름에서 검증할 수 없다: e2e_backup_jobs.py NO_E2E_RESTORE). identity-db(Keycloak 계정·역할)는 platform 의 identity-db 이미지 잡이다(복구는 identity 를 멈춘 뒤).
+chk "백업 잡 9개(영역 6 + 사람 인증 DB + 공개 입구·인증기관) (BackupJobResult status=ok)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_backup_jobs.py" backup --project "$PROJECT"
+NEED+=("백업 잡 9개(영역 6 + 사람 인증 DB + 공개 입구·인증기관) (BackupJobResult status=ok)")   # 백업이 실패하면 아래 데이터 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
 dc "$PROJECT" down >/dev/null 2>&1
-AREA_VOLUMES="survey-db-data question-authoring-db-data ops-feedback-db-data release-gate-db-data gate-data models-data datasets-data"   # 영역 데이터 볼륨(compose 볼륨 이름). identity 는 이 구간 밖
-chk_dep "백업 잡 8개(영역 6 + 공개 입구·인증기관) (BackupJobResult status=ok)" "볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" bash -c "$DOCKER volume rm $(for _v in $AREA_VOLUMES; do printf '%s_%s ' "$PROJECT" "$_v"; done) >/dev/null"
+AREA_VOLUMES="survey-db-data question-authoring-db-data ops-feedback-db-data release-gate-db-data identity-db-data gate-data models-data datasets-data"   # 영역 데이터 볼륨(compose 볼륨 이름)
+chk_dep "백업 잡 9개(영역 6 + 사람 인증 DB + 공개 입구·인증기관) (BackupJobResult status=ok)" "볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" bash -c "$DOCKER volume rm $(for _v in $AREA_VOLUMES; do printf '%s_%s ' "$PROJECT" "$_v"; done) >/dev/null"
 chk_dep "볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" "빈 볼륨에서 스택 기동" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
-chk_dep "빈 볼륨에서 스택 기동" "영역 복구 잡 6개 (BackupJobResult status=ok)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_backup_jobs.py" restore --project "$PROJECT"
+chk_dep "빈 볼륨에서 스택 기동" "사람 인증(identity) 정지: 복구는 identity 를 멈춘 뒤 돌린다(platform identity-db 잡 선언)" dc "$PROJECT" stop identity
+chk_dep "사람 인증(identity) 정지: 복구는 identity 를 멈춘 뒤 돌린다(platform identity-db 잡 선언)" "영역 복구 잡 7개 (BackupJobResult status=ok)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_backup_jobs.py" restore --project "$PROJECT"
 # 복구한 데이터를 서비스가 다시 읽게 영역 서비스만 다시 시작한다(compose 재시작, 영역 안으로 들어가지 않는다)
-chk_dep "영역 복구 잡 6개 (BackupJobResult status=ok)" "복구 뒤 영역 서비스 재시작" dc "$PROJECT" restart survey-service question-authoring ops-feedback release-gate model-registry dataset-store
-NEED+=("볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" "빈 볼륨에서 스택 기동" "영역 복구 잡 6개 (BackupJobResult status=ok)" "복구 뒤 영역 서비스 재시작")
+chk_dep "영역 복구 잡 7개 (BackupJobResult status=ok)" "복구 뒤 영역 서비스 재시작" dc "$PROJECT" restart identity survey-service question-authoring ops-feedback release-gate model-registry dataset-store
+NEED+=("볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" "빈 볼륨에서 스택 기동" "영역 복구 잡 7개 (BackupJobResult status=ok)" "복구 뒤 영역 서비스 재시작")
 PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 스택을 다시 만들었으니 게이트웨이 호스트 포트를 다시 읽는다
 PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
 chk_dep "단계 1~8" "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
