@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 def certs(path):
     s = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))["services"]
-    return {n: v for n, v in s.items() if n.endswith("-cert") or n == "postgres-cert"}
+    return {n: v for n, v in s.items() if n.endswith("-cert")}
 
 
 class T(unittest.TestCase):
@@ -17,6 +17,11 @@ class T(unittest.TestCase):
             c = certs(path)
             self.assertTrue(c, path)
             for n, v in c.items():
+                if path == "compose.yaml":   # platform step-ca 이미지의 cert 부명령: 만료 검증·발급·갱신·HEALTHCHECK 는 이미지가 하고 platform 시험이 본다
+                    self.assertEqual(v.get("command"), ["cert", n[:-5]], f"{n}: platform step-ca 이미지의 cert 부명령이어야 한다")
+                    self.assertIn("openit/step-ca@", v["image"], n)
+                    self.assertNotIn("entrypoint", v, f"{n}: 손으로 쓴 셸 한 줄 금지")
+                    continue
                 cmd = " ".join(v.get("entrypoint") or [])
                 if "<<" in str(v) and not cmd:   # 앵커에서 오는 항목은 yaml 이 이미 합쳐 준다
                     continue
@@ -27,6 +32,9 @@ class T(unittest.TestCase):
     def test_healthcheck_is_verification(self):
         for path in ("compose.yaml", "compose.inference.yaml"):
             for n, v in certs(path).items():
+                if path == "compose.yaml":
+                    self.assertNotIn("healthcheck", v, f"{n}: 이미지 HEALTHCHECK 를 쓴다")
+                    continue
                 self.assertIn("verify", " ".join(map(str, v["healthcheck"]["test"])), f"{path} {n}")
 
 

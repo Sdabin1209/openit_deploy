@@ -85,5 +85,5 @@
 | R10.1 `OPENIT_BACKUP_*`·영역 백업 잡 | 배선 반영, 기동 미확인 | `scripts/test_backup_wiring.py`(변이 확인) |
 | R10.3 tar 묶음 300초 | 반영 | `config/model-serving.env` `MODEL_RUNTIME_RELEASE_READ_TIMEOUT_S=300` |
 | R6.4·R10.4·R3.12·R3.17·R10.6·R10.11 공개 입구 | platform 으로 이전 중 | deploy 의 `config/Caddyfile`·`gateway-auth.caddy` 는 platform 이 받아 간다. deploy 는 platform 이미지로 배치만 한다(미반영) |
-| step-ca·인증서 발급·감시·alertmanager·백업 저장소의 platform 이미지 교체 | 미반영(백업 저장소만 반영) | 아직 deploy compose 의 옛 정의가 남아 있다 |
+| step-ca·인증서 발급(pki-root·pki-tokens·`<서비스>-cert`)·감시(prometheus·alertmanager·blackbox·json·node)·백업 저장소의 platform 이미지 교체 | 배선 반영, 기동 미확인 | `test_cert_entrypoint.py`, `test_monitoring_targets.py`(변이 확인). 사람 인증(Keycloak·oauth2-proxy)은 platform 이 공식 이미지를 쓴다고 해서 그대로 두었다. 옛 `config/prometheus/`·`scripts/test-monitoring.sh` 는 platform 으로 옮겨 간 사본이라 지워야 하는데 아직 남아 있다 |
 | 폐지 조항 번호 → deploy 번호(DC-) | 반영 | `docs/RUNTIME-COMPONENTS.md` 0.1 |

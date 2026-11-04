@@ -1,0 +1,2 @@
+# 공개 입구 탐침. 서버 밖에서 보는 주소는 사용자 결정 뒤에 더한다(D10)
+- targets: ['https://gateway:8443/healthz', 'https://gateway:8443/readyz']

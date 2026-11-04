@@ -1,0 +1,2 @@
+# release-gate /readyz 의 judging_loop 를 숫자로 읽는 대상(GateReadyz)
+- targets: ['https://release-gate/readyz']

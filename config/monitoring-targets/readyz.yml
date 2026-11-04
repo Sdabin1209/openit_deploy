@@ -1,0 +1,9 @@
+# 상류 /readyz 탐침 대상(DC-MON.1 경보의 입력). https://<서비스>/readyz
+- targets: ['https://survey-service/readyz']
+- targets: ['https://question-authoring/readyz']
+- targets: ['https://ops-feedback-ingest/readyz']
+- targets: ['https://release-gate/readyz']
+- targets: ['https://model-registry/readyz']
+- targets: ['https://dataset-store/readyz']
+- targets: ['https://kiosk-frontend/readyz']
+- targets: ['https://admin-console/readyz']

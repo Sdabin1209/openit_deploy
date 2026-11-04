@@ -55,20 +55,19 @@ x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공�
 
 x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증서 볼륨(/home/step 에 마운트해 소유자 상속)에 쓴다
   restart: unless-stopped
-  image: ${STEP_CA_IMAGE:?locks/images.lock}
+  image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
   user: "1000:1000"
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
   read_only: true
   tmpfs: ["/tmp"]
-  environment: {STEPPATH: /tmp}
+  environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
   mem_limit: 64m   # 측정 안 함(시작값)
   cpus: 0.25
   pids_limit: 64
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
   group_add: *secretgid
   networks: [pki]
-  healthcheck: {test: ["CMD", "step", "certificate", "verify", "/home/step/tls.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
   depends_on:
     pki-tokens: {condition: service_completed_successfully}
 
@@ -114,6 +113,22 @@ networks:
   backup-ops:   # 백업 저장소 <-> ops-feedback-ingest 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
   backup-gate:   # 백업 저장소 <-> release-gate 영역 pod 만(영역끼리 닿지 않는다)
+    internal: true
+  mon-survey-service:   # 감시(prometheus·blackbox·json)가 survey-service 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+    internal: true
+  mon-question-authoring:   # 감시(prometheus·blackbox·json)가 question-authoring 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+    internal: true
+  mon-ops-feedback-ingest:   # 감시(prometheus·blackbox·json)가 ops-feedback-ingest 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+    internal: true
+  mon-release-gate:   # 감시(prometheus·blackbox·json)가 release-gate 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+    internal: true
+  mon-model-registry:   # 감시(prometheus·blackbox·json)가 model-registry 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+    internal: true
+  mon-dataset-store:   # 감시(prometheus·blackbox·json)가 dataset-store 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+    internal: true
+  mon-kiosk-frontend:   # 감시(prometheus·blackbox·json)가 kiosk-frontend 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+    internal: true
+  mon-admin-console:   # 감시(prometheus·blackbox·json)가 admin-console 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
     internal: true
   reload-survey-db:   # survey-db-reload <-> survey-db 만
     internal: true
@@ -340,7 +355,7 @@ secrets:
 services:
   step-ca:   # 독립 인증기관(사설 PKI + ACME, ADR 0060). 공식 이미지(digest 고정). 루트·중간 키는 처음 기동에 1회 만들어 pki-ca 볼륨에 둔다(비밀번호는 비밀 파일)
     restart: unless-stopped
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "1000:1000"   # 이미지의 step 사용자(비루트)
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -351,37 +366,37 @@ services:
     pids_limit: 128
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
-    entrypoint: ["sh", "-c", "test -f /home/step/config/ca.json || step ca init --name OpenIt --dns step-ca $$(for d in $${STEP_CA_DNS_NAMES:-}; do printf -- '--dns %s ' $$d; done) --address :${STEP_CA_PORT:-9000} --provisioner admin --acme --password-file /run/secrets/step-ca-password --provisioner-password-file /run/secrets/step-ca-password >/dev/null 2>&1; cp /usr/local/bin/step-ca /tmp/step-ca && exec /tmp/step-ca /home/step/config/ca.json --password-file /run/secrets/step-ca-password"]   # 왜 공식 entrypoint 의 DOCKER_STEPCA_INIT_* 를 쓰지 않나: 그 경로는 CA 관리 비밀번호를 컨테이너 로그에 찍는다(비밀은 로그 금지, D84). 같은 step ca init 을 출력 없이 1회 실행한다
-    environment: {STEP_CA_DNS_NAMES: "${STEP_CA_DNS_NAMES:-}"}   # 다른 서버·시험 배치가 step-ca 를 부르는 추가 이름(공백 구분, 인증서 SAN 과 토큰 audience 에 들어간다)
+    environment: {STEP_CA_PORT: "${STEP_CA_PORT:-9000}", STEP_CA_DNS_NAMES: "${STEP_CA_DNS_NAMES:-}"}   # 다른 서버·시험 배치가 step-ca 를 부르는 추가 이름(공백 구분, 인증서 SAN 과 토큰 audience 에 들어간다)
     secrets: [step-ca-password]
     volumes: [pki-ca:/home/step]
     networks: [pki]
   pki-root:   # 루트 인증서(공개)를 읽기 전용 볼륨 pki-root 로 복사하는 일회성 잡. 키가 든 pki-ca 는 호출자에게 마운트하지 않는다
     restart: "no"
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "1000:1000"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
-    entrypoint: ["sh", "-c", "cp /ca/certs/root_ca.crt /home/step/root_ca.crt && chmod 644 /home/step/root_ca.crt"]
-    volumes: ["pki-ca:/ca:ro", "pki-root:/home/step"]
+    command: ["root"]
+    environment: {PKI_OUT: /out}
+    volumes: ["pki-ca:/home/step:ro", "pki-root:/out"]
     networks: [pki]
     depends_on:
       step-ca: {condition: service_healthy}
   pki-tokens:   # 서비스마다 일회용 토큰(OTT, 수명 5분 = step 기본)을 발급해 pki-tokens 볼륨에 둔다. 프로비저너 비밀번호는 이 잡만 읽는다(인증서 컨테이너는 읽지 않는다). 다른 서버의 서비스는 이 토큰 파일을 배치 도구가 그 서버에 전달한다
     restart: "no"
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "1000:1000"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
     group_add: *secretgid
-    environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "for n in survey-service question-authoring ops-feedback-ingest release-gate model-serving model-registry dataset-store admin-console kiosk-frontend keycloak oauth2-proxy backup-store survey-db question-authoring-db ops-feedback-db release-gate-db keycloak-db; do step ca token $$n --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt > /home/step/$$n.ott || exit 1; done; chmod 644 /home/step/*.ott"]
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}"}
+    command: ["token", "survey-service", "question-authoring", "ops-feedback-ingest", "release-gate", "model-serving", "model-registry", "dataset-store", "admin-console", "kiosk-frontend", "keycloak", "oauth2-proxy", "backup-store", "survey-db", "question-authoring-db", "ops-feedback-db", "release-gate-db", "keycloak-db"]
     secrets: [step-ca-password]
-    volumes: ["pki-tokens:/home/step", "pki-root:/etc/openit/pki:ro"]
+    volumes: ["pki-tokens:/tokens", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
     depends_on:
       step-ca: {condition: service_healthy}
@@ -391,72 +406,72 @@ services:
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate survey-service /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/survey-service.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-survey-service:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "survey-service"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-survey-service:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   question-authoring-cert:   # question-authoring 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate question-authoring /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/question-authoring.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-question-authoring:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "question-authoring"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-question-authoring:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   ops-feedback-ingest-cert:   # ops-feedback-ingest 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate ops-feedback-ingest /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/ops-feedback-ingest.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-ops-feedback-ingest:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "ops-feedback-ingest"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-ops-feedback-ingest:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   release-gate-cert:   # release-gate 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate release-gate /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/release-gate.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-release-gate:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "release-gate"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-release-gate:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   model-serving-cert:   # model-serving 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate model-serving /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/model-serving.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-model-serving:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "model-serving"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-model-serving:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   model-registry-cert:   # model-registry 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate model-registry /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/model-registry.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-model-registry:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "model-registry"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-model-registry:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   dataset-store-cert:   # dataset-store 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate dataset-store /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/dataset-store.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-dataset-store:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "dataset-store"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-dataset-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   admin-console-cert:   # admin-console 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate admin-console /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/admin-console.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-admin-console:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "admin-console"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-admin-console:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   kiosk-frontend-cert:   # kiosk-frontend 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
       certs-perms: {condition: service_completed_successfully}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate kiosk-frontend /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/kiosk-frontend.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-kiosk-frontend:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "kiosk-frontend"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-kiosk-frontend:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   keycloak-cert:   # keycloak 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate keycloak /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/keycloak.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-keycloak:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "keycloak"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-keycloak:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   oauth2-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate oauth2-proxy /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/oauth2-proxy.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-oauth2-proxy:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "oauth2-proxy"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-oauth2-proxy:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   survey-service-gw:   # survey-service 의 영역 게이트웨이(platform 이미지): https://survey-service 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:survey-service-net"
@@ -537,7 +552,7 @@ services:
       oauth2-proxy-cert: {condition: service_healthy}
   survey-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -547,11 +562,10 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "step certificate verify /pg-tls/server.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate survey-db /pg-tls/server.crt /pg-tls/server.key --token \"$$(cat /tokens/survey-db.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /pg-tls/server.key; exec step ca renew --daemon --force --expires-in 12h /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["survey-db-pgtls:/pg-tls", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
+    command: ["cert", "survey-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["survey-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
-    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/pg-tls/server.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
@@ -606,9 +620,9 @@ services:
       - -c
       - ssl=on
       - -c
-      - ssl_cert_file=/etc/openit/pg-tls/server.crt
+      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
       - -c
-      - ssl_key_file=/etc/openit/pg-tls/server.key
+      - ssl_key_file=/etc/openit/pg-tls/tls.key
       - -c
       - ssl_min_protocol_version=TLSv1.2
       - -c
@@ -641,7 +655,7 @@ services:
       start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
   question-authoring-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -651,11 +665,10 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "step certificate verify /pg-tls/server.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate question-authoring-db /pg-tls/server.crt /pg-tls/server.key --token \"$$(cat /tokens/question-authoring-db.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /pg-tls/server.key; exec step ca renew --daemon --force --expires-in 12h /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["question-authoring-db-pgtls:/pg-tls", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
+    command: ["cert", "question-authoring-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["question-authoring-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
-    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/pg-tls/server.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
@@ -710,9 +723,9 @@ services:
       - -c
       - ssl=on
       - -c
-      - ssl_cert_file=/etc/openit/pg-tls/server.crt
+      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
       - -c
-      - ssl_key_file=/etc/openit/pg-tls/server.key
+      - ssl_key_file=/etc/openit/pg-tls/tls.key
       - -c
       - ssl_min_protocol_version=TLSv1.2
       - -c
@@ -745,7 +758,7 @@ services:
       start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
   ops-feedback-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -755,11 +768,10 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "step certificate verify /pg-tls/server.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate ops-feedback-db /pg-tls/server.crt /pg-tls/server.key --token \"$$(cat /tokens/ops-feedback-db.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /pg-tls/server.key; exec step ca renew --daemon --force --expires-in 12h /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["ops-feedback-db-pgtls:/pg-tls", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
+    command: ["cert", "ops-feedback-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["ops-feedback-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
-    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/pg-tls/server.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
@@ -814,9 +826,9 @@ services:
       - -c
       - ssl=on
       - -c
-      - ssl_cert_file=/etc/openit/pg-tls/server.crt
+      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
       - -c
-      - ssl_key_file=/etc/openit/pg-tls/server.key
+      - ssl_key_file=/etc/openit/pg-tls/tls.key
       - -c
       - ssl_min_protocol_version=TLSv1.2
       - -c
@@ -849,7 +861,7 @@ services:
       start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
   release-gate-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -859,11 +871,10 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "step certificate verify /pg-tls/server.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate release-gate-db /pg-tls/server.crt /pg-tls/server.key --token \"$$(cat /tokens/release-gate-db.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /pg-tls/server.key; exec step ca renew --daemon --force --expires-in 12h /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["release-gate-db-pgtls:/pg-tls", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
+    command: ["cert", "release-gate-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["release-gate-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
-    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/pg-tls/server.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
@@ -918,9 +929,9 @@ services:
       - -c
       - ssl=on
       - -c
-      - ssl_cert_file=/etc/openit/pg-tls/server.crt
+      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
       - -c
-      - ssl_key_file=/etc/openit/pg-tls/server.key
+      - ssl_key_file=/etc/openit/pg-tls/tls.key
       - -c
       - ssl_min_protocol_version=TLSv1.2
       - -c
@@ -953,7 +964,7 @@ services:
       start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
   keycloak-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
-    image: ${STEP_CA_IMAGE:?locks/images.lock}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -963,11 +974,10 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "step certificate verify /pg-tls/server.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate keycloak-db /pg-tls/server.crt /pg-tls/server.key --token \"$$(cat /tokens/keycloak-db.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /pg-tls/server.key; exec step ca renew --daemon --force --expires-in 12h /pg-tls/server.crt /pg-tls/server.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["keycloak-db-pgtls:/pg-tls", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
+    command: ["cert", "keycloak-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["keycloak-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
-    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/pg-tls/server.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
@@ -1022,9 +1032,9 @@ services:
       - -c
       - ssl=on
       - -c
-      - ssl_cert_file=/etc/openit/pg-tls/server.crt
+      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
       - -c
-      - ssl_key_file=/etc/openit/pg-tls/server.key
+      - ssl_key_file=/etc/openit/pg-tls/tls.key
       - -c
       - ssl_min_protocol_version=TLSv1.2
       - -c
@@ -1071,8 +1081,8 @@ services:
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
     user: "65534:65534"   # 저장소 이미지 사용자가 키 파일(0600)을 읽는다
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate backup-store /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/backup-store.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /home/step/tls.key; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
-    volumes: ["certs-backup-store:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "backup-store"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-backup-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   backup-store-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 저장소(uid 1000)가 못 쓴다
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
@@ -1178,6 +1188,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-kiosk-frontend: {aliases: [kiosk-frontend]}
       ui-kiosk: {aliases: [kiosk-frontend]}
   kiosk-frontend:       # 키오스크 앱 + 직원 콘솔 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다
     environment: {<<: *commonenv, KIOSK_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
@@ -1204,6 +1215,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-admin-console: {aliases: [admin-console]}
       ui-admin: {aliases: [admin-console]}
   admin-console:        # 출고 승인 화면 정적 이미지(포트 8080, /healthz·/readyz). /v1 은 처리하지 않는다. ADMIN_DEV_APPROVER_ID 는 설정하지 않는다
     environment: {<<: *commonenv, ADMIN_HOST: 127.0.0.1}   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다(계약 v3.4.3, ADR 0060)
@@ -1230,12 +1242,12 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-survey-service: {aliases: [survey-service]}
       backup-survey: {aliases: [survey-service]}
       edge: {aliases: [survey-service]}
       serving: {aliases: [survey-service]}
       serving-ops: {aliases: [survey-service]}
       db-survey: {aliases: [survey-service]}
-      monitoring: {aliases: [survey-service]}
   survey-service:
     <<: *hardening
     mem_limit: ${SURVEY_SERVICE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -1282,6 +1294,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-question-authoring: {aliases: [question-authoring]}
       backup-qa: {aliases: [question-authoring]}
       authoring: {aliases: [question-authoring]}
       release-qa: {aliases: [question-authoring]}
@@ -1462,6 +1475,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-ops-feedback-ingest: {aliases: [ops-feedback-ingest]}
       backup-ops: {aliases: [ops-feedback-ingest]}
       serving-ops: {aliases: [ops-feedback-ingest]}
       logs: {aliases: [ops-feedback-ingest]}
@@ -1510,6 +1524,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-release-gate: {aliases: [release-gate]}
       backup-gate: {aliases: [release-gate]}
       serving: {aliases: [release-gate]}
       release-mr: {aliases: [release-gate]}
@@ -1596,6 +1611,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-model-registry: {aliases: [model-registry]}
       release-mr: {aliases: [model-registry]}
   model-registry:       # model-lab의 I3 서버(소스 리포지토리는 model-lab, 이미지 이름은 model-registry)
     <<: *hardening
@@ -1630,6 +1646,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      mon-dataset-store: {aliases: [dataset-store]}
       datasets: {aliases: [dataset-store]}
   dataset-store:        # synthetic-data의 I2 서버(소스 리포지토리는 synthetic-data, 이미지 이름은 dataset-store, 계약 v2.1.0 D100). 읽기=model-lab, 쓰기=synthetic-data
     <<: *hardening
