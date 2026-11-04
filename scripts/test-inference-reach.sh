@@ -42,7 +42,7 @@ CFG=$(INFERENCE_IMAGE=x INFERENCE_PAUSE_IMAGE=x INFERENCE_STEP_IMAGE=x INFERENCE
   INFERENCE_STEP_CA_URL=https://x INFERENCE_TLS_TOKEN_FILE="$T/tlstok" INFERENCE_TLS_NAME=x INFERENCE_RELEASE_NETWORK="$NET" SECRETS_GID=0 \
   "$DOCKER" compose -p infreach-$ID -f compose.inference.yaml -f compose.inference.samehost.yaml config --format json 2>"$T/cfg.err") || { cat "$T/cfg.err" >&2; bad "compose.inference.yaml + samehost overlay 를 해석하지 못했다"; }
 JOINED=$(printf '%s' "$CFG" | python3 -c "import json,sys;d=json.load(sys.stdin);n=d['services']['model-serving-net'];nets=list((n.get('networks') or {}).keys());print('|'.join(d['networks'][k]['name'] for k in nets if d['networks'][k].get('external')), n.get('network_mode',''), len(nets))")
-[ "$JOINED" = "$NET  1" ] && ok "samehost overlay: model-serving-net 이 외부 망($NET) 하나에만 붙는다(network_mode 없음)" || bad "samehost overlay 해석: '$JOINED'"
+[ "$JOINED" = "$NET  2" ] && ok "samehost overlay: model-serving-net 이 외부 망($NET)과 기본 망(게시 포트용)에 붙는다(network_mode 없음)" || bad "samehost overlay 해석: '$JOINED'"
 fetch() { # fetch <루트 파일> <망>: 추론 쪽 컨테이너를 그 망에 붙여 https://release-gate/healthz -> 상태 코드, 실패면 ERR
   "$DOCKER" run --rm --network "$2" -v "$1:/root_ca.crt:ro" -e SSL_CERT_FILE=/root_ca.crt "$UTIL" python -c "import urllib.request,sys
 try: print(urllib.request.urlopen('https://release-gate/healthz', timeout=8).status)

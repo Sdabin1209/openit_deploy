@@ -4,7 +4,7 @@
 services:
   model-serving-net:
     network_mode: !reset null
-    networks: [release]
+    networks: [release, default]   # default: 호스트로 게시하는 포트(내부 전용 망에서는 게시가 안 된다)와 step-ca 를 부르는 길
 networks:
   release:
     name: ${INFERENCE_RELEASE_NETWORK:?INFERENCE_RELEASE_NETWORK(주 서버 프로젝트의 inference-in 망 이름)가 필요하다}
