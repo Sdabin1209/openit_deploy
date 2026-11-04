@@ -8,10 +8,15 @@ TLS=("$@"); [ ${#TLS[@]} -gt 0 ] || TLS=(--insecure)
 H=$(mktemp); trap 'rm -f "$H"' EXIT; bad=0; n=0
 while read -r m p want loc; do case "$m" in ""|\#*) continue;; esac
   n=$((n+1)); extra=(); [ "$m" = GET ] || extra=(-d '{}')
-  code=$(curl -s -m 10 -o /dev/null -D "$H" -w '%{http_code}' -X "$m" "${extra[@]}" "${TLS[@]}" "$BASE$p")
+  acc=(); [ -z "$loc" ] || acc=(-H 'Accept: text/html')   # 화면 이동(302)은 Accept 에 text/html 이 있는 브라우저 요청에만 한다(RUNTIME R3.23)
+  code=$(curl -s -m 10 -o /dev/null -D "$H" -w '%{http_code}' -X "$m" "${extra[@]}" "${acc[@]}" "${TLS[@]}" "$BASE$p")
   l=$(grep -i '^location:' "$H" | tr -d '\r' | head -1 | sed 's/^[Ll]ocation: *//')
   [ "$code" = "$want" ] || { echo "어긋남: $m $p -> $code (기대 $want)"; bad=$((bad+1)); }
   [ -z "$loc" ] || case "$l" in "$loc"*) ;; *) echo "어긋남: $m $p -> Location '$l' (기대 $loc…)"; bad=$((bad+1));; esac
+  if [ -n "$loc" ]; then   # 같은 경로를 html 이 아닌 요청으로 부르면 302 가 아니라 401 + WWW-Authenticate(R3.23)
+    c2=$(curl -s -m 10 -o /dev/null -D "$H" -w '%{http_code}' -X "$m" "${extra[@]}" "${TLS[@]}" "$BASE$p"); w2=$(grep -ci '^www-authenticate: *Bearer realm="openit"' "$H")
+    [ "$c2" = 401 ] && [ "$w2" -ge 1 ] || { echo "어긋남: $m $p (Accept 없음) -> $c2, WWW-Authenticate ${w2}개 (기대 401 + Bearer realm=\"openit\")"; bad=$((bad+1)); }
+  fi
 done < "$HERE/../test/gateway-oidc/unauth-expectations.txt"
 [ $n -gt 0 ] || { echo "기대표가 비었다"; exit 1; }
 [ $bad = 0 ] && { echo "일치: 인증 없는 요청 ${n}건의 응답이 기대표와 같다"; exit 0; } || exit 1
