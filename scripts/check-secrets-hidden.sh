@@ -7,8 +7,8 @@
 #   환경: SECRETS_DIR(기본 secrets/), COMPOSE_EXTRA(dc 와 같음), DOCKER
 # 정적: compose 병합 결과(--profile jobs)에서 비밀 이름(…TOKEN/TOKENS/SALT/PASSWORD/SECRET/PRIVATE_KEY/API_KEY)에 값이 직접 들어 있으면 실패,
 #       NAME_FILE=/run/secrets/<이름> 이 그 서비스의 secrets 마운트와 맞지 않으면 실패.
-# 동적: 떠 있는 프로젝트의 컨테이너마다 `docker inspect`(Env, Cmd, Entrypoint)와 `docker exec env`(또는 /proc/1/environ)에
-#       secrets 파일의 값이 하나라도 들어 있으면 실패.
+# 동적: 떠 있는 프로젝트의 컨테이너마다 `docker inspect`(Config.Env, Cmd, Entrypoint)에 secrets 파일의 값이 하나라도 들어 있으면 실패.
+#       왜 inspect 만: deploy 는 실행 중에 영역 안으로 들어가지 않는다(exec·/proc 읽기 금지, 구조 규칙 1·6, CONVENTIONS 13절). Config.Env 는 컨테이너 생성 때 정한 환경이라 컨테이너 안 env 의 출처와 같다.
 # 값은 절대 출력하지 않는다: 출력은 컨테이너 이름, 변수 이름(또는 Cmd/Entrypoint), 개수뿐이다. 비교는 파일 내용을 읽어 포함 여부만 판정한다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -87,20 +87,6 @@ for c in names:
         if leaks(v): fails.append(f"동적 {c}: docker inspect Env 의 {k} 에 secrets 파일의 값이 있다")
     for label, j in (("Cmd", cmdj), ("Entrypoint", epj)):
         if leaks(j): fails.append(f"동적 {c}: docker inspect {label} 에 secrets 파일의 값이 있다")
-    seen = False
-    rcode, out = run("exec", c, "env")
-    if rcode == 0:
-        seen = True
-        for line in out.splitlines():
-            k, _, v = line.partition("=")
-            if leaks(v): fails.append(f"동적 {c}: docker exec env 의 {k} 에 secrets 파일의 값이 있다")
-    rcode, out = run("exec", c, "cat", "/proc/1/environ")
-    if rcode == 0:
-        seen = True
-        for item in out.split("\0"):
-            k, _, v = item.partition("=")
-            if leaks(v): fails.append(f"동적 {c}: /proc/1/environ 의 {k} 에 secrets 파일의 값이 있다")
-    if not seen: unchecked.append(f"{c}: 컨테이너 안에서 env 도 /proc/1/environ 도 읽지 못했다(inspect 만 확인)")
 print(f"[{proj}] 정적: 서비스 {len(cfg.get('services', {}))}개 / 동적: 실행 중인 컨테이너 {len(names)}개 검사")
 for u in unchecked: print(f"  확인 못 함: {u}")
 for f in fails: print("  실패:", f)

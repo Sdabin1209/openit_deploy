@@ -11,7 +11,7 @@ cleanup() { "$DOCKER" rm -f "$GOOD-c" "$BAD-c" >/dev/null 2>&1; }; trap cleanup 
 N=0; F=0
 chk() { N=$((N+1)); local name=$1 want=$2 txt=$3; shift 3; local out rc; out=$("$@" 2>&1); rc=$?; if [ $rc = "$want" ] && grep -qF -- "$txt" <<<"$out"; then echo "  PASS $name"; else echo "  FAIL $name (종료 $rc, 기대 $want)"; echo "$out" | sed 's/^/       /'; F=$((F+1)); fi; }
 chk "강화된 컨테이너는 통과" 0 "OK   $GOOD-c" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$GOOD"
-chk "root·쓰기 가능·cap 유지 컨테이너는 FAIL(1)" 1 "root 로 실행 중이다" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$BAD"
+chk "root·쓰기 가능·cap 유지 컨테이너는 FAIL(1)" 1 "root 로 실행 중이다(uid 0, Config.User='')" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$BAD"
 chk "쓰기 가능 루트도 잡는다" 1 "루트 파일시스템이 쓰기 가능하다" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$BAD"
 chk "cap_drop ALL 아님도 잡는다" 1 "cap_drop ALL 이 아니다" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$BAD"
 chk "컨테이너가 없으면 안내" 2 "점검할 컨테이너가 없다" bash "$DEPLOY_ROOT/scripts/check-containers.sh" deploy-chk-none-$ID

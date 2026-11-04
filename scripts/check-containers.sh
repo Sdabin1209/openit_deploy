@@ -15,7 +15,8 @@ for P in "${PROJECTS[@]}"; do
     insp=$("$DOCKER" inspect "$id" --format '{{.Name}}|{{.Config.User}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.Privileged}}|{{.HostConfig.NetworkMode}}|{{.HostConfig.PidMode}}|{{.HostConfig.Memory}}|{{.HostConfig.PidsLimit}}|{{.HostConfig.CapDrop}}|{{.HostConfig.CapAdd}}|{{.HostConfig.SecurityOpt}}|{{range .Mounts}}{{.Source}} {{end}}|{{range $p,$b := .HostConfig.PortBindings}}{{range $b}}{{.HostIp}}:{{.HostPort}} {{end}}{{end}}|{{index .Config.Labels "com.docker.compose.service"}}' | tr -d '\r')
     IFS='|' read -r name user ro priv net pidm mem pids capdrop capadd secopt mounts ports svc <<<"$insp"
     name=${name#/}; probs=(); warns=()
-    uid=$("$DOCKER" exec "$id" id -u 2>/dev/null | tr -d '\r'); [ -n "$uid" ] || uid=${user%%:*}
+    # 왜 exec 가 아닌가: deploy 는 실행 중에 영역 안으로 들어가지 않는다(구조 규칙 1·6, CONVENTIONS 13절). 바깥에서 보는 표준 방법: 이미지·compose 가 정한 Config.User, 없으면 docker top 이 호스트에서 보여 주는 PID 1 의 uid
+    uid=${user%%:*}; [ -n "$uid" ] || uid=$("$DOCKER" top "$id" -eo pid,uid 2>/dev/null | awk "NR==2{print \$2}" | tr -d "\r")
     case "$uid" in ""|0|root) probs+=("root 로 실행 중이다(uid ${uid:-?}, Config.User='${user}')");; esac
     [ "$ro" = true ] || probs+=("루트 파일시스템이 쓰기 가능하다")
     [ "$priv" = false ] || probs+=("privileged 이다")
