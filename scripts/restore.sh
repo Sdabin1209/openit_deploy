@@ -5,7 +5,7 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/backup-lib.sh"
 S=${1:?저장소}; SNAP=$(backup_snapshot_arg "${2:?스냅샷(latest 또는 ID)}"); [ "${3:-}" = "--yes" ] || die "--yes 가 필요하다(볼륨을 비운다)"
-[[ "$S" =~ ^[a-z][a-z0-9-]*$ ]] || die "저장소 이름 형식 오류: $S"
+[ "$S" = registry-data ] || die "deploy 가 복구하는 저장소는 registry-data 뿐이다(영역 데이터는 영역의 복구 잡, RUNTIME R10.1, 계약 3.4.16): $S"
 BACKUP_CHECK_ONLY=1 backup_load_config
 P=${DEPLOY_PROJECT:-deploy}
 case "$S" in registry-data) V="${REGISTRY_PROJECT:-deploy-registry}_registry-data";; *) V="${P}_$S";; esac

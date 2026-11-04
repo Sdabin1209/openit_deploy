@@ -10,7 +10,6 @@ fail(){ echo "  FAIL $*"; rc=1; }; ok(){ echo "  ok   $*"; n=$((n+1)); }
 TABLE='ops-feedback-job|3600|scripts/run-job.sh job-ops-feedback
 survey-purge|86400|scripts/run-job.sh job-survey-purge
 backup|86400|scripts/backup-all.sh
-backup-restore-test|604800|scripts/backup-restore-test.sh
 question-authoring-purge|86400|scripts/run-job.sh job-question-authoring-purge
 release-gate-prune|86400|scripts/run-job.sh job-release-gate-prune
 release-gate-collector|600|scripts/run-job.sh job-release-gate-collect'

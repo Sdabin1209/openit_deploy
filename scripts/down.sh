@@ -45,7 +45,7 @@ describe() { # 볼륨 이름(프로젝트 접두 제거) -> 들어 있는 것
     models-data) echo "모델 패키지(어댑터)";;
     datasets-data) echo "학습 데이터셋(DatasetManifest와 jsonl, dataset-store)";;
     serving-data) echo "추론 서버 번들 캐시(다시 받을 수 있음)";;
-    *-db-data) echo "영역 DB(${1#"$P"_} 에서 -data 를 뺀 서비스)의 데이터베이스. 백업은 scripts/pg-backup.sh";;
+    *-db-data) echo "영역 DB(${1#"$P"_} 에서 -data 를 뺀 서비스)의 데이터베이스. 백업은 그 영역의 백업 잡(io.openit.jobs)";;
     *-db-pgtls) echo "영역 DB 서버 인증서(다시 발급됨)";;
     gateway-*) echo "gateway 설정 사본(다시 만들어짐)";;
     *) echo "(알 수 없음)";;

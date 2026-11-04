@@ -62,6 +62,9 @@ curl -s http://127.0.0.1:$(docker port deploy-gateway-1 8080/tcp | sed 's/.*://'
 
 ## 4. 백업과 복구 (PostgreSQL 기준, restic)
 
+> **(2026-11-05, 계약 3.4.16) 범위 변경.** deploy 는 영역 데이터를 직접 백업·복구하지 않는다: `pg-backup.sh`·`pg-restore.sh`·`backup-restore-test.sh`·영역 볼륨용 `backup.sh`/`restore.sh` 는 없어졌다. 영역 데이터(영역 DB, gate-data, models-data, datasets-data, gateway-data, pki-ca)의 백업·복구는 주인 영역의 잡(`io.openit.jobs` 의 backup/restore, 결과 `BackupJobResult`)이 하고 deploy 의 스케줄러가 돌린다. deploy 가 백업하는 것은 자기 데이터인 이미지 레지스트리(`registry-data`)와 `secrets/` 뿐이다(`backup-all.sh`). 이 절의 영역 데이터 명령은 옛 방식의 기록이다.
+
+
 저장소는 PostgreSQL 한 서버(5개 데이터베이스: survey, qa, ops_log, ops_failure, gate)와 파일 볼륨(gate-data 번들, models-data 모델 패키지, datasets-data, gateway-data, 레지스트리 볼륨)이다. 백업은 **restic 저장소 하나**(`$BACKUP_DIR/restic`)에 둔다. 근거와 한계: [adr/0038-restic-backup.md](adr/0038-restic-backup.md)(옛 [0020](adr/0020-backup-tool-and-encryption.md)을 대체).
 
 ### 4-1. 설정과 규칙 (백업 없이 운영하지 않는다, D88 U6)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 저장소(볼륨)별 백업. 사용: backup.sh [저장소 ...]   저장소: gate-data models-data datasets-data registry-data gateway-data pki-ca (파일 저장소. 비우면 전부). 데이터베이스는 PostgreSQL 이라 pg-backup.sh 가 맡는다.
+# deploy 자신의 저장소 백업. 사용: backup.sh [registry-data]   (영역 데이터는 영역의 백업 잡, 계약 3.4.16). 데이터베이스는 PostgreSQL 이라 pg-backup.sh 가 맡는다.
 #  환경: DEPLOY_PROJECT(기본 deploy), BACKUP_CONFIG(기본 config/backup.env), REGISTRY_PROJECT(기본 deploy-registry: 레지스트리 볼륨은 별도 프로젝트 소유)
 # 설정(BACKUP_DIR, BACKUP_RETENTION_DAYS, BACKUP_PASSWORD_FILE)이 없거나 비어 있으면 CRIT 로 거부한다(종료 코드 2, 코드에 기본값 없음). 설정·restic 호출은 backup-lib.sh.
 # 저장소 하나가 restic 스냅샷 하나다(--host 가 저장소 이름, 태그 set-<UTC 시각>). restic 이 중복 제거·암호화(AES-256, 인증)·무결성 해시를 맡는다(ADR 0038).
@@ -12,10 +12,12 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/backup-lib.sh"
+STORES=${*:-registry-data}
+# 왜 registry-data 만: 영역 데이터(gate-data, models-data, datasets-data, gateway-data, pki-ca, 영역 DB)의 백업·복구는 그 데이터의 주인 영역이 자기 잡(io.openit.jobs 의 backup/restore, needs 는 볼륨 이름)으로 한다(RUNTIME R10.1, DATA_OWNERSHIP, 계약 3.4.16).
+# deploy 가 영역 볼륨을 직접 복사하면 영역 안으로 들어가는 것이다(구조 규칙 1·6). deploy 자신의 데이터는 이미지 레지스트리(registry-data)와 secrets/(backup-secrets.sh)뿐이다.
+for s in $STORES; do [ "$s" = registry-data ] || die "deploy 가 백업하는 저장소는 registry-data 뿐이다(영역 데이터는 영역의 백업 잡): $s"; done
 backup_load_config
 P=${DEPLOY_PROJECT:-deploy}
-STORES=${*:-gate-data models-data datasets-data registry-data gateway-data pki-ca}
-for s in $STORES; do [[ "$s" =~ ^[a-z][a-z0-9-]*$ ]] || die "저장소 이름 형식 오류: $s"; done
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 # 겹침 실행 방지(점검 M4): 같은 BACKUP_DIR 에서 두 번째 백업이 동시에 돌면 forget --prune 이 진행 중인 백업과 겹친다. 잠금을 못 잡으면 거부한다(종료 4)
 exec 9>"$BACKUP_LOCK_FILE"; flock -n 9 || { echo "CRIT: 다른 백업이 같은 저장소로 진행 중이다($BACKUP_LOCK_FILE): 겹쳐 돌리지 않는다" >&2; exit 4; }

@@ -500,56 +500,11 @@ chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 �
 
 fi
 if has_s9 backup; then
-sect "단계 9: 백업과 복구 (restic: 시험 폴더 안의 임시 저장소 암호 파일, 저장소는 암호화된다. ADR 0038)"
-chk "설정 파일이 없으면 백업 거부(종료 코드 2)" bash -c "BACKUP_CONFIG=$W/none.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
-printf 'BACKUP_DIR=%s\nBACKUP_RETENTION_DAYS=\n' "$W/backups" > "$W/backup-bad.env"
-chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/backup-bad.env bash $DEPLOY_ROOT/scripts/backup.sh; [ \$? = 2 ]"
-# 시험용 저장소 암호: 시험 폴더($W, 모드 700) 안에서만 만들고 출력·로그에 내지 않는다. 시험이 끝나면 $W 째로 지워진다
-( umask 077; head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$W/backup.pass" )
-printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_REPOSITORY=rest:https://backup-target:8000/openit\nBACKUP_CACERT_FILE=%s/backup-tls/root_ca.crt\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s_backup\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W" "$W/backup-target.cred" "$PROJECT" "$W/backup.pass" > "$W/backup-test.env"
-export BACKUP_CONFIG="$W/backup-test.env" BACKUP_LOCK_FILE="$W/backup.lock"   # 잠금 파일도 이 실행의 임시 폴더에 둔다(고정 경로 state/backup.lock 이면 같은 트리의 다른 E2E·실제 백업과 겹쳐 flock 이 거부한다)
-# 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
-dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx -e backup-target $(printf -- "-e %s " $PG_SERVICES | sed "s/^/ /") | tr '\n' ' ') >/dev/null 2>&1
-STORES="gate-data models-data datasets-data"; PGDBS="$PG_DBS"; NPG=$(set -- $PGDBS; echo $#)   # 정본은 lib.sh 의 PG_DBS(keycloak 포함): 하드코딩하면 Keycloak(직원 계정·역할)이 백업·복구·지문 검사에서 빠진다
-# 지문 생성이 실패하면(빈 파일) 지운 뒤 지문 비교와 복구 뒤 일치 비교가 둘 다 빈 값끼리 맞아 헛통과한다: 실패하면 그 자리에서 멈추고 빈 지문도 거부한다
-fp_before() { local out; out=$(bash "$DEPLOY_ROOT/scripts/$1" "$2") && [ -n "$out" ] || { echo "지문을 만들지 못했다: $1 $2" >&2; exit 1; }; printf '%s\n' "$out" > "$3"; }
-for s in $STORES; do fp_before fingerprint.sh $s "$W/fp-before-$s.json"; done
-for d in $PGDBS; do fp_before pg-fingerprint.sh $d "$W/fp-before-pg-$d.json"; done
-chk "백업(파일 저장소 3개, restic 스냅샷)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
-chk "백업(PostgreSQL ${NPG}개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
-repo_clean() { n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = "$((3+NPG))" ] || { echo "저장소(host)별 스냅샷이 $((3+NPG))개(파일 3 + 데이터베이스 ${NPG})가 아니다: $n"; return 1; }
-  local grc=0; "$DOCKER" run --rm -v "${PROJECT}_backup-target-data:/d:ro" "$UTIL_REF" sh -c "grep -rqa PGDMP /d" >/dev/null 2>&1 || grc=$?
-  [ $grc = 1 ] || { echo "저장소에 덤프 평문 표지가 있거나(종료 코드 0) 점검 명령이 실패했다(종료 코드 $grc): 1(일치 없음)일 때만 통과"; return 1; }   # `! 명령` 은 docker run 이 실패해도 통과로 센다
-  [ ! -e "$W/backups" ] || { echo "서버 쪽 로컬 폴더에 저장소가 생겼다"; return 1; }
-  echo "서버 밖(append-only) 저장소: 스냅샷 $((3+NPG))개(host별 1개), 덤프 평문 표지 없음, 서버 쪽 로컬 저장소 없음"; return 0; }
-NEED+=("백업(파일 저장소 3개, restic 스냅샷)" "백업(PostgreSQL ${NPG}개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)")   # 백업이 실패하면 아래 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
-chk "백업 산출물은 서버 밖 append-only restic 저장소뿐이다(평문 없음)" repo_clean
-append_only() { local id; id=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json" | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["id"])')
-  out=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- forget $id" 2>&1); grep -q '403 Forbidden' <<<"$out" || { echo "서버 자격의 forget 이 거부되지 않았다: $out"; return 1; }
-  bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --host pg-survey --json" | grep -q "$id" || { echo "forget 시도 뒤 스냅샷이 사라졌다"; return 1; }
-  echo "서버 자격으로 forget -> 403, 스냅샷 그대로"; }
-chk "서버 자격으로는 백업을 지울 수 없다(append-only)" append_only
-chk "저장소 쪽 관리 자격으로 보관 정리(host마다 최신 1개 이상 유지)" bash "$DEPLOY_ROOT/scripts/backup-prune.sh" "${PROJECT}_backup-target-data" openit "$W/backup.pass" 7
-dc "$PROJECT" down >/dev/null 2>&1
-chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_datasets-data $(for _s in $PG_SERVICES; do printf "%s_%s-data " "$PROJECT" "$_s"; done) >/dev/null"
-chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)" "영역 DB·백업 저장소 재기동(빈 볼륨 초기화)" dc "$PROJECT" up -d --wait --wait-timeout $E2E_UP_WAIT_S $PG_SERVICES backup-target   # 빈 볼륨에서 DB 이미지가 계정을 다시 만든다. 백업 저장소(볼륨 backup-target-data 는 down 으로 지워지지 않는다)도 다시 올린다. 실패하면 뒤 항목이 SKIP 으로 센다(예전에는 결과를 버렸다)
-NEED+=("영역 DB·백업 저장소 재기동(빈 볼륨 초기화)")
-chk_dep "영역 DB·백업 저장소 재기동(빈 볼륨 초기화)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
-NEED+=("볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)")
-for s in $STORES; do chk "복구 $s" bash "$DEPLOY_ROOT/scripts/restore.sh" $s latest --yes; done
-for d in $PGDBS; do chk "복구 pg-$d" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" $d latest --yes; done
-for s in $STORES; do chk_dep "복구 $s" "복구 후 지문 일치 $s" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh $s)\" = \"\$(cat $W/fp-before-$s.json)\" ]"; done
-for d in $PGDBS; do chk_dep "복구 pg-$d" "복구 후 지문 일치 pg-$d" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh $d)\" = \"\$(cat $W/fp-before-pg-$d.json)\" ]"; done
-NEED_RESTORE=(); for s in $STORES; do NEED_RESTORE+=("복구 $s"); done; for d in $PGDBS; do NEED_RESTORE+=("복구 pg-$d"); done
-NEED+=("${NEED_RESTORE[@]}")
-chk "복구 후 서비스 기동" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
-PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 복구 뒤 게이트웨이를 다시 만들었으니 호스트 포트를 다시 읽는다
-PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
-NEED+=("복구 후 서비스 기동")
-chk_dep "복구 후 서비스 기동" "복구 후 Keycloak: 시험 사용자(trainer-e2e)가 OIDC 로그인되고 역할(release-approver)이 그대로다 (직원 계정·역할이 백업·복구에 들어 있다)" \
-  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_keycloak.py" --secrets "$SECRETS_DIR" --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT" --gw-ca "$W/trust.crt"
-chk_dep "단계 1~8" "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
-  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
+sect "단계 9: 영역 백업·복구 (영역이 자기 백업·복구 잡을 돌린다, RUNTIME R10.1·DATA_OWNERSHIP)"
+# deploy 는 영역 데이터를 직접 꺼내지 않는다(구조 규칙 1·6, 계약 3.4.16): 예전 구간은 pg_dump·볼륨 복사·docker exec psql 로 영역 데이터를 직접 만지고 지문을 비교했다. 이제는 스케줄러가 영역의 backup/restore 잡(io.openit.jobs, needs 는 볼륨 이름)을
+# 돌리고, 결과는 BackupJobResult 와 공개 API 로 읽은 데이터로 판정한다. 그 잡은 platform·model-lab·synthetic-data 가 만드는 중이라 이 구간은 아직 구현되지 않았다. 통과로 세지 않도록 실패 항목으로 둔다(미구현을 감추지 않는다).
+backup_jobs_pending() { echo "미구현: 영역 백업·복구 잡 해시 대기(platform·model-lab·synthetic-data). 잡 실행 -> BackupJobResult 판정 -> 공개 API 로 읽은 데이터 대조를 여기에 구현한다"; return 1; }
+chk "영역 백업·복구 잡 (BackupJobResult 와 공개 API 로 읽은 데이터로 판정)" backup_jobs_pending
 
 fi
 if has_s9 rollback; then

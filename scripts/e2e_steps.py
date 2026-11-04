@@ -2492,41 +2492,11 @@ def step5g():
       why='STATE 를 읽지 않는다. 임시 BACKUP_DIR 에 pg-backup.sh 를 돌리고 도중에 qa 영역 DB(question-authoring-db)를 stop 한다',
       also={'survey-service': 'survey DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'release-gate': 'gate DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'ops-feedback': 'ops_log·ops_failure DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고된다(G3 F1)', 'question-authoring': 'qa DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)'})
 def step5b():
-    title("5b", "백업 도중 영역 DB 중지(F1): 백업이 실패로 보고되고 불완전한 백업이 성공으로 남지 않으며 복구 뒤 다시 성공 (FAULT_MATRIX G3 F1)")
-    # 기대 출처: FAULT_MATRIX G3 '완료 시에만 완성본이 보인다'(옛 .partial -> mv). pg-backup.sh(restic): 덤프 실패 시 이 실행의 스냅샷을 모두 forget + die. FAULT_POLICY 14(잡 실패는 종료 코드로 드러남), 12(복구 뒤 재실행)
-    pg = f"{a.project}-question-authoring-db-1"; bdir = WORK / "backups-5b"; bdir.mkdir(parents=True, exist_ok=True)
-    pw = WORK / "backup-5b.pass"; pw.write_text("e2e-5b-test-password-not-a-secret\n"); pw.chmod(0o600)   # 시험 전용 임시 암호(시험 폴더 안)
-    cfg = WORK / "backup-5b.env"; cfg.write_text(f"BACKUP_DIR={bdir}\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE={pw}\n")
-    env = {"DEPLOY_PROJECT": a.project, "BACKUP_CONFIG": str(cfg)}
-    def done_dirs():   # 완성본 = restic 저장소의 스냅샷(이름은 호스트 pg-<db>). 저장소가 아직 없으면 0개
-        if not (bdir / "restic" / "config").exists(): return []
-        r = sh(["bash", "-c", f"source {ROOT}/scripts/lib.sh; source {ROOT}/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json"], env=env)
-        return sorted(x["hostname"] for x in json.loads(r.stdout or "[]"))
-    # 백업이 '진행 중'인 순간을 결정적으로 만든다: qa DB 의 테이블 하나에 ACCESS EXCLUSIVE 잠금을 잡아 pg_dump 가 그 테이블에서 기다리게 한다
-    tbl = sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-Atqc", "select tablename from pg_tables where schemaname='public' order by 1 limit 1"]).stdout.strip()
-    assert tbl, "qa DB 에서 잠글 테이블을 찾지 못했다"
-    locker = subprocess.Popen([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-qc", f"begin; lock table {tbl} in access exclusive mode; select pg_sleep(120);"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        wait(lambda: sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-d", "qa", "-Atqc", "select count(*) from pg_locks where mode='AccessExclusiveLock' and granted"]).stdout.strip() not in ("", "0") or None, 30, "잠금 세션이 테이블 잠금을 얻음", every=0.5)   # 고정 2초 대신 잠금을 실제로 얻을 때까지(R4.3)
-        bk = subprocess.Popen(["bash", str(ROOT / "scripts/pg-backup.sh")], env={**os.environ, **env}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        wait(lambda: sh([a.docker, "exec", pg, "psql", "-U", "postgres", "-Atqc", "select count(*) from pg_stat_activity where wait_event_type='Lock' and datname='qa'"]).stdout.strip() not in ("", "0") or None, 30, "pg_dump 가 잠금에서 기다림(= 백업 진행 중)", every=1)
-        sh([a.docker, "stop", "-t", "2", pg])
-        try: out, _ = bk.communicate(timeout=90)
-        except subprocess.TimeoutExpired: bk.kill(); raise AssertionError("백업이 postgres 중지 뒤 90s 안에 끝나지 않았다(무한 대기)")
-        assert bk.returncode != 0, f"백업 도중 postgres 가 멈췄는데 백업이 성공(0)으로 보고됐다: {out[-300:]}"
-        # 실패한 데이터베이스(잠금에서 멈춘 qa)의 스냅샷은 만들어지지 않아야 한다. 다른 데이터베이스의 스냅샷은 남을 수 있다(append-only 저장소에서는 지울 수 없어 지우지 않는다, ADR 0038)
-        assert "pg-qa" not in done_dirs(), f"불완전한 qa 덤프가 스냅샷으로 남았다: {done_dirs()}"
-        rc_fail = bk.returncode
-    finally:
-        locker.kill()
-        sh([a.docker, "start", pg], check=False)
-    _pg_ready_wait(pg)
-    wait(lambda: all(_ready_code(k) == 200 for k in ("ops", "qa", "gate")) or None, 120, "postgres 기동 뒤 서비스 /readyz 200", every=1)
-    r = sh(["bash", str(ROOT / "scripts/pg-backup.sh"), "qa", "gate"], env=env)
-    ok = done_dirs(); assert "pg-qa" in ok and "pg-gate" in ok, f"복구 뒤 백업이 완성본을 만들지 못했다: {ok}"
-    rec("5b", "REAL", f"백업 도중(pg_dump 잠금 대기 중) postgres stop -> pg-backup.sh 종료 코드 {rc_fail}(실패), 실패한 qa 의 스냅샷 없음(EOF 전에 restic 을 죽여 만들지 않음; 성공한 다른 데이터베이스의 것은 남는다); 복구 뒤 재실행 성공(스냅샷 {len(ok)}개: {ok}).")
+    title("5b", "영역 백업 잡 도중 영역 DB 중지(F1): 잡이 실패로 보고되고 불완전한 백업이 성공으로 남지 않는다 (FAULT_MATRIX G3 F1)")
+    # deploy 는 영역 데이터를 직접 꺼내지 않는다(계약 3.4.16, RUNTIME R10.1): 예전 이 단계는 pg-backup.sh(pg_dump 를 docker exec 로 직접 실행)를 돌리다 DB 를 멈췄다. 이제는 영역의 backup 잡(io.openit.jobs)을 돌리며 DB 를 멈추고 BackupJobResult 의
+    # status 로 판정해야 한다. 그 잡은 영역이 만드는 중이라 이 단계는 아직 구현되지 않았다. 통과로 세지 않도록 실패로 둔다(미구현을 감추지 않는다).
+    raise AssertionError("미구현: 영역 backup 잡(io.openit.jobs)이 아직 없다. 잡 해시가 오면 이 단계를 잡 실행 + BackupJobResult 판정으로 구현한다")
 
-# ---- D72/D122/D123 (헤드, 2026-11-01): 추론 서버 위치 독립의 경계 확인. 적재 자체(LOADED)는 단계 5 가 다른 호스트 역할의 추론 서버(SB.inference_url)에서 확인한다 ----
 @step('5L', repos=('model-runtime', 'release-gate', 'boundary-contracts') + _GW, deps=('4',),
       why="D72: 다른 호스트 역할의 추론 서버(별도 compose 프로젝트)는 운영 입구(게이트웨이 기계 토큰 경로 D122)로만 release-gate 를 읽는다. "
           "음성: 사람 계정은 404, 무토큰은 401. release-gate 는 호스트에 게시되지 않는다(D123)")

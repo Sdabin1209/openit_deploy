@@ -102,3 +102,4 @@ compose 의 모든 환경 이름이 받는 쪽 계약 Env 스키마에 있다 (�
 영역 시험 시간 상한은 근거 있는 상수다 (측정 최악 768s 의 2배, D125, 변이: 900 이면 실패) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_area_test_timeout.py"
 run-self-checks 집계 (77=SKIP 은 PASS 가 아니고 묶음을 0 으로 끝내지 않는다, 변이 포함) :: bash "$DEPLOY_ROOT/scripts/test-run-self-checks.sh"
 영역 DB 비밀 생성은 실행별 잠금(DEPLOY_LOCK)의 digest 를 읽는다 (임시 잠금 시험, 변이: 고정 경로면 실패) :: bash "$DEPLOY_ROOT/scripts/test-gen-db-secrets-all.sh"
+백업·복구 범위: deploy 는 자기 데이터(registry-data, secrets/)만, 영역 데이터는 영역의 잡 (계약 3.4.16, 변이 포함) :: bash "$DEPLOY_ROOT/scripts/test-backup-scope.sh"
