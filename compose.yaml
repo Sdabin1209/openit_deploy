@@ -62,7 +62,7 @@ x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증�
   read_only: true
   tmpfs: ["/tmp"]
   environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
-  mem_limit: 64m   # 측정 안 함(시작값)
+  mem_limit: 128m   # 64m 에서 platform step-ca 이미지의 cert 부명령이 컨테이너 시작 때 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰). 128m 는 그 뒤의 시작값이고 이 이상은 측정하지 않았다
   cpus: 0.25
   pids_limit: 64
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
@@ -383,6 +383,7 @@ services:
     volumes: ["pki-ca:/home/step:ro", "pki-root:/out"]
     networks: [pki]
     depends_on:
+      certs-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
   pki-tokens:   # 서비스마다 일회용 토큰(OTT, 수명 5분 = step 기본)을 발급해 pki-tokens 볼륨에 둔다. 프로비저너 비밀번호는 이 잡만 읽는다(인증서 컨테이너는 읽지 않는다). 다른 서버의 서비스는 이 토큰 파일을 배치 도구가 그 서버에 전달한다
     restart: "no"
@@ -399,12 +400,16 @@ services:
     volumes: ["pki-tokens:/tokens", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
     depends_on:
+      certs-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
   survey-service-cert:   # survey-service 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "survey-service"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-survey-service:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -412,6 +417,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "question-authoring"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-question-authoring:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -419,6 +427,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "ops-feedback-ingest"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-ops-feedback-ingest:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -426,6 +437,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "release-gate"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-release-gate:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -433,6 +447,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "model-serving"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-model-serving:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -440,6 +457,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "model-registry"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-model-registry:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -447,6 +467,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "dataset-store"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-dataset-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -454,6 +477,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "admin-console"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-admin-console:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -461,6 +487,9 @@ services:
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "kiosk-frontend"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-kiosk-frontend:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
@@ -1066,10 +1095,10 @@ services:
       start_period: 30s
       start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
 
-  certs-perms:   # 일회용: 영역 게이트웨이 이미지 사용자(101)가 읽고 <서비스>-cert 가 그 사용자로 쓰게 인증서 볼륨의 소유자를 맞춘다(새 이름 있는 볼륨은 root 소유)
+  certs-perms:   # 일회용: 영역 게이트웨이 이미지 사용자(101)가 읽고, step-ca 이미지(uid 1000)가 토큰·루트를, 백업 저장소 이미지(65534)가 자기 인증서를 쓰게 <서비스>-cert 가 그 사용자로 쓰게 인증서 볼륨의 소유자를 맞춘다(새 이름 있는 볼륨은 root 소유)
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
-    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback-ingest /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend"]
+    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback-ingest /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root; chown -R 65534:65534 /c/backup-store"]
     restart: "no"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "DAC_OVERRIDE"]
@@ -1077,12 +1106,17 @@ services:
     read_only: true
     network_mode: none
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
+    volumes: ["pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
     user: "65534:65534"   # 저장소 이미지 사용자가 키 파일(0600)을 읽는다
     command: ["cert", "backup-store"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-backup-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    depends_on:
+      step-ca: {condition: service_healthy}
+      pki-root: {condition: service_completed_successfully}
+      pki-tokens: {condition: service_completed_successfully}
+      certs-perms: {condition: service_completed_successfully}
   backup-store-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 저장소(uid 1000)가 못 쓴다
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
@@ -1182,7 +1216,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1209,7 +1243,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1236,7 +1270,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1288,7 +1322,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1334,7 +1368,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1391,7 +1425,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1469,7 +1503,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1518,7 +1552,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1566,7 +1600,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1605,7 +1639,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
@@ -1640,7 +1674,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 16m 에서는 망이 여러 개인 영역 pod 의 init 이 OOM-kill 됐다(2026-11-04 분리 배치 시험에서 관찰, 감시·백업 전용 망이 붙은 뒤). 32m 는 시작값이고 측정하지 않았다
     cpus: 0.1
     pids_limit: 16
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)

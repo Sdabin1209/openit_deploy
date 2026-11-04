@@ -21,7 +21,7 @@
     export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ ca_dir }}/secrets" SECRETS_GID="{{ hostvars[plan.step_ca_host].gid }}" COMPOSE_EXTRA="{{ ca_dir }}/compose.placement.yaml" CONFIG_DIR="{{ ca_dir }}/config"
     {{ ("export STEP_CA_PORT=" ~ plan.step_ca_port) if plan.step_ca_port else ":" }}
     source scripts/lib.sh
-    dc "{{ ca_project }}" run --rm pki-tokens >/dev/null 2>&1
+    dc "{{ ca_project }}" run --rm pki-tokens >/dev/null
     UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ ca_dir }}/locks/images.lock")
     docker run --rm --network none -v "{{ ca_project }}_pki-tokens:/t:ro" -v "{{ ca_project }}_pki-root:/r:ro" "$UTIL" python -c 'import json,sys;import base64;print(base64.b64encode(json.dumps({"root":open("/r/root_ca.crt").read(),"tokens":{n:open("/t/%s.ott"%n).read().strip() for n in sys.argv[1:]}}).encode()).decode())' {{ missing.stdout_lines | join(' ') }}
   args: {executable: /bin/bash}
@@ -30,7 +30,7 @@
     ca_project: "{{ hostvars[plan.step_ca_host].placement_project | default('deploy') }}"
   delegate_to: "{{ plan.step_ca_host | default(inventory_hostname, true) }}"
   register: tokens
-  no_log: true
+  no_log: "{{ placement_no_log | default(true) | bool }}"   # 시험이 실패 원인을 보려고 끌 수 있다(토큰 값이 로그에 나오므로 운영에서는 켜 둔다)
   changed_when: false
   when: plan.stage_tokens[stage_i] | length > 0 and (missing.stdout_lines | length) > 0
 - name: "단계 {{ stage_i }}: 이 서버의 토큰 볼륨에 쓰기 (640)"
@@ -58,7 +58,7 @@
   args: {executable: /bin/bash}
   register: up
   # compose 는 진행 상황을 표준 오류에 낸다. 새로 만들거나 시작했을 때만 바뀐 것으로 센다
-  changed_when: "(up.stderr | default('')) is search('Container (?!\\S*(pki-tokens|pki-root|-migrate)-)\\S+ +(Created|Recreated|Started) *$', multiline=True)"   # 일회성 서비스는 depends_on 으로 매번 다시 돈다. 그것만으로는 바뀐 것이 아니다
+  changed_when: "(up.stderr | default('')) is search('Container (?!\\S*(pki-tokens|pki-root|certs-perms|backup-store-perms|-migrate)-)\\S+ +(Created|Recreated|Started) *$', multiline=True)"   # 일회성 서비스는 depends_on 으로 매번 다시 돈다. 그것만으로는 바뀐 것이 아니다
   # 일회성 서비스(pki-tokens, ...)는 그것을 기다리는 서비스의 depends_on 으로 함께 돈다. 목록에 직접 넣으면 --wait 가 정상 종료(0)를 실패로 센다
   when: plan.stages[stage_i] | difference(plan.oneshots) | length > 0
 # 게시된 서비스의 https /readyz 를 지휘 기계에서 보려면 step-ca 루트(공개 인증서)가 필요하다: step-ca 서버의 pki-root 볼륨에서 읽어 지휘 기계에 둔다. 인벤토리에 placement_ca_path 가 있으면 그것을 쓴다

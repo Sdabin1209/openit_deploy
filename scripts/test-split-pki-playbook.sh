@@ -2,7 +2,7 @@
 # 분리 배치의 인증서·DB 경로를 실제 플레이북(ansible/site.yml, stage.yml)으로 시험한다(ADR 0060, 0061). E2E 밖, 단독.
 # 가상 서버 2개 = compose 프로젝트 2개(서로 다른 Docker 망). 제품 compose.yaml 에서 아래 서비스만 뽑은 compose 로 돈다(제품 정의 그대로, 서비스 수만 줄임).
 #   data 서버: step-ca, pki-root, pki-tokens, release-gate-db, release-gate-db-cert, release-gate-db-reload   (실제 잠금 이미지)
-#   app 서버 : release-gate(응답만 하는 대역 앱), release-gate-cert, release-gate-tls(실제 인증서 컨테이너·사이드카)
+#   app 서버 : release-gate(응답만 하는 대역 앱), release-gate-cert, release-gate-gw(실제 인증서 컨테이너·platform 영역 게이트웨이 이미지)
 # 확인: (1) 토큰 전달 단계가 돌아 app 서버 토큰 볼륨에 release-gate.ott 가 640 으로 있다 (2) app 서버 -cert 가 extra_hosts step-ca:<호스트> + 게시 포트(STEP_CA_PORT)로 다른 망의 step-ca 에서
 #       서비스 이름 인증서를 받았다 (3) app 서버의 DSN(sslmode=verify-full)로 다른 망의 release-gate-db 에 접속하고 pg-tls 소유자는 999 다 (4) 2회차 changed=0
 # 고정 포트가 없다: step-ca 와 release-gate-db 의 게시 포트는 빈 포트를 골라 인벤토리에 넣는다(step-ca 는 STEP_CA_PORT 로 안팎 같은 값). 다른 시험과 동시에 돌 수 있다.
@@ -23,15 +23,23 @@ UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK"); PGIMG=$(sed -n 's/^POSTGRES_IMAGE=//
 mkdir -p "$T/secrets"; DEPLOY_NO_DOCKER=1 bash scripts/gen-secrets.sh --db-only "$T/secrets" >/dev/null
 ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$T/secrets/tokens/step-ca-password" ); chmod 640 "$T/secrets/tokens/step-ca-password"
 # 제품 compose 에서 서비스만 뽑는다. release-gate 는 앱만 대역(응답만 하는 파이썬)으로 바꾸고 인증서·사이드카·네트워크·sysctl·DB 비밀은 제품 정의 그대로 둔다
-"$PY" - "$ROOT/compose.yaml" "$T/compose.subset.yaml" <<'PYEOF'
+mkdir -p "$T/gw"; echo '{"service":"release-gate","routes":[{"paths":["/"],"methods":["GET"],"auth":{"kind":"none"},"user_header":"strip"}],"egress":[]}' > "$T/gw/exposure.json"
+"$PY" - "$ROOT/compose.yaml" "$T/compose.subset.yaml" "$ROOT/build/images.env" "$T/gw/exposure.json" <<'PYEOF'
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-keep = ["step-ca", "pki-root", "pki-tokens", "release-gate-db", "release-gate-db-cert", "release-gate-db-reload", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-tls"]
+keep = ["step-ca", "pki-root", "pki-tokens", "release-gate-db", "release-gate-db-cert", "release-gate-db-reload", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-gw", "certs-perms"]
 svc = {k: c["services"][k] for k in keep}
 rg = svc["release-gate"]
 for k in ("env_file", "environment", "volumes", "stop_grace_period"):
     rg.pop(k, None)
 rg["image"] = "${UTIL_IMAGE}"
+# platform 이미지는 deploy 가 빌드한 로컬 이미지(build/images.env)로 바꾼다(이 시험은 레지스트리를 쓰지 않는다). 영역 게이트웨이의 Exposure 는 시험 파일 하나다
+imgs = {l.split()[0]: l.split()[1] for l in open(sys.argv[3], encoding="utf-8") if l.strip()}
+for k, v in svc.items():
+    if "openit/step-ca@" in str(v.get("image", "")): v["image"] = imgs["step-ca"]
+    if "openit/area-gateway@" in str(v.get("image", "")): v["image"] = imgs["area-gateway"]
+for v in svc["release-gate-gw"]["volumes"]:
+    if isinstance(v, dict) and v.get("target") == "/etc/openit/exposure.json": v["source"] = sys.argv[4]
 rg["entrypoint"] = ["python", "-c", "import http.server as h\nclass H(h.BaseHTTPRequestHandler):\n    def do_GET(s):\n        s.send_response(200); s.end_headers(); s.wfile.write(b'ok')\n    def log_message(s, *a): pass\nh.ThreadingHTTPServer(('127.0.0.1', 8080), H).serve_forever()"]
 rg.pop("command", None)
 rg["secrets"] = ["db-gate-dsn"]
@@ -46,6 +54,7 @@ svc["survey-service"] = {"image": "${UTIL_IMAGE}", "restart": "no", "networks": 
     "entrypoint": ["python", "-c", "import http.server as h, os, urllib.request as u\nclass H(h.BaseHTTPRequestHandler):\n    def do_GET(s):\n        url = os.environ['SURVEY_RELEASE_READER_URL'] + '/'\n        try:\n            r = u.urlopen(url, timeout=4); out = '%d %s %s' % (r.status, url, r.read().decode()[:20])\n        except u.HTTPError as e:\n            out = '%d %s' % (e.code, url)\n        except Exception as e:\n            out = 'ERR %s %s' % (url, type(e).__name__)\n        s.send_response(200); s.end_headers(); s.wfile.write(out.encode())\n    def log_message(s, *a): pass\nh.ThreadingHTTPServer(('127.0.0.1', 8080), H).serve_forever()"],
     "healthcheck": {"test": ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/',timeout=8)"], "interval": "3s", "timeout": "9s", "retries": 10}}
 c["services"] = svc
+for k in [k for k in c if k.startswith("x-")]: del c[k]   # 확장 조각(앵커 원본)은 이미 풀려 있다. 남기면 쓰지 않는 조각의 변수까지 해석한다
 yaml.safe_dump(c, open(sys.argv[2], "w", encoding="utf-8"), allow_unicode=True, sort_keys=False)
 PYEOF
 ln -s "$ROOT/config" "$T/config"   # 배치 도구가 compose 옆의 config/*.env 에서 호출 설정을 읽는다
@@ -57,7 +66,8 @@ all:
     placement_compose: $T/compose.subset.yaml
     placement_config_dir: $ROOT/config
     placement_lock: $T/images.lock
-    placement_no_lock: true   # 왜: 이 시험은 여러 번 동시에 돌 수 있다. 배치 잠금 자체는 test_placement_ops.py 가 본다(R10.12)
+    placement_no_lock: true
+    placement_no_log: ${PLACEMENT_NO_LOG:-true}   # 왜: 이 시험은 여러 번 동시에 돌 수 있다. 배치 잠금 자체는 test_placement_ops.py 가 본다(R10.12)
     placement_secrets_dir: $T/secrets
     placement_probe_address: 127.0.0.1
     placement_bind_address: 0.0.0.0
@@ -69,7 +79,7 @@ YML
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose "$T/compose.subset.yaml" >/dev/null || bad "인벤토리 점검"
 ok "인벤토리 점검 통과 (step-ca·release-gate-db 는 data 서버, release-gate 는 app 서버)"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home" UTIL_IMAGE="$UTIL"
-timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -40 "$T/run1.log" >&2; bad "플레이북 실패"; }
+timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { grep -a -A12 -m2 "^fatal" "$T/run1.log" | cut -c1-8000 >&2; tail -15 "$T/run1.log" >&2; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
 A=deploy-$ID-app; D=deploy-$ID-data
 grep -a "토큰 볼륨에 쓰기" -A3 "$T/run1.log" | grep -aq "changed: .*$ID-app" || bad "토큰 전달 단계가 app 서버에서 돌지 않았다"; ok "(1) 토큰 전달 단계가 실제로 돌았다"
@@ -79,11 +89,11 @@ grep -q 'step-ca:' "$T/r/app/compose.placement.yaml" && ok "(2) app 서버 overr
 [ "$(docker inspect -f '{{.State.Health.Status}}' $A-release-gate-cert-1)" = healthy ] || bad "release-gate-cert 가 healthy 가 아니다"
 S=$(docker run --rm --network none -v ${A}_certs-release-gate:/c:ro "$UTIL" cat /c/tls.crt | openssl x509 -noout -subject -issuer 2>/dev/null)
 case "$S" in *"CN = release-gate"*|*"CN=release-gate"*) ok "(2) app 서버 -cert 가 다른 망의 step-ca 에서 서비스 이름(release-gate) 인증서를 받았다";; *) bad "인증서 주체: $S";; esac
-[ "$(docker inspect -f '{{.State.Health.Status}}' $A-release-gate-tls-1)" = healthy ] && ok "(2) 사이드카가 그 인증서로 443 을 연다(healthy)" || bad "사이드카가 healthy 가 아니다"
+[ "$(docker inspect -f '{{.State.Health.Status}}' $A-release-gate-gw-1)" = healthy ] && ok "(2) 영역 게이트웨이가 그 인증서로 443 을 연다(healthy)" || bad "사이드카가 healthy 가 아니다"
 # --- R3.2·R3.4·R4.1·DC-NET.1·R6.2: 실제 사이드카·<서비스>-net 구조에서, 다른 서버의 호출자가 보는 것 ---
 CALL() { docker exec $D-survey-service-1 python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/',timeout=15).read().decode())"; }
 R=$(CALL); case "$R" in "200 https://release-gate:"*" ok") ok "(R1.4) 다른 서버의 호출자가 https://<서비스 이름>:<게시 포트> 로 사이드카를 거쳐 앱 응답을 받는다 ($R)";; *) bad "기준 호출: $R";; esac
-A_APP=$A-release-gate-1; A_TLS=$A-release-gate-tls-1; A_NET=$A-release-gate-net-1
+A_APP=$A-release-gate-1; A_TLS=$A-release-gate-gw-1; A_NET=$A-release-gate-net-1
 waith() { local i; for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' "$1")" = healthy ] && return 0; sleep 1; done; return 1; }   # 복구는 준비 확인(healthcheck)으로 판단한다(R4.3)
 notok() { case "$1" in 200\ *) return 1;; *) return 0;; esac; }
 S0=$(docker inspect -f '{{.State.StartedAt}}' $A_TLS)
@@ -111,7 +121,7 @@ XADDR=$(awk '$2=="release-gate"{print $1}' "$EXP/hosts"); XPORT=$(awk -F'\t' '$1
 XC="import urllib.request;print(urllib.request.urlopen('https://release-gate:$XPORT/',timeout=8).read().decode())"
 [ "$(docker run --rm --add-host release-gate:$XADDR -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "$XC" 2>&1)" = ok ] && ok "(R1.5) compose 밖 호출자가 내보낸 루트 + hosts 표만으로 https 검증을 통과해 앱 응답을 받는다" || bad "R1.5: 내보낸 파일만으로 호출 실패"
 docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/null 2>&1 && bad "R1.5: 루트 없이 호출이 통과했다" || ok "(R1.5) 루트 없이는 검증 실패(변이 확인)"
-O=$(docker run --rm --network none -v ${D}_release-gate-db-pgtls:/p:ro "$UTIL" stat -c %u /p/server.key); [ "$O" = 999 ] || bad "release-gate-db-pgtls 의 server.key 소유자 $O"; ok "(3) release-gate-db-cert 의 pg-tls 소유자 999"
+O=$(docker run --rm --network none -v ${D}_release-gate-db-pgtls:/p:ro "$UTIL" stat -c %u /p/tls.key); [ "$O" = 999 ] || bad "release-gate-db-pgtls 의 tls.key 소유자 $O"; ok "(3) release-gate-db-cert 의 pg-tls 소유자 999"
 DSN="$T/r/app/secrets/tokens/db-gate-dsn"; grep -q "@release-gate-db:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
 ok "(3) app 서버 DSN = release-gate-db:$PGP, sslmode=verify-full"
 R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 release-gate-db 에 verify-full 접속 실패"; }

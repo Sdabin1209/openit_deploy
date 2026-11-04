@@ -27,7 +27,7 @@ def build(groups):
         p["ports"][n] = 21000 + k
     return p
 
-DBS = [s for s in ALL if s.endswith("-db")]   # 영역마다 자기 DB 컨테이너(<서비스>-db)
+DBS = [s for s in ALL if s.endswith("-db") or s == "backup-store"]   # 영역 DB(<서비스>-db)와 백업 저장소(데이터 서버에 같이 둔다)   # 영역마다 자기 DB 컨테이너(<서비스>-db)
 SPLITS = {
     "multi-example": None,
     "edge-vs-core": {"edge": ["gateway", "oauth2-proxy", "keycloak", "kiosk-frontend", "admin-console"],
