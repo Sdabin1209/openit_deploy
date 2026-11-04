@@ -21,6 +21,13 @@ class T(unittest.TestCase):
     def test_no_result_line_fails(self): self.assertEqual(self.go(text="그냥 로그\n"), 1)
     def test_schema_violation_fails(self): self.assertEqual(self.go(res={"status": "ok"}), 1)
     def test_ok_status_with_nonzero_exit_fails(self): self.assertEqual(self.go(rc=1), 1)
+    def test_restore_default_skips_ca_and_ingress_but_backup_runs_them(self):
+        seen = {"backup": [], "restore": []}
+        for kind in seen:
+            J.main([kind], runner=lambda svc, kind=kind: (seen[kind].append(svc), fake()(svc))[1])
+        self.assertIn("job-gateway-backup", seen["backup"]); self.assertIn("job-pki-backup", seen["backup"])
+        self.assertNotIn("job-gateway-restore", seen["restore"]); self.assertEqual(len(seen["restore"]), 6)
+
     def test_unknown_area_is_usage_error(self): self.assertEqual(J.main(["backup", "--areas", "nope"], runner=fake()), 2)
 
 
