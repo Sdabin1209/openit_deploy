@@ -304,7 +304,8 @@ GWCURL="curl --cacert $W/gateway-ca.crt"
 GWTLS="https://host.docker.internal:$PGWS"   # 추론 서버가 제품 입구를 부르는 주소(다른 호스트의 호출자와 같은 모양)
 issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 일회용 토큰을 지휘 쪽 자격(step-ca 비밀번호)으로 발급한다
   "$DOCKER" run --rm -v "${PROJECT}_pki-root:/r:ro" "$UTIL_REF" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || return 1
-  "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --san host.docker.internal --san localhost --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$STEP_CA_PORT" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; return 1; }
+  # 역할 기반 입력(계약 StepCaEnv, 3.4.17): 인증서 이름은 host.docker.internal 하나다(SAN localhost 는 없다: 호스트에서는 --resolve 로 이 이름을 부른다)
+  step_issue_token "$STEP_IMG" host.docker.internal "https://host.docker.internal:$STEP_CA_PORT" "$W/pki" "$SECRETS_DIR/tokens/step-ca-password" "$W/tls.ott" --add-host host.docker.internal:host-gateway || return 1
   chmod 644 "$W/tls.ott" "$W/pki/root_ca.crt"
   # 시험 프로세스(호스트)의 신뢰 묶음: 게이트웨이 CA(제품 입구)와 step-ca 루트(추론 서버 사이드카). 두 곳을 부르므로 둘 다 믿는다(검증을 끄지 않는다)
   cat "$W/gateway-ca.crt" "$W/pki/root_ca.crt" > "$W/trust.crt"; chmod 644 "$W/trust.crt"
@@ -320,7 +321,7 @@ abort_if_failed
 cn() { if [ "$1" = model-serving ]; then echo "$INF-model-serving-1"; else echo "${PROJECT}-$1-1"; fi; }   # 컨테이너 이름: model-serving 은 제품이 아니라 추론 서버 프로젝트의 것이다
 echo "  Docker가 배정한 호스트 포트: gateway=$PGW(평문) gateway-tls=$PGWS 추론서버=$IPORT (제품의 다른 서비스는 호스트 포트가 없다)"
 getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
-getinf() { local o; o=$(curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" "https://localhost:$IPORT$1") || return 1; [ -n "$o" ] || { echo "본문이 비었다(사이드카가 Host 를 못 맞췄다?)"; return 1; }; printf "%s" "$o"; }   # 호스트에서는 localhost 로 부른다: 인증서 SAN 에 host.docker.internal 과 localhost 가 함께 있다(토큰·인증서에 --san). 컨테이너 쪽 호출자는 host.docker.internal 그대로
+getinf() { local o; o=$(curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" --resolve "host.docker.internal:$IPORT:127.0.0.1" "https://host.docker.internal:$IPORT$1") || return 1; [ -n "$o" ] || { echo "본문이 비었다(사이드카가 Host 를 못 맞췄다?)"; return 1; }; printf "%s" "$o"; }   # 호스트에서는 localhost 로 부른다: 인증서 SAN 에 host.docker.internal 과 localhost 가 함께 있다(토큰·인증서에 --san). 컨테이너 쪽 호출자는 host.docker.internal 그대로
 # R2.2·R4.3·R5.1: 서비스 건강 확인은 앱 포트(127.0.0.1:8080)를 직접 부르지 않고 **중계(TLS 종단)를 거쳐** 자기 서비스 이름으로 부른다(앱 컨테이너 안에서 https://<서비스 이름>, 같은 공간이라 별칭이 자기에게 풀린다).
 # 앱만 살아 있는 상태를 건강으로 오판하지 않으려는 것이다. 판정은 상태 코드 + 본문 status(없으면 서비스별 ready, HealthStatus 정의 부재: docs/change-requests/CR-HealthStatus-schema.md)다.
 # 왜 클라이언트 컨테이너인가: deploy 는 실행 중인 영역 컨테이너 안으로 들어가지 않는다(구조 규칙 1·6, CONVENTIONS 13절). 출발 서비스와 같은 망의 클라이언트가 https://<서비스> 를 그 영역 게이트웨이로 부른다(scripts/client-probe.sh, 인증서 검증을 끄지 않는다).

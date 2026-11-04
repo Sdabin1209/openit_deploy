@@ -5,7 +5,6 @@ x-monlog: &monlog {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 x-monhard: &monhard
   restart: unless-stopped
   image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/monitoring@${MONITORING_DIGEST:?locks/images.lock}
-  user: "65534:65534"
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
   read_only: true
@@ -13,8 +12,7 @@ x-monhard: &monhard
 services:
   prometheus:
     <<: *monhard
-    command: ["prometheus"]
-    environment: {PROMETHEUS_RETENTION: "${PROMETHEUS_RETENTION:-15d}"}   # Prometheus 기본값(측정 안 함)
+    environment: {MONITORING_ROLE: prometheus, PROMETHEUS_RETENTION: "${PROMETHEUS_RETENTION:-15d}"}   # Prometheus 기본값(측정 안 함)
     mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}      # 측정 안 함(시작값)
     cpus: ${PROMETHEUS_CPUS:-0.5}
     pids_limit: ${PROMETHEUS_PIDS_LIMIT:-128}
@@ -27,7 +25,7 @@ services:
     depends_on: [alertmanager, blackbox-exporter, json-exporter, node-exporter]
   alertmanager:
     <<: *monhard
-    command: ["alertmanager"]
+    environment: {MONITORING_ROLE: alertmanager}   # 역할은 계약 MonitoringEnv.MONITORING_ROLE 로 준다(이미지 부명령을 deploy 가 모른다, 3.4.17)
     mem_limit: ${ALERTMANAGER_MEM_LIMIT:-128m}
     cpus: ${ALERTMANAGER_CPUS:-0.25}
     pids_limit: ${ALERTMANAGER_PIDS_LIMIT:-64}
@@ -48,7 +46,7 @@ services:
       gateway: {condition: service_healthy}   # 공개 입구가 루트를 출력 마운트(gateway-root)에 쓴 뒤(INGRESS_ROOT_EXPORT_DIR)
   blackbox-exporter:
     <<: *monhard
-    command: ["blackbox"]
+    environment: {MONITORING_ROLE: blackbox}   # 역할은 계약 MonitoringEnv.MONITORING_ROLE 로 준다(이미지 부명령을 deploy 가 모른다, 3.4.17)
     mem_limit: ${BLACKBOX_MEM_LIMIT:-128m}
     cpus: ${BLACKBOX_CPUS:-0.25}
     pids_limit: ${BLACKBOX_PIDS_LIMIT:-64}
@@ -58,7 +56,7 @@ services:
     networks: [monitoring, serving, mon-survey-service, mon-question-authoring, mon-ops-feedback, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
   json-exporter:
     <<: *monhard
-    command: ["json"]
+    environment: {MONITORING_ROLE: json}   # 역할은 계약 MonitoringEnv.MONITORING_ROLE 로 준다(이미지 부명령을 deploy 가 모른다, 3.4.17)
     mem_limit: ${JSON_EXPORTER_MEM_LIMIT:-128m}
     cpus: ${JSON_EXPORTER_CPUS:-0.25}
     pids_limit: ${JSON_EXPORTER_PIDS_LIMIT:-64}
@@ -66,7 +64,7 @@ services:
     networks: [monitoring, serving, mon-survey-service, mon-question-authoring, mon-ops-feedback, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
   node-exporter:
     <<: *monhard
-    command: ["node"]
+    environment: {MONITORING_ROLE: node}   # 역할은 계약 MonitoringEnv.MONITORING_ROLE 로 준다(이미지 부명령을 deploy 가 모른다, 3.4.17)
     mem_limit: ${NODE_EXPORTER_MEM_LIMIT:-128m}
     cpus: ${NODE_EXPORTER_CPUS:-0.25}
     pids_limit: ${NODE_EXPORTER_PIDS_LIMIT:-64}

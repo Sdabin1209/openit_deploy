@@ -18,6 +18,7 @@ JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge"
              "job-release-gate-collect": "collect", "job-ops-feedback": "ops-feedback-job",
              "job-survey-backup": "backup", "job-question-authoring-backup": "backup", "job-release-gate-backup": "backup", "job-ops-feedback-backup": "ops-feedback-backup",
              "job-model-registry-backup": "backup", "job-dataset-store-backup": "dataset-backup",
+             "job-gateway-backup": "gateway-backup", "job-pki-backup": "pki-backup", "job-gateway-restore": "gateway-restore", "job-pki-restore": "pki-restore",
              # 복구 잡(RUNTIME R10.1): 사람이 필요할 때 돌린다. 주기가 없어 TIMERS 에 없다
              "job-survey-restore": "restore", "job-question-authoring-restore": "restore", "job-release-gate-restore": "restore", "job-ops-feedback-restore": "ops-feedback-restore",
              "job-model-registry-restore": "restore", "job-dataset-store-restore": "dataset-restore",
@@ -30,7 +31,8 @@ JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge"
 TIMERS = {"job-survey-purge": "openit-survey-purge", "job-question-authoring-purge": "openit-question-authoring-purge", "job-release-gate-prune": "openit-release-gate-prune",
           "job-release-gate-collect": "openit-release-gate-collector", "job-ops-feedback": "openit-ops-feedback-job",
           "job-survey-backup": "openit-survey-backup", "job-question-authoring-backup": "openit-question-authoring-backup", "job-release-gate-backup": "openit-release-gate-backup", "job-ops-feedback-backup": "openit-ops-feedback-backup",
-          "job-model-registry-backup": "openit-model-registry-backup", "job-dataset-store-backup": "openit-dataset-store-backup"}
+          "job-model-registry-backup": "openit-model-registry-backup", "job-dataset-store-backup": "openit-dataset-store-backup",
+          "job-gateway-backup": "openit-gateway-backup", "job-pki-backup": "openit-pki-backup"}
 SYSTEMD = pathlib.Path(__file__).resolve().parents[2] / "config" / "systemd"
 
 

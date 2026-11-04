@@ -105,13 +105,13 @@ services:
     #       devices:
     #         - {driver: nvidia, count: all, capabilities: [gpu]}
     # 건강 확인은 model-runtime 이미지의 HEALTHCHECK 가 정한다(CONVENTIONS 13절 3.4.17); deploy 는 덮어쓰지 않는다
-  certs-perms:   # 일회용: 인증서 볼륨의 소유자를 영역 게이트웨이 이미지 사용자(101)로 맞춘다(새 이름 있는 볼륨은 root 소유; 인증서 컨테이너도 101 로 돌아 키 파일 0600 을 같은 사용자가 쓰고 읽는다)
+  certs-perms:   # 일회용: 인증서 볼륨(새 이름 있는 볼륨은 root 소유)을 이미지 사용자가 쓰게 모드만 연다(0777). deploy 는 이미지의 uid 를 모른다(3.4.17, 구조 규칙 1): 쓰는 쪽(model-serving-cert)만 읽기·쓰기로 마운트하고 키 파일은 이미지가 0640 + STEP_CERT_GID 로 만든다
     image: ${INFERENCE_STEP_IMAGE:?INFERENCE_STEP_IMAGE가 필요하다}
     user: "0:0"
     restart: "no"
-    entrypoint: ["sh", "-c", "chown -R 101:101 /certs"]
+    entrypoint: ["sh", "-c", "chmod 0777 /certs"]
     cap_drop: ["ALL"]
-    cap_add: ["CHOWN", "DAC_OVERRIDE"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
     security_opt: ["no-new-privileges:true"]
     read_only: true
     network_mode: none
@@ -119,14 +119,12 @@ services:
   model-serving-cert:   # model-serving 의 인증서(ADR 0060): 지휘 쪽이 발급해 준 일회용 토큰(OTT, INFERENCE_TLS_TOKEN_FILE)으로 deploy step-ca 에서 한 번 받고, renew 데몬이 기존 인증서로 갱신한다. 필요한 경로는 이 컨테이너 -> step-ca 하나뿐이다
     group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}"]   # L02(ADR 0054): 비밀 파일은 640 + 이 그룹이다. 누구나 읽게(644) 하지 않는다
     image: ${INFERENCE_STEP_IMAGE:?INFERENCE_STEP_IMAGE(step-ca 이미지, digest 참조)가 필요하다}
-    user: "101:101"   # 영역 게이트웨이 이미지 사용자와 같다(키 파일 0600 을 둘이 같은 사용자로 쓰고 읽는다)
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
-    environment: {STEP_CA_URL: "${INFERENCE_STEP_CA_URL:?INFERENCE_STEP_CA_URL이 필요하다}", STEP_RENEW_EXPIRES_IN: 12h}
-    command: ["cert", "${INFERENCE_TLS_NAME}"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬 + HEALTHCHECK). 인증서 이름은 일회용 토큰이 정한다
+    environment: {STEP_CA_URL: "${INFERENCE_STEP_CA_URL:?INFERENCE_STEP_CA_URL이 필요하다}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: "${INFERENCE_TLS_NAME}"}   # 역할·이름은 계약 StepCaEnv(3.4.17): 이미지 부명령을 deploy 가 모른다. 인증서 이름은 일회용 토큰이 정한다
     secrets:
       - {source: tls-token, target: "/tokens/${INFERENCE_TLS_NAME}.ott"}   # platform cert 가 /tokens/<이름>.ott 를 읽는다
     extra_hosts: ["host.docker.internal:host-gateway"]   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험). 다른 서버면 배치 값이 step-ca 주소를 준다
@@ -137,9 +135,8 @@ services:
       certs-perms: {condition: service_completed_successfully}
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
   model-serving-gw:   # model-serving 의 영역 게이트웨이(platform area-gateway 이미지): 들어오는 쪽 TLS 종단(서비스 이름 인증서) + 나가는 쪽 loopback CONNECT 출구(허용 목록은 영역 Exposure.egress)
-    group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}"]   # L02(ADR 0054)
+    group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}", "${STEP_CERT_GID:-10100}"]   # L02(ADR 0054) + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
     image: ${INFERENCE_GATEWAY_IMAGE:?INFERENCE_GATEWAY_IMAGE(platform area-gateway 이미지, digest 참조)가 필요하다}
-    user: "101:101"
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]

@@ -249,6 +249,19 @@ gateway_test_mounts() { # gateway_test_mounts <gateway_test_pki 폴더>: 게이�
 # 대기 한 곳(wait_ready): 명령이 성공할 때까지 1초 간격으로 확인한다. 상한을 넘으면 설명과 마지막 출력을 표준 오류에 남기고 return 1 (호출자가 die/exit 로 실패를 낸다: 준비 안 된 채 다음 단계로 가지 않는다).
 # 사용: wait_ready <설명> <상한초> <명령...>. 명령의 출력은 성공하면 버리고, 실패하면 마지막 출력 3줄을 보인다. 상한은 호출하는 쪽이 근거와 함께 정한다(이 함수는 값을 정하지 않는다).
 # 왜 간격 1초: 대기 대상(컨테이너 기동, 내부 CA 생성, 레지스트리 응답)은 초 단위로 준비되고, 1초보다 짧게 두드리면 준비 중인 대상에 요청만 늘린다. 이 값은 측정한 것이 아니라 대기 대상의 규모(초 단위)에 맞춘 판단이다. 상한은 SECONDS(벽시계)로 센다: 명령 자체가 걸리는 시간도 상한에 들어간다.
+# 일회용 토큰 발급(지휘 쪽): step-ca 이미지를 계약 StepCaEnv 의 역할로 띄운다(STEP_ROLE=token, STEP_TOKEN_NAMES, STEP_CA_PASSWORD_FILE, 출력 STEP_TOKENS_DIR). 이미지 부명령·step 도구를 deploy 가 모른다(구조 규칙 1·6, 3.4.17).
+# 사용: step_issue_token <step 이미지> <이름> <CA 주소> <루트 인증서 폴더(root_ca.crt 가 있다)> <비밀번호 파일> <출력 파일> [docker run 추가 인자...]
+# 출력 폴더는 임시로 만들고(모드 0777: 이미지 사용자를 deploy 가 모른다) 끝나면 지운다. 토큰 파일은 <이름>.ott.
+step_issue_token() {
+  local img=$1 name=$2 url=$3 rootdir=$4 pwfile=$5 out=$6; shift 6
+  local td; td=$(mktemp -d "${TMPDIR:-/tmp}/step-tok.XXXXXX") || return 1; chmod 0777 "$td"
+  "$DOCKER" run --rm "$@" -e STEP_ROLE=token -e "STEP_TOKEN_NAMES=$name" -e "STEP_CA_URL=$url" -e STEP_CA_PASSWORD_FILE=/run/secrets/step-ca-password -e STEP_TOKENS_DIR=/tokens \
+    -v "$rootdir:/etc/openit/pki:ro" -v "$pwfile:/run/secrets/step-ca-password:ro" -v "$td:/tokens" "$img" >"$td/.log" 2>&1 \
+    || { sed 's/^/    /' "$td/.log"; rm -rf "$td"; return 1; }
+  [ -s "$td/$name.ott" ] || { echo "토큰 파일이 없다: $name.ott"; rm -rf "$td"; return 1; }
+  cp "$td/$name.ott" "$out"; rm -rf "$td"
+}
+
 wait_ready() {
   local what=$1 limit=$2 out="" end; shift 2
   end=$((SECONDS + limit))

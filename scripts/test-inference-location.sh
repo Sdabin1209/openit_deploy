@@ -110,7 +110,7 @@ for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   if ! reach "https://host.docker.internal:$GWPORT/healthz" "$W/gateway-ca.crt"; then echo "  컨테이너에서 게이트웨이 https://host.docker.internal:$GWPORT 에 닿지 못했다 (바인드 $BIND)"; continue; fi   # body-judged: reach 가 본문 status/ok 를 판정한다
   "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$UTIL" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || bail "step-ca 루트를 꺼내지 못했다"
   # 지휘 쪽: 이 서버 이름(host.docker.internal)의 일회용 토큰을 발급해 파일로 준다(비밀번호는 이 컨테이너만 읽는다)
-  "$DOCKER" run --rm --add-host host.docker.internal:host-gateway --user 1000:1000 -e STEPPATH=/tmp --tmpfs /tmp -v "$W/pki:/etc/openit/pki:ro" -v "$SECRETS_DIR/tokens/step-ca-password:/run/secrets/step-ca-password:ro" --entrypoint step "$STEP_IMG" ca token host.docker.internal --provisioner admin --provisioner-password-file /run/secrets/step-ca-password --ca-url "https://host.docker.internal:$SCP" --root /etc/openit/pki/root_ca.crt > "$W/tls.ott" 2>"$W/tls.ott.err" || { sed 's/^/    /' "$W/tls.ott.err"; bail "일회용 토큰을 발급하지 못했다"; }
+  step_issue_token "$STEP_IMG" host.docker.internal "https://host.docker.internal:$SCP" "$W/pki" "$SECRETS_DIR/tokens/step-ca-password" "$W/tls.ott" --add-host host.docker.internal:host-gateway || bail "일회용 토큰을 발급하지 못했다"
   chmod 640 "$W/tls.ott"
   echo "== (나) 다른 호스트: 별도 프로젝트 $INF, compose.inference.yaml 하나 (바인드 $BIND, 포트는 Docker 배정)"
   inf_compose up -d --wait || { echo "  추론 서버가 준비되지 않았다 (바인드 $BIND)"; "$DOCKER" logs --tail 20 "$INF-model-serving-1" 2>&1 | sed 's/^/    /'; bail "추론 서버 기동 실패"; }

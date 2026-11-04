@@ -14,7 +14,7 @@ AREA_ENV = {"survey-service": "SurveyServiceEnv", "question-authoring": "Questio
             "ops-feedback": "OpsFeedbackServerEnv", "release-gate": "GateEnv", "model-serving": "ModelServingEnv",
             "model-registry": "ModelRegistryEnv", "dataset-store": "DatasetStoreEnv", "admin-console": "AdminConsoleEnv", "kiosk-frontend": "KioskFrontendEnv"}
 
-JOB_OWNER = {"survey": "SurveyServiceEnv", "question-authoring": "QuestionAuthoringEnv", "ops-feedback": "OpsFeedbackServerEnv", "release-gate": "GateEnv"}
+JOB_OWNER = {"survey": "SurveyServiceEnv", "question-authoring": "QuestionAuthoringEnv", "ops-feedback": "OpsFeedbackServerEnv", "release-gate": "GateEnv", "identity": "IdentityEnv", "gateway": "PublicIngressEnv", "pki": "StepCaEnv"}
 
 def schema_of(svc: str):
     if svc in AREA_ENV: return AREA_ENV[svc]

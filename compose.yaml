@@ -21,9 +21,10 @@ x-joblog: &joblog {driver: json-file, options: {max-size: "10m", max-file: "5"}}
 x-common-env: &commonenv   # CommonEnv(계약): 모든 영역 컨테이너가 받는 공통 환경. OPENIT_EGRESS_PROXY 는 자기 영역 게이트웨이의 loopback CONNECT 출구다(서비스 이름 주소 금지, R1.8)
   OPENIT_EGRESS_PROXY: "http://127.0.0.1:3128"
 
+x-secretcertgid: &secretcertgid ["${SECRETS_GID:?SECRETS_GID(비밀 파일의 그룹 gid). scripts/lib.sh 가 기본값 id -g 를 내보낸다}", "${STEP_CERT_GID:-10100}"]   # 3.4.17 StepCaEnv.STEP_CERT_GID: 인증서·키(0640)의 그룹. 인증서를 읽는 컨테이너가 보조 그룹으로 받는다(deploy 의 group_add, uid 는 이미지가 정한 그대로)
 x-area-gateway: &areagw   # 영역 게이트웨이(platform 이미지, ADR 0063): 영역마다 하나를 그 영역의 네트워크 공간(<서비스>-net)에 둔다. 들어오는 쪽 443(서비스 이름 인증서)과 나가는 쪽 loopback 3128(CONNECT, 허용 목록은 영역 Exposure.egress). 설정은 이미지가 시작할 때 마운트된 Exposure 선언에서 만든다(deploy 는 라벨을 파일로 건넬 뿐이다)
   image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/area-gateway@${AREA_GATEWAY_DIGEST:?locks/images.lock}
-  # 사용자는 이미지가 선언한 것(USER 101)을 그대로 쓴다. 인증서 키 파일의 소유자는 <서비스>-cert 가 이 사용자(101)로 쓰게 맞춘다(certs-perms)
+  # 사용자는 이미지가 선언한 것(USER 101)을 그대로 쓴다. 인증서 키 파일의 소유자는 <서비스>-cert 가 이 사용자(101)로 쓰게 맞춘다(이미지 홈 마운트로 소유자를 이어받는다)
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
@@ -33,13 +34,12 @@ x-area-gateway: &areagw   # 영역 게이트웨이(platform 이미지, ADR 0063)
   cpus: 0.5
   pids_limit: 128
   logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-  group_add: *secretgid
-  healthcheck: {test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/443"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}
+  group_add: *secretcertgid
+  # 건강 확인은 이미지의 HEALTHCHECK 가 정한다(platform area-gateway, CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
 x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증서 볼륨(/home/step 에 마운트해 소유자 상속)에 쓴다
   restart: unless-stopped
   image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-  user: "1000:1000"
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
   read_only: true
@@ -102,6 +102,10 @@ networks:
   backup-models:   # 백업 저장소 <-> model-registry 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
   backup-datasets:   # 백업 저장소 <-> dataset-store 영역 pod 만(영역끼리 닿지 않는다)
+    internal: true
+  backup-gateway:   # 백업 저장소 <-> 공개 입구 백업 잡 만
+    internal: true
+  backup-pki:   # 백업 저장소 <-> 인증기관 백업 잡 만
     internal: true
   mon-survey-service:   # 감시(prometheus·blackbox·json)가 survey-service 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
     internal: true
@@ -203,6 +207,14 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/backup-datasets-credentials
   backup-datasets-repo-password:
     file: ${SECRETS_DIR:-./secrets}/tokens/backup-datasets-repo-password
+  backup-gateway-credentials:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-gateway-credentials
+  backup-gateway-repo-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-gateway-repo-password
+  backup-pki-credentials:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-pki-credentials
+  backup-pki-repo-password:
+    file: ${SECRETS_DIR:-./secrets}/tokens/backup-pki-repo-password
   pg-superuser-survey:
     file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-survey
   pg-superuser-qa:
@@ -330,7 +342,6 @@ services:
   step-ca:   # 독립 인증기관(사설 PKI + ACME, ADR 0060). 공식 이미지(digest 고정). 루트·중간 키는 처음 기동에 1회 만들어 pki-ca 볼륨에 둔다(비밀번호는 비밀 파일)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "1000:1000"   # 이미지의 step 사용자(비루트)
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -340,147 +351,134 @@ services:
     pids_limit: 128
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
-    environment: {STEP_CA_PORT: "${STEP_CA_PORT:-9000}", STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_CA_DNS_NAMES: "${STEP_CA_DNS_NAMES:-}"}   # 다른 서버·시험 배치가 step-ca 를 부르는 추가 이름(공백 구분, 인증서 SAN 과 토큰 audience 에 들어간다)
+    environment: {STEP_ROLE: serve, STEP_CA_PORT: "${STEP_CA_PORT:-9000}", STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_CA_DNS_NAMES: "${STEP_CA_DNS_NAMES:-}"}   # 다른 서버·시험 배치가 step-ca 를 부르는 추가 이름(공백 구분, 인증서 SAN 과 토큰 audience 에 들어간다)
     secrets: [step-ca-password]
     volumes: [pki-ca:/home/step]
     networks: [pki]
   pki-root:   # 루트 인증서(공개)를 읽기 전용 볼륨 pki-root 로 복사하는 일회성 잡. 키가 든 pki-ca 는 호출자에게 마운트하지 않는다
     restart: "no"
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "1000:1000"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
-    command: ["root"]
-    environment: {PKI_OUT: /out}
+    environment: {STEP_ROLE: root, PKI_OUT: /out}
     volumes: ["pki-ca:/home/step:ro", "pki-root:/out"]
     networks: [pki]
     depends_on:
-      certs-perms: {condition: service_completed_successfully}
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
   pki-tokens:   # 서비스마다 일회용 토큰(OTT, 수명 5분 = step 기본)을 발급해 pki-tokens 볼륨에 둔다. 프로비저너 비밀번호는 이 잡만 읽는다(인증서 컨테이너는 읽지 않는다). 다른 서버의 서비스는 이 토큰 파일을 배치 도구가 그 서버에 전달한다
     restart: "no"
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "1000:1000"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
     group_add: *secretgid
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}"}
-    command: ["token", "survey-service", "question-authoring", "ops-feedback", "release-gate", "model-serving", "model-registry", "dataset-store", "admin-console", "kiosk-frontend", "identity", "identity-proxy", "backup-store", "survey-db", "question-authoring-db", "ops-feedback-db", "release-gate-db", "identity-db"]
+    environment: {STEP_ROLE: token, STEP_TOKEN_NAMES: "survey-service question-authoring ops-feedback release-gate model-serving model-registry dataset-store admin-console kiosk-frontend identity identity-proxy backup-store survey-db question-authoring-db ops-feedback-db release-gate-db identity-db", STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}"}
     secrets: [step-ca-password]
     volumes: ["pki-tokens:/tokens", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
     depends_on:
-      certs-perms: {condition: service_completed_successfully}
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
   survey-service-cert:   # survey-service 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "survey-service"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: survey-service, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-survey-service:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   question-authoring-cert:   # question-authoring 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "question-authoring"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: question-authoring, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-question-authoring:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   ops-feedback-cert:   # ops-feedback 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "ops-feedback"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: ops-feedback, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-ops-feedback:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   release-gate-cert:   # release-gate 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "release-gate"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: release-gate, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-release-gate:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   model-serving-cert:   # model-serving 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "model-serving"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: model-serving, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-model-serving:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   model-registry-cert:   # model-registry 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "model-registry"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: model-registry, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-model-registry:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   dataset-store-cert:   # dataset-store 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "dataset-store"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: dataset-store, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-dataset-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   admin-console-cert:   # admin-console 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "admin-console"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: admin-console, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-admin-console:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   kiosk-frontend-cert:   # kiosk-frontend 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "kiosk-frontend"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: kiosk-frontend, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-kiosk-frontend:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   identity-cert:   # keycloak 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    command: ["cert", "identity"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-identity:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
   identity-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    command: ["cert", "identity-proxy"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity-proxy, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-identity-proxy:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
   survey-service-gw:   # survey-service 의 영역 게이트웨이(platform 이미지): https://survey-service 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:survey-service-net"
@@ -488,6 +486,7 @@ services:
     volumes: ["certs-survey-service:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/survey-service/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       survey-service-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   question-authoring-gw:   # question-authoring 의 영역 게이트웨이(platform 이미지): https://question-authoring 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:question-authoring-net"
@@ -495,6 +494,7 @@ services:
     volumes: ["certs-question-authoring:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/question-authoring/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       question-authoring-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   ops-feedback-gw:   # ops-feedback 의 영역 게이트웨이(platform 이미지): https://ops-feedback 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:ops-feedback-net"
@@ -502,6 +502,7 @@ services:
     volumes: ["certs-ops-feedback:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/ops-feedback/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       ops-feedback-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   release-gate-gw:   # release-gate 의 영역 게이트웨이(platform 이미지): https://release-gate 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:release-gate-net"
@@ -509,6 +510,7 @@ services:
     volumes: ["certs-release-gate:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/release-gate/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       release-gate-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   model-serving-gw:   # model-serving 의 영역 게이트웨이(platform 이미지): https://model-serving 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:model-serving-net"
@@ -516,6 +518,7 @@ services:
     volumes: ["certs-model-serving:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/model-serving/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       model-serving-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   model-registry-gw:   # model-registry 의 영역 게이트웨이(platform 이미지): https://model-registry 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:model-registry-net"
@@ -523,6 +526,7 @@ services:
     volumes: ["certs-model-registry:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/model-registry/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       model-registry-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   dataset-store-gw:   # dataset-store 의 영역 게이트웨이(platform 이미지): https://dataset-store 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:dataset-store-net"
@@ -530,6 +534,7 @@ services:
     volumes: ["certs-dataset-store:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/dataset-store/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       dataset-store-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   admin-console-gw:   # admin-console 의 영역 게이트웨이(platform 이미지): https://admin-console 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:admin-console-net"
@@ -537,6 +542,7 @@ services:
     volumes: ["certs-admin-console:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/admin-console/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       admin-console-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   kiosk-frontend-gw:   # kiosk-frontend 의 영역 게이트웨이(platform 이미지): https://kiosk-frontend 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:kiosk-frontend-net"
@@ -544,6 +550,7 @@ services:
     volumes: ["certs-kiosk-frontend:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/kiosk-frontend/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       kiosk-frontend-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   identity-gw:   # identity 의 영역 게이트웨이(platform 이미지): https://identity 로 받고 상류는 루프백 8080
     <<: *areagw
     network_mode: "service:identity-net"
@@ -551,6 +558,7 @@ services:
     volumes: ["certs-identity:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/identity/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       identity-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   identity-proxy-gw:   # identity-proxy 의 영역 게이트웨이(platform 이미지): https://identity-proxy 로 받고 상류는 루프백 4180
     <<: *areagw
     network_mode: "service:identity-proxy-net"
@@ -558,10 +566,10 @@ services:
     volumes: ["certs-identity-proxy:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/identity-proxy/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       identity-proxy-cert: {condition: service_healthy}
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   survey-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -571,10 +579,11 @@ services:
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
-    command: ["cert", "survey-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: survey-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["survey-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -599,10 +608,10 @@ services:
     depends_on:
       survey-db-cert: {condition: service_healthy}
     # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   question-authoring-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -612,10 +621,11 @@ services:
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
-    command: ["cert", "question-authoring-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: question-authoring-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["question-authoring-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -640,10 +650,10 @@ services:
     depends_on:
       question-authoring-db-cert: {condition: service_healthy}
     # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   ops-feedback-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -653,10 +663,11 @@ services:
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
-    command: ["cert", "ops-feedback-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: ops-feedback-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["ops-feedback-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -681,10 +692,10 @@ services:
     depends_on:
       ops-feedback-db-cert: {condition: service_healthy}
     # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   release-gate-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -694,10 +705,11 @@ services:
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
-    command: ["cert", "release-gate-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: release-gate-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["release-gate-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -722,10 +734,10 @@ services:
     depends_on:
       release-gate-db-cert: {condition: service_healthy}
     # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   identity-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
-    user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -735,10 +747,11 @@ services:
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
-    command: ["cert", "identity-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["identity-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -762,29 +775,16 @@ services:
     depends_on:
       identity-db-cert: {condition: service_healthy}
     # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
-
-  certs-perms:   # 일회용: 영역 게이트웨이 이미지 사용자(101)가 읽고, step-ca 이미지(uid 1000)가 토큰·루트를, 백업 저장소 이미지(65534)가 자기 인증서를 쓰게 <서비스>-cert 가 그 사용자로 쓰게 인증서 볼륨의 소유자를 맞춘다(새 이름 있는 볼륨은 root 소유)
-    image: ${UTIL_IMAGE:?locks/images.lock}
-    user: "0:0"
-    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root /c/identity /c/identity-proxy; chown -R 65534:65534 /c/backup-store"]
-    restart: "no"
-    cap_drop: ["ALL"]
-    cap_add: ["CHOWN", "DAC_OVERRIDE"]
-    security_opt: ["no-new-privileges:true"]
-    read_only: true
-    network_mode: none
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["certs-identity:/c/identity", "certs-identity-proxy:/c/identity-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback:/c/ops-feedback", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
+    group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
-    user: "65534:65534"   # 저장소 이미지 사용자가 키 파일(0600)을 읽는다
-    command: ["cert", "backup-store"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: backup-store, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-backup-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
+      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-      certs-perms: {condition: service_completed_successfully}
   backup-store-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 저장소(uid 1000)가 못 쓴다
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
@@ -800,7 +800,6 @@ services:
   backup-store:   # 영역 백업 저장소(platform backup-store 이미지, restic REST, --private-repos: 자격의 사용자 이름이 곧 자기 저장소 경로, TLS 443, HTTP 기본 인증; append-only 가 아니다: 영역 백업 잡이 백업 직후 forget --prune 으로 보존 상한을 지킨다, 헤드 결정·ops-feedback ADR 0032): 영역마다 다른 자격·경로·저장소 암호(RUNTIME R10.1)
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/backup-store@${BACKUP_STORE_DIGEST:?locks/images.lock}
     restart: unless-stopped
-    user: "65534:65534"   # platform 이미지 입력: /data 는 uid 65534. 인증서 키는 backup-store-cert 가 이 사용자로 쓴다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -810,7 +809,7 @@ services:
     cpus: 0.5
     pids_limit: 128
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    group_add: *secretgid
+    group_add: *secretcertgid
     environment: {OPENIT_BACKUP_PORT: "443"}   # 영역 게이트웨이 출구가 backup-store:443 을 허용한다(platform backup-store 입력). 서버는 이미지 기본 인자(--private-repos, append-only 아님)
     secrets:
       - {source: backup-survey-credentials, target: areas/survey}
@@ -819,6 +818,8 @@ services:
       - {source: backup-gate-credentials, target: areas/gate}
       - {source: backup-models-credentials, target: areas/models}
       - {source: backup-datasets-credentials, target: areas/datasets}
+      - {source: backup-gateway-credentials, target: areas/gateway}
+      - {source: backup-pki-credentials, target: areas/pki}
     volumes: ["backup-store-data:/data", "certs-backup-store:/run/tls:ro"]   # /run/secrets/areas/<영역>: 내용 '<영역>:<암호>', 파일 이름 = 사용자 이름(platform 입력)
     networks:
       backup-survey: {aliases: [backup-store]}
@@ -827,10 +828,24 @@ services:
       backup-gate: {aliases: [backup-store]}
       backup-models: {aliases: [backup-store]}
       backup-datasets: {aliases: [backup-store]}
+      backup-gateway: {aliases: [backup-store]}
+      backup-pki: {aliases: [backup-store]}
     depends_on:
       backup-store-cert: {condition: service_healthy}
       backup-store-perms: {condition: service_completed_successfully}
 
+  step-out-perms:   # 일회용: 인증서·토큰·루트 출력 볼륨(새 이름 있는 볼륨은 root 소유)을 이미지 사용자가 쓰게 모드만 연다(0777). deploy 는 이미지의 uid 를 모른다(3.4.17, 구조 규칙 1): 쓰는 쪽만 읽기·쓰기로 마운트하고 읽는 쪽은 모두 읽기 전용이며, 키 파일은 이미지가 0640 + STEP_CERT_GID 로 만든다
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chmod 0777 /c/*"]
+    restart: "no"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    network_mode: none
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    volumes: ["certs-identity:/c/identity", "certs-identity-proxy:/c/identity-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback:/c/ops-feedback", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend", "survey-db-pgtls:/c/survey-db-pgtls", "question-authoring-db-pgtls:/c/question-authoring-db-pgtls", "ops-feedback-db-pgtls:/c/ops-feedback-db-pgtls", "release-gate-db-pgtls:/c/release-gate-db-pgtls", "identity-db-pgtls:/c/identity-db-pgtls"]
   gateway-root-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 공개 입구(uid 10001)가 루트 인증서(출력 마운트)를 못 쓴다
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
@@ -894,7 +909,7 @@ services:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_TLS_PORT-8443}:8443"  # HTTPS (D88/U5)
     networks: [edge, authoring, auth, ui-kiosk, ui-admin, release-mr, release-qa]   # release: 학습 서버의 패키지 게시 입구(U69, model-registry). ui: 정적 화면, serving: 게이트웨이가 release-gate의 승인 경로 네 개만 프록시한다(Caddyfile)
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}   # 왜: start_period 가 없으면 첫 확인이 interval(15초) 뒤라 healthy 가 15초 늦다(측정: 격리 시험 15.7초 -> 1.4초). 실패는 start_period 동안 retries 에 세지 않을 뿐이다
+    # 건강 확인은 이미지의 HEALTHCHECK 가 정한다(platform, CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   kiosk-frontend-net:   # kiosk-frontend 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:kiosk-frontend-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -1081,12 +1096,7 @@ services:
     network_mode: "service:identity-net"   # 망·별칭·sysctls 는 identity-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       identity-db: {condition: service_healthy}
-    healthcheck:   # 영역 게이트웨이가 상류로 쓰는 루프백 포트(8080)가 열렸는지만 본다(이미지 내부 점검 경로를 deploy 가 알지 않는다)
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-      start_period: 90s   # 첫 기동은 realm 가져오기를 한다(측정 전, 시작값)
+    # 건강 확인은 이미지의 HEALTHCHECK 가 정한다(platform, CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   identity-proxy-net:   # oauth2-proxy 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:identity-proxy-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -1677,6 +1687,78 @@ services:
     environment: {<<: *commonenv, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, IDENTITY_ADMIN_PASSWORD_FILE: /run/secrets/identity-admin-password}
     secrets: [identity-admin-password]
     network_mode: "service:identity-net"   # 영역 pod 안에서 돈다(영역 게이트웨이 경로)
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp"]
+
+  job-gateway-backup:   # 공개 입구 상태(gateway-data: 내부 CA 키·발급 인증서)의 백업 잡(RUNTIME R10.1, 공개 입구 이미지의 잡 gateway-backup): 공개 입구는 영역 pod 가 아니라 백업 저장소 전용 망(backup-gateway)으로 직접 닿는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 에서 온다
+    profiles: ["jobs"]
+    mem_limit: ${JOB_GATEWAY_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}
+    volumes: [gateway-data:/data, pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/gateway/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gateway-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gateway-repo-password, INGRESS_ROOT_CA: /etc/openit/pki/root_ca.crt}
+    secrets: [backup-gateway-credentials, backup-gateway-repo-password]
+    networks: [backup-gateway]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp"]
+
+  job-pki-backup:   # 사설 인증기관 상태(pki-ca: 루트·중간 키)의 백업 잡(RUNTIME R10.1, step-ca 이미지의 잡 pki-backup): 백업 저장소 전용 망(backup-pki)으로 직접 닿는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 에서 온다
+    profiles: ["jobs"]
+    mem_limit: ${JOB_PKI_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
+    volumes: [pki-ca:/home/step, pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/pki/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-pki-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-pki-repo-password, STEP_CA_HOME: /home/step}
+    secrets: [backup-pki-credentials, backup-pki-repo-password]
+    networks: [backup-pki]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp"]
+
+  job-gateway-restore:   # 공개 입구 상태(gateway-data: 내부 CA 키·발급 인증서)의 복구 잡(RUNTIME R10.1, 공개 입구 이미지의 잡 gateway-restore): 공개 입구는 영역 pod 가 아니라 백업 저장소 전용 망(backup-gateway)으로 직접 닿는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 에서 온다; 복구는 사람이 돌린다(주기 없음)
+    profiles: ["jobs"]
+    mem_limit: ${JOB_GATEWAY_RESTORE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}
+    volumes: [gateway-data:/data, pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/gateway/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gateway-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gateway-repo-password, INGRESS_ROOT_CA: /etc/openit/pki/root_ca.crt}
+    secrets: [backup-gateway-credentials, backup-gateway-repo-password]
+    networks: [backup-gateway]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    logging: *joblog
+    group_add: *secretgid
+    tmpfs: ["/tmp"]
+
+  job-pki-restore:   # 사설 인증기관 상태(pki-ca: 루트·중간 키)의 복구 잡(RUNTIME R10.1, step-ca 이미지의 잡 pki-restore): 백업 저장소 전용 망(backup-pki)으로 직접 닿는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 에서 온다; 복구는 인증기관을 멈춘 상태에서 사람이 돌린다(주기 없음)
+    profiles: ["jobs"]
+    mem_limit: ${JOB_PKI_RESTORE_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
+    cpus: 1.0
+    pids_limit: 256
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
+    volumes: [pki-ca:/home/step, pki-root:/etc/openit/pki:ro]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/pki/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-pki-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-pki-repo-password, STEP_CA_HOME: /home/step}
+    secrets: [backup-pki-credentials, backup-pki-repo-password]
+    networks: [backup-pki]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
