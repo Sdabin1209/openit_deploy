@@ -266,11 +266,11 @@ cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; cp "$GWT
 #  (3) 추론 서버를 별도 프로젝트로(RELEASE_URL=제품 입구)  (4) 실제 추론 서버 주소를 제품(survey-service)에 알린다.
 mkdir -p "$W/pki"; : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
 STEP_IMG="$DEPLOY_REGISTRY/openit/step-ca@$STEP_CA_DIGEST"; SC_IMG="$DEPLOY_REGISTRY/openit/area-gateway@$AREA_GATEWAY_DIGEST"; PAUSE_IMG=$PAUSE_IMAGE   # 추론 서버(다른 호스트 역할)도 platform 이미지(step-ca cert, area-gateway)를 쓴다
-inf_up() { # inf_up <release-gate 영역 게이트웨이 주소(IP, 443)> <OUT-FILE 루트 인증서 파일>: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
-  local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" INFERENCE_RELEASE_ADDR="$1" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
+inf_up() { # inf_up <주 서버 프로젝트(inference-in 망의 주인)> <OUT-FILE 루트 인증서 파일>: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
+  local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" INFERENCE_RELEASE_NETWORK="${1}_inference-in" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
     INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal
     INFERENCE_GATEWAY_IMAGE="$SC_IMG" INFERENCE_EXPOSURE_FILE="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/model-serving/exposure.json" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
-  env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
+  env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/compose.inference.samehost.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
 }
 export INFERENCE_TOKEN_FILE="$W/inference-token"
@@ -296,7 +296,7 @@ issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 �
 }
 chk "추론 서버용 일회용 TLS 토큰 발급 (step-ca 게시 포트로, 지휘 쪽 자격)" issue_tls_token
 abort_if_failed
-chk "추론 서버 기동 (별도 프로젝트 $INF: compose.inference.yaml, 제품 입구로 release-gate 를 읽는다, https)" inf_up "$("$DOCKER" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$PROJECT-release-gate-net-1" | awk '{print $1}')" "$W/pki/root_ca.crt"
+chk "추론 서버 기동 (별도 프로젝트 $INF: compose.inference.yaml, release-gate 영역 게이트웨이로 바로 읽는다(R1.5, inference-in 외부 망 별칭), https)" inf_up "$PROJECT" "$W/pki/root_ca.crt"
 abort_if_failed
 IPORT=$(port_of "$INF-model-serving-net-1" 443)
 external_inference_setup "https://host.docker.internal:$IPORT"

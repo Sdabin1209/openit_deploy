@@ -79,6 +79,8 @@ x-pyhealth: &pyhealth   # 컨테이너 안 python으로 /healthz (이미지에 c
   start_interval: 1s   # 왜: start_period 동안만 1초 간격으로 확인한다(기본 5초). 뜬 직후 healthy가 되어 depends_on 사슬과 `up --wait`가 빨라진다. 평시 간격(interval)은 그대로. Docker 엔진 25 이상 필요(doctor.sh가 확인)
 
 networks:
+  inference-in:   # 같은 호스트의 추론 서버(compose.inference.samehost.yaml, 다른 프로젝트)가 external 로 붙는 망. release-gate 영역 게이트웨이만 별칭 release-gate 로 이 망에 있다(RUNTIME R1.5: compose 밖 호출자는 받는 영역의 게이트웨이로 바로 간다). 다른 영역은 이 망에 없다
+    internal: true
   pki:        # step-ca(ACME)와 서비스 사이드카 사이. internal: 호스트로 열지 않는다(ADR 0060)
     internal: true
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
@@ -1559,6 +1561,7 @@ services:
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
       mon-release-gate: {aliases: [release-gate]}
+      inference-in: {aliases: [release-gate]}
       backup-gate: {aliases: [release-gate]}
       serving: {aliases: [release-gate]}
       release-mr: {aliases: [release-gate]}

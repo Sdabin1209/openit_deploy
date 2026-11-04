@@ -1,0 +1,11 @@
+# 같은 호스트의 추론 서버(compose.inference.yaml 에 더한다): 주 서버 프로젝트의 inference-in 망(release-gate 영역 게이트웨이가 별칭 release-gate 로 붙어 있다)에 external 로 붙어
+# Docker DNS 로 https://release-gate 가 풀린다(IP·extra_hosts 없음, compose 표준 external 네트워크). 다른 영역은 그 망에 없다.
+# 사용: INFERENCE_RELEASE_NETWORK=<주 서버 프로젝트>_inference-in docker compose -f compose.inference.yaml -f compose.inference.samehost.yaml up ...
+services:
+  model-serving-net:
+    network_mode: !reset null
+    networks: [release]
+networks:
+  release:
+    name: ${INFERENCE_RELEASE_NETWORK:?INFERENCE_RELEASE_NETWORK(주 서버 프로젝트의 inference-in 망 이름)가 필요하다}
+    external: true

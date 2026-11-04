@@ -1,0 +1,6 @@
+# 다른 서버의 추론 서버(compose.inference.yaml 에 더한다): release-gate 이름을 주 서버의 release-gate 영역 게이트웨이(들어오는 쪽 443)의 주소로 푼다.
+# 주소는 주 서버가 내보내는 OUT-FILE hosts 표의 `<주소> release-gate` 줄이다(RUNTIME R1.5). 주 서버는 배치 인벤토리의 placement_ports {release-gate: 443} 로 그 포트를 게시한다.
+# 사용: docker compose -f compose.inference.yaml -f compose.inference.remote.yaml up ...   (INFERENCE_RELEASE_ADDR=<IP>)
+services:
+  model-serving-net:
+    extra_hosts: ["release-gate:${INFERENCE_RELEASE_ADDR:?INFERENCE_RELEASE_ADDR(주 서버 release-gate 게이트웨이 주소, OUT-FILE hosts 표)가 필요하다}"]

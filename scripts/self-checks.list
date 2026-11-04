@@ -103,3 +103,4 @@ OUT-FILE(루트 PEM·hosts 표·SHA256SUMS, R1.5·R1.7) 내보내기와 대조 :
 감시 대상 파일과 영역 pod 의 감시 전용 망이 compose 와 맞는다 (DC-MON.1, R10.11) :: python3 "$DEPLOY_ROOT/scripts/test_monitoring_targets.py"
 영역 시험·빌드를 돌리는 deploy 도구가 영역 환경에 로컬 미러 git 설정을 준다 (S14, 빼면 실패하는 변이) :: python3 "$DEPLOY_ROOT/scripts/test_mirrors_env.py"
 추론 서버 compose 의 나가는 쪽이 model-runtime 이미지 Exposure.egress 와 이름·포트로 맞는다 (R1.8·R6.2; 이미지 없으면 SKIP 77) :: python3 "$DEPLOY_ROOT/scripts/test_inference_egress.py"
+추론 서버 -> release-gate 영역 게이트웨이 단독 시험(같은 호스트 외부 망 별칭, OUT-FILE 루트, 외부 망 빼는 변이; Docker 필요) :: bash "$DEPLOY_ROOT/scripts/test-inference-reach.sh"

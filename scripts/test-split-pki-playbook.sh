@@ -15,7 +15,8 @@ ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
 T=$(mktemp -d)
 trap 'rc=$?; if [ $rc -ne 0 ]; then for s in data app; do docker ps -a --filter "label=com.docker.compose.project=deploy-$ID-$s" --format "{{.Names}} {{.Status}}" >&2; for n in $(docker ps -a -q --filter "label=com.docker.compose.project=deploy-$ID-$s"); do echo "--- $(docker inspect -f "{{.Name}}" $n)" >&2; docker logs --tail 8 $n 2>&1 | cut -c1-200 >&2; done; done; tail -25 "$T/run1.log" 2>/dev/null >&2; fi; [ "${SPLIT_KEEP:-0}" = 1 ] || { for s in data app; do docker compose -p "deploy-$ID-$s" down -v --remove-orphans >/dev/null 2>&1; done; rm -rf "$T" "$ROOT/build/placement/$ID"-* "$ROOT/build/placement.lock"; }; exit $rc' EXIT
 freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
-PGP=$(freeport); SCP=$(freeport); RGP=$(freeport)   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
+PGP=$(freeport); SCP=$(freeport); RGP=$(freeport)
+if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)443$"; then RGP=443; fi   # 다른 서버의 추론 서버는 https://release-gate(443)로 온다(RUNTIME R1.5): 게시 포트가 443 인 실제 경로를 본다. 호스트의 443 이 사용 중이면 임의 포트로 돌고 아래 443 단언은 SKIP 으로 센다   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1); [ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 LOCK="$T/images.lock"; cp locks/images.lock "$LOCK"; export DEPLOY_LOCK="$LOCK"   # 왜: 잠금 파일을 시험이 스스로 정한다(밖에서 내보낸 DEPLOY_LOCK 이 있으면 그 파일을 읽어 플레이북이 실패했다, E2E 사전 점검에서 확인)
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK"); PGIMG=$(sed -n 's/^POSTGRES_IMAGE=//p' "$LOCK"); CAIMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$LOCK")
@@ -118,6 +119,11 @@ EXP="$T/export"; docker run --rm --network none -v ${D}_pki-root:/r:ro "$UTIL" c
 "$PY" scripts/placement.py export "$T/inv.yml" --compose "$T/compose.subset.yaml" --out "$EXP" --root-ca "$T/root.pem" >/dev/null || bad "내보내기 실패"
 ( cd "$EXP" && sha256sum -c SHA256SUMS >/dev/null ) || bad "내보낸 파일의 SHA-256 대조 실패"; ok "(R1.5) 내보낸 파일(루트·hosts·포트 표)의 SHA-256 목록이 맞는다"
 XADDR=$(awk '$2=="release-gate"{print $1}' "$EXP/hosts"); XPORT=$(awk -F'\t' '$1=="release-gate"{print $2}' "$EXP/ports.tsv")
+if [ "$XPORT" = 443 ]; then   # 추론 서버(다른 호스트) 경로: compose.inference.remote.yaml 이 주는 이름 해석(release-gate:<주소>)과 같은 줄로, https://release-gate (443) 가 실제로 닿는다
+  RMT=$(INFERENCE_RELEASE_ADDR="$XADDR" INFERENCE_IMAGE=x INFERENCE_PAUSE_IMAGE=x INFERENCE_STEP_IMAGE=x INFERENCE_GATEWAY_IMAGE=x INFERENCE_EXPOSURE_FILE="$T/gw/exposure.json" INFERENCE_TOKENS_FILE="$T/gw/exposure.json" INFERENCE_RELEASE_TOKEN_FILE="$T/gw/exposure.json" INFERENCE_CA_FILE="$EXP/root_ca.crt" INFERENCE_PKI_ROOT_FILE="$EXP/root_ca.crt" INFERENCE_STEP_CA_URL=https://x INFERENCE_TLS_TOKEN_FILE="$T/gw/exposure.json" INFERENCE_TLS_NAME=x SECRETS_GID=0 docker compose -p infrmt-$$ -f compose.inference.yaml -f compose.inference.remote.yaml config --format json 2>/dev/null | python3 -c "import json,sys;print(' '.join(json.load(sys.stdin)['services']['model-serving-net']['extra_hosts']))")
+  case "$RMT" in *"release-gate=$XADDR"*|*"release-gate:$XADDR"*) ok "(R1.5) compose.inference.remote.yaml 의 extra_hosts 가 hosts 표의 release-gate 줄과 같다";; *) bad "remote overlay 해석: $RMT";; esac
+  [ "$(docker run --rm --add-host "release-gate:$XADDR" -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "import urllib.request;print(urllib.request.urlopen('https://release-gate/',timeout=8).read().decode())" 2>&1)" = ok ] && ok "(R1.5) 추론 서버 경로: https://release-gate (포트 443 게시)가 OUT-FILE 루트 + hosts 표로 닿는다" || bad "https://release-gate:443 이 닿지 않는다"
+else echo "SKIP: 호스트의 443 이 사용 중이라 게시 포트 443 단언을 건너뛴다(통과로 세지 않는다)"; fi
 XC="import urllib.request;print(urllib.request.urlopen('https://release-gate:$XPORT/',timeout=8).read().decode())"
 [ "$(docker run --rm --add-host release-gate:$XADDR -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "$XC" 2>&1)" = ok ] && ok "(R1.5) compose 밖 호출자가 내보낸 루트 + hosts 표만으로 https 검증을 통과해 앱 응답을 받는다" || bad "R1.5: 내보낸 파일만으로 호출 실패"
 docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/null 2>&1 && bad "R1.5: 루트 없이 호출이 통과했다" || ok "(R1.5) 루트 없이는 검증 실패(변이 확인)"
