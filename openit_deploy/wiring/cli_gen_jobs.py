@@ -11,6 +11,8 @@ from openit_deploy.components import job_overlay
 from openit_deploy.wiring.call import call
 
 # compose 잡 서비스 -> 이미지 라벨 안의 잡 이름. 잡 이름은 영역이 선언한다(영역이 바꾸면 여기 한 곳이 바뀐다). 여기 없는 job-* 서비스는 거부한다
+# 선언에 config 가 있는 잡이 마운트할 호스트 쪽 설정 파일(deploy 가 정한다. 컨테이너 안 경로는 영역이 선언한다)
+CONFIG_SOURCES = {"job-ops-feedback": "${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}"}
 JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge": "purge", "job-release-gate-prune": "prune",
              "job-release-gate-collect": "collect", "job-ops-feedback": "ops-feedback-job",
              "job-survey-backup": "backup", "job-question-authoring-backup": "backup", "job-release-gate-backup": "backup", "job-ops-feedback-backup": "ops-feedback-backup"}
@@ -83,7 +85,7 @@ def build(compose: dict, labels_of, validator_of) -> dict:
             problems.append(f"{svc}: 선언에 잡 {name} 가 없다: {[j['name'] for j in decl['jobs']]}")
             continue
         base = period_seconds(svc) if svc in TIMERS else None
-        jobs.append({"compose_service": svc, "declared": job, **({"base_period_seconds": base} if base else {})})
+        jobs.append({"compose_service": svc, "declared": job, **({"base_period_seconds": base} if base else {}), **({"config_source": CONFIG_SOURCES[svc]} if svc in CONFIG_SOURCES else {})})
     if problems:
         raise SystemExit("\n".join(problems))
     res = call(job_overlay, "JobOverlayRequest", "JobOverlayResult", {"jobs": jobs})

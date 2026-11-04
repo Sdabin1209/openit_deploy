@@ -23,9 +23,9 @@ def schema_of(svc: str):
     if svc.endswith("-db"): return "AreaDatabaseEnv"
     if svc == "backup-store": return "BackupStoreEnv"
     if svc == "gateway": return "PublicIngressEnv"
-    if svc == "keycloak": return "IdentityEnv"
-    if svc == "oauth2-proxy": return "IdentityProxyEnv"
-    if svc in ("prometheus", "alertmanager", "gateway-root", "blackbox-exporter", "json-exporter", "node-exporter"): return "MonitoringEnv"
+    if svc == "identity": return "IdentityEnv"
+    if svc == "identity-proxy": return "IdentityProxyEnv"
+    if svc in ("prometheus", "alertmanager", "gateway-root", "monitoring-root", "blackbox-exporter", "json-exporter", "node-exporter"): return "MonitoringEnv"
     if svc.startswith("job-"):   # 잡은 소유 영역 이미지(job-<영역 짧은 이름>-...)
         for k, v in JOB_OWNER.items():
             if svc.startswith("job-" + k): return v

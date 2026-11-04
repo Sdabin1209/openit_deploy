@@ -45,9 +45,9 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.11}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.12}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.20}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
-DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.17}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
+DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.18}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
@@ -95,7 +95,6 @@ gateway_public_url() {
   if [ "$p" = 443 ]; then echo "https://$first"; else echo "https://$first:$p"; fi
 }
 export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
-export GATEWAY_HOST_NAMES="$(gateway_host_names)"   # 직접 compose 를 부르는 스크립트(down 등)용 기본값. dc 는 부를 때마다 다시 계산한다(E2E 가 GATEWAY_HOSTS 를 source 뒤에 바꾼다)
 # pg-tls 볼륨(postgres 서버 인증서·키, ADR 0060)은 postgres 의 uid(999)가 쓸 수 있어야 한다(새 이름 있는 볼륨은 root 소유). gateway-data 와 같은 방식으로 처음 한 번 소유자를 맞춘다. dc 가 up/run 때 부른다
 ensure_pg_tls_volume() { # ensure_pg_tls_volume <프로젝트>: 영역 DB 마다 서버 인증서 볼륨(<서비스>-pgtls)의 소유자를 postgres(999)로 맞춘다
   local svc V UTIL

@@ -23,4 +23,7 @@ def run(request: "JobOverlayRequest") -> "JobOverlayResult":
         timeout = j["declared"].get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
         out[j["compose_service"]] = {"command": list(j["declared"]["argv"]), "x-openit-timeout-seconds": timeout,
                                      "x-openit-period-seconds": period_for(timeout, j.get("base_period_seconds", 0))}
+        cfg = j["declared"].get("config")   # 설정 파일의 컨테이너 안 경로는 영역이 선언한다(JobsDeclaration.config). deploy 는 경로를 적지 않고 host 쪽 파일만 준다(구조 규칙 1)
+        if cfg and j.get("config_source"):
+            out[j["compose_service"]]["volumes"] = [{"type": "bind", "source": j["config_source"], "target": cfg["container_path"], "read_only": True}]
     return {"services": out}

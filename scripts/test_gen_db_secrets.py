@@ -27,7 +27,7 @@ class T(unittest.TestCase):
         for a in d["accounts"]:
             self.assertEqual(r["account_files"][a["name"]], pw[a["name"]] + "\n")
             for env in a["url_env"]:
-                u = urlparse(r["url_files"][env].strip())
+                u = urlparse(r["url_files"][a["name"]][env].strip())
                 self.assertEqual((u.scheme, u.username, u.password, u.hostname, u.port, u.path), ("postgresql", a["name"], pw[a["name"]], "ops-feedback-db", d["port"], "/" + a["database"]))
                 q = parse_qs(u.query)
                 self.assertEqual(q["sslmode"], ["verify-full"]); self.assertTrue(q["sslrootcert"][0].startswith("/"))
@@ -39,8 +39,8 @@ class T(unittest.TestCase):
             for a in example()["accounts"]:
                 pw = (pathlib.Path(t) / "a" / a["name"]).read_text().strip()
                 for env in a["url_env"]:
-                    self.assertEqual(urlparse((pathlib.Path(t) / "u" / env).read_text().strip()).password, pw)
-                    self.assertEqual(stat.S_IMODE(os.stat(pathlib.Path(t) / "u" / env).st_mode), 0o600)
+                    self.assertEqual(urlparse((pathlib.Path(t) / "u" / a["name"] / env).read_text().strip()).password, pw)
+                    self.assertEqual(stat.S_IMODE(os.stat(pathlib.Path(t) / "u" / a["name"] / env).st_mode), 0o600)
 
     def test_idempotent_keeps_password(self):
         with tempfile.TemporaryDirectory() as t:
@@ -63,10 +63,11 @@ class T(unittest.TestCase):
             rc = G.main(["--image", "img/db", "--db-host", "x-db", "--accounts-dir", t + "/a", "--urls-dir", t + "/u"], labels_of=lambda i: {"io.openit.database": json.dumps(example())})
             self.assertEqual(rc, 0)
 
-    def test_mutation_duplicate_env_rejected(self):
+    def test_same_env_in_two_accounts_kept_apart(self):   # ops-feedback 은 owner·app 이 같은 환경 변수 이름을 선언한다: 계정별 파일로 나뉘어야 한다
         d = example(); d["accounts"][1]["url_env"] = list(d["accounts"][0]["url_env"])
-        with self.assertRaises(ValueError):
-            db_secrets.run({"db_host": "x-db", "declaration": d, "passwords": {a["name"]: "a" * 16 for a in d["accounts"]}})
+        r = db_secrets.run({"db_host": "x-db", "declaration": d, "passwords": {a["name"]: ("%d" % i) * 16 for i, a in enumerate(d["accounts"])}})
+        env = d["accounts"][0]["url_env"][0]
+        self.assertNotEqual(r["url_files"][d["accounts"][0]["name"]][env], r["url_files"][d["accounts"][1]["name"]][env])
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

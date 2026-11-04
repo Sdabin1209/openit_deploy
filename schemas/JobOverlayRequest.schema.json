@@ -53,6 +53,11 @@
       "type": "integer",
       "minimum": 1,
       "description": "deploy 가 정한 기본 실행 주기(초, systemd 타이머의 OnUnitActiveSec). 없으면 0 으로 본다. 실제 주기는 max(기본 주기, 선언 상한보다 큰 가장 작은 5분 배수)다(RUNTIME R9.3)"
+     },
+     "config_source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "선언에 config(container_path)가 있을 때 그 파일을 마운트할 호스트 쪽 경로(deploy 가 정한 설정 파일, compose 변수 치환 허용)"
      }
     }
    }

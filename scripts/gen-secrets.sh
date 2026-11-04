@@ -26,34 +26,22 @@ roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="$
 
 # PostgreSQL 계정: 이름 = 데이터베이스 = 계정. 환경 변수 이름은 docs/RUN.md 4-1-1 표(SURVEY_DATABASE_URL 등)
 gen_db() {
-  # 영역마다 자기 DB 컨테이너(<서비스>-db)와 자기 슈퍼유저 암호를 가진다: 다른 영역의 DB 계정·접속은 없다(RUNTIME R6.2, 구조 규칙 1)
-  for su in survey qa ops gate keycloak; do tok "pg-superuser-$su" >/dev/null; done
-  local a n h
-  dbhost() { case "$1" in survey) echo survey-db;; qa) echo question-authoring-db;; ops_log|ops_failure) echo ops-feedback-db;; gate) echo release-gate-db;; keycloak) echo keycloak-db;; esac; }
-  for a in survey qa ops_log ops_failure gate keycloak; do
-    n=${a//_/-}; tok "db-$n-password" >/dev/null
-    putlist "db-$n-dsn" "postgresql://$a:$(cat "$D/tokens/db-$n-password")@$(dbhost "$a"):5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
-  done
-  # L08: 스키마를 만드는 소유자 계정(위 db-$n-*, admin migrate 잡만 쓴다)과 DML만 가진 앱 계정(<이름>_app, 서버·잡이 쓴다)을 나눈다. 앱 계정 비밀은 db-$n-app-*
-  for a in $PG_APP_DBS; do
-    n=${a//_/-}; tok "db-$n-app-password" >/dev/null
-    putlist "db-$n-app-dsn" "postgresql://${a}_app:$(cat "$D/tokens/db-$n-app-password")@$(dbhost "$a"):5432/$a?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt"
-  done
+  # 영역마다 자기 DB 컨테이너(<영역>-db 이미지)와 자기 슈퍼유저 암호를 가진다(RUNTIME R6.2, 구조 규칙 1). 계정 암호와 접속 URI 파일은 여기서 만들지 않는다:
+  # 계정은 DB 이미지가 라벨 io.openit.database(DatabaseDeclaration)로 선언하고, scripts/gen-db-secrets-all.sh 가 그 선언대로 만든다(계약 3.4.12, D126).
+  for su in survey qa ops gate identity; do tok "pg-superuser-$su" >/dev/null; done
 }
 gen_db
 # 인증기관(ADR 0060): step-ca 가 루트·중간 키를 암호화하는 비밀번호. 키 자체는 step-ca 가 처음 기동에 1회 만들어 pki-ca 볼륨에 둔다(값은 출력하지 않는다). 개행 없이 만든다(step-ca 는 파일 내용을 그대로 비밀번호로 쓴다)
 [ -s "$D/tokens/step-ca-password" ] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$D/tokens/step-ca-password" ); secret_fix "$D/tokens/step-ca-password" step-ca-password
 # 사람 인증(U82, ADR 0057): Keycloak 부트스트랩 관리자, realm openit 의 초기 admin 임시 비밀번호, OIDC 클라이언트 비밀(Keycloak 과 oauth2-proxy 가 같은 값), oauth2-proxy 쿠키 키(32자: 16·24·32바이트만 받는다)
 gen_idp() {
-  tok keycloak-bootstrap-admin-password >/dev/null; tok openit-initial-admin-password >/dev/null
-  # oauth2-proxy 는 *_file 의 내용을 다듬지 않고 그대로 쓴다(끝 줄바꿈이 비밀 값의 일부가 되어 Keycloak 에서 invalid_client_credentials 가 났다). 이 두 파일은 줄바꿈 없이 만든다(Keycloak 래퍼는 줄바꿈을 떼므로 같은 값이다)
-  [ -s "$D/tokens/oauth2-proxy-client-secret" ] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$D/tokens/oauth2-proxy-client-secret" ); secret_fix "$D/tokens/oauth2-proxy-client-secret" oauth2-proxy-client-secret
-  [ -s "$D/tokens/oauth2-proxy-cookie-secret" ] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(16),end="")' > "$D/tokens/oauth2-proxy-cookie-secret" ); secret_fix "$D/tokens/oauth2-proxy-cookie-secret" oauth2-proxy-cookie-secret
+  # 계약 IdentityEnv·IdentityProxyEnv(3.4.12): 관리자 암호, 첫 관리자(openit realm) 암호, OIDC 클라이언트 비밀(identity 와 identity-proxy 가 같은 값), 세션 쿠키 키(32자). realm·Keycloak 설정은 identity 이미지가 만든다.
+  tok identity-admin-password >/dev/null; tok identity-initial-admin-password >/dev/null
+  # 클라이언트 비밀과 쿠키 키는 줄바꿈 없이 만든다(끝 줄바꿈이 비밀 값의 일부가 되면 invalid_client_credentials 가 난다: 이전 관찰)
+  [ -s "$D/tokens/identity-client-secret" ] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$D/tokens/identity-client-secret" ); secret_fix "$D/tokens/identity-client-secret" identity-client-secret
+  [ -s "$D/tokens/identity-cookie-secret" ] || ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(16),end="")' > "$D/tokens/identity-cookie-secret" ); secret_fix "$D/tokens/identity-cookie-secret" identity-cookie-secret
 }
 gen_idp
-# Keycloak --config-file(비밀 파일): db-password 와 bootstrap-admin-password. 환경 변수로 넘기지 않는다(프로세스 환경에 값이 남는다, D84). 값이 바뀌면 다시 쓴다
-kc_conf="db-password=$(tr -d '\r\n' < "$D/tokens/db-keycloak-password")"$'\n'"bootstrap-admin-password=$(tr -d '\r\n' < "$D/tokens/keycloak-bootstrap-admin-password")"
-[ "$(cat "$D/keycloak-secrets.conf" 2>/dev/null)" = "$kc_conf" ] || ( umask 077; printf '%s\n' "$kc_conf" > "$D/keycloak-secrets.conf" ); secret_fix "$D/keycloak-secrets.conf" keycloak-secrets.conf; unset kc_conf
 # 영역 백업(RUNTIME R10.1, CommonEnv OPENIT_BACKUP_*): 영역마다 다른 자격(HTTP 기본 인증 "<사용자>:<암호>" 한 줄, RFC 7617)과 다른 저장소 암호. 저장소 경로도 영역마다 다르다(https://backup-store/<영역>/).
 # 한 영역의 자격으로 다른 영역의 저장소를 읽지 못하게 암호가 다르다. 저장소 쪽 htpasswd 는 이 자격들에서 만든다(아래, docker 가 있을 때)
 gen_backup() {

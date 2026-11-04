@@ -104,9 +104,9 @@ networks:
   # postgres 는 아래 넷에 모두 붙는다(여러 네트워크 가입은 compose 에서 정상). 서비스끼리의 길은 serving/authoring/release 만 열어 준다.
   datasets:   # dataset-store(I2) 전용. internal: 호스트로 열지 않고 게이트웨이도 붙지 않는다(키오스크·직원 경로에서 닿지 않는다). docs/adr/0032-dataset-store-boundary.md
     internal: true
-  auth:       # 사람 인증(U82): gateway <-> oauth2-proxy <-> keycloak. 호스트로 열지 않는다
+  auth:       # 사람 인증(U82): gateway <-> identity-proxy <-> identity. 호스트로 열지 않는다
     internal: true
-  db-keycloak:   # keycloak <-> postgres 만
+  db-identity:   # identity <-> identity-db 만
     internal: true
   backup-survey:   # 백업 저장소 <-> survey-service 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
@@ -131,16 +131,6 @@ networks:
   mon-kiosk-frontend:   # 감시(prometheus·blackbox·json)가 kiosk-frontend 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
     internal: true
   mon-admin-console:   # 감시(prometheus·blackbox·json)가 admin-console 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
-    internal: true
-  reload-survey-db:   # survey-db-reload <-> survey-db 만
-    internal: true
-  reload-question-authoring-db:   # question-authoring-db-reload <-> question-authoring-db 만
-    internal: true
-  reload-ops-feedback-db:   # ops-feedback-db-reload <-> ops-feedback-db 만
-    internal: true
-  reload-release-gate-db:   # release-gate-db-reload <-> release-gate-db 만
-    internal: true
-  reload-keycloak-db:   # keycloak-db-reload <-> keycloak-db 만
     internal: true
   db-survey:
     internal: true
@@ -171,8 +161,8 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   certs-dataset-store:
   certs-admin-console:
   certs-kiosk-frontend:
-  certs-keycloak:
-  certs-oauth2-proxy:
+  certs-identity:
+  certs-identity-proxy:
   pki-root:       # 루트 인증서(공개)만. 모든 호출자가 읽기 전용으로 마운트한다
   survey-db-data:   # survey-db: 이 영역의 데이터베이스. 백업은 볼륨 복사가 아니라 영역의 백업 잡(pg_dump)
   survey-db-pgtls:   # survey-db 서버 인증서·키(step-ca 발급)
@@ -182,8 +172,8 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   ops-feedback-db-pgtls:   # ops-feedback-db 서버 인증서·키(step-ca 발급)
   release-gate-db-data:   # release-gate-db: 이 영역의 데이터베이스. 백업은 볼륨 복사가 아니라 영역의 백업 잡(pg_dump)
   release-gate-db-pgtls:   # release-gate-db 서버 인증서·키(step-ca 발급)
-  keycloak-db-data:   # keycloak-db: 이 영역의 데이터베이스. 백업은 볼륨 복사가 아니라 영역의 백업 잡(pg_dump)
-  keycloak-db-pgtls:   # keycloak-db 서버 인증서·키(step-ca 발급)
+  identity-db-data:   # identity-db: 이 영역의 데이터베이스. 백업은 볼륨 복사가 아니라 영역의 백업 잡(pg_dump)
+  identity-db-pgtls:   # identity-db 서버 인증서·키(step-ca 발급)
 
 configs:
   gateway-tls-internal:
@@ -239,46 +229,32 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-ops
   pg-superuser-gate:
     file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-gate
-  pg-superuser-keycloak:
-    file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-keycloak
-  db-survey-password:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-password
-  db-qa-password:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-qa-password
-  db-ops-log-password:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-password
-  db-ops-failure-password:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-password
-  db-ops-log-app-password:      # L08: 앱 계정(DML만) 암호는 postgres 초기화만 읽는다
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-app-password
-  db-ops-failure-app-password:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-app-password
-  db-gate-password:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-password
-  db-keycloak-password:          # Keycloak 의 데이터베이스 계정 암호(U82). keycloak 서비스가 쓴다(postgres 초기화도 읽는다)
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-keycloak-password
-  keycloak-secrets.conf:              # Keycloak --config-file: db-password, bootstrap-admin-password (원본 값은 tokens/db-keycloak-password, tokens/keycloak-bootstrap-admin-password)
-    file: ${SECRETS_DIR:-./secrets}/keycloak-secrets.conf
-  keycloak-realm.json:                # realm 가져오기 파일(비밀 값 포함: 클라이언트 비밀, 초기 admin 임시 비밀번호). 원본 값은 tokens/oauth2-proxy-client-secret, tokens/openit-initial-admin-password
-    file: ${SECRETS_DIR:-./secrets}/keycloak-realm.json
-  oauth2-proxy-client-secret:         # Keycloak 클라이언트 openit-gateway 의 비밀(Keycloak 이 realm 가져올 때, oauth2-proxy 가 토큰 교환 때 읽는다)
-    file: ${SECRETS_DIR:-./secrets}/tokens/oauth2-proxy-client-secret
-  oauth2-proxy-cookie-secret:         # oauth2-proxy 세션 쿠키 암호화 키(32자)
-    file: ${SECRETS_DIR:-./secrets}/tokens/oauth2-proxy-cookie-secret
+  pg-superuser-identity:
+    file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-identity
+  identity-client-secret:         # OIDC 클라이언트 비밀(identity 와 identity-proxy 가 같은 값, 줄바꿈 없음)
+    file: ${SECRETS_DIR:-./secrets}/tokens/identity-client-secret
+  identity-cookie-secret:         # 세션 쿠키 서명 키(32자)
+    file: ${SECRETS_DIR:-./secrets}/tokens/identity-cookie-secret
+  identity-admin-password:        # Keycloak 자체(master) 관리자 암호
+    file: ${SECRETS_DIR:-./secrets}/tokens/identity-admin-password
+  identity-initial-admin-password:   # openit realm 의 첫 관리자(가입 승인용) 암호
+    file: ${SECRETS_DIR:-./secrets}/tokens/identity-initial-admin-password
+  identity-db-url:                # identity-db 접속 URI(scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다)
+    file: ${SECRETS_DIR:-./secrets}/db-urls/identity-db/identity/IDENTITY_DB_URL_FILE
   db-survey-dsn:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-survey-dsn
+    file: ${SECRETS_DIR:-./secrets}/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   db-qa-dsn:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-qa-dsn
+    file: ${SECRETS_DIR:-./secrets}/db-urls/question-authoring-db/qa/QA_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   db-ops-log-dsn:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-dsn
+    file: ${SECRETS_DIR:-./secrets}/db-urls/ops-feedback-db/ops_log_owner/OPS_LOG_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   db-ops-failure-dsn:           # 소유자 계정(스키마를 만든다). ops-feedback-migrate 만 쓴다(L08)
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-dsn
+    file: ${SECRETS_DIR:-./secrets}/db-urls/ops-feedback-db/ops_failure_owner/OPS_FAILURE_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   db-ops-log-app-dsn:           # 앱 계정(DML만). 서버·잡이 쓴다(L08)
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-log-app-dsn
+    file: ${SECRETS_DIR:-./secrets}/db-urls/ops-feedback-db/ops_log_app/OPS_LOG_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   db-ops-failure-app-dsn:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-ops-failure-app-dsn
+    file: ${SECRETS_DIR:-./secrets}/db-urls/ops-feedback-db/ops_failure_app/OPS_FAILURE_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   db-gate-dsn:
-    file: ${SECRETS_DIR:-./secrets}/tokens/db-gate-dsn
+    file: ${SECRETS_DIR:-./secrets}/db-urls/release-gate-db/gate/GATE_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   qa-gateway-token:
     file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-token
   qa-gateway-tokens:
@@ -395,7 +371,7 @@ services:
     tmpfs: ["/tmp"]
     group_add: *secretgid
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}"}
-    command: ["token", "survey-service", "question-authoring", "ops-feedback-ingest", "release-gate", "model-serving", "model-registry", "dataset-store", "admin-console", "kiosk-frontend", "keycloak", "oauth2-proxy", "backup-store", "survey-db", "question-authoring-db", "ops-feedback-db", "release-gate-db", "keycloak-db"]
+    command: ["token", "survey-service", "question-authoring", "ops-feedback-ingest", "release-gate", "model-serving", "model-registry", "dataset-store", "admin-console", "kiosk-frontend", "identity", "identity-proxy", "backup-store", "survey-db", "question-authoring-db", "ops-feedback-db", "release-gate-db", "identity-db"]
     secrets: [step-ca-password]
     volumes: ["pki-tokens:/tokens", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
@@ -493,17 +469,17 @@ services:
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "kiosk-frontend"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-kiosk-frontend:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
-  keycloak-cert:   # keycloak 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+  identity-cert:   # keycloak 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    command: ["cert", "keycloak"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
-    volumes: ["certs-keycloak:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "identity"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-identity:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
       pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
-  oauth2-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+  identity-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    command: ["cert", "oauth2-proxy"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
-    volumes: ["certs-oauth2-proxy:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "identity-proxy"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-identity-proxy:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
       pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
@@ -570,21 +546,20 @@ services:
     volumes: ["certs-kiosk-frontend:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/kiosk-frontend/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       kiosk-frontend-cert: {condition: service_healthy}
-  keycloak-tls:   # keycloak 의 TLS 사이드카(ADR 0060): https://keycloak 으로 받는다
-    <<: *tlssidecar
-    network_mode: "service:keycloak-net"
-    environment: {TLS_NAME: keycloak, TLS_UPSTREAM: "127.0.0.1:8080"}
-    volumes: ["certs-keycloak:/certs:ro"]
+  identity-gw:   # identity 의 영역 게이트웨이(platform 이미지): https://identity 로 받고 상류는 루프백 8080
+    <<: *areagw
+    network_mode: "service:identity-net"
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-identity:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/identity/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
-      keycloak-cert: {condition: service_healthy}
-  oauth2-proxy-tls:   # oauth2-proxy 의 TLS 사이드카(ADR 0060): https://oauth2-proxy 으로 받는다
-    <<: *tlssidecar
-    network_mode: "service:oauth2-proxy-net"
-    environment: {TLS_NAME: oauth2-proxy, TLS_UPSTREAM: "127.0.0.1:4180"}
-    volumes: ["certs-oauth2-proxy:/certs:ro"]
-    healthcheck: {test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 443 && wget -q -O /dev/null http://127.0.0.1:4180/ping"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}   # 왜: oauth2-proxy 이미지에는 셸이 없어(healthcheck 를 둘 수 없다) 같은 네임스페이스의 사이드카가 표준 /ping 으로 준비를 본다. 게이트웨이가 이것을 기다린다
+      identity-cert: {condition: service_healthy}
+  identity-proxy-gw:   # identity-proxy 의 영역 게이트웨이(platform 이미지): https://identity-proxy 로 받고 상류는 루프백 4180
+    <<: *areagw
+    network_mode: "service:identity-proxy-net"
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:4180", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
+    volumes: ["certs-identity-proxy:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/identity-proxy/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
-      oauth2-proxy-cert: {condition: service_healthy}
+      identity-proxy-cert: {condition: service_healthy}
   survey-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -605,79 +580,23 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-  survey-db-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
-    restart: unless-stopped
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    read_only: true
-    tmpfs: ["/tmp"]
-    group_add: *secretgid
-    mem_limit: 64m
-    cpus: 0.25
-    pids_limit: 64
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    entrypoint: ["sh", "-c", "while true; do sleep 28860; PGPASSWORD=$$(cat /run/secrets/pg-superuser-survey) psql -qAt 'host=survey-db user=postgres dbname=postgres sslmode=verify-full sslrootcert=/etc/openit/pki/root_ca.crt' -c 'select pg_reload_conf()' >/dev/null; done"]
-    secrets: [pg-superuser-survey]
-    volumes: ["pki-root:/etc/openit/pki:ro"]
-    networks: [reload-survey-db]
-    depends_on:
-      survey-db: {condition: service_healthy}
-  survey-db:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
+  survey-db:             # 영역 DB 이미지(survey-db): 초기화·계정·접속 규칙·TLS 설정은 이미지 안에서 DatabaseDeclaration 대로 한다(계약 3.4.12 AreaDatabaseEnv, D126). 인증서 갱신 반영도 이미지가 한다(reload 컨테이너 없음)
     <<: *hardening
     mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/survey-db@${SURVEY_DB_DIGEST:?locks/images.lock}
     environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-survey   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
-      POSTGRES_INITDB_ARGS: "--data-checksums"
-      PG_INIT_ACCOUNTS: "survey"   # 이 영역의 데이터베이스·계정만 만든다(다른 영역의 DB 계정·접속은 없다)
-      PG_APP_ACCOUNTS: ""
-    secrets: [pg-superuser-survey, db-survey-password]
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-survey   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
+      DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
+    secrets: [pg-superuser-survey]
     volumes:
       - survey-db-data:/var/lib/postgresql/data
-      - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
-      - ${CONFIG_DIR:-./config}/postgres/pg_hba.conf:/etc/openit/pg_hba.conf:ro   # 네트워크 접속은 TLS 만(ADR 0060)
-      - survey-db-pgtls:/etc/openit/pg-tls:ro   # step-ca 발급 서버 인증서·키(postgres-cert-init)
-    tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-survey, reload-survey-db]
+      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/survey-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
+      - survey-db-pgtls:/certs:ro
+    tmpfs: ["/tmp", "/var/run/postgresql"]
+    networks: [db-survey]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
-    # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
-    #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
-    #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
-    #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
-    #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
-      - -c
-      - ssl_key_file=/etc/openit/pg-tls/tls.key
-      - -c
-      - ssl_min_protocol_version=TLSv1.2
-      - -c
-      - hba_file=/etc/openit/pg_hba.conf
-      - -c
-      - log_statement=none
-      - -c
-      - log_min_error_statement=panic
-      - -c
-      - log_min_duration_statement=-1
-      - -c
-      - log_error_verbosity=terse
-      - -c
-      - log_parameter_max_length=0          # 바인드 값은 로그에 남기지 않는다(PG13+, 오류 때도: 아래 _on_error)
-      - -c
-      - log_parameter_max_length_on_error=0
-      - -c
-      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
-      - -c
-      - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     depends_on:
       survey-db-cert: {condition: service_healthy}
@@ -708,79 +627,23 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-  question-authoring-db-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
-    restart: unless-stopped
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    read_only: true
-    tmpfs: ["/tmp"]
-    group_add: *secretgid
-    mem_limit: 64m
-    cpus: 0.25
-    pids_limit: 64
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    entrypoint: ["sh", "-c", "while true; do sleep 28860; PGPASSWORD=$$(cat /run/secrets/pg-superuser-qa) psql -qAt 'host=question-authoring-db user=postgres dbname=postgres sslmode=verify-full sslrootcert=/etc/openit/pki/root_ca.crt' -c 'select pg_reload_conf()' >/dev/null; done"]
-    secrets: [pg-superuser-qa]
-    volumes: ["pki-root:/etc/openit/pki:ro"]
-    networks: [reload-question-authoring-db]
-    depends_on:
-      question-authoring-db: {condition: service_healthy}
-  question-authoring-db:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
+  question-authoring-db:             # 영역 DB 이미지(question-authoring-db): 초기화·계정·접속 규칙·TLS 설정은 이미지 안에서 DatabaseDeclaration 대로 한다(계약 3.4.12 AreaDatabaseEnv, D126). 인증서 갱신 반영도 이미지가 한다(reload 컨테이너 없음)
     <<: *hardening
     mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/question-authoring-db@${QUESTION_AUTHORING_DB_DIGEST:?locks/images.lock}
     environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-qa   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
-      POSTGRES_INITDB_ARGS: "--data-checksums"
-      PG_INIT_ACCOUNTS: "qa"   # 이 영역의 데이터베이스·계정만 만든다(다른 영역의 DB 계정·접속은 없다)
-      PG_APP_ACCOUNTS: ""
-    secrets: [pg-superuser-qa, db-qa-password]
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-qa   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
+      DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
+    secrets: [pg-superuser-qa]
     volumes:
       - question-authoring-db-data:/var/lib/postgresql/data
-      - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
-      - ${CONFIG_DIR:-./config}/postgres/pg_hba.conf:/etc/openit/pg_hba.conf:ro   # 네트워크 접속은 TLS 만(ADR 0060)
-      - question-authoring-db-pgtls:/etc/openit/pg-tls:ro   # step-ca 발급 서버 인증서·키(postgres-cert-init)
-    tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-qa, reload-question-authoring-db]
+      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/question-authoring-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
+      - question-authoring-db-pgtls:/certs:ro
+    tmpfs: ["/tmp", "/var/run/postgresql"]
+    networks: [db-qa]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
-    # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
-    #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
-    #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
-    #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
-    #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
-      - -c
-      - ssl_key_file=/etc/openit/pg-tls/tls.key
-      - -c
-      - ssl_min_protocol_version=TLSv1.2
-      - -c
-      - hba_file=/etc/openit/pg_hba.conf
-      - -c
-      - log_statement=none
-      - -c
-      - log_min_error_statement=panic
-      - -c
-      - log_min_duration_statement=-1
-      - -c
-      - log_error_verbosity=terse
-      - -c
-      - log_parameter_max_length=0          # 바인드 값은 로그에 남기지 않는다(PG13+, 오류 때도: 아래 _on_error)
-      - -c
-      - log_parameter_max_length_on_error=0
-      - -c
-      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
-      - -c
-      - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     depends_on:
       question-authoring-db-cert: {condition: service_healthy}
@@ -811,79 +674,23 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-  ops-feedback-db-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
-    restart: unless-stopped
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    read_only: true
-    tmpfs: ["/tmp"]
-    group_add: *secretgid
-    mem_limit: 64m
-    cpus: 0.25
-    pids_limit: 64
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    entrypoint: ["sh", "-c", "while true; do sleep 28860; PGPASSWORD=$$(cat /run/secrets/pg-superuser-ops) psql -qAt 'host=ops-feedback-db user=postgres dbname=postgres sslmode=verify-full sslrootcert=/etc/openit/pki/root_ca.crt' -c 'select pg_reload_conf()' >/dev/null; done"]
-    secrets: [pg-superuser-ops]
-    volumes: ["pki-root:/etc/openit/pki:ro"]
-    networks: [reload-ops-feedback-db]
-    depends_on:
-      ops-feedback-db: {condition: service_healthy}
-  ops-feedback-db:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
+  ops-feedback-db:             # 영역 DB 이미지(ops-feedback-db): 초기화·계정·접속 규칙·TLS 설정은 이미지 안에서 DatabaseDeclaration 대로 한다(계약 3.4.12 AreaDatabaseEnv, D126). 인증서 갱신 반영도 이미지가 한다(reload 컨테이너 없음)
     <<: *hardening
     mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback-db@${OPS_FEEDBACK_DB_DIGEST:?locks/images.lock}
     environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-ops   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
-      POSTGRES_INITDB_ARGS: "--data-checksums"
-      PG_INIT_ACCOUNTS: "ops_log ops_failure"   # 이 영역의 데이터베이스·계정만 만든다(다른 영역의 DB 계정·접속은 없다)
-      PG_APP_ACCOUNTS: "ops_log ops_failure"
-    secrets: [pg-superuser-ops, db-ops-log-password, db-ops-failure-password, db-ops-log-app-password, db-ops-failure-app-password]
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-ops   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
+      DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
+    secrets: [pg-superuser-ops]
     volumes:
       - ops-feedback-db-data:/var/lib/postgresql/data
-      - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
-      - ${CONFIG_DIR:-./config}/postgres/pg_hba.conf:/etc/openit/pg_hba.conf:ro   # 네트워크 접속은 TLS 만(ADR 0060)
-      - ops-feedback-db-pgtls:/etc/openit/pg-tls:ro   # step-ca 발급 서버 인증서·키(postgres-cert-init)
-    tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-ops, reload-ops-feedback-db]
+      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/ops-feedback-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
+      - ops-feedback-db-pgtls:/certs:ro
+    tmpfs: ["/tmp", "/var/run/postgresql"]
+    networks: [db-ops]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
-    # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
-    #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
-    #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
-    #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
-    #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
-      - -c
-      - ssl_key_file=/etc/openit/pg-tls/tls.key
-      - -c
-      - ssl_min_protocol_version=TLSv1.2
-      - -c
-      - hba_file=/etc/openit/pg_hba.conf
-      - -c
-      - log_statement=none
-      - -c
-      - log_min_error_statement=panic
-      - -c
-      - log_min_duration_statement=-1
-      - -c
-      - log_error_verbosity=terse
-      - -c
-      - log_parameter_max_length=0          # 바인드 값은 로그에 남기지 않는다(PG13+, 오류 때도: 아래 _on_error)
-      - -c
-      - log_parameter_max_length_on_error=0
-      - -c
-      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
-      - -c
-      - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     depends_on:
       ops-feedback-db-cert: {condition: service_healthy}
@@ -914,79 +721,23 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-  release-gate-db-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
-    restart: unless-stopped
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    read_only: true
-    tmpfs: ["/tmp"]
-    group_add: *secretgid
-    mem_limit: 64m
-    cpus: 0.25
-    pids_limit: 64
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    entrypoint: ["sh", "-c", "while true; do sleep 28860; PGPASSWORD=$$(cat /run/secrets/pg-superuser-gate) psql -qAt 'host=release-gate-db user=postgres dbname=postgres sslmode=verify-full sslrootcert=/etc/openit/pki/root_ca.crt' -c 'select pg_reload_conf()' >/dev/null; done"]
-    secrets: [pg-superuser-gate]
-    volumes: ["pki-root:/etc/openit/pki:ro"]
-    networks: [reload-release-gate-db]
-    depends_on:
-      release-gate-db: {condition: service_healthy}
-  release-gate-db:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
+  release-gate-db:             # 영역 DB 이미지(release-gate-db): 초기화·계정·접속 규칙·TLS 설정은 이미지 안에서 DatabaseDeclaration 대로 한다(계약 3.4.12 AreaDatabaseEnv, D126). 인증서 갱신 반영도 이미지가 한다(reload 컨테이너 없음)
     <<: *hardening
     mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate-db@${RELEASE_GATE_DB_DIGEST:?locks/images.lock}
     environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-gate   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
-      POSTGRES_INITDB_ARGS: "--data-checksums"
-      PG_INIT_ACCOUNTS: "gate"   # 이 영역의 데이터베이스·계정만 만든다(다른 영역의 DB 계정·접속은 없다)
-      PG_APP_ACCOUNTS: ""
-    secrets: [pg-superuser-gate, db-gate-password]
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-gate   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
+      DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
+    secrets: [pg-superuser-gate]
     volumes:
       - release-gate-db-data:/var/lib/postgresql/data
-      - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
-      - ${CONFIG_DIR:-./config}/postgres/pg_hba.conf:/etc/openit/pg_hba.conf:ro   # 네트워크 접속은 TLS 만(ADR 0060)
-      - release-gate-db-pgtls:/etc/openit/pg-tls:ro   # step-ca 발급 서버 인증서·키(postgres-cert-init)
-    tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-gate, reload-release-gate-db]
+      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/release-gate-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
+      - release-gate-db-pgtls:/certs:ro
+    tmpfs: ["/tmp", "/var/run/postgresql"]
+    networks: [db-gate]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
-    # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
-    #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
-    #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
-    #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
-    #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
-      - -c
-      - ssl_key_file=/etc/openit/pg-tls/tls.key
-      - -c
-      - ssl_min_protocol_version=TLSv1.2
-      - -c
-      - hba_file=/etc/openit/pg_hba.conf
-      - -c
-      - log_statement=none
-      - -c
-      - log_min_error_statement=panic
-      - -c
-      - log_min_duration_statement=-1
-      - -c
-      - log_error_verbosity=terse
-      - -c
-      - log_parameter_max_length=0          # 바인드 값은 로그에 남기지 않는다(PG13+, 오류 때도: 아래 _on_error)
-      - -c
-      - log_parameter_max_length_on_error=0
-      - -c
-      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
-      - -c
-      - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     depends_on:
       release-gate-db-cert: {condition: service_healthy}
@@ -997,7 +748,7 @@ services:
       retries: 6
       start_period: 30s
       start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
-  keycloak-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
+  identity-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     user: "999:999"   # postgres 와 같은 uid: 키 파일(0600)을 postgres 만 읽는다
@@ -1010,89 +761,33 @@ services:
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h}
-    command: ["cert", "keycloak-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
-    volumes: ["keycloak-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "identity-db"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["identity-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-  keycloak-db-reload:   # 새 서버 인증서를 postgres 가 읽게 8시간 1분마다 pg_reload_conf() 를 부른다(SQL 표준 방법; 신호나 pid 공유를 쓰지 않는다). 접속은 verify-full TLS
-    restart: unless-stopped
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    read_only: true
-    tmpfs: ["/tmp"]
-    group_add: *secretgid
-    mem_limit: 64m
-    cpus: 0.25
-    pids_limit: 64
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    entrypoint: ["sh", "-c", "while true; do sleep 28860; PGPASSWORD=$$(cat /run/secrets/pg-superuser-keycloak) psql -qAt 'host=keycloak-db user=postgres dbname=postgres sslmode=verify-full sslrootcert=/etc/openit/pki/root_ca.crt' -c 'select pg_reload_conf()' >/dev/null; done"]
-    secrets: [pg-superuser-keycloak]
-    volumes: ["pki-root:/etc/openit/pki:ro"]
-    networks: [reload-keycloak-db]
-    depends_on:
-      keycloak-db: {condition: service_healthy}
-  keycloak-db:             # 공식 postgres:16 하나. 서비스마다 데이터베이스와 최소 권한 계정을 나눈다(config/postgres/initdb/10-roles.sh). 호스트 포트 없음, db 네트워크만
+  identity-db:             # 영역 DB 이미지(identity-db): 초기화·계정·접속 규칙·TLS 설정은 이미지 안에서 DatabaseDeclaration 대로 한다(계약 3.4.12 AreaDatabaseEnv, D126). 인증서 갱신 반영도 이미지가 한다(reload 컨테이너 없음)
     <<: *hardening
     mem_limit: ${POSTGRES_MEM_LIMIT:-2g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${POSTGRES_CPUS:-2.0}
     pids_limit: ${POSTGRES_PIDS_LIMIT:-300}
-    image: ${POSTGRES_IMAGE:?locks/images.lock}
-    user: "999:999"     # 공식 이미지의 postgres 사용자. 처음부터 비루트로 뜬다(볼륨은 이미지가 이 사용자 소유로 만든다)
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-db@${IDENTITY_DB_DIGEST:?locks/images.lock}
     environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-keycloak   # 공식 이미지가 지원하는 *_FILE (D84). 평문 환경 변수 없음
-      POSTGRES_INITDB_ARGS: "--data-checksums"
-      PG_INIT_ACCOUNTS: "keycloak"   # 이 영역의 데이터베이스·계정만 만든다(다른 영역의 DB 계정·접속은 없다)
-      PG_APP_ACCOUNTS: ""
-    secrets: [pg-superuser-keycloak, db-keycloak-password]
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-identity   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
+      DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
+    secrets: [pg-superuser-identity]
     volumes:
-      - keycloak-db-data:/var/lib/postgresql/data
-      - ${CONFIG_DIR:-./config}/postgres/initdb:/docker-entrypoint-initdb.d:ro
-      - ${CONFIG_DIR:-./config}/postgres/pg_hba.conf:/etc/openit/pg_hba.conf:ro   # 네트워크 접속은 TLS 만(ADR 0060)
-      - keycloak-db-pgtls:/etc/openit/pg-tls:ro   # step-ca 발급 서버 인증서·키(postgres-cert-init)
-    tmpfs: ["/tmp", "/var/run/postgresql:uid=999,gid=999"]
-    networks: [db-keycloak, reload-keycloak-db]
+      - identity-db-data:/var/lib/postgresql/data
+      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/identity-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
+      - identity-db-pgtls:/certs:ro
+    tmpfs: ["/tmp", "/var/run/postgresql"]
+    networks: [db-identity]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
-    # 서버 설정(docs/adr/0024-postgres-logging-and-limits.md). 로그에 SQL 문장·값이 남지 않게 하는 것이 핵심이다(감사 C4):
-    #  log_min_error_statement=panic  오류가 난 SQL 문장을 로그에 쓰지 않는다(기본 error 는 리터럴 값이 든 문장을 그대로 남긴다)
-    #  log_error_verbosity=terse      DETAIL(예: 'Key (id)=(값) already exists')·QUERY·CONTEXT 줄을 빼 값이 로그에 새지 않게 한다
-    #  log_statement=none, log_min_duration_statement=-1  문장 로깅·느린 쿼리 로깅 끔(기본값이지만 바뀌지 않게 못 박는다)
-    #  max_connections, idle_in_transaction_session_timeout  연결 상한과 열린 채 방치된 트랜잭션 정리(값은 측정 안 함, 시작값)
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - ssl_cert_file=/etc/openit/pg-tls/tls.crt
-      - -c
-      - ssl_key_file=/etc/openit/pg-tls/tls.key
-      - -c
-      - ssl_min_protocol_version=TLSv1.2
-      - -c
-      - hba_file=/etc/openit/pg_hba.conf
-      - -c
-      - log_statement=none
-      - -c
-      - log_min_error_statement=panic
-      - -c
-      - log_min_duration_statement=-1
-      - -c
-      - log_error_verbosity=terse
-      - -c
-      - log_parameter_max_length=0          # 바인드 값은 로그에 남기지 않는다(PG13+, 오류 때도: 아래 _on_error)
-      - -c
-      - log_parameter_max_length_on_error=0
-      - -c
-      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
-      - -c
-      - idle_in_transaction_session_timeout=${POSTGRES_IDLE_TX_TIMEOUT_MS:-300000}
     stop_grace_period: 30s
     depends_on:
-      keycloak-db-cert: {condition: service_healthy}
+      identity-db-cert: {condition: service_healthy}
     healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
@@ -1104,7 +799,7 @@ services:
   certs-perms:   # 일회용: 영역 게이트웨이 이미지 사용자(101)가 읽고, step-ca 이미지(uid 1000)가 토큰·루트를, 백업 저장소 이미지(65534)가 자기 인증서를 쓰게 <서비스>-cert 가 그 사용자로 쓰게 인증서 볼륨의 소유자를 맞춘다(새 이름 있는 볼륨은 root 소유)
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
-    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback-ingest /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root /c/keycloak /c/oauth2-proxy; chown -R 65534:65534 /c/backup-store"]
+    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback-ingest /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root /c/identity /c/identity-proxy; chown -R 65534:65534 /c/backup-store"]
     restart: "no"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "DAC_OVERRIDE"]
@@ -1112,7 +807,7 @@ services:
     read_only: true
     network_mode: none
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["certs-keycloak:/c/keycloak", "certs-oauth2-proxy:/c/oauth2-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
+    volumes: ["certs-identity:/c/identity", "certs-identity-proxy:/c/identity-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
     user: "65534:65534"   # 저장소 이미지 사용자가 키 파일(0600)을 읽는다
@@ -1173,8 +868,8 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}   # platform 공개 입구(S9): 경로 표는 시작할 때 마운트한 영역 Exposure 선언에서 만든다. 설정은 이미지 안에 있다
     cap_add: ["NET_BIND_SERVICE"]   # caddy 바이너리에 파일 권한이 있어 cap_drop ALL이면 실행이 거부된다. 실제로는 8080을 연다
     configs:
-      - {source: gateway-tls-cert, target: /etc/openit/gateway-tls/server.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
-    secrets: [gateway-tls-key, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
+      - {source: gateway-tls-cert, target: /etc/openit/ingress-tls/tls.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
+    secrets: [{source: gateway-tls-key, target: /etc/openit/ingress-tls/tls.key}, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:   # 게이트웨이가 상류로 부르는 서비스는 모두 준비된 뒤에 뜬다: 앱과 그 TLS 사이드카가 둘 다 healthy (준비 전 요청은 503 이 된다, 정적 점검이 지킨다)
       kiosk-frontend: {condition: service_healthy}
@@ -1191,10 +886,10 @@ services:
       question-authoring-gw: {condition: service_healthy}
       model-registry: {condition: service_healthy}
       model-registry-gw: {condition: service_healthy}
-      keycloak: {condition: service_healthy}
-      keycloak-tls: {condition: service_healthy}
-      oauth2-proxy-tls: {condition: service_healthy}   # 사람 인증(forward_auth): 사이드카의 healthcheck 가 oauth2-proxy 의 /ping 을 본다
-      oauth2-proxy: {condition: service_started}
+      identity: {condition: service_healthy}
+      identity-gw: {condition: service_healthy}
+      identity-proxy-gw: {condition: service_healthy}   # 사람 인증(forward_auth): 사이드카의 healthcheck 가 oauth2-proxy 의 /ping 을 본다
+      identity-proxy: {condition: service_started}
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
@@ -1202,7 +897,6 @@ services:
       GATEWAY_TLS_MODE: ${GATEWAY_TLS_MODE:-internal}   # 공개 입구 인증서 출처: internal(기본)|files|acme (ADR 0060)
       GATEWAY_ACME_EMAIL: ${GATEWAY_ACME_EMAIL:-internal@invalid.example}
       GATEWAY_ACME_DIRECTORY: ${GATEWAY_ACME_DIRECTORY:-https://acme-v02.api.letsencrypt.org/directory}
-      GATEWAY_HOST_NAMES: ${GATEWAY_HOST_NAMES:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다(L20, ADR 0056)}   # CSRF 허용 호스트 이름 목록. 직접 정하지 않는다
     volumes:
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
@@ -1365,7 +1059,7 @@ services:
       <<: *pyhealth
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
 
-  keycloak-net:   # keycloak 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:keycloak-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  identity-net:   # keycloak 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:identity-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -1378,51 +1072,40 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
-      auth: {aliases: [keycloak]}
-      db-keycloak: {aliases: [keycloak]}
-  keycloak:   # 사람 계정 IdP(U82, head ADR 0014, deploy ADR 0057). optimized image(images/keycloak/Dockerfile, ADR 0058)라 읽기 전용 루트다(그 밖의 강화는 같다)
+      auth: {aliases: [identity]}
+      db-identity: {aliases: [identity]}
+  identity:   # 사람 인증 IdP(platform identity 이미지, Keycloak 위; 계약 3.4.12 IdentityEnv). realm·클라이언트·역할 그룹·Keycloak 설정은 이미지가 만든다(deploy 는 KC_* 를 모른다, 구조 규칙 1·6)
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    tmpfs: ["/tmp", "/opt/keycloak/data/tmp", "/opt/keycloak/data/import"]   # 쓰는 곳은 이 셋뿐(시험으로 확인): 임시 파일, realm 가져오기 작업 폴더
+    tmpfs: ["/tmp", "/opt/keycloak/data/tmp", "/opt/keycloak/data/import"]   # 이미지가 쓰는 곳(platform docs/boundary.md 마운트 규칙)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
     mem_limit: ${KEYCLOAK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${KEYCLOAK_CPUS:-1.0}
     pids_limit: ${KEYCLOAK_PIDS_LIMIT:-512}
-    image: openit-keycloak-optimized:26.4   # 로컬 빌드 이름(base 는 digest 고정). 이미지에 비밀이 없다
-    build: {context: ./images/keycloak, args: {KEYCLOAK_BASE: "${KEYCLOAK_IMAGE:?locks/images.lock}"}}
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity@${IDENTITY_DIGEST:?locks/images.lock}
     read_only: true
-    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
-    command: ["--config-file=/run/secrets/keycloak-secrets.conf", "start", "--optimized", "--import-realm"]   # 비밀(db-password, bootstrap-admin-password)은 환경 변수가 아니라 설정 파일로 받는다: 프로세스 환경(/proc/1/environ)에도 값이 없다(D84, 3차 E2E check-secrets-hidden). --config-file 은 kc.sh 의 전역 옵션이라 start 앞에 온다(시험으로 확인)
-    environment:   # 비밀 아님
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt
-      KC_DB_USERNAME: keycloak
-      KC_BOOTSTRAP_ADMIN_USERNAME: kcadmin
-      KC_HTTP_HOST: 127.0.0.1          # 사이드카에게만 닿는다(ADR 0060). 공식 옵션 http-host
-      KC_HTTP_ENABLED: "true"          # TLS 는 gateway 가 끝낸다(내부망 auth 안에서만 평문)
-      KC_HTTP_RELATIVE_PATH: /auth     # 계약 밖 deploy 규약: gateway 가 /auth/* 를 Keycloak 으로 보낸다
-      KC_HOSTNAME: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다}/auth   # 밖에 보이는 주소(토큰의 iss). 뒷길(oauth2-proxy -> keycloak)은 요청 주소를 쓴다
-      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
-      KC_PROXY_HEADERS: xforwarded
-      KC_HEALTH_ENABLED: "true"
-      KC_CACHE: local                  # 단일 서버: 클러스터 캐시(Infinispan 포트)를 켜지 않는다
-      KC_LOG: console
-    secrets:
-      - keycloak-secrets.conf          # db-password, bootstrap-admin-password (scripts/gen-secrets.sh)
-      - {source: keycloak-realm.json, target: /opt/keycloak/data/import/openit-realm.json}   # realm 가져오기: 클라이언트 비밀·초기 admin 임시 비밀번호가 값으로 들어 있어 비밀 파일이다(scripts/gen-keycloak-realm.sh)
-    network_mode: "service:keycloak-net"   # 망·별칭·sysctls 는 keycloak-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개): IDENTITY_ROOT_CA
+    environment:
+      IDENTITY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh 가 GATEWAY_HOSTS 에서 만든다}   # 공개 입구의 공개 주소(GATEWAY_HOSTS 첫 항목 + 포트). 발급자·되돌아올 주소는 이미지가 만든다
+      IDENTITY_CLIENT_SECRET_FILE: /run/secrets/identity-client-secret
+      IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt
+      IDENTITY_DB_URL_FILE: /run/secrets/identity-db-url
+      IDENTITY_ADMIN_PASSWORD_FILE: /run/secrets/identity-admin-password
+      IDENTITY_INITIAL_ADMIN_PASSWORD_FILE: /run/secrets/identity-initial-admin-password
+    secrets: [identity-client-secret, identity-db-url, identity-admin-password, identity-initial-admin-password]
+    network_mode: "service:identity-net"   # 망·별칭·sysctls 는 identity-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
-      keycloak-db: {condition: service_healthy}
-    healthcheck:   # 관리 포트(9000)의 /auth/health/ready. 이미지에 curl 이 없어 bash 의 /dev/tcp 로 요청한다
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
+      identity-db: {condition: service_healthy}
+    healthcheck:   # 영역 게이트웨이가 상류로 쓰는 루프백 포트(8080)가 열렸는지만 본다(이미지 내부 점검 경로를 deploy 가 알지 않는다)
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
       interval: 15s
       timeout: 5s
       retries: 20
-      start_period: 90s   # 첫 기동은 시작 때 다시 빌드·realm 가져오기를 한다(측정 전, 시작값)
+      start_period: 90s   # 첫 기동은 realm 가져오기를 한다(측정 전, 시작값)
 
-  oauth2-proxy-net:   # oauth2-proxy 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:oauth2-proxy-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  identity-proxy-net:   # oauth2-proxy 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:identity-proxy-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -1435,47 +1118,23 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
-      auth: {aliases: [oauth2-proxy]}
-  oauth2-proxy:   # OIDC 클라이언트(U82). 인증 결과를 쿠키 세션으로 갖고 gateway 의 forward_auth(/oauth2/auth)에 답한다. 이미지에 셸이 없어 healthcheck 를 두지 않는다
+      auth: {aliases: [identity-proxy]}
+  identity-proxy:   # 사람 인증 확인 프록시(platform identity-proxy 이미지, oauth2-proxy 위; 계약 3.4.12 IdentityProxyEnv). OAUTH2_PROXY_* 는 이미지가 만든다(deploy 는 모른다)
     <<: *hardening
     mem_limit: ${OAUTH2_PROXY_MEM_LIMIT:-128m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${OAUTH2_PROXY_CPUS:-0.5}
     pids_limit: ${OAUTH2_PROXY_PIDS_LIMIT:-128}
-    image: ${OAUTH2_PROXY_IMAGE:?locks/images.lock}
-    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
-    environment:   # 비밀 아님(비밀은 *_FILE). 밖에서 보이는 주소는 GATEWAY_PUBLIC_URL(첫 GATEWAY_HOSTS 이름 + 밖에 보이는 포트)이고 사람 화면은 이 이름으로 쓴다(ADR 0057)
-      OAUTH2_PROXY_PROVIDER: oidc   # keycloak-oidc 가 아니다: 그 공급자는 realm 역할을 `role:<이름>` 그룹으로 섞어 넣어(default-roles-openit 등) 그룹이 비지 않고 X-Openit-Roles 에 잡음이 들어간다(스모크 시험이 잡았다)
-      OAUTH2_PROXY_CLIENT_ID: openit-gateway
-      OAUTH2_PROXY_CLIENT_SECRET_FILE: /run/secrets/oauth2-proxy-client-secret
-      OAUTH2_PROXY_COOKIE_SECRET_FILE: /run/secrets/oauth2-proxy-cookie-secret
-      OAUTH2_PROXY_SKIP_OIDC_DISCOVERY: "true"   # 발급자(iss)는 밖에 보이는 주소이고 서버끼리는 내부 주소로 부른다: 주소를 직접 준다
-      OAUTH2_PROXY_OIDC_ISSUER_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit
-      OAUTH2_PROXY_LOGIN_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/auth/realms/openit/protocol/openid-connect/auth
-      OAUTH2_PROXY_PROVIDER_CA_FILES: /etc/openit/pki/root_ca.crt   # keycloak 사이드카 인증서를 step-ca 루트로 검증(ADR 0060)
-      OAUTH2_PROXY_REDEEM_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/token
-      OAUTH2_PROXY_OIDC_JWKS_URL: https://keycloak/auth/realms/openit/protocol/openid-connect/certs
-      OAUTH2_PROXY_REDIRECT_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}/oauth2/callback
-      OAUTH2_PROXY_HTTP_ADDRESS: 127.0.0.1:4180   # 사이드카에게만 닿는다(ADR 0060)
-      OAUTH2_PROXY_UPSTREAMS: static://202
-      OAUTH2_PROXY_REVERSE_PROXY: "true"
-      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
-      OAUTH2_PROXY_OIDC_GROUPS_CLAIM: groups
-      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
-      OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL: "true"   # 이메일 발송 설정이 없어 가입 이메일을 검증하지 않는다(가입 승인은 admin 이 한다)
-      OAUTH2_PROXY_SCOPE: openid profile email
-      OAUTH2_PROXY_CODE_CHALLENGE_METHOD: S256
-      OAUTH2_PROXY_COOKIE_NAME: _openit_session
-      OAUTH2_PROXY_COOKIE_SECURE: "true"
-      OAUTH2_PROXY_COOKIE_SAMESITE: lax
-      OAUTH2_PROXY_COOKIE_EXPIRE: 8h      # 절대 만료. OWASP Session Management Cheat Sheet: 절대 시간제한은 업무일 길이(4~8시간 예시)로 둔다. oauth2-proxy 기본은 168h 라 더 짧게 정했다(ADR 0058)
-      OAUTH2_PROXY_COOKIE_REFRESH: 5m     # 그룹(역할) 변경·계정 정지가 반영되는 지연의 상한. Keycloak 액세스 토큰 기본 수명 5분(realm accessTokenLifespan 300s)과 맞췄다. 측정 안 함(ADR 0058)
-      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
-      OAUTH2_PROXY_AUTH_LOGGING: "true"
-      SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-    secrets: [oauth2-proxy-client-secret, oauth2-proxy-cookie-secret]
-    network_mode: "service:oauth2-proxy-net"   # 망·별칭·sysctls 는 oauth2-proxy-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-proxy@${IDENTITY_PROXY_DIGEST:?locks/images.lock}
+    volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개): IDENTITY_ROOT_CA
+    environment:
+      IDENTITY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}
+      IDENTITY_CLIENT_SECRET_FILE: /run/secrets/identity-client-secret
+      IDENTITY_COOKIE_SECRET_FILE: /run/secrets/identity-cookie-secret
+      IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt
+    secrets: [identity-client-secret, identity-cookie-secret]
+    network_mode: "service:identity-proxy-net"   # 망·별칭·sysctls 는 identity-proxy-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
-      keycloak: {condition: service_healthy}
+      identity: {condition: service_healthy}
 
   ops-feedback-migrate:   # L08(ADR 0055): 스키마를 만드는 일회성 서비스. 소유자 계정 접속 문자열 파일만 받는다. 서버·잡은 이것이 성공한 뒤에 뜬다. 상시 서비스도 주기 잡도 아니다(restart 없음, 기본 기동에 포함)
     restart: "no"
@@ -1724,7 +1383,6 @@ services:
     depends_on:
       ops-feedback-migrate: {condition: service_completed_successfully}
     volumes:
-      - ${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}:/config/job.yaml:ro
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
     network_mode: "service:ops-feedback-ingest-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
     security_opt: ["no-new-privileges:true"]

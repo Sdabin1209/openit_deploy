@@ -34,27 +34,40 @@ services:
     ports: ["127.0.0.1::9093"]
     volumes: ["alertmanager-data:/alertmanager"]
     networks: [monitoring]
-  gateway-root:   # 공개 입구 루트 인증서(공개)를 감시가 읽을 볼륨으로 복사하는 일회성 잡. internal 모드는 Caddy 내부 CA 루트(gateway-data), 다른 모드는 GATEWAY_TLS_ROOT_FILE. root 인 이유: gateway-data 는 uid 10001 소유다
+  gateway-root:   # 공개 입구의 사설 CA 루트(공개 인증서)를 꺼낸다: 공개 입구 이미지의 export-root 부명령(platform docs/COMPONENTS.md). 다른 TLS 모드에서는 빈 결과일 수 있다
     restart: "no"
-    image: ${UTIL_IMAGE:?locks/images.lock}
-    user: "0:0"
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}
+    user: "10001:10001"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    cap_add: ["DAC_OVERRIDE"]
     read_only: true
     network_mode: none
-    entrypoint: ["sh", "-c", "i=0; while [ $$i -lt 90 ]; do [ -s /gw/caddy/pki/authorities/local/root.crt ] && cp /gw/caddy/pki/authorities/local/root.crt /out/root.crt && exit 0; [ -s /override.pem ] && cp /override.pem /out/root.crt && exit 0; i=$$((i+1)); sleep 1; done; exit 1"]
-    volumes: ["gateway-data:/gw:ro", "gateway-root:/out", "${GATEWAY_TLS_ROOT_FILE:-./config/gateway-tls/unused.pem}:/override.pem:ro"]
+    volumes_from: [gateway:ro]
+    command: ["export-root", "/out"]
+    volumes: ["gateway-root:/out"]
+    depends_on:
+      gateway: {condition: service_healthy}
+  monitoring-root:   # 감시가 믿을 루트 모음(MonitoringEnv.MONITORING_ROOT_CA 는 여러 PEM 을 이어 붙인 파일을 받는다): 서비스 인증서 루트(pki-root) + 공개 입구 루트(gateway-root)
+    restart: "no"
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    user: "65534:65534"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    network_mode: none
+    entrypoint: ["sh", "-c", "cat /pki/root_ca.crt /gw/root_ca.crt > /out/root_ca.crt"]
+    volumes: ["pki-root:/pki:ro", "gateway-root:/gw:ro", "monitoring-root:/out"]
+    depends_on:
+      gateway-root: {condition: service_completed_successfully}
   blackbox-exporter:
     <<: *monhard
     command: ["blackbox"]
-    environment: {SSL_CERT_FILE: /etc/openit/gateway-root/root.crt}   # 공개 입구가 사설 인증서면 추가 루트(platform 감시 입력)
     mem_limit: ${BLACKBOX_MEM_LIMIT:-128m}
     cpus: ${BLACKBOX_CPUS:-0.25}
     pids_limit: ${BLACKBOX_PIDS_LIMIT:-64}
-    volumes: ["pki-root:/etc/openit/pki:ro", "gateway-root:/etc/openit/gateway-root:ro"]
+    volumes: ["monitoring-root:/etc/openit/pki:ro"]   # MONITORING_ROOT_CA 기본 경로(/etc/openit/pki/root_ca.crt)의 파일: 서비스 루트 + 공개 입구 루트
     depends_on:
-      gateway-root: {condition: service_completed_successfully}
+      monitoring-root: {condition: service_completed_successfully}
     networks: [monitoring, serving, mon-survey-service, mon-question-authoring, mon-ops-feedback-ingest, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
   json-exporter:
     <<: *monhard
@@ -78,6 +91,7 @@ networks:
   monitoring:
 volumes:
   gateway-root:   # 공개 입구 루트 인증서(공개)만
+  monitoring-root:   # 감시가 믿을 루트 모음(공개 인증서만)
   gateway-data:   # compose.yaml 이 정의한다(같은 프로젝트). 읽기 전용으로만 쓴다
   pki-root:   # compose.yaml 가 정의한다(같은 프로젝트라 같은 볼륨). 루트 인증서만 있다
   prometheus-data:

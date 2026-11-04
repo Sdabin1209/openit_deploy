@@ -134,7 +134,7 @@ guide() {
    키오스크 화면      주소는 $(demo_kiosk_url "$gw" "$host") 에 있다(기기 토큰이 URL 조각 #device= 에 들어 있어 터미널에 출력하지 않는다. cat 해서 브라우저에 붙여 넣는다)
    직원 콘솔          $GATEWAY_PUBLIC_URL/staff/      계정 staff-e2e (역할 staff)
    승인·실패 사례 검토·문진 결과 $GATEWAY_PUBLIC_URL/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 의사 계정 clinician-e2e(문진 결과 탭) / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
-   계정 관리(가입 승인)  $GATEWAY_PUBLIC_URL/auth/admin/openit/console/      초기 admin openit-admin (임시 비밀번호는 $W/secrets/tokens/openit-initial-admin-password, 첫 로그인에서 바꾼다) 또는 시험 사용자 admin-e2e
+   계정 관리(가입 승인)  $GATEWAY_PUBLIC_URL/auth/admin/openit/console/      초기 admin openit-admin (임시 비밀번호는 $W/secrets/tokens/identity-initial-admin-password, 첫 로그인에서 바꾼다) 또는 시험 사용자 admin-e2e
  (로그인: 사람 인증은 Keycloak(OIDC)이다. 새로 가입하면 admin 이 그룹(역할)을 줄 때까지 403 승인 대기다. HTTPS: 내부 CA 가 발급한 인증서라 브라우저가 경고한다. 루트 인증서는 $W/gateway-ca.crt 이고 신뢰시키려면 docs/runbook.md TLS 절. 시험용이다.)
 
  암호: 값은 출력하지 않는다. 비밀 파일을 열어 본다 (폴더 700, 저장소 밖 $W/secrets):

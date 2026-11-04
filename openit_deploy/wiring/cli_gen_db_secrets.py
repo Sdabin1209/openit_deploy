@@ -1,5 +1,5 @@
 """wiring/진입: gen-db-secrets.py (--image 이미지 | --declaration 파일) --db-host 호스트 --accounts-dir 폴더 --urls-dir 폴더
-영역 DB 이미지의 라벨 io.openit.database(계약 DatabaseDeclaration)대로 계정 암호 파일(DB 컨테이너의 DB_ACCOUNT_SECRETS_DIR 에 줄 폴더)과 접속 URI 파일(영역 컨테이너의 <url_env> 에 줄 폴더, 파일 이름 = 환경 변수 이름)을 만든다.
+영역 DB 이미지의 라벨 io.openit.database(계약 DatabaseDeclaration)대로 계정 암호 파일(DB 컨테이너의 DB_ACCOUNT_SECRETS_DIR 에 줄 폴더)과 접속 URI 파일(<urls-dir>/<계정>/<환경 변수 이름>, 영역 컨테이너의 <url_env> 에 줄 파일)을 만든다.
 이미 있는 계정 암호 파일은 그대로 쓴다(멱등: 다시 실행해도 암호가 바뀌지 않는다. 바꾸려면 파일을 지운다). 값은 출력하지 않고 파일 이름만 알린다(D84).
 종료 코드 0 성공, 1 선언 없음·위반."""
 import argparse
@@ -51,7 +51,9 @@ def main(argv, labels_of=image_labels) -> int:
     res = call(db_secrets, "DbSecretsRequest", "DbSecretsResult", {"db_host": a.db_host, "declaration": decl, "passwords": passwords})
     for name, body in res["account_files"].items():
         _write(adir / name, body)
-    for env, body in res["url_files"].items():
-        _write(udir / env, body)
-    print(f"계정 {len(res['account_files'])}개, 접속 파일 {len(res['url_files'])}개: {', '.join(sorted(res['url_files']))}")
+    n = 0
+    for acct, envs in res["url_files"].items():
+        for env, body in envs.items():
+            _write(udir / acct / env, body); n += 1
+    print(f"계정 {len(res['account_files'])}개, 접속 파일 {n}개")
     return 0

@@ -23,8 +23,5 @@ def run(request: "DbSecretsRequest") -> "DbSecretsResult":
     for a in decl["accounts"]:
         account_files[a["name"]] = pw[a["name"]] + "\n"
         uri = f"postgresql://{a['name']}:{quote(pw[a['name']], safe='')}@{request['db_host']}:{decl['port']}/{a['database']}?sslmode=verify-full&sslrootcert={quote(ca, safe='/')}\n"
-        for env in a["url_env"]:
-            if env in url_files:
-                raise ValueError(f"환경 변수 {env} 를 두 계정이 쓴다")
-            url_files[env] = uri
+        url_files[a["name"]] = {env: uri for env in a["url_env"]}   # 같은 환경 변수 이름을 여러 계정이 선언할 수 있다(owner·dml): 계정별로 나눠 놓고 배치가 고른다
     return {"account_files": account_files, "url_files": url_files}

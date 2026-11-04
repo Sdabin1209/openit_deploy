@@ -126,7 +126,7 @@ class DbSecretsRequest(TypedDict):
 
 class DbSecretsResult(TypedDict):
     account_files: Dict[str, str]
-    url_files: Dict[str, str]
+    url_files: Dict[str, Dict[str, str]]
 
 
 Role = str
@@ -278,6 +278,7 @@ class Job1(TypedDict):
     compose_service: str
     declared: Declared
     base_period_seconds: NotRequired[int]
+    config_source: NotRequired[str]
 
 
 class JobOverlayRequest(TypedDict):
@@ -290,6 +291,7 @@ Services = TypedDict(
         'command': List[str],
         'x-openit-timeout-seconds': int,
         'x-openit-period-seconds': int,
+        'volumes': NotRequired[List[Dict[str, Any]]],
     },
 )
 
