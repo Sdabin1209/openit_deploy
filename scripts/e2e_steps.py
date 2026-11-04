@@ -2487,13 +2487,28 @@ def step5g():
     rec("5g", "REAL", "레지스트리 컨테이너: " + "; ".join(notes) + "; 복구 뒤 재시도 성공.")
 
 @step('5b', repos=('deploy:scripts,config,compose.yaml',), deps=(),
-      why='STATE 를 읽지 않는다. 임시 BACKUP_DIR 에 pg-backup.sh 를 돌리고 도중에 qa 영역 DB(question-authoring-db)를 stop 한다',
+      why='STATE 를 읽지 않는다. question-authoring 영역 백업 잡을 돌리고 그 영역 DB(question-authoring-db)를 stop 한다',
       also={'survey-service': 'survey DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'release-gate': 'gate DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)', 'ops-feedback': 'ops_log·ops_failure DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고된다(G3 F1)', 'question-authoring': 'qa DB 의 pg_dump 가 백업 도중 영역 DB 중지에서 실패로 보고되고 불완전한 백업을 남기지 않는다(G3 F1)'})
 def step5b():
     title("5b", "영역 백업 잡 도중 영역 DB 중지(F1): 잡이 실패로 보고되고 불완전한 백업이 성공으로 남지 않는다 (FAULT_MATRIX G3 F1)")
-    # deploy 는 영역 데이터를 직접 꺼내지 않는다(계약 3.4.16, RUNTIME R10.1): 예전 이 단계는 pg-backup.sh(pg_dump 를 docker exec 로 직접 실행)를 돌리다 DB 를 멈췄다. 이제는 영역의 backup 잡(io.openit.jobs)을 돌리며 DB 를 멈추고 BackupJobResult 의
-    # status 로 판정해야 한다. 그 잡은 영역이 만드는 중이라 이 단계는 아직 구현되지 않았다. 통과로 세지 않도록 실패로 둔다(미구현을 감추지 않는다).
-    raise AssertionError("미구현: 영역 backup 잡(io.openit.jobs)이 아직 없다. 잡 해시가 오면 이 단계를 잡 실행 + BackupJobResult 판정으로 구현한다")
+    # deploy 는 영역 데이터를 직접 꺼내지 않는다(계약 3.4.16, RUNTIME R10.1): 영역의 backup 잡(compose job-question-authoring-backup)을 돌리고 판정은 마지막 줄 BackupJobResult 와 종료 코드로 한다.
+    import e2e_backup_jobs as BJ
+    pg = f"{a.project}-question-authoring-db-1"
+    def run_job():
+        r = sh(["bash", str(ROOT / "scripts/run-job.sh"), "job-question-authoring-backup"], env={"DEPLOY_PROJECT": a.project}, check=False)
+        return r.returncode, BJ.last_json_line(r.stdout or "")
+    _pg_each("stop", pg)
+    try:
+        rc, res = run_job()
+    finally:
+        _pg_each("start", pg)
+    _pg_ready_wait(pg)
+    assert rc != 0, f"영역 DB 중지 중 백업 잡이 성공(0)으로 끝났다(조용한 성공): {res}"
+    assert res is None or res.get("status") != "ok", f"영역 DB 중지 중 백업 잡이 status=ok 를 냈다: {res}"
+    wait(lambda: _ready_code("qa") == 200 or None, 120, "DB 기동 뒤 question-authoring /readyz 200", every=1)
+    rc2, res2 = run_job()   # 복구 뒤 같은 잡을 다시 돌리면 성공한다(멱등, 다음 주기에 한 번 다시 R10.12)
+    assert rc2 == 0 and res2 and res2.get("status") == "ok", f"DB 기동 뒤 백업 잡 재실행이 성공하지 않았다({rc2}): {res2}"
+    rec("5b", "REAL", f"영역 DB 중지 중 백업 잡 종료 코드 {rc}, status={(res or {}).get('status')} (실패로 보고); DB 기동 뒤 재실행 status=ok.")
 
 @step('5L', repos=('model-runtime', 'release-gate', 'boundary-contracts') + _GW, deps=('4',),
       why="D72: 다른 호스트 역할의 추론 서버(별도 compose 프로젝트)는 운영 입구(게이트웨이 기계 토큰 경로 D122)로만 release-gate 를 읽는다. "

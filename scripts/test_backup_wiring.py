@@ -11,7 +11,8 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 S0 = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
 AREAS = {"survey": ("job-survey-backup", "survey-service"), "qa": ("job-question-authoring-backup", "question-authoring"),
-         "ops": ("job-ops-feedback-backup", "ops-feedback"), "gate": ("job-release-gate-backup", "release-gate")}
+         "ops": ("job-ops-feedback-backup", "ops-feedback"), "gate": ("job-release-gate-backup", "release-gate"),
+         "models": ("job-model-registry-backup", "model-registry"), "datasets": ("job-dataset-store-backup", "dataset-store")}
 
 
 def check(S):
@@ -43,7 +44,7 @@ def check(S):
     bs = S.get("backup-store") or {}
     nets = set((bs.get("networks") or {}).keys())
     if nets != {f"backup-{k}" for k in AREAS}:
-        errs.append(f"backup-store 의 망이 영역별 전용 망 4개가 아니다: {sorted(nets)}")
+        errs.append(f"backup-store 의 망이 영역별 전용 망 6개가 아니다: {sorted(nets)}")
     for key, (job, pod) in AREAS.items():
         pn = set((S.get(f"{pod}-net", {}).get("networks") or {}).keys())
         if f"backup-{key}" not in pn:
@@ -53,15 +54,15 @@ def check(S):
             errs.append(f"{pod}-net 이 다른 영역의 백업 망을 쓴다")
     bsec = {(x if isinstance(x, str) else x.get("source")) for x in bs.get("secrets", [])}
     if bsec != {f"backup-{k}-credentials" for k in AREAS}:
-        errs.append(f"저장소는 영역 자격 파일 4개(/run/secrets/areas/<영역>)만 받는다: {sorted(bsec)}")
+        errs.append(f"저장소는 영역 자격 파일 6개(/run/secrets/areas/<영역>)만 받는다: {sorted(bsec)}")
     for k in AREAS:
         readers = [n for n, sv in S.items() if any((x if isinstance(x, str) else x.get("source")) == f"backup-{k}-credentials" for x in sv.get("secrets", []))]
-        if sorted(readers) != sorted([AREAS[k][0], "backup-store"]):
-            errs.append(f"{k} 자격을 읽는 서비스가 그 영역 백업 잡과 저장소뿐이 아니다: {readers}")
+        if sorted(readers) != sorted([AREAS[k][0], AREAS[k][0].replace("-backup", "-restore"), "backup-store"]):
+            errs.append(f"{k} 자격을 읽는 서비스가 그 영역 백업·복구 잡과 저장소뿐이 아니다: {readers}")
     cmd = bs.get("command") or []
     if "--append-only" in cmd:
         errs.append("백업 저장소는 append-only 가 아니다(영역 백업 잡이 forget --prune 으로 보존을 지킨다)")
-    for sv in ("survey-service", "question-authoring", "ops-feedback", "release-gate"):
+    for sv in ("survey-service", "question-authoring", "ops-feedback", "release-gate", "model-registry", "dataset-store"):
         if S.get(f"{sv}-gw", {}).get("user") is not None:
             errs.append(f"{sv}-gw: 이미지가 선언한 사용자를 deploy 가 바꾸지 않는다")
         if str(S.get(f"{sv}-cert", {}).get("user")) != "101:101":

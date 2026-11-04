@@ -488,15 +488,28 @@ chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 �
 fi
 if has_s9 backup; then
 sect "단계 9: 영역 백업·복구 (영역이 자기 백업·복구 잡을 돌린다, RUNTIME R10.1·DATA_OWNERSHIP)"
-# deploy 는 영역 데이터를 직접 꺼내지 않는다(구조 규칙 1·6, 계약 3.4.16): 예전 구간은 pg_dump·볼륨 복사·docker exec psql 로 영역 데이터를 직접 만지고 지문을 비교했다. 이제는 스케줄러가 영역의 backup/restore 잡(io.openit.jobs, needs 는 볼륨 이름)을
-# 돌리고, 결과는 BackupJobResult 와 공개 API 로 읽은 데이터로 판정한다. 그 잡은 platform·model-lab·synthetic-data 가 만드는 중이라 이 구간은 아직 구현되지 않았다. 통과로 세지 않도록 실패 항목으로 둔다(미구현을 감추지 않는다).
-backup_jobs_pending() { echo "미구현: 영역 백업·복구 잡 해시 대기(platform·model-lab·synthetic-data). 잡 실행 -> BackupJobResult 판정 -> 공개 API 로 읽은 데이터 대조를 여기에 구현한다"; return 1; }
-chk "영역 백업·복구 잡 (BackupJobResult 와 공개 API 로 읽은 데이터로 판정)" backup_jobs_pending
+# deploy 는 영역 데이터를 직접 꺼내지 않는다(구조 규칙 1·6, 계약 3.4.16): 영역의 백업·복구 잡(io.openit.jobs, compose job-*-backup / job-*-restore)을 돌리고 결과는 마지막 줄의 BackupJobResult(계약 검증)로 판정한다.
+# 복구한 데이터는 공개 API 로 다시 읽어 대조한다(e2e_verify_restore.py). 영역 DB 를 직접 읽는 지문(pg-fingerprint.sh)·docker exec psql 은 쓰지 않는다.
+# 범위: survey-service, question-authoring, ops-feedback, release-gate(DB 영역 4개), model-lab(models-data), synthetic-data(datasets-data). identity(Keycloak) DB 는 platform 이 백업 잡을 선언하면 더한다(아직 선언이 없어 이 구간 밖이다).
+chk "영역 백업 잡 6개 (BackupJobResult status=ok)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_backup_jobs.py" backup --project "$PROJECT"
+NEED+=("영역 백업 잡 6개 (BackupJobResult status=ok)")   # 백업이 실패하면 아래 데이터 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
+dc "$PROJECT" down >/dev/null 2>&1
+AREA_VOLUMES="survey-db-data question-authoring-db-data ops-feedback-db-data release-gate-db-data gate-data models-data datasets-data"   # 영역 데이터 볼륨(compose 볼륨 이름). identity 는 이 구간 밖
+chk_dep "영역 백업 잡 6개 (BackupJobResult status=ok)" "볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" bash -c "$DOCKER volume rm $(for _v in $AREA_VOLUMES; do printf '%s_%s ' "$PROJECT" "$_v"; done) >/dev/null"
+chk_dep "볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" "빈 볼륨에서 스택 기동" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
+chk_dep "빈 볼륨에서 스택 기동" "영역 복구 잡 6개 (BackupJobResult status=ok)" "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_backup_jobs.py" restore --project "$PROJECT"
+# 복구한 데이터를 서비스가 다시 읽게 영역 서비스만 다시 시작한다(compose 재시작, 영역 안으로 들어가지 않는다)
+chk_dep "영역 복구 잡 6개 (BackupJobResult status=ok)" "복구 뒤 영역 서비스 재시작" dc "$PROJECT" restart survey-service question-authoring ops-feedback release-gate model-registry dataset-store
+NEED+=("볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장소 볼륨은 남긴다)" "빈 볼륨에서 스택 기동" "영역 복구 잡 6개 (BackupJobResult status=ok)" "복구 뒤 영역 서비스 재시작")
+PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 스택을 다시 만들었으니 게이트웨이 호스트 포트를 다시 읽는다
+PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
+chk_dep "단계 1~8" "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
+  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
 
 fi
 if has_s9 rollback; then
 sect "단계 9: digest 잠금으로 코드 축 롤백"
-NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" "복구 후 서비스 기동")   # 롤백 구간: 복구 뒤 스택이 떠 있어야 한다. 백업 구간의 나머지 실패는 이 구간과 무관하다
+NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" "복구 뒤 영역 서비스 재시작")   # 롤백 구간: 복구 뒤 스택이 떠 있어야 한다. 백업 구간의 나머지 실패는 이 구간과 무관하다
 OLD_REF=$("$DOCKER" inspect "${PROJECT}-survey-service-1" --format '{{.Config.Image}}' | tr -d '\r')
 cp "$DEPLOY_ROOT/build/images.env" "$W/images.env.bak"
 chk "새 버전 빌드(시험: 시험 라벨 openit.test-build=test2, revision 은 그대로)" env BUILD_TEST_ID=test2 bash "$DEPLOY_ROOT/scripts/build-images.sh" survey-service

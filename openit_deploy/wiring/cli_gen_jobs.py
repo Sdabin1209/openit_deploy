@@ -15,13 +15,18 @@ from openit_deploy.wiring.call import call
 CONFIG_SOURCES = {"job-ops-feedback": "${OPS_JOB_CONFIG:-./config/ops-feedback-job.yaml}"}
 JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge": "purge", "job-release-gate-prune": "prune",
              "job-release-gate-collect": "collect", "job-ops-feedback": "ops-feedback-job",
-             "job-survey-backup": "backup", "job-question-authoring-backup": "backup", "job-release-gate-backup": "backup", "job-ops-feedback-backup": "ops-feedback-backup"}
+             "job-survey-backup": "backup", "job-question-authoring-backup": "backup", "job-release-gate-backup": "backup", "job-ops-feedback-backup": "ops-feedback-backup",
+             "job-model-registry-backup": "backup", "job-dataset-store-backup": "dataset-backup",
+             # 복구 잡(RUNTIME R10.1): 사람이 필요할 때 돌린다. 주기가 없어 TIMERS 에 없다
+             "job-survey-restore": "restore", "job-question-authoring-restore": "restore", "job-release-gate-restore": "restore", "job-ops-feedback-restore": "ops-feedback-restore",
+             "job-model-registry-restore": "restore", "job-dataset-store-restore": "dataset-restore"}
 
 
 # compose 잡 서비스 -> 그 잡을 띄우는 타이머 파일(config/systemd). 주기는 타이머의 OnUnitActiveSec 이고 잡의 시간 상한은 그 주기보다 짧아야 한다(RUNTIME R9.3: 상한이 주기 이상이면 겹침 방지가 다음 주기를 막는다)
 TIMERS = {"job-survey-purge": "openit-survey-purge", "job-question-authoring-purge": "openit-question-authoring-purge", "job-release-gate-prune": "openit-release-gate-prune",
           "job-release-gate-collect": "openit-release-gate-collector", "job-ops-feedback": "openit-ops-feedback-job",
-          "job-survey-backup": "openit-survey-backup", "job-question-authoring-backup": "openit-question-authoring-backup", "job-release-gate-backup": "openit-release-gate-backup", "job-ops-feedback-backup": "openit-ops-feedback-backup"}
+          "job-survey-backup": "openit-survey-backup", "job-question-authoring-backup": "openit-question-authoring-backup", "job-release-gate-backup": "openit-release-gate-backup", "job-ops-feedback-backup": "openit-ops-feedback-backup",
+          "job-model-registry-backup": "openit-model-registry-backup", "job-dataset-store-backup": "openit-dataset-store-backup"}
 SYSTEMD = pathlib.Path(__file__).resolve().parents[2] / "config" / "systemd"
 
 
