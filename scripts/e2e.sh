@@ -320,12 +320,10 @@ getj() { curl -fsS -m 5 "http://127.0.0.1:$1$2"; }
 getinf() { local o; o=$(curl -fsS -m 5 --cacert "$W/pki/root_ca.crt" "https://localhost:$IPORT$1") || return 1; [ -n "$o" ] || { echo "본문이 비었다(사이드카가 Host 를 못 맞췄다?)"; return 1; }; printf "%s" "$o"; }   # 호스트에서는 localhost 로 부른다: 인증서 SAN 에 host.docker.internal 과 localhost 가 함께 있다(토큰·인증서에 --san). 컨테이너 쪽 호출자는 host.docker.internal 그대로
 # R2.2·R4.3·R5.1: 서비스 건강 확인은 앱 포트(127.0.0.1:8080)를 직접 부르지 않고 **중계(TLS 종단)를 거쳐** 자기 서비스 이름으로 부른다(앱 컨테이너 안에서 https://<서비스 이름>, 같은 공간이라 별칭이 자기에게 풀린다).
 # 앱만 살아 있는 상태를 건강으로 오판하지 않으려는 것이다. 판정은 상태 코드 + 본문 status(없으면 서비스별 ready, HealthStatus 정의 부재: docs/change-requests/CR-HealthStatus-schema.md)다.
-inpy() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request;sys.stdout.write(urllib.request.urlopen('https://'+sys.argv[1]+sys.argv[2],timeout=5).read().decode())" "$1" "$2"; }
-inpy_code() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,urllib.request,urllib.error
-try:
-    r=urllib.request.urlopen('https://'+sys.argv[1]+sys.argv[2],timeout=5); print(r.status, r.read().decode())
-except urllib.error.HTTPError as e:
-    print(e.code, e.read().decode())" "$1" "$2"; }
+# 왜 클라이언트 컨테이너인가: deploy 는 실행 중인 영역 컨테이너 안으로 들어가지 않는다(구조 규칙 1·6, CONVENTIONS 13절). 출발 서비스와 같은 망의 클라이언트가 https://<서비스> 를 그 영역 게이트웨이로 부른다(scripts/client-probe.sh, 인증서 검증을 끄지 않는다).
+client_probe() { bash "$DEPLOY_ROOT/scripts/client-probe.sh" "$(cn "$1")" "$W/pki/root_ca.crt" "${@:2}"; }   # client_probe <출발 서비스> <탐침 인자...>
+inpy() { client_probe "$1" body "https://$1$2"; }
+inpy_code() { client_probe "$1" code "https://$1$2"; }
 health_body_ok() { python3 -c "import sys,json
 b=sys.stdin.read()
 try: d=json.loads(b)
@@ -390,20 +388,9 @@ chk "사람 화면 주소(GATEWAY_PUBLIC_URL)가 게이트웨이 HTTPS 호스트
 # 도달·차단 판정은 한 함수(probe_http / probe_tcp)가 세 값 중 하나를 낸다: ok(응답 확인) / unreachable(연결 실패·시간 초과·이름 안 풀림) / bad(응답은 왔으나 본문·상태가 다르다). 빈 값은 docker exec 자체가 실패한 것(컨테이너 없음 등)이라 판정할 수 없다.
 # 왜: 차단(부정) 단언이 `! 명령` 이면 컨테이너가 없거나 exec 가 실패해도 "차단됨"으로 통과한다(정적 점검 A11). 차단은 unreachable 일 때만 통과한다.
 probe_http() { # probe_http <출발 서비스> <URL> <초>: 본문이 ok 로 시작하거나 JSON status==ok 면 ok
-  "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request,urllib.error
-try:
-    b = urllib.request.urlopen(sys.argv[1], timeout=float(sys.argv[2])).read().decode()
-except urllib.error.HTTPError: print('bad')
-except (urllib.error.URLError, OSError): print('unreachable')
-else:
-    try: good = b.strip().startswith('ok') or json.loads(b).get('status') == 'ok'
-    except ValueError: good = False
-    print('ok' if good else 'bad')" "$2" "$3" 2>/dev/null | tail -1 | tr -d '\r'; }
+  client_probe "$1" http "$2" "$3" 2>/dev/null | tail -1; }
 probe_tcp() { # probe_tcp <출발 서비스> <호스트> <포트> <초>: ok(연결됨) / unreachable
-  "$DOCKER" exec "${PROJECT}-$1-1" python -c "import socket,sys
-try:
-    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=float(sys.argv[3])); print('ok')
-except OSError: print('unreachable')" "$2" "$3" "$4" 2>/dev/null | tail -1 | tr -d '\r'; }
+  bash "$DEPLOY_ROOT/scripts/client-probe.sh" "${PROJECT}-$1-1" "$W/pki/root_ca.crt" tcp "$2" "$3" "$4" 2>/dev/null | tail -1; }
 reach() { [ "$(probe_http "$1" "https://$2/healthz" "$REACH_T")" = ok ]; }   # 서비스는 TLS 사이드카(443)로만 받는다(ADR 0060). 컨테이너의 SSL_CERT_FILE 이 step-ca 루트를 가리킨다
 reachu() { [ "$(probe_http "$1" "$2" "$REACH_T")" = ok ]; }   # reachu <출발 서비스> <URL>: 호스트를 거치는 경로(host.docker.internal)는 Docker Desktop 프록시라 부하 때 3초를 넘겼다(4차 실행)
 blockedu() { [ "$(probe_http "$1" "$2" "$REACH_T")" = unreachable ]; }
@@ -449,7 +436,7 @@ chk "보존 정리 잡이 Compose 에서 실행된다: release-gate prune --dry-
 chk "보존 정리 잡이 Compose 에서 실행된다: survey purge(SURVEY_SESSION_RETENTION_DAYS=90, 지운 개수 JSON)" bash -c "set -o pipefail; bash $DEPLOY_ROOT/scripts/run-job.sh job-survey-purge | tail -1 | python3 -c 'import json,sys;json.loads(sys.stdin.read());print(\"purge 출력이 JSON 한 줄\")'"
 chk "보존 정리 잡이 Compose 에서 실행된다: question-authoring purge(멱등; 출력 한 줄은 지운 개수 요약)" bash -c "set -o pipefail; bash $DEPLOY_ROOT/scripts/run-job.sh job-question-authoring-purge | tail -1 | grep -q ."
 chk "컨테이너 격리 실제 확인(check-containers: 비루트·읽기 전용·cap_drop ALL·no-new-privileges·자원 한도·로그 회전)" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$PROJECT"
-nonroot() { [ "$("$DOCKER" exec "$(cn "$1")" id -u | tr -d '\r')" != 0 ]; }
+nonroot() { local u; u=$("$DOCKER" inspect "$(cn "$1")" --format '{{.Config.User}}' | tr -d '\r'); u=${u%%:*}; [ -n "$u" ] || u=$("$DOCKER" top "$(cn "$1")" -eo pid,uid | awk 'NR==2{print $2}' | tr -d '\r'); case "$u" in ""|0|root) return 1;; esac; }   # 컨테이너 밖에서 본다: Config.User, 없으면 docker top 의 PID 1 uid(CONVENTIONS 13절)
 bydigest() { "$DOCKER" inspect "$(cn "$1")" --format '{{.Config.Image}}' | tr -d '\r' | grep -E '@sha256:[0-9a-f]{64}$'; }
 labels6() { validate_image_labels "$1" "$2"; }   # 라벨 검사는 계약 ImageLabels 검증 하나다(손으로 키를 따로 보지 않는다, U44). 필수 키·빈 값·revision 형식·n/a 표기를 스키마가 본다
 for s in survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console; do

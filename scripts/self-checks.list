@@ -104,3 +104,4 @@ run-self-checks 집계 (77=SKIP 은 PASS 가 아니고 묶음을 0 으로 끝내
 영역 DB 비밀 생성은 실행별 잠금(DEPLOY_LOCK)의 digest 를 읽는다 (임시 잠금 시험, 변이: 고정 경로면 실패) :: bash "$DEPLOY_ROOT/scripts/test-gen-db-secrets-all.sh"
 백업·복구 범위: deploy 는 자기 데이터(registry-data, secrets/)만, 영역 데이터는 영역의 잡 (계약 3.4.16, 변이 포함) :: bash "$DEPLOY_ROOT/scripts/test-backup-scope.sh"
 인증 없는 요청 점검은 계약(노출 선언의 auth, R3.13·R3.23)에서 기대를 만든다 (가짜 입구, 변이 3건) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_check_unauth.py"
+같은 망 클라이언트 탐침(client-probe.sh): 같은 망은 ok·다른 망은 unreachable·없는 출발 컨테이너는 3, 망을 안 붙이는 변이를 잡는다 (Docker 필요) :: bash "$DEPLOY_ROOT/scripts/test-client-probe.sh"
