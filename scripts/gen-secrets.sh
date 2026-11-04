@@ -103,6 +103,8 @@ dev() { [ -s "$D/devices/$1" ] || ( umask 077; rnd > "$D/devices/$1" ); }   # �
 # E2E 단계 5d(기기 사이 세션 격리, 폐기): 시험 기기 a·b 와 폐기 시험용 c. 운영에서는 kiosk-add-device.sh 로 실제 기기만 만든다(이 시험 기기는 운영 비밀 폴더에서 remove 한다)
 [ $TEST_FIX = 0 ] || for _d in e2e-a e2e-b e2e-c; do dev "$_d"; done
 gw_write_devices "$D"
+# 기기 CA(공개 인증서, 계약 3.4.13 INGRESS_DEVICE_CA_FILE): 운영은 설치처가 준 파일을 $D/device-ca.pem 에 둔다. 시험 폴더에는 시험 CA 를 만든다(기기 인증서는 E2E 가 이 CA 로 발급한다)
+if [ $TEST_FIX = 1 ] && [ ! -s "$D/device-ca.pem" ]; then openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$D/device-ca.key" -out "$D/device-ca.pem" -subj "/CN=openit-test-device-ca" -days 30 >/dev/null 2>&1 && chmod 600 "$D/device-ca.key" && chmod 644 "$D/device-ca.pem"; fi
 old=$(cd "$D" && ls *.env 2>/dev/null | tr '\n' ' ') || true
 [ -z "$old" ] || echo "알림: 예전 방식의 비밀 env 파일이 남아 있다($old). 더는 쓰지 않는다(환경 변수로 평문이 노출됐다). 지워도 된다: (cd $D && rm -f $old)" >&2
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

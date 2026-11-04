@@ -159,6 +159,8 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   identity-db-pgtls:   # identity-db 서버 인증서·키(step-ca 발급)
 
 configs:
+  gateway-device-ca:   # 키오스크 기기 인증서(mTLS, PUBLIC_API F절)를 검증할 기기 CA(PEM, 공개 인증서). 운영(설치처)이 준다(계약 3.4.13 PublicIngressEnv.INGRESS_DEVICE_CA_FILE, 필수). 시험 폴더(--test-fixtures)에는 gen-secrets.sh 가 시험 CA 를 만든다
+    file: ${DEVICE_CA_FILE:?기기 CA 파일(PEM) 경로가 필요하다. 운영이 준다}
   gateway-tls-cert:   # 공개 인증서(비밀 아님). files 모드(GATEWAY_TLS_MODE=files)에서만 쓰인다(계약 PublicIngressEnv.INGRESS_TLS_DIR 의 tls.crt)
     file: ${GATEWAY_TLS_CERT_FILE:-./config/unused.pem}
 
@@ -850,6 +852,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}   # platform 공개 입구(S9): 경로 표는 시작할 때 마운트한 영역 Exposure 선언에서 만든다. 설정은 이미지 안에 있다
     cap_add: ["NET_BIND_SERVICE"]   # caddy 바이너리에 파일 권한이 있어 cap_drop ALL이면 실행이 거부된다. 실제로는 8080을 연다
     configs:
+      - {source: gateway-device-ca, target: /etc/openit/device-ca.pem}
       - {source: gateway-tls-cert, target: /etc/openit/ingress-tls/tls.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
     secrets: [{source: gateway-tls-key, target: /etc/openit/ingress-tls/tls.key}, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
@@ -874,6 +877,7 @@ services:
       identity-proxy: {condition: service_started}
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
+      INGRESS_DEVICE_CA_FILE: /etc/openit/device-ca.pem   # 기본 기기 인증(mTLS)의 기기 CA 경로(계약 3.4.13). 파일은 위 configs gateway-device-ca
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
       GATEWAY_PROBE_SITE: ${GATEWAY_PROBE_SITE:-gateway:8443}   # 감시(blackbox)가 게이트웨이를 https 로 부르는 사이트 이름. internal 모드에서는 내부 CA 가 이 이름 인증서도 발급한다. files/acme 모드에서는 그 인증서가 이 이름을 포함하거나 감시 대상을 GATEWAY_HOSTS 의 이름으로 바꾼다
       GATEWAY_TLS_MODE: ${GATEWAY_TLS_MODE:-internal}   # 공개 입구 인증서 출처: internal(기본)|files|acme (ADR 0060)

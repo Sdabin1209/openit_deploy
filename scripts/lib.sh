@@ -45,9 +45,9 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.12}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.13}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.21}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
-DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.18}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
+DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.19}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
@@ -124,7 +124,7 @@ dc() { # dc <project> <compose args...>
   [ -f "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}" ] && envs+=(--env-file "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}")
   [ -f "$DEPLOY_ROOT/.env" ] && envs+=(--env-file "$DEPLOY_ROOT/.env")
   # 잠금 파일이 digest의 유일한 출처다: 셸에 남은 같은 이름의 변수가 --env-file 을 이기지 못하게 지운다
-  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u STEP_CA_IMAGE -u PAUSE_IMAGE -u DEPLOY_REGISTRY "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
+  env -u SURVEY_SERVICE_DIGEST -u QUESTION_AUTHORING_DIGEST -u OPS_FEEDBACK_DIGEST -u RELEASE_GATE_DIGEST -u GATEWAY_IMAGE -u REGISTRY_IMAGE -u UTIL_IMAGE -u POSTGRES_IMAGE -u RESTIC_IMAGE -u REST_SERVER_IMAGE -u PROMETHEUS_IMAGE -u ALERTMANAGER_IMAGE -u BLACKBOX_IMAGE -u NODE_EXPORTER_IMAGE -u JSON_EXPORTER_IMAGE -u KEYCLOAK_IMAGE -u OAUTH2_PROXY_IMAGE -u STEP_CA_IMAGE -u PAUSE_IMAGE -u DEPLOY_REGISTRY "DEVICE_CA_FILE=${DEVICE_CA_FILE:-${SECRETS_DIR:-$DEPLOY_ROOT/secrets}/device-ca.pem}" "GATEWAY_PUBLIC_URL=$(gateway_public_url)" "HF_CACHE_VOLUME=$HF_CACHE_VOLUME" \
     "$DOCKER" compose -p "$project" --project-directory "$DEPLOY_ROOT" "${files[@]}" "${envs[@]}" "$@"
 }
 # 외부 추론 서버 모드(D72): external_inference_setup <URL>. INFERENCE_URL / INFERENCE_TOKEN_FILE 을 내보내고 COMPOSE_EXTRA 에 override 를 붙인다.
