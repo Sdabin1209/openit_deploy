@@ -9,6 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD; ID="splitpki-$$"
+DEPLOY_NO_DOCKER=1 source "$ROOT/scripts/lib.sh"   # wait_ready 등 공용 함수(lib.sh 한 곳). 예전에는 이 시험이 같은 대기 루프를 따로 가졌다
 PY=${DEPLOY_PY:-}; [ -n "$PY" ] || for c in "$ROOT/.venv/bin/python" "$ROOT/../../.venv/bin/python"; do [ -x "$c" ] && PY=$c && break; done
 AP="$(dirname "$PY")/ansible-playbook"
 # 실패한 task 의 이름·대상·모듈만 보인다(no_log 로 가려진 값·비밀은 보이지 않는다): 묶음에서만 나는 실패의 원인 파악용
