@@ -34,19 +34,6 @@ services:
     ports: ["127.0.0.1::9093"]
     volumes: ["alertmanager-data:/alertmanager"]
     networks: [monitoring]
-  gateway-root:   # 공개 입구의 사설 CA 루트(공개 인증서)를 꺼낸다: 공개 입구 이미지의 export-root 부명령(platform docs/COMPONENTS.md). 다른 TLS 모드에서는 빈 결과일 수 있다
-    restart: "no"
-    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}
-    user: "10001:10001"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    read_only: true
-    network_mode: none
-    volumes_from: [gateway:ro]
-    command: ["export-root", "/config"]   # 출력 폴더는 이미지가 VOLUME 으로 선언한 쓰기 폴더(/config)를 쓴다: PublicIngressEnv 에 내보내기 폴더 입력이 없다(계약 빈칸: 헤드에 보고)
-    volumes: ["gateway-root:/config"]
-    depends_on:
-      gateway: {condition: service_healthy}
   monitoring-root:   # 감시가 믿을 루트 모음(MonitoringEnv.MONITORING_ROOT_CA 는 여러 PEM 을 이어 붙인 파일을 받는다): 서비스 인증서 루트(pki-root) + 공개 입구 루트(gateway-root)
     restart: "no"
     image: ${UTIL_IMAGE:?locks/images.lock}
@@ -58,7 +45,7 @@ services:
     entrypoint: ["sh", "-c", "cat /pki/root_ca.crt /gw/root_ca.crt > /out/root_ca.crt"]
     volumes: ["pki-root:/pki:ro", "gateway-root:/gw:ro", "monitoring-root:/out"]
     depends_on:
-      gateway-root: {condition: service_completed_successfully}
+      gateway: {condition: service_healthy}   # 공개 입구가 루트를 출력 마운트(gateway-root)에 쓴 뒤(INGRESS_ROOT_EXPORT_DIR)
   blackbox-exporter:
     <<: *monhard
     command: ["blackbox"]
@@ -90,7 +77,7 @@ services:
 networks:
   monitoring:
 volumes:
-  gateway-root:   # 공개 입구 루트 인증서(공개)만
+  gateway-root:   # compose.yaml 이 정의한다(같은 프로젝트). 공개 입구가 쓴 루트 인증서(공개)만 있고 여기서는 읽기 전용으로만 쓴다
   monitoring-root:   # 감시가 믿을 루트 모음(공개 인증서만)
   gateway-data:   # compose.yaml 이 정의한다(같은 프로젝트). 읽기 전용으로만 쓴다
   pki-root:   # compose.yaml 가 정의한다(같은 프로젝트라 같은 볼륨). 루트 인증서만 있다

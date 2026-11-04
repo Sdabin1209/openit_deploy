@@ -134,6 +134,7 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   serving-data:   # model-serving: 게이트에서 받은 번들 캐시(다시 받을 수 있어 백업 대상 아님)
   models-data:    # model-registry: 모델 패키지(어댑터 tar에서 푼 파일 레지스트리)
   datasets-data:  # dataset-store: 학습 데이터셋(DatasetManifest + files/). 쓰기는 dataset-store 서버만(D49: 이웃은 볼륨이 아니라 HTTP). 백업 대상(ADR 0032)
+  gateway-root:   # 공개 입구가 쓰는 사설 CA 루트 인증서(공개)만 담는 출력 마운트(INGRESS_ROOT_EXPORT_DIR)
   gateway-data:   # gateway(Caddy)의 내부 CA 루트와 발급 인증서(/data/caddy/pki). 비밀키가 들어 있어 백업·유출에 주의
   pki-ca:         # step-ca: 루트·중간 키(암호화됨)와 DB. **비밀 키가 있다. 백업 대상(루트 키 분실 = 모든 인증서 재발급, 사람 보관: docs/runbook.md PKI 절)**
   pki-tokens:     # 일회용 토큰(OTT). 5분 안에 쓰이지 않으면 무효
@@ -830,6 +831,18 @@ services:
       backup-store-cert: {condition: service_healthy}
       backup-store-perms: {condition: service_completed_successfully}
 
+  gateway-root-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 공개 입구(uid 10001)가 루트 인증서(출력 마운트)를 못 쓴다
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    user: "0:0"
+    entrypoint: ["chown", "10001:10001", "/o"]
+    restart: "no"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    network_mode: none
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
+    volumes: ["gateway-root:/o"]
   gateway:
     <<: *hardening
     mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -843,6 +856,7 @@ services:
     secrets: [{source: gateway-tls-key, target: /etc/openit/ingress-tls/tls.key}, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:   # 게이트웨이가 상류로 부르는 서비스는 모두 준비된 뒤에 뜬다: 앱과 그 TLS 사이드카가 둘 다 healthy (준비 전 요청은 503 이 된다, 정적 점검이 지킨다)
+      gateway-root-perms: {condition: service_completed_successfully}
       kiosk-frontend: {condition: service_healthy}
       kiosk-frontend-gw: {condition: service_healthy}
       survey-service: {condition: service_healthy}
@@ -870,6 +884,7 @@ services:
       GATEWAY_ACME_EMAIL: ${GATEWAY_ACME_EMAIL:-internal@invalid.example}
       GATEWAY_ACME_DIRECTORY: ${GATEWAY_ACME_DIRECTORY:-https://acme-v02.api.letsencrypt.org/directory}
     volumes:
+      - gateway-root:/etc/openit/root-out   # 계약 PublicIngressEnv.INGRESS_ROOT_EXPORT_DIR(3.4.16) 출력 마운트: internal 모드의 사설 CA 루트(공개 인증서)를 root_ca.crt 로 써 둔다. deploy 는 이 파일만 읽는다(export-gateway-ca.sh)
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
       - {type: bind, source: "${SECRETS_DIR:-./secrets}/devices", target: /run/secrets/devices, read_only: true, bind: {create_host_path: false}}   # 기기 토큰 폴더(계약 PublicIngressEnv.INGRESS_DEVICE_TOKENS_DIR 기본값): 기기마다 파일 하나, 지우면 폐기
