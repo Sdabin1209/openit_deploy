@@ -18,7 +18,7 @@ def main(argv) -> int:
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts"))
     import e2e_sandbox as S
     S.init(project=a.project, secrets=a.secrets, docker=a.docker, **({"root": a.root} if a.root else {}))
-    SVC = {"qa": "question-authoring", "ops": "ops-feedback-ingest", "mr": "model-registry", "gate": "release-gate"}
+    SVC = {"qa": "question-authoring", "ops": "ops-feedback", "mr": "model-registry", "gate": "release-gate"}
     u = lambda k: "http://127.0.0.1:8080"
     req = {"run_id": a.run_id, "work": str(W), "state": json.loads((W / "state.json").read_text()),
            "urls": {"qa": u("qa"), "ops": u("ops"), "mr": u("mr"), "gate": u("gate")},

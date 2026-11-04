@@ -507,10 +507,10 @@ def imp_config(name, max_invalid_rows, store_root):
     validate("SyntheticJobConfigImport", cfg)   # R7: 설정을 쓰기 전에 계약으로 검증한다
     p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
-# synthetic-run 잡이 부르는 이웃(문항 읽기 question-authoring, 실패 사례 ops-feedback-ingest)은 compose 의 authoring 네트워크에 함께 붙어 있다(compose.yaml 이 정본, test_e2e_job_urls 가 대조).
+# synthetic-run 잡이 부르는 이웃(문항 읽기 question-authoring, 실패 사례 ops-feedback)은 compose 의 authoring 네트워크에 함께 붙어 있다(compose.yaml 이 정본, test_e2e_job_urls 가 대조).
 SD_RUN_NETWORK = lambda: f"{a.project}_authoring"
 SD_QA_JOB_URL = "https://question-authoring"    # 서비스 이름·컨테이너 포트
-SD_OPS_JOB_URL = "https://ops-feedback-ingest"
+SD_OPS_JOB_URL = "https://ops-feedback"
 DS_JOB_NETWORK = lambda: f"{a.project}_datasets"   # dataset-store(I2) 전용 internal 네트워크(compose.yaml networks.datasets). 잡은 서비스 이름 dataset-store 로 닿는다
 DS_JOB_URL = "https://dataset-store"   # 잡 컨테이너가 쓰는 dataset-store 주소(서비스 이름·컨테이너 포트). 호스트에서 부르는 URL("ds") 와 다르다
 
@@ -854,7 +854,7 @@ def model_server_v2_check(new, tok):
     assert info.get("system_prompt_sha256") == STATE.get("system_prompt"), f"서버가 쓰는 시스템 프롬프트 해시가 패키지와 다르다: {info.get('system_prompt_sha256')} / {STATE.get('system_prompt')}"
     return "extract(ExtractRequest{input, flow, fields} 200·JSON ActionExtraction 스키마·X-Openit-Outcome ok; 옛 본문·fields 없음·skips 없는 flow 는 400) -> respond(text/plain 문장, ok), 계약 위반 입력 400, 미적재 릴리스 404, /v1/info 의 system_prompt_sha256 이 패키지(ModelPackageManifest.system_prompt)와 일치"
 
-SWAP_SERVICES = ["survey-service", "release-gate", "model-registry", "ops-feedback-ingest", "question-authoring", "gateway"]
+SWAP_SERVICES = ["survey-service", "release-gate", "model-registry", "ops-feedback", "question-authoring", "gateway"]
 def container_ids():
     """서비스별 (컨테이너 ID, StartedAt). docker inspect 의 두 필드만 읽는다(Env 등은 읽지 않는다)."""
     out = {}
@@ -1139,13 +1139,13 @@ def step5o():
     rec("5o", "REAL", f"일수 칸 규격(0~7, 값 단위 day/week). 추론 서버 직접(ExtractRequest{{input, flow, fields}}): 8일 -> REASK/OUT_OF_RANGE(같은 문항, 저장 안 하는 UNCLEAR, targets Q8_1.days), 7일·0일 -> NEXT(경계 포함). 서비스 경유: {turns}턴으로 Q8_1 도달 뒤 '8일이요' -> 턴 action REASK, Q8_1.days=8 저장 없음 -> '3일이요' -> 3 저장(ANSWERED).")
 
 # ---- 시간 단언의 상수: 설정(config/Caddyfile, 서비스 문서)에서 도출한 값과 측정 환경별 관찰값을 이름으로 둔다. 단언의 의미(상한 안에 들어와야 한다)는 그대로이고, 한 환경의 측정값을 불변식처럼 쓰지 않는다.
-ADMIN_CONSOLE_WAIT_S = {'release-gate': 190.0, 'question-authoring': 130.0, 'ops-feedback-ingest': 70.0, 'admin-console': 70.0}   # 관리 화면(admin-console 영역)의 경로별 대기(CONVENTIONS 시간표 D125): 각 경로의 gateway 상한(연결 + 헤더)이 이보다 짧아야 한다(ADR 0051)
+ADMIN_CONSOLE_WAIT_S = {'release-gate': 190.0, 'question-authoring': 130.0, 'ops-feedback': 70.0, 'admin-console': 70.0}   # 관리 화면(admin-console 영역)의 경로별 대기(CONVENTIONS 시간표 D125): 각 경로의 gateway 상한(연결 + 헤더)이 이보다 짧아야 한다(ADR 0051)
 STAFF_SCREEN_WAIT_S = 60.0   # 직원 화면(kiosk-frontend REQUEST_TIMEOUT_MS)의 대기: 직원 API 경로(@staffapi)의 gateway 상한이 이보다 짧고 서버 턴 마감보다 길어야 한다
 KIOSK_WAIT_S = 60.0          # 키오스크 대기(kiosk-frontend 영역, 계약 CONVENTIONS 시간표 D125: 프록시·LB 표준 60초)
 SURVEY_TURN_DEADLINE_S = 50.0 # survey-service 서버 턴 총 마감(SURVEY_TURN_DEADLINE_SECONDS, config/survey.env 가 정본이고 scripts/test_time_chain.py 가 같음을 본다)
 GW_DIAL_PROXY_S = 1.0        # 사람용 프록시(proxy_limits) 연결 상한 dial_timeout
 GW_READYZ_CAP_S = 3.0        # gateway /readyz 프록시 = 연결 1s + 응답 헤더 2s (Caddyfile)
-GW_HDR_GATE_S, GW_HDR_OPS_S = 180.0, 60.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback-ingest (proxy_limits, D125: 측정 최악 승인 128초·프록시 표준 60초 위의 여유)
+GW_HDR_GATE_S, GW_HDR_OPS_S = 180.0, 60.0   # 사람용 프록시 응답 헤더 상한: release-gate / ops-feedback (proxy_limits, D125: 측정 최악 승인 128초·프록시 표준 60초 위의 여유)
 DOCKER_DNS_FAIL_S = 3.0      # 멈춘 컨테이너 이름을 Docker 내부 DNS가 해석하지 못하는 지연. 근거: 설정 없는 Caddy가 이름 해석 실패 502를 3.0s 뒤에 냈다(docs/E2E.md 관찰, 한 환경에서 측정)
 BASIC_AUTH_S = 2.0           # gateway 사람 인증 확인 시간의 여유(예전 basic_auth bcrypt 확인에서 정한 값을 forward_auth 왕복에도 그대로 둔다: 더 짧아져 여유가 늘 뿐이다). 관찰: 이 PC 약 0.9s(검토 목록 pause 가 설정 10s 에 10.87s). 근거 기록 없음 이상의 일반화는 하지 않는다
 CLIENT_EXTRA_S = 2.0         # 호스트 클라이언트가 gateway 응답을 더 늦게 받는 정도. 관찰: gpu-dev(Docker Desktop 4.50) +0.5~1.9s, 이 PC 0 (docs/E2E.md 5w 계측)
@@ -1282,10 +1282,10 @@ def step5w():
 
 @step('5u', repos=('release-gate', 'survey-service') + _GW, deps=(),
       why='step5u 는 STATE 를 읽지 않는다. 활성 릴리스가 있어야 하는지는 코드를 읽어 확정하지 못했다',
-      also={'ops-feedback': 'ops-feedback-ingest 무응답 때 gateway의 검토 경로 상한'})
+      also={'ops-feedback': 'ops-feedback 무응답 때 gateway의 검토 경로 상한'})
 def step5u():
-    title("5u", "사람이 쓰는 화면 경로(승인·운영·검토)의 gateway 상류 상한: release-gate 중지/무응답, ops-feedback-ingest 무응답 (FAULT_POLICY 6, config/Caddyfile proxy_limits)")
-    gate, ops = f"{a.project}-release-gate-1", f"{a.project}-ops-feedback-ingest-1"
+    title("5u", "사람이 쓰는 화면 경로(승인·운영·검토)의 gateway 상류 상한: release-gate 중지/무응답, ops-feedback 무응답 (FAULT_POLICY 6, config/Caddyfile proxy_limits)")
+    gate, ops = f"{a.project}-release-gate-1", f"{a.project}-ops-feedback-1"
     def call(path, acct, who):
         t0 = time.time(); c, b, h = _c2_raw("GET", path, basic=acct); return c, b, time.time() - t0, t0
     def up503(c, b, what): assert c == 503 and b == {"code": "UPSTREAM_UNAVAILABLE"}, f"{what}: 503 UPSTREAM_UNAVAILABLE 이 아니다: {c} {str(b)[:100]}"
@@ -1311,7 +1311,7 @@ def step5u():
     wait(lambda: _c2_raw("GET", "/v1/submissions", basic=_C2_ADMIN)[0] == 200, 60, "승인 조회 복구(200)", every=2)
     paused(ops, "/v1/cases", _C2_REVIEWER, "검토 목록 pause", GW_HDR_OPS_S - 0.5, GW_HDR_OPS_S + BASIC_AUTH_S)
     wait(lambda: _c2_raw("GET", "/v1/cases", basic=_C2_REVIEWER)[0] == 200, 60, "검토 목록 복구(200)", every=2)
-    rec("5u", "REAL", "사람이 쓰는 화면 경로의 gateway 상류 상한: release-gate 중지 중 승인 조회 " + f"{obs['승인 조회 C7']}·운영자 읽기 {obs['운영자 active-pointer C8']}(코드, 초)가 503 {{\"code\":\"UPSTREAM_UNAVAILABLE\"}}; release-gate 무응답 중 승인 조회 {obs['승인 조회 pause']}(코드, 클라이언트 초, gateway duration 초; 설정 헤더 180s), ops-feedback-ingest 무응답 중 검토 목록 {obs['검토 목록 pause']}(설정 헤더 60s)이 504 UPSTREAM_UNAVAILABLE; 해제 뒤 모두 200 복구. 정적 화면(admin-console, kiosk-frontend) 프록시의 상한은 같은 설정이나 이 단계에서 시험하지 않았다")
+    rec("5u", "REAL", "사람이 쓰는 화면 경로의 gateway 상류 상한: release-gate 중지 중 승인 조회 " + f"{obs['승인 조회 C7']}·운영자 읽기 {obs['운영자 active-pointer C8']}(코드, 초)가 503 {{\"code\":\"UPSTREAM_UNAVAILABLE\"}}; release-gate 무응답 중 승인 조회 {obs['승인 조회 pause']}(코드, 클라이언트 초, gateway duration 초; 설정 헤더 180s), ops-feedback 무응답 중 검토 목록 {obs['검토 목록 pause']}(설정 헤더 60s)이 504 UPSTREAM_UNAVAILABLE; 해제 뒤 모두 200 복구. 정적 화면(admin-console, kiosk-frontend) 프록시의 상한은 같은 설정이나 이 단계에서 시험하지 않았다")
 
 @step('5m', repos=('survey-service', 'model-runtime', 'kiosk-frontend') + _GW, deps=('4',),
       why="STATE['pointers'] 를 읽고 model-serving 을 pause 한다. " + _P4)
@@ -1708,7 +1708,7 @@ def trace_env(release_id, n):
 #   (a) 게이트웨이(사람 계정·기기·기계 토큰), (b) 제품 네트워크 안(compose exec/run), (c) 별도 호스트의 추론 서버. 내부 서비스의 호스트 포트는 없다.
 import e2e_sandbox as SB
 _C3_ACCT = {"approver": "trainer-e2e", "operator": "operator-e2e", "reviewer": "reviewer-e2e", "author": "author-e2e", "clinical": "clinical-e2e", "staff": "staff-e2e"}   # Keycloak 시험 사용자: test/gateway-oidc/accounts.test.conf 를 scripts/idp-test-users.sh 가 만든다 의 시험 계정(역할 이름 -> 계정 ID)
-_C3_SVC = {"qa": "question-authoring", "gate": "release-gate", "ops": "ops-feedback-ingest", "survey": "survey-service"}   # 단계가 쓰는 짧은 이름 -> compose 서비스
+_C3_SVC = {"qa": "question-authoring", "gate": "release-gate", "ops": "ops-feedback", "survey": "survey-service"}   # 단계가 쓰는 짧은 이름 -> compose 서비스
 
 def _c3_tok(name):   # 시험 비밀 폴더의 토큰 파일(값은 출력하지 않는다, D84)
     return _tokpath(name).read_text().strip()
@@ -1846,7 +1846,7 @@ def step6():
     env = trace_env(rel, 1); STATE["trace_env"] = env; save()
     # Trace 를 ops-feedback 으로 보내는 운영 주체는 survey-service(outbox)다: 그 컨테이너 안에서, 그 서비스의 수집 토큰으로 이웃 서비스 이름 주소를 부른다
     o = _c3_py("survey-service", '''
-u = "https://ops-feedback-ingest/v1/traces"; t = _tokfile("SURVEY_TRACE_INGEST_TOKEN_FILE")
+u = "https://ops-feedback/v1/traces"; t = _tokfile("SURVEY_TRACE_INGEST_TOKEN_FILE")
 r1 = call("POST", u, t, V["env"]); r2 = call("POST", u, t, V["env"])
 n = call("POST", u, None, V["env"]); bad = call("POST", u, t, {**V["env"], "trace": {"x": 1}})
 R = {"r1": r1[:2], "r2": r2[:2], "noauth": [n[0], n[2]], "bad": bad[:2]}''', env=env)
@@ -1906,7 +1906,7 @@ R = {"sig": call("GET", B + "?question_set_id=" + V["qs"], au)[:2], "read": call
     c, e = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", bad)[:2]; assert c == 400, (c, e); validate("BoundaryError", e)
     c, e2 = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", {"review_status": "CONFIRMED", "expected": GOOD_EXPECTED})[:2]; assert c == 400, (c, e2)
     # 읽기 토큰으로는 검토를 게시할 수 없다: 게이트웨이는 늘 검토 토큰을 붙이므로 ops-feedback 컨테이너 안에서 그 서비스의 읽기 토큰으로 확인한다
-    c403 = _c3_py("ops-feedback-ingest", '''
+    c403 = _c3_py("ops-feedback", '''
 R = call("POST", "http://127.0.0.1:8080/v1/cases/" + V["cid"] + "/review", _list("OPS_READ_TOKENS_FILE")["synthetic-data"], V["bad"], {"X-Openit-User": "reader-e2e"})[0]''', cid=cid, bad=bad)
     assert c403 == 403, "읽기 토큰으로 검토 게시됨"
     assert _c3_gw("POST", "/v1/cases/nonexistent-case/review", "reviewer", {"review_status": "DISMISSED"})[0] == 404
@@ -2264,7 +2264,7 @@ R = [st, b]''', qs=qset)
 def step5p():
     title("5p", "PostgreSQL 컨테이너 중지 -> 서비스 /readyz 비정상 관찰 -> 기동 -> /readyz 복구, 이전 데이터 보존, 새 쓰기 (D85)")
     pg = _pgs()
-    svcs = [("qa", "question-authoring"), ("gate", "release-gate"), ("ops", "ops-feedback-ingest"), ("survey", "survey-service")]
+    svcs = [("qa", "question-authoring"), ("gate", "release-gate"), ("ops", "ops-feedback"), ("survey", "survey-service")]
     def ready(k):   # 서비스 컨테이너 안에서 본 /readyz (코드, 본문)
         try: c, b, _ = _c3_probe(k, "/readyz"); return c, b
         except Exception as e: return 0, f"{type(e).__name__}"
@@ -2357,7 +2357,7 @@ def _ready_code(k): return _c3_ready(k)   # 서비스 컨테이너 안에서 본
 
 def _outbox_drained(timeout=120):
     """survey-service 의 Trace outbox 가 비기를 기다리고 그때의 전송 수(sent)를 돌려준다(계약 SurveyReadyz.trace_outbox.pending/sent).
-    왜: ops_log 에는 잡뿐 아니라 ops-feedback-ingest(outbox 가 보낸 Trace)도 쓴다. 앞 단계의 DB 장애로 밀린 Trace 가 백오프 뒤 전송되면 ops_log 가 잡과 무관하게 바뀐다.
+    왜: ops_log 에는 잡뿐 아니라 ops-feedback(outbox 가 보낸 Trace)도 쓴다. 앞 단계의 DB 장애로 밀린 Trace 가 백오프 뒤 전송되면 ops_log 가 잡과 무관하게 바뀐다.
     /readyz 가 503(활성 릴리스 없음 등)이어도 본문의 trace_outbox 는 계약상 필수라 읽는다. 상한 120초는 측정값이 아니다(outbox 백오프 상한을 deploy 가 알지 못해 넉넉히 잡은 시작값)."""
     def drained():
         try: c, r = _c3_survey_ready()
@@ -2375,7 +2375,7 @@ def _run_ops_job():   # 스케줄러와 같은 호출(compose run --rm job-ops-f
 def step5pn():
     title("5pn", "PostgreSQL 네트워크 분리(docker network disconnect, F8) -> 서비스 /readyz 2초 안 503 -> 재연결 -> 사람 개입 없이 200 (FAULT_MATRIX A5·C4·D1·D4·E1 F8)")
     # FAULT_POLICY 11: 분리(F8)는 중지(F1)·멈춤(F2)과 같은 규칙. 연결할 수 없으면 F1 로 분류한다 -> 원칙 5: 의존이 죽으면 /readyz 는 2초 안에 503. 원칙 12: 의존이 돌아오면 사람 개입 없이 /readyz 200
-    edges = [("A5", "survey", "survey-service", "db-survey"), ("C4", "gate", "release-gate", "db-gate"), ("D4", "ops", "ops-feedback-ingest", "db-ops"), ("E1", "qa", "question-authoring", "db-qa")]
+    edges = [("A5", "survey", "survey-service", "db-survey"), ("C4", "gate", "release-gate", "db-gate"), ("D4", "ops", "ops-feedback", "db-ops"), ("E1", "qa", "question-authoring", "db-qa")]
     if "pointers" not in STATE:   # 활성 릴리스가 없으면 survey-service /readyz 는 DB 와 무관하게 503(5p 와 같은 제한)
         edges = [e for e in edges if e[1] != "survey"]; print("  (활성 릴리스가 없어 A5(survey-service)는 제외한다: 단계 4 를 포함해 돌려야 A5 가 확인된다)")
     out = []

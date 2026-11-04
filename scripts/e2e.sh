@@ -327,7 +327,7 @@ readyz_obj() { local o; o=$("$@") || return 1; printf '%s' "$o" | python3 -c "im
 d=json.loads(sys.stdin.read())
 if not isinstance(d,dict) or not d: sys.exit('본문이 비어 있지 않은 JSON 객체가 아니다')
 if d.get('ready') is False or d.get('status') in ('not-ready','error','fail','failed'): sys.exit('준비되지 않았다: '+json.dumps(d)[:80])"; }   # 스키마가 없는 서비스(model-serving)의 /readyz: status 값은 서비스별이다
-readyz_check() { local sch o; case "$1" in survey-service) sch=SurveyReadyz;; release-gate) sch=GateReadyz;; ops-feedback-ingest) sch=OpsFeedbackReadyz;; *) sch=-;; esac
+readyz_check() { local sch o; case "$1" in survey-service) sch=SurveyReadyz;; release-gate) sch=GateReadyz;; ops-feedback) sch=OpsFeedbackReadyz;; *) sch=-;; esac
   o=$(inpy "$1" /readyz) || return 1
   printf '%s' "$o" | "$VENV/bin/python" -W ignore -c "import sys,json
 from boundary_contracts import validator
@@ -340,7 +340,7 @@ if d.get('ready') is False or d.get('status') in ('not-ready','error','fail','fa
 no_doors() { local bad; bad=$("$DOCKER" ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}} {{.Ports}}' | tr -d '\r' | grep -- '->' | grep -v "^${PROJECT}-gateway-1 " | grep -v "^${PROJECT}-step-ca-1 "); [ -z "$bad" ] || { echo "gateway 밖에서 호스트 포트를 게시한 제품 컨테이너: $bad"; return 1; }; echo "호스트 포트를 게시한 제품 컨테이너는 gateway 뿐이다 (시험용 문 0)"; }
 chk "샌드박스: 제품에 시험용 문이 없다 (호스트 포트는 gateway 뿐, 실행 중 컨테이너 기준)" no_doors
 chk "샌드박스: 제품 compose 정적 점검 (시험용 포트·가짜 백엔드·compose.test.yaml 없음)" "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_no_test_doors.py"
-for n in gateway question-authoring release-gate ops-feedback-ingest model-registry dataset-store survey-service; do
+for n in gateway question-authoring release-gate ops-feedback model-registry dataset-store survey-service; do
   if [ "$n" = gateway ]; then chk "/healthz $n (본문 status=ok)" health_check getj "$PGW" /healthz; else chk "/healthz $n (중계를 거쳐, 본문 status=ok)" health_check inpy "$n" /healthz; fi
   [ "$n" = survey-service ] && continue
   [ "$n" = gateway ] && continue   # gateway /readyz 는 survey-service 를 반영한다(아래에서 따로)
@@ -382,7 +382,7 @@ net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원�
   want=$(printf '%s\n' "$@" | sort | tr '\n' ' ')
   [ "$got" = "$want" ] || { echo "구성원 불일치: $n"; return 1; }
 }
-chk "도달: survey-service -> ops-feedback-ingest (serving, I6)" reach survey-service ops-feedback-ingest
+chk "도달: survey-service -> ops-feedback (serving, I6)" reach survey-service ops-feedback
 chk "도달: survey-service -> release-gate (serving, I4)" reach survey-service release-gate
 chk "도달: release-gate -> question-authoring (release, I1)" reach release-gate question-authoring
 chk "도달: release-gate -> model-registry (release, I3)" reach release-gate model-registry
@@ -394,12 +394,12 @@ chk "차단: model-registry -> dataset-store" blocked model-registry dataset-sto
 chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
 chk "공개 입구에 낸 영역 Exposure 선언에 dataset-store 경로가 없다" bash -c "! grep -rq 'dataset-store\|datasets' ${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/exposures"
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
-for pair in "db-survey:survey-service:survey-db" "db-qa:question-authoring:question-authoring-db" "db-ops:ops-feedback-ingest:ops-feedback-db" "db-gate:release-gate:release-gate-db"; do   # 영역마다 자기 DB 컨테이너(구조 규칙 1)
+for pair in "db-survey:survey-service:survey-db" "db-qa:question-authoring:question-authoring-db" "db-ops:ops-feedback:ops-feedback-db" "db-gate:release-gate:release-gate-db"; do   # 영역마다 자기 DB 컨테이너(구조 규칙 1)
   _n=${pair%%:*}; _r=${pair#*:}; _svc=${_r%%:*}; _db=${_r##*:}
   chk "db 네트워크 $_n 에는 $_db 와 $_svc 만 있다(다른 영역의 DB 에 닿지 않는다)" net_is "$_n" "${PROJECT}-$_db-1" "${PROJECT}-$_svc-1"
 done
 tcp() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import socket;socket.create_connection(('$2',$3),timeout=3)" >/dev/null 2>&1; }
-for pair in survey-service:survey-db question-authoring:question-authoring-db ops-feedback-ingest:ops-feedback-db release-gate:release-gate-db; do chk "도달: ${pair%%:*} -> ${pair##*:}:5432 (db 네트워크)" tcp "${pair%%:*}" "${pair##*:}" 5432; done
+for pair in survey-service:survey-db question-authoring:question-authoring-db ops-feedback:ops-feedback-db release-gate:release-gate-db; do chk "도달: ${pair%%:*} -> ${pair##*:}:5432 (db 네트워크)" tcp "${pair%%:*}" "${pair##*:}" 5432; done
 tcp_blocked() { ! tcp "$@"; }
 for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do chk "차단: model-registry -> $_db" tcp_blocked model-registry $_db 5432; done
 chk "차단: survey-service -> 다른 영역의 DB(release-gate-db)" tcp_blocked survey-service release-gate-db 5432
@@ -407,8 +407,8 @@ for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do c
 chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "https://host.docker.internal:$IPORT/healthz"   # body-judged: reachu 가 본문 status/ok 를 판정한다
 chk "도달: 추론 서버 -> 제품 입구(게이트웨이 TLS, 게이트웨이 CA 검증, I4 번들 읽기의 운영 경로 D72)" reachu model-serving "$GWTLS/healthz"
 chk "차단: 추론 서버 -> question-authoring (제품 내부 이름으로는 닿지 않는다)" blocked model-serving question-authoring
-chk "도달: question-authoring -> ops-feedback-ingest (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback-ingest
-chk "차단: ops-feedback-ingest -> model-registry" blocked ops-feedback-ingest model-registry
+chk "도달: question-authoring -> ops-feedback (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback
+chk "차단: ops-feedback -> model-registry" blocked ops-feedback model-registry
 noegress() { ! "$DOCKER" exec "${PROJECT}-release-gate-1" python -c "import urllib.request;urllib.request.urlopen('http://1.1.1.1',timeout=3)" >/dev/null 2>&1; }
 chk "내부 네트워크 밖으로 나가지 못함(release-gate -> 외부 인터넷)" noegress
 chk "보존 정리 잡이 Compose 에서 실행된다: release-gate prune --dry-run(멱등, release-gate CR-0008)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-release-gate-prune python -m release_gate prune --dry-run
@@ -418,7 +418,7 @@ chk "컨테이너 격리 실제 확인(check-containers: 비루트·읽기 전�
 nonroot() { [ "$("$DOCKER" exec "$(cn "$1")" id -u | tr -d '\r')" != 0 ]; }
 bydigest() { "$DOCKER" inspect "$(cn "$1")" --format '{{.Config.Image}}' | tr -d '\r' | grep -E '@sha256:[0-9a-f]{64}$'; }
 labels6() { validate_image_labels "$1" "$2"; }   # 라벨 검사는 계약 ImageLabels 검증 하나다(손으로 키를 따로 보지 않는다, U44). 필수 키·빈 값·revision 형식·n/a 표기를 스키마가 본다
-for s in survey-service question-authoring ops-feedback-ingest release-gate model-registry dataset-store model-serving kiosk-frontend admin-console; do
+for s in survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console; do
   chk "비root 실행 $s" nonroot "$s"
   chk "컨테이너가 digest로 만들어짐 $s" bydigest "$s"
 done

@@ -4,7 +4,7 @@
 import pathlib, unittest
 import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BIND = {"survey-service": "SURVEY_HOST", "question-authoring": "QA_HOST", "ops-feedback-ingest": "OPS_HOST", "release-gate": "GATE_HOST", "model-serving": "MODEL_RUNTIME_HOST",
+BIND = {"survey-service": "SURVEY_HOST", "question-authoring": "QA_HOST", "ops-feedback": "OPS_HOST", "release-gate": "GATE_HOST", "model-serving": "MODEL_RUNTIME_HOST",
         "model-registry": "MODEL_REGISTRY_HOST", "dataset-store": "DATASET_STORE_HOST", "identity": None, "identity-proxy": None, "kiosk-frontend": "KIOSK_HOST", "admin-console": "ADMIN_HOST"}
 KNOWN_GAP = set()   # 계약 v3.4.3 부터 kiosk-frontend(KIOSK_HOST)·admin-console(ADMIN_HOST)도 바인드 주소를 환경에서 받는다
 S = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]

@@ -11,7 +11,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 S0 = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
 AREAS = {"survey": ("job-survey-backup", "survey-service"), "qa": ("job-question-authoring-backup", "question-authoring"),
-         "ops": ("job-ops-feedback-backup", "ops-feedback-ingest"), "gate": ("job-release-gate-backup", "release-gate")}
+         "ops": ("job-ops-feedback-backup", "ops-feedback"), "gate": ("job-release-gate-backup", "release-gate")}
 
 
 def check(S):
@@ -61,7 +61,7 @@ def check(S):
     cmd = bs.get("command") or []
     if "--append-only" in cmd:
         errs.append("백업 저장소는 append-only 가 아니다(영역 백업 잡이 forget --prune 으로 보존을 지킨다)")
-    for sv in ("survey-service", "question-authoring", "ops-feedback-ingest", "release-gate"):
+    for sv in ("survey-service", "question-authoring", "ops-feedback", "release-gate"):
         if S.get(f"{sv}-gw", {}).get("user") is not None:
             errs.append(f"{sv}-gw: 이미지가 선언한 사용자를 deploy 가 바꾸지 않는다")
         if str(S.get(f"{sv}-cert", {}).get("user")) != "101:101":

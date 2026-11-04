@@ -20,11 +20,11 @@ class T(unittest.TestCase):
         self.ws = Path(tempfile.mkdtemp()); self.store = Path(tempfile.mkdtemp())
         a = self.ws / "areax"; (a / ".venv/bin").mkdir(parents=True); (a / ".venv/bin/python").write_text("")
         subprocess.run(["git", "init", "-q", str(a)], check=True); (a / "f").write_text("1"); git(a, "add", "-A"); git(a, "commit", "-qm", "c1")
-        self.a = a; os.environ["SETUP_ENV_DIR"] = str(self.store)
+        self.a = a; os.environ["SETUP_ENV_DIR"] = str(self.store); os.environ["SETUP_ENV_WORK"] = str(self.ws)   # 환경은 사본 폴더(work_root)에 있다: 시험에서는 임시 워크스페이스가 그 자리
         self.store.mkdir(exist_ok=True); (self.store / "areax.json").write_text(json.dumps(REP))
 
     def tearDown(self):
-        os.environ.pop("SETUP_ENV_DIR", None)
+        os.environ.pop("SETUP_ENV_DIR", None); os.environ.pop("SETUP_ENV_WORK", None)
 
     def test_same_commit_is_ready(self):
         (self.store / "areax.commit").write_text(git(self.a, "rev-parse", "--short", "HEAD") + "\n")
@@ -40,7 +40,7 @@ class T(unittest.TestCase):
         self.assertIn("낡았다", SE.env_status("areax", self.ws)[1])
 
     def test_store_is_inside_this_tree_by_default(self):
-        os.environ.pop("SETUP_ENV_DIR", None)
+        os.environ.pop("SETUP_ENV_DIR", None); os.environ.pop("SETUP_ENV_WORK", None)
         self.assertEqual(SE.store(), SE.ROOT / "state" / "setup-env")
 
 

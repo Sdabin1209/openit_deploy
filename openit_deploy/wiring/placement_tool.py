@@ -19,7 +19,7 @@ FOUNDATION = ["step-ca", "identity", "gateway"]   # 기반 요소(명세 "배치
 STAGES = [["step-ca"], ["@db"], ["identity"],   # "@db": 이름이 -db 로 끝나는 영역 DB 전부(영역마다 자기 DB 컨테이너)
    # step-ca 가 먼저: 모든 서비스의 인증서(postgres-cert 포함)를 받으려면 CA 가 떠 있어야 한다(ADR 0060)
          
-          ["release-gate", "question-authoring", "ops-feedback-migrate", "ops-feedback-ingest", "model-registry", "dataset-store"],
+          ["release-gate", "question-authoring", "ops-feedback-migrate", "ops-feedback", "model-registry", "dataset-store"],
           ["survey-service", "model-serving"],
           ["identity-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3

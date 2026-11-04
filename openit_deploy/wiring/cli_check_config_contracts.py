@@ -15,7 +15,7 @@ from openit_deploy.wiring.call import call
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ENV_SERVICES = {   # compose 서비스 -> (계약 스키마, 환경 문서로 바꾸는 규칙). 3.2.0(U73): 모든 서비스 컨테이너의 환경을 그 서비스의 선언 스키마로 검증한다
     "survey-service": ("SurveyServiceEnv", lambda env: env),
-    "ops-feedback-ingest": ("OpsFeedbackServerEnv", lambda env: {"env": {k: v for k, v in env.items() if k.startswith("OPS_")}}),   # 스키마: OPS_ 접두 변수만 넣는다
+    "ops-feedback": ("OpsFeedbackServerEnv", lambda env: {"env": {k: v for k, v in env.items() if k.startswith("OPS_")}}),   # 스키마: OPS_ 접두 변수만 넣는다
     "question-authoring": ("QuestionAuthoringEnv", lambda env: env),
     "release-gate": ("GateEnv", lambda env: env),
     "model-serving": ("ModelServingEnv", lambda env: env),

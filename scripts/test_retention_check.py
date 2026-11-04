@@ -22,7 +22,7 @@ class T(unittest.TestCase):
     def test_reads_every_retention_source(self):
         v = R.data_retentions(read_sources(ROOT / "config", ROOT / "compose.yaml"))
         names = " ".join(v)
-        for need in ("survey.env:SURVEY_SESSION_RETENTION_DAYS", "ops-feedback-ingest.env:OPS_RAW_RETENTION_DAYS", "question-authoring.env:QA_DRAFT_RETENTION_DAYS", "question-authoring.env:QA_SOURCE_RETENTION_DAYS",
+        for need in ("survey.env:SURVEY_SESSION_RETENTION_DAYS", "ops-feedback.env:OPS_RAW_RETENTION_DAYS", "question-authoring.env:QA_DRAFT_RETENTION_DAYS", "question-authoring.env:QA_SOURCE_RETENTION_DAYS",
                      "ops-feedback-job.yaml:retention.raw_days", "ops-feedback-job.yaml:retention.cases_days", "ops-feedback-job.yaml:retention.metrics_days"):
             self.assertIn(need, names)
         self.assertEqual(v["survey.env:SURVEY_SESSION_RETENTION_DAYS"], 90)

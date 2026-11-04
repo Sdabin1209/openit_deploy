@@ -1,7 +1,7 @@
 # 지표 수집 대상(R10.11: 내부 TLS). platform 감시 이미지의 file_sd. 영역 서비스 이름:443(영역 게이트웨이가 받는다). 서비스 목록은 scripts/test_monitoring_targets.py 가 compose 와 맞는지 본다
 - targets: ['survey-service:443']
 - targets: ['question-authoring:443']
-- targets: ['ops-feedback-ingest:443']
+- targets: ['ops-feedback:443']
 - targets: ['release-gate:443']
 - targets: ['model-registry:443']
 - targets: ['dataset-store:443']

@@ -40,7 +40,7 @@ class Gate(unittest.TestCase):
         self.assertEqual(rc, 1); self.assertIn("survey-service", err); self.assertNotIn("SECRETVALUE123", out + err)
 
     def test_ops_feedback_unknown_ops_variable_fails(self):
-        c = rendered(); c["services"]["ops-feedback-ingest"]["environment"]["OPS_NOT_A_KEY"] = "1"
+        c = rendered(); c["services"]["ops-feedback"]["environment"]["OPS_NOT_A_KEY"] = "1"
         self.assertEqual(run(c)[0], 1)
 
     def test_missing_schema_is_a_failure_not_a_skip(self):

@@ -67,7 +67,7 @@ networks:
   pki:        # step-ca(ACME)와 서비스 사이드카 사이. internal: 호스트로 열지 않는다(ADR 0060)
     internal: true
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
-  serving:    # 문진 서비스 런타임 경로: survey-service·model-serving 이 release-gate 를 읽고 survey-service 가 model-serving 을 부른다(I4·I9). gateway·ops-feedback-ingest 는 붙지 않는다(R6.2)
+  serving:    # 문진 서비스 런타임 경로: survey-service·model-serving 이 release-gate 를 읽고 survey-service 가 model-serving 을 부른다(I4·I9). gateway·ops-feedback 는 붙지 않는다(R6.2)
   monitoring: # 지표 수집(U71, ADR 0053): survey-service·model-serving 의 /metrics 를 Prometheus 가 읽는 길 하나. 두 서비스와 감시 스택(compose.monitoring.yaml)만 붙는다. gateway 는 붙지 않는다(공개 노출 없음)
   ui-kiosk:   # gateway <-> kiosk-frontend 만. internal: 정적 화면 컨테이너는 외부로 나가지 못한다. 화면별로 망을 나눈다(R6.2: 두 화면은 서로 부를 일이 없다)
     internal: true
@@ -80,7 +80,7 @@ networks:
     internal: true
   gate-ops:   # job-ops-feedback -> release-gate 만(판정 읽기·쓰기). ops 잡은 모델 레지스트리·문항 저작을 부르지 않는다(R6.2)
     internal: true
-  serving-ops: # survey-service -> ops-feedback-ingest(I6 Trace 전송) 만. release-gate·model-serving 은 붙지 않는다(R6.2)
+  serving-ops: # survey-service -> ops-feedback(I6 Trace 전송) 만. release-gate·model-serving 은 붙지 않는다(R6.2)
   logs:       # 로그 저장소(원본 Trace) 접근
     internal: true
   # PostgreSQL 접근: 서비스마다 postgres 와만 닿는 별도 네트워크(internal, 호스트로 열지 않는다). 하나로 합치면 postgres 클라이언트끼리 서로 닿는다(E2E 차단 단언이 잡았다).
@@ -95,7 +95,7 @@ networks:
     internal: true
   backup-qa:   # 백업 저장소 <-> question-authoring 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
-  backup-ops:   # 백업 저장소 <-> ops-feedback-ingest 영역 pod 만(영역끼리 닿지 않는다)
+  backup-ops:   # 백업 저장소 <-> ops-feedback 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
   backup-gate:   # 백업 저장소 <-> release-gate 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
@@ -103,7 +103,7 @@ networks:
     internal: true
   mon-question-authoring:   # 감시(prometheus·blackbox·json)가 question-authoring 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
     internal: true
-  mon-ops-feedback-ingest:   # 감시(prometheus·blackbox·json)가 ops-feedback-ingest 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
+  mon-ops-feedback:   # 감시(prometheus·blackbox·json)가 ops-feedback 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
     internal: true
   mon-release-gate:   # 감시(prometheus·blackbox·json)가 release-gate 영역 pod 에 닿는 전용 망(감시 말고는 이 망에 아무도 없다: 영역끼리 닿지 않는다)
     internal: true
@@ -137,7 +137,7 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   backup-store-data:   # 영역 백업 저장소(platform backup-store, --private-repos). 서버 밖 저장소로 바꿀 수 있다
   certs-survey-service:
   certs-question-authoring:
-  certs-ops-feedback-ingest:
+  certs-ops-feedback:
   certs-release-gate:
   certs-model-serving:
   certs-model-registry:
@@ -356,7 +356,7 @@ services:
     tmpfs: ["/tmp"]
     group_add: *secretgid
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}"}
-    command: ["token", "survey-service", "question-authoring", "ops-feedback-ingest", "release-gate", "model-serving", "model-registry", "dataset-store", "admin-console", "kiosk-frontend", "identity", "identity-proxy", "backup-store", "survey-db", "question-authoring-db", "ops-feedback-db", "release-gate-db", "identity-db"]
+    command: ["token", "survey-service", "question-authoring", "ops-feedback", "release-gate", "model-serving", "model-registry", "dataset-store", "admin-console", "kiosk-frontend", "identity", "identity-proxy", "backup-store", "survey-db", "question-authoring-db", "ops-feedback-db", "release-gate-db", "identity-db"]
     secrets: [step-ca-password]
     volumes: ["pki-tokens:/tokens", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
@@ -384,7 +384,7 @@ services:
       certs-perms: {condition: service_completed_successfully}
     command: ["cert", "question-authoring"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-question-authoring:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
-  ops-feedback-ingest-cert:   # ops-feedback-ingest 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
+  ops-feedback-cert:   # ops-feedback 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
     depends_on:
@@ -392,8 +392,8 @@ services:
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
       certs-perms: {condition: service_completed_successfully}
-    command: ["cert", "ops-feedback-ingest"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
-    volumes: ["certs-ops-feedback-ingest:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    command: ["cert", "ops-feedback"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
+    volumes: ["certs-ops-feedback:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   release-gate-cert:   # release-gate 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     user: "101:101"   # 영역 게이트웨이 이미지의 사용자(USER 101)가 키 파일(0600)을 읽는다
@@ -482,13 +482,13 @@ services:
     volumes: ["certs-question-authoring:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/question-authoring/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
       question-authoring-cert: {condition: service_healthy}
-  ops-feedback-ingest-gw:   # ops-feedback-ingest 의 영역 게이트웨이(platform 이미지): https://ops-feedback-ingest 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
+  ops-feedback-gw:   # ops-feedback 의 영역 게이트웨이(platform 이미지): https://ops-feedback 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
-    network_mode: "service:ops-feedback-ingest-net"
+    network_mode: "service:ops-feedback-net"
     environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
-    volumes: ["certs-ops-feedback-ingest:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/ops-feedback-ingest/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
+    volumes: ["certs-ops-feedback:/certs:ro", {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/ops-feedback/exposure.json", target: /etc/openit/exposure.json, read_only: true, bind: {create_host_path: false}}]
     depends_on:
-      ops-feedback-ingest-cert: {condition: service_healthy}
+      ops-feedback-cert: {condition: service_healthy}
   release-gate-gw:   # release-gate 의 영역 게이트웨이(platform 이미지): https://release-gate 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:release-gate-net"
@@ -585,13 +585,7 @@ services:
     stop_grace_period: 30s
     depends_on:
       survey-db-cert: {condition: service_healthy}
-    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 60s
-      start_interval: 1s
+    # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
   question-authoring-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -632,13 +626,7 @@ services:
     stop_grace_period: 30s
     depends_on:
       question-authoring-db-cert: {condition: service_healthy}
-    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 60s
-      start_interval: 1s
+    # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
   ops-feedback-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -679,13 +667,7 @@ services:
     stop_grace_period: 30s
     depends_on:
       ops-feedback-db-cert: {condition: service_healthy}
-    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 60s
-      start_interval: 1s
+    # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
   release-gate-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -726,13 +708,7 @@ services:
     stop_grace_period: 30s
     depends_on:
       release-gate-db-cert: {condition: service_healthy}
-    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 60s
-      start_interval: 1s
+    # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
   identity-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -772,18 +748,12 @@ services:
     stop_grace_period: 30s
     depends_on:
       identity-db-cert: {condition: service_healthy}
-    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 60s
-      start_interval: 1s
+    # healthcheck 는 영역 DB 이미지의 HEALTHCHECK 를 그대로 쓴다(Docker 표준, 이미지가 준비 상태를 안다: 구조 규칙 1)
 
   certs-perms:   # 일회용: 영역 게이트웨이 이미지 사용자(101)가 읽고, step-ca 이미지(uid 1000)가 토큰·루트를, 백업 저장소 이미지(65534)가 자기 인증서를 쓰게 <서비스>-cert 가 그 사용자로 쓰게 인증서 볼륨의 소유자를 맞춘다(새 이름 있는 볼륨은 root 소유)
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
-    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback-ingest /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root /c/identity /c/identity-proxy; chown -R 65534:65534 /c/backup-store"]
+    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root /c/identity /c/identity-proxy; chown -R 65534:65534 /c/backup-store"]
     restart: "no"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "DAC_OVERRIDE"]
@@ -791,7 +761,7 @@ services:
     read_only: true
     network_mode: none
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["certs-identity:/c/identity", "certs-identity-proxy:/c/identity-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
+    volumes: ["certs-identity:/c/identity", "certs-identity-proxy:/c/identity-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback:/c/ops-feedback", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
     user: "65534:65534"   # 저장소 이미지 사용자가 키 파일(0600)을 읽는다
@@ -865,8 +835,8 @@ services:
       admin-console-gw: {condition: service_healthy}
       release-gate: {condition: service_healthy}
       release-gate-gw: {condition: service_healthy}
-      ops-feedback-ingest: {condition: service_healthy}
-      ops-feedback-ingest-gw: {condition: service_healthy}
+      ops-feedback: {condition: service_healthy}
+      ops-feedback-gw: {condition: service_healthy}
       question-authoring: {condition: service_healthy}
       question-authoring-gw: {condition: service_healthy}
       model-registry: {condition: service_healthy}
@@ -996,7 +966,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
     depends_on:
       survey-db: {condition: service_healthy}
-      ops-feedback-ingest: {condition: service_healthy}
+      ops-feedback: {condition: service_healthy}
       release-gate: {condition: service_healthy}
       model-serving: {condition: service_healthy}
 
@@ -1144,7 +1114,7 @@ services:
     depends_on:
       ops-feedback-db: {condition: service_healthy}
 
-  ops-feedback-ingest-net:   # ops-feedback-ingest 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:ops-feedback-ingest-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
+  ops-feedback-net:   # ops-feedback 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:ops-feedback-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
     restart: unless-stopped
     user: "65535:65535"
@@ -1157,14 +1127,14 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
-      mon-ops-feedback-ingest: {aliases: [ops-feedback-ingest]}
-      backup-ops: {aliases: [ops-feedback-ingest]}
-      serving-ops: {aliases: [ops-feedback-ingest]}
-      logs: {aliases: [ops-feedback-ingest]}
-      authoring: {aliases: [ops-feedback-ingest]}
-      db-ops: {aliases: [ops-feedback-ingest]}
-      gate-ops: {aliases: [ops-feedback-ingest]}   # 잡(job-ops-feedback)이 영역 pod 안에서 release-gate 를 부른다
-  ops-feedback-ingest:
+      mon-ops-feedback: {aliases: [ops-feedback]}
+      backup-ops: {aliases: [ops-feedback]}
+      serving-ops: {aliases: [ops-feedback]}
+      logs: {aliases: [ops-feedback]}
+      authoring: {aliases: [ops-feedback]}
+      db-ops: {aliases: [ops-feedback]}
+      gate-ops: {aliases: [ops-feedback]}   # 잡(job-ops-feedback)이 영역 pod 안에서 release-gate 를 부른다
+  ops-feedback:
     <<: *hardening
     mem_limit: ${OPS_FEEDBACK_INGEST_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${OPS_FEEDBACK_INGEST_CPUS:-1.0}
@@ -1172,7 +1142,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     env_file:
-      - ${CONFIG_DIR:-./config}/ops-feedback-ingest.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
+      - ${CONFIG_DIR:-./config}/ops-feedback.env         # OPS_FAILURE_DB (I7 읽기 면 켜기). 비밀 아님
     environment:
       <<: *commonenv
       OPS_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
@@ -1184,7 +1154,7 @@ services:
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-app-dsn, db-ops-failure-app-dsn]
     tmpfs: ["/tmp", "/data"]
-    network_mode: "service:ops-feedback-ingest-net"   # 망·별칭·sysctls 는 ops-feedback-ingest-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
+    network_mode: "service:ops-feedback-net"   # 망·별칭·sysctls 는 ops-feedback-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       ops-feedback-db: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
       ops-feedback-migrate: {condition: service_completed_successfully}   # L08: 스키마는 소유자 계정의 migrate 가 먼저 만든다. 서버는 verify 만 한다
@@ -1370,7 +1340,7 @@ services:
       ops-feedback-migrate: {condition: service_completed_successfully}
     volumes:
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
-    network_mode: "service:ops-feedback-ingest-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
+    network_mode: "service:ops-feedback-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -1504,7 +1474,7 @@ services:
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
     environment: {<<: *commonenv, OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-app-dsn, OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/ops/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-ops-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-ops-repo-password}
     secrets: [db-ops-log-app-dsn, db-ops-failure-app-dsn, backup-ops-credentials, backup-ops-repo-password]
-    network_mode: "service:ops-feedback-ingest-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
+    network_mode: "service:ops-feedback-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true

@@ -21,7 +21,7 @@ OWN = {   # deploy 자신의 형식(계약 스키마 없음)
 # 컨테이너에 주는 최종 환경(compose 병합 결과: environment + env_file + 덧붙임 파일)을 계약 Env 스키마로 검증한다. 서비스 -> (스키마, 감싸기)
 ENV_CONTRACT = {
     "survey-service": ("SurveyServiceEnv", lambda env: env),
-    "ops-feedback-ingest": ("OpsFeedbackServerEnv", lambda env: {"env": {k: v for k, v in env.items() if k.startswith("OPS_")}}),   # 스키마: OPS_ 접두 변수만 넣는다
+    "ops-feedback": ("OpsFeedbackServerEnv", lambda env: {"env": {k: v for k, v in env.items() if k.startswith("OPS_")}}),   # 스키마: OPS_ 접두 변수만 넣는다
 }
 
 

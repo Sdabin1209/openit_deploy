@@ -53,7 +53,7 @@ class RuntimeVersionNotHardcoded(unittest.TestCase):
 
 
 class Step5pjMeasuresOnlyTheJob(unittest.TestCase):
-    """5pj 는 '잡의 멱등'을 ops_log 지문으로 본다. ops_log 에는 잡 말고 ops-feedback-ingest(survey-service outbox 의 Trace 전송)도 쓴다(compose 의 OPS_LOG_DATABASE_URL_FILE 이 둘 다에 있다).
+    """5pj 는 '잡의 멱등'을 ops_log 지문으로 본다. ops_log 에는 잡 말고 ops-feedback(survey-service outbox 의 Trace 전송)도 쓴다(compose 의 OPS_LOG_DATABASE_URL_FILE 이 둘 다에 있다).
     앞 단계(5p·5pn)의 DB 장애로 밀린 Trace 가 5pj 도중에 전송되면 지문이 잡과 무관하게 바뀐다(gpu-dev e2e-bc220-run1 의 5pj 실패).
     그래서 첫 잡 실행·fp0 전에 survey outbox 가 비기를 기다리고(계약 SurveyReadyz.trace_outbox.pending == 0), fp1 에서 전송 수가 그대로인지 확인해야 한다."""
     def _body(self):

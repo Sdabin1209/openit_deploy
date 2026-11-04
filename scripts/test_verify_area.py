@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from openit_deploy.wiring import verify_area as v
+from openit_deploy.wiring import setup_env as SER
 
 HERE = Path(__file__).resolve().parent
 WS = Path("/ws")
@@ -100,7 +101,7 @@ class T(unittest.TestCase):
 
     def test_assemble_npm_and_deploy_and_stale(self):
         plan, _ = v.assemble(self.cfg, "kiosk-frontend", WS, changed=["app/x.ts"], stale=("kiosk-frontend",))
-        self.assertEqual(plan[0][1], ["npm", "test"]); self.assertEqual(plan[0][2], WS / "kiosk-frontend")
+        self.assertEqual(plan[0][1], ["npm", "test"]); self.assertEqual(plan[0][2], SER.work_root() / "kiosk-frontend")   # 영역 시험은 사본(state/areas/<영역>)에서 돈다
         self.assertEqual(plan[2][1][-1], "kiosk-frontend"); self.assertIn("build-images.sh", plan[2][1][1])
         self.assertEqual(plan[3][1][-2:], ["--only", "1,2,3,4,5,5f,5d,5q,5w,5m,5r,5k,5n,6,8,5g"])   # repos 에 kiosk-frontend 가 있는 단계(+deps 닫힘)
         plan, _ = v.assemble(self.cfg, "deploy", WS, changed=["compose.yaml"])

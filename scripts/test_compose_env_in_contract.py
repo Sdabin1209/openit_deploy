@@ -11,7 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILES = ["compose.yaml", "compose.monitoring.yaml", "compose.inference.yaml"]
 ALWAYS = {"SSL_CERT_FILE"}   # 표준 이름(OpenSSL). CommonEnv 가 따로 정하지 않는다
 AREA_ENV = {"survey-service": "SurveyServiceEnv", "question-authoring": "QuestionAuthoringEnv", "ops-feedback": "OpsFeedbackServerEnv",
-            "ops-feedback-ingest": "OpsFeedbackServerEnv", "release-gate": "GateEnv", "model-serving": "ModelServingEnv",
+            "ops-feedback": "OpsFeedbackServerEnv", "release-gate": "GateEnv", "model-serving": "ModelServingEnv",
             "model-registry": "ModelRegistryEnv", "dataset-store": "DatasetStoreEnv", "admin-console": "AdminConsoleEnv", "kiosk-frontend": "KioskFrontendEnv"}
 
 JOB_OWNER = {"survey": "SurveyServiceEnv", "question-authoring": "QuestionAuthoringEnv", "ops-feedback": "OpsFeedbackServerEnv", "release-gate": "GateEnv"}

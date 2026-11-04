@@ -10,4 +10,4 @@ all:
     core-1:
       ansible_host: core-1.example.internal
       placement_region: region-a
-      placement_services: [survey-db, question-authoring-db, ops-feedback-db, release-gate-db, identity-db, backup-store, step-ca, identity, identity-proxy, gateway, kiosk-frontend, admin-console, survey-service, question-authoring, ops-feedback-ingest, release-gate, model-serving, model-registry, dataset-store]
+      placement_services: [survey-db, question-authoring-db, ops-feedback-db, release-gate-db, identity-db, backup-store, step-ca, identity, identity-proxy, gateway, kiosk-frontend, admin-console, survey-service, question-authoring, ops-feedback, release-gate, model-serving, model-registry, dataset-store]

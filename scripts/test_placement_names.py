@@ -34,7 +34,7 @@ SPLITS = {
                      "core": [s for s in ALL if s not in ("gateway", "identity-proxy", "identity", "kiosk-frontend", "admin-console")]},
     "db-alone": {"db": DBS + ["step-ca"], "rest": [s for s in ALL if s not in DBS + ["step-ca"]]},
     "three-way": {"a": DBS + ["step-ca", "identity", "identity-proxy"],
-                  "b": ["release-gate", "question-authoring", "ops-feedback-ingest", "model-registry", "dataset-store"],
+                  "b": ["release-gate", "question-authoring", "ops-feedback", "model-registry", "dataset-store"],
                   "c": ["survey-service", "model-serving", "gateway", "kiosk-frontend", "admin-console"]},
 }
 one = build({"only": ALL})

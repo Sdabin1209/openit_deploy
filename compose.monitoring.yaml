@@ -23,7 +23,7 @@ services:
       - ${CONFIG_DIR:-./config}/monitoring-targets:/etc/openit/monitoring/targets:ro
       - pki-root:/etc/openit/pki:ro   # 서비스 인증서를 검증할 루트(공개 인증서). 지표 읽기가 https 다(ADR 0060)
       - prometheus-data:/prometheus
-    networks: [monitoring, mon-survey-service, mon-question-authoring, mon-ops-feedback-ingest, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
+    networks: [monitoring, mon-survey-service, mon-question-authoring, mon-ops-feedback, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
     depends_on: [alertmanager, blackbox-exporter, json-exporter, node-exporter]
   alertmanager:
     <<: *monhard
@@ -68,7 +68,7 @@ services:
     volumes: ["monitoring-root:/etc/openit/pki:ro"]   # MONITORING_ROOT_CA 기본 경로(/etc/openit/pki/root_ca.crt)의 파일: 서비스 루트 + 공개 입구 루트
     depends_on:
       monitoring-root: {condition: service_completed_successfully}
-    networks: [monitoring, serving, mon-survey-service, mon-question-authoring, mon-ops-feedback-ingest, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
+    networks: [monitoring, serving, mon-survey-service, mon-question-authoring, mon-ops-feedback, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
   json-exporter:
     <<: *monhard
     command: ["json"]
@@ -76,7 +76,7 @@ services:
     cpus: ${JSON_EXPORTER_CPUS:-0.25}
     pids_limit: ${JSON_EXPORTER_PIDS_LIMIT:-64}
     volumes: ["pki-root:/etc/openit/pki:ro"]
-    networks: [monitoring, serving, mon-survey-service, mon-question-authoring, mon-ops-feedback-ingest, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
+    networks: [monitoring, serving, mon-survey-service, mon-question-authoring, mon-ops-feedback, mon-release-gate, mon-model-registry, mon-dataset-store, mon-kiosk-frontend, mon-admin-console]
   node-exporter:
     <<: *monhard
     command: ["node"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """R6.2 양방향(허용 목록 방식): (1) 호출 관계 밖의 쌍은 공통 망이 없다. (2) 반대로 호출 관계 안의 모든 쌍은 공통 망이 있다(망을 나누다 필요한 길을 끊지 않았는지).
-(2)의 범위: compose 환경·설정에서 뽑은 호출(서비스·잡 -> 대상, 게이트웨이 상류), 서비스 -> postgres(DSN 비밀이 있는 앱), 인증서 컨테이너 -> step-ca, 그리고 compose 밖에서 도는 호출자의 길(synthetic-data 잡 -> question-authoring I1·ops-feedback-ingest I7, dataset-store I2: E2E 가 잡을 붙이는 망 authoring·datasets).
+(2)의 범위: compose 환경·설정에서 뽑은 호출(서비스·잡 -> 대상, 게이트웨이 상류), 서비스 -> postgres(DSN 비밀이 있는 앱), 인증서 컨테이너 -> step-ca, 그리고 compose 밖에서 도는 호출자의 길(synthetic-data 잡 -> question-authoring I1·ops-feedback I7, dataset-store I2: E2E 가 잡을 붙이는 망 authoring·datasets).
 (1)은 이렇다: 호출 관계 밖의 서비스 쌍은 망에서 안 닿는다. 허용되는 쌍은 compose 의 환경·설정에서 뽑은 호출 관계(`https://<서비스>`를 담은 호출자 -> 대상, 게이트웨이의 상류 포함)와
 계약이 정한 호출(HTTP.md I1~I10) 중 compose 밖에서 일어나는 것(EXTRA)뿐이다. 범위는 사이드카를 둔 앱 + gateway 쌍이다(데이터베이스·감시·인증서 발급 망은 다른 점검).
 예외 표는 없다: 허용 목록 밖의 쌍이 하나라도 공통 망을 가지면 실패한다(V8 로 드러난 5쌍은 망을 나눠 해소했다). 사용: python3 scripts/test_service_pair_isolation.py"""
@@ -14,7 +14,7 @@ S = C.S
 # 계약이 정한 호출 중 compose 서비스 사이에서 일어나지 않는 것(오프 컴포즈 호출자: model-lab, synthetic-data 는 compose 서비스가 아니다). 현재 없음.
 EXTRA = {   # compose 의 환경·설정에서는 보이지 않는 계약 호출(이미지 안에서 정해지거나 라벨 선언으로 마운트되는 설정)
     frozenset(("identity-proxy", "identity")),   # 인증 확인 프록시가 토큰을 identity 에 교환한다: 주소는 이미지가 IDENTITY_PUBLIC_URL·내장 경로에서 만든다(계약 3.4.12 IdentityProxyEnv)
-    frozenset(("ops-feedback-ingest", "release-gate")),   # ops 잡(영역 pod 안)의 release-gate 호출(I4): 주소는 config/ops-feedback-job.yaml 이고 그 파일은 잡 선언 config 로 덧씌우기가 마운트한다(gen-jobs)
+    frozenset(("ops-feedback", "release-gate")),   # ops 잡(영역 pod 안)의 release-gate 호출(I4): 주소는 config/ops-feedback-job.yaml 이고 그 파일은 잡 선언 config 로 덧씌우기가 마운트한다(gen-jobs)
 }
 DB_OF = {"survey": "survey-db", "qa": "question-authoring-db", "ops_log": "ops-feedback-db", "ops_failure": "ops-feedback-db", "gate": "release-gate-db", "identity": "identity-db"}   # DB 계정 -> 영역 DB 서비스
 
@@ -45,7 +45,7 @@ def violations(svcs):
 
 
 # compose 밖에서 도는 호출자(잡을 이 망에 붙여 돌린다, e2e_steps.py SD_RUN_NETWORK·DS_JOB_NETWORK): 망 이름 -> 그 망에 있어야 하는 대상들(계약 I1·I7·I2)
-OFF_COMPOSE_RUNNERS = {"authoring": ["question-authoring", "ops-feedback-ingest"], "datasets": ["dataset-store"]}
+OFF_COMPOSE_RUNNERS = {"authoring": ["question-authoring", "ops-feedback"], "datasets": ["dataset-store"]}
 
 
 def missing_paths(svcs):
@@ -74,9 +74,9 @@ class T(unittest.TestCase):
 
     def test_changed_pairs_are_connected(self):
         # 이번에 망을 나눈 쌍을 이름으로 못박는다(계약 호출: release-gate->QA I1, release-gate->registry I3, survey->ops I6, ops job->gate I4, gateway->각 상류)
-        want = [("release-gate", "question-authoring"), ("release-gate", "model-registry"), ("survey-service", "ops-feedback-ingest"), ("survey-service", "release-gate"),
+        want = [("release-gate", "question-authoring"), ("release-gate", "model-registry"), ("survey-service", "ops-feedback"), ("survey-service", "release-gate"),
                 ("survey-service", "model-serving"), ("model-serving", "release-gate"), ("job-ops-feedback", "release-gate"), ("job-release-gate-collect", "question-authoring"),
-                ("job-release-gate-collect", "model-registry"), ("question-authoring", "ops-feedback-ingest"), ("gateway", "kiosk-frontend"), ("gateway", "admin-console")]
+                ("job-release-gate-collect", "model-registry"), ("question-authoring", "ops-feedback"), ("gateway", "kiosk-frontend"), ("gateway", "admin-console")]
         bad = [w for w in want if not (set(nets(S, w[0])) & set(nets(S, w[1])))]
         self.assertEqual(bad, [], "바꾼 쌍이 공통 망을 잃었다")
 

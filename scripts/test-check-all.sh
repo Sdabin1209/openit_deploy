@@ -12,8 +12,8 @@ FAILS=0; N=0
 # mk <이름>... : 임시 워크스페이스 $W 에 영역(.git 과 올바른 README 포함)을 만든다
 mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; done; }
 # run <규칙번호> [환경...] : 출력을 $OUT, 종료 코드를 $RC 에
-run() { local r=$1; shift; OUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
-runfake() { local r=$1; shift; OUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" "$FV/bin/python" -I "$HERE/check_all.py" 2>&1); RC=$?; }   # 가짜 설치 패키지를 보는 파이썬(규칙 4·5)
+run() { local r=$1; shift; OUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" SETUP_ENV_WORK="$W" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
+runfake() { local r=$1; shift; OUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" SETUP_ENV_WORK="$W" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" "$FV/bin/python" -I "$HERE/check_all.py" 2>&1); RC=$?; }   # 가짜 설치 패키지를 보는 파이썬(규칙 4·5)
 expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   N=$((N+1)); local ok=1
   grep -q ": $2\$" <<<"$OUT" || ok=0
@@ -117,7 +117,7 @@ run 0; expect "areas.json 이 없으면 규칙 0 도 FAIL" FAIL "0개"
 
 # 변이 확인: 규칙 4 를 끄면(규칙 표에서 뺀다) 같은 어긋난 입력이 통과해 버린다 -> 위 FAIL 기대가 시험으로서 의미가 있다
 mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'v = "prompt-3"' > "$W/deploy/app/a.py"
-MUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=4 CHECK_ALL_EXCLUDE=/dev/null CHECK_ALL_ORDERED="$W/ordered.txt" "$FV/bin/python" -I -c "
+MUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" SETUP_ENV_WORK="$W" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=4 CHECK_ALL_EXCLUDE=/dev/null CHECK_ALL_ORDERED="$W/ordered.txt" "$FV/bin/python" -I -c "
 import sys; sys.path.insert(0, '$ROOT')
 from openit_deploy.components import consistency_check as C
 C.RULES[:] = [r for r in C.RULES if r[0] != '4']
