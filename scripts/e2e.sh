@@ -384,8 +384,8 @@ no_test_policy() { local out rc=0; out=$(grep -rEn --exclude=verify-areas.yaml '
 chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" no_test_policy
 no_auto_pass() { inpy release-gate /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
-# 인증 없는 요청의 기대 응답은 공개 입구 이미지의 selfcheck-unauth 가 정본이다(platform): 선언에서 기대 행을 만든다. 주소의 이름은 공개 입구가 받는 이름(GATEWAY_PROBE_SITE)이다
-chk "gateway: 인증 없는 요청의 응답이 공개 입구 이미지의 기대 행(selfcheck-unauth)과 같다" bash "$DEPLOY_ROOT/scripts/check-unauth.sh" "$PROJECT" "https://${GATEWAY_PROBE_SITE:-gateway:8443}" "$W/gateway-ca.crt"
+# 인증 없는 요청의 기대 응답은 계약(노출 선언의 auth, RUNTIME R3.13·R3.23, CONVENTIONS 9절)에서 만든다(scripts/check_unauth.py). 주소의 이름은 공개 입구가 받는 이름(GATEWAY_PROBE_SITE)이다
+chk "gateway: 인증 없는 요청의 응답이 계약에서 만든 기대 행과 같다" bash "$DEPLOY_ROOT/scripts/check-unauth.sh" "$PROJECT" "https://${GATEWAY_PROBE_SITE:-gateway:8443}" "$W/gateway-ca.crt"
 chk "사람 화면 주소(GATEWAY_PUBLIC_URL)가 게이트웨이 HTTPS 호스트 포트와 같다 (Keycloak 발급자·로그인 쿠키가 이 주소에 묶인다, U82)" bash -c "[ \"\$GATEWAY_PUBLIC_URL\" = \"https://localhost:$PGWS\" ]"
 # 도달·차단 판정은 한 함수(probe_http / probe_tcp)가 세 값 중 하나를 낸다: ok(응답 확인) / unreachable(연결 실패·시간 초과·이름 안 풀림) / bad(응답은 왔으나 본문·상태가 다르다). 빈 값은 docker exec 자체가 실패한 것(컨테이너 없음 등)이라 판정할 수 없다.
 # 왜: 차단(부정) 단언이 `! 명령` 이면 컨테이너가 없거나 exec 가 실패해도 "차단됨"으로 통과한다(정적 점검 A11). 차단은 unreachable 일 때만 통과한다.

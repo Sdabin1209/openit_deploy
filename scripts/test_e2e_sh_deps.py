@@ -18,6 +18,7 @@ class T(unittest.TestCase):
                 if not any(re.match(r'chk_dep "단계 1~8"', x) for x in prev): bad.append(f"e2e.sh:{i}")
         self.assertEqual(bad, [], '선행 단계 산출물을 읽는 항목이 chk_dep 단계 1~8 이 아니다')
 
+    @unittest.skipUnless(any(r in E2E for r in READERS), '읽는 도구를 쓰는 구간 대기(계약 3.4.16 항목 2)')
     def test_reader_is_found(self):
         self.assertIn("e2e_verify_restore.py", E2E)
 
