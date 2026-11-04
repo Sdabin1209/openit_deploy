@@ -21,6 +21,7 @@ Y
 }
 F=0; ok() { if "${@:2}" >"$T/out" 2>&1; then echo "  PASS $1"; else echo "  FAIL $1"; tail -3 "$T/out"; F=$((F+1)); fi; }
 no() { if "${@:2}" >"$T/out" 2>&1; then echo "  FAIL $1 (성공했다)"; F=$((F+1)); else echo "  PASS $1"; fi; }
+# --wait-timeout 60: 측정하지 않았다. 일회성 서비스 하나의 기동·종료 대기라 수 초로 판단한 상한이고, 대기가 실제로 끝나는지를 이 시험이 본다(D125)
 up() { docker compose -f "$T/c.yaml" -p $P up -d --wait --wait-timeout 60; }
 mk 0
 ok "일회성 서비스가 0 으로 끝나면 up --wait 가 성공한다" up

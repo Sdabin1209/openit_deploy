@@ -105,7 +105,9 @@ done
 inv "$T/inv.yml" "$A" "$B" "$C"
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose test/split/compose.split.yaml >/dev/null && ok "인벤토리 점검 통과"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home"
-timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -30 "$T/run1.log" >&2; failed_tasks "$T/run1.log"; failed_stderr "$T/run1.log"; bad "플레이북 실패"; }
+# 플레이북 상한(초): 측정하지 않았다. 컨테이너 안에서 인증서·DB·앱을 만드는 전체 실행이라 분 단위라는 판단이며, 상한은 멈춘 실행이 묶음을 막지 않게 하는 용도다(D125: 측정하면 최악+여유로 바꾼다).
+PLAYBOOK_TIMEOUT=500
+timeout "$PLAYBOOK_TIMEOUT" "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -30 "$T/run1.log" >&2; failed_tasks "$T/run1.log"; failed_stderr "$T/run1.log"; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
 ex() { docker exec "deploy-$ID-$1-$2-1" python -c "$3"; } # ex <서버> <서비스> <파이썬 식>
 H="import urllib.request,ssl,os;print(urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/healthz',timeout=3,context=ssl._create_unverified_context()).status)"
@@ -134,6 +136,6 @@ N="import socket;print(socket.getaddrinfo('release-gate',8080)[0][4][0])"
 M=$(stat -c %a "$T/r/b/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE"); [ "$M" = 640 ] || bad "비밀 파일 권한 $M"; ok "비밀 파일 640"
 [ ! -e "$T/r/a/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE" ] || bad "다른 서버의 비밀이 배포됐다"; ok "서버는 자기 몫의 비밀만 받는다"
 # (5) 멱등
-timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -30 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
+timeout "$PLAYBOOK_TIMEOUT" "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -30 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
 if grep -E '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 ' ; then grep -a -B1 "^changed:" "$T/run2.log" | cut -c1-200 >&2; bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi; ok "플레이북 2회차 changed=0 (멱등)"
 echo "PASS: 분리 배치 시험 (scheme=$SCHEME, 이미지=${SPLIT_IMAGE:-python:3.12-slim})"

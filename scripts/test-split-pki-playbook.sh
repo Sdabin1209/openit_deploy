@@ -98,7 +98,9 @@ YML
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose "$T/compose.subset.yaml" >/dev/null || bad "인벤토리 점검"
 ok "인벤토리 점검 통과 (step-ca·release-gate-db 는 data 서버, release-gate 는 app 서버)"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home" UTIL_IMAGE="$UTIL"
-timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { grep -a -A12 -m2 "^fatal" "$T/run1.log" | cut -c1-8000 >&2; tail -15 "$T/run1.log" >&2; failed_tasks "$T/run1.log"; failed_stderr "$T/run1.log"; bad "플레이북 실패"; }
+# 플레이북 상한(초): 측정하지 않았다. 컨테이너 안에서 인증서·DB·앱을 만드는 전체 실행이라 분 단위라는 판단이며, 상한은 멈춘 실행이 묶음을 막지 않게 하는 용도다(D125: 측정하면 최악+여유로 바꾼다).
+PLAYBOOK_TIMEOUT=600
+timeout "$PLAYBOOK_TIMEOUT" "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { grep -a -A12 -m2 "^fatal" "$T/run1.log" | cut -c1-8000 >&2; tail -15 "$T/run1.log" >&2; failed_tasks "$T/run1.log"; failed_stderr "$T/run1.log"; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
 A=deploy-$ID-app; D=deploy-$ID-data
 grep -a "토큰 볼륨에 쓰기" -A3 "$T/run1.log" | grep -aq "changed: .*$ID-app" || bad "토큰 전달 단계가 app 서버에서 돌지 않았다"; ok "(1) 토큰 전달 단계가 실제로 돌았다"
@@ -113,7 +115,9 @@ case "$S" in *"CN = release-gate"*|*"CN=release-gate"*) ok "(2) app 서버 -cert
 CALL() { docker exec $D-survey-service-1 python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/',timeout=15).read().decode())"; }
 R=$(CALL); case "$R" in "200 https://release-gate:"*" ok") ok "(R1.4) 다른 서버의 호출자가 https://<서비스 이름>:<게시 포트> 로 사이드카를 거쳐 앱 응답을 받는다 ($R)";; *) bad "기준 호출: $R";; esac
 A_APP=$A-release-gate-1; A_TLS=$A-release-gate-gw-1; A_NET=$A-release-gate-net-1
-waith() { local i; for i in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Health.Status}}' "$1")" = healthy ] && return 0; sleep 1; done; return 1; }   # 복구는 준비 확인(healthcheck)으로 판단한다(R4.3)
+is_healthy() { [ "$(docker inspect -f '{{.State.Health.Status}}' "$1")" = healthy ]; }
+# 준비 확인 상한 60초: 측정하지 않았다(healthcheck 주기 기준 판단, D125). 못 넘기면 wait_ready 가 사유를 남기고 return 1
+waith() { wait_ready "$1 healthy" 60 is_healthy "$1"; }   # 복구는 준비 확인(healthcheck)으로 판단한다(R4.3)
 notok() { case "$1" in 200\ *) return 1;; *) return 0;; esac; }
 S0=$(docker inspect -f '{{.State.StartedAt}}' $A_TLS)
 docker stop -t 2 $A_APP >/dev/null; R=$(CALL)
@@ -151,7 +155,7 @@ ok "(3) app 서버 DSN = release-gate-db:$PGP, sslmode=verify-full"
 R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 release-gate-db 에 verify-full 접속 실패"; }
 [ "$R" = 1 ] && ok "(3) 다른 망의 release-gate-db 에 sslmode=verify-full 로 접속했다(서버 인증서 이름 release-gate-db, step-ca 루트 검증)"
 R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(sed "s/verify-full/disable/" /dsn)" -qAt -c "select 1"' 2>&1) && bad "TLS 없는 접속이 통과했다" || ok "(3) TLS 없는 접속은 거부된다(hostssl 만)"
-timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -25 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
+timeout "$PLAYBOOK_TIMEOUT" "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -25 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
 if grep -aE '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 '; then bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi
 ok "(4) 플레이북 2회차 changed=0"
 [ "${skipped:-0}" = 1 ] && { echo "SKIP: 분리 배치 인증서·DB 경로 시험은 443 단언을 하지 않았다"; exit 77; }
