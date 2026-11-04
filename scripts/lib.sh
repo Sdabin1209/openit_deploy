@@ -107,13 +107,15 @@ ensure_pg_tls_volume() { # ensure_pg_tls_volume <프로젝트>: 영역 DB 마다
     "$DOCKER" run --network none --user 0 --cap-drop ALL --cap-add CHOWN --rm -v "$V:/data" "$UTIL" chown 999:999 /data >/dev/null || die "$svc 서버 인증서 볼륨 소유자 설정 실패"
   done
 }
+# 잡 덧씌우기 파일은 프로젝트마다 따로 둔다(다른 프로젝트·시험의 compose 에 없는 잡 서비스를 가리키면 compose 가 거부한다): JOBS_OVERLAY 로 바꿀 수 있다
+jobs_overlay_path() { echo "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.${1:?프로젝트}.yaml}"; }
 # 이미지 라벨에서 만드는 배치 입력(영역 게이트웨이의 exposure.json, 잡 덧씌우기)을 만든다: gen_stack_files <프로젝트>. 기동 때마다 새로 만든다(이미지가 바뀌면 라벨도 바뀐다)
 gen_stack_files() {
   local project=$1 cfg
-  cfg=$(mktemp); rm -f "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}"   # 이전 덧씌우기가 아래 config 입력에 섞이지 않게
+  cfg=$(mktemp); rm -f "$(jobs_overlay_path "$project")"   # 이전 덧씌우기가 아래 config 입력에 섞이지 않게
   GEN_STACK_ACTIVE=1 dc "$project" --profile jobs --profile local-inference config --format json > "$cfg"   # local-inference: 외부 추론 모드에서 꺼진 model-serving 의 선언도 만든다(다른 호스트의 추론 서버가 같은 선언을 쓴다) || { rm -f "$cfg"; return 1; }
   mkdir -p "$DEPLOY_ROOT/state"
-  "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-jobs.py" --out "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}" --compose-json "$cfg" >/dev/null || { rm -f "$cfg"; return 1; }
+  "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-jobs.py" --out "$(jobs_overlay_path "$project")" --compose-json "$cfg" >/dev/null || { rm -f "$cfg"; return 1; }
   "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-gateways.py" --out "${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}" --compose-json "$cfg" >/dev/null || { rm -f "$cfg"; return 1; }
   rm -f "$cfg"
 }
@@ -132,7 +134,7 @@ dc() { # dc <project> <compose args...>
     for f in $COMPOSE_EXTRA; do files+=(-f "$f"); done
   fi
   # 잡 서비스의 command·시간 한도는 이미지 라벨 io.openit.jobs 에서 만든 덧씌우기 파일이 정한다(S10, scripts/gen-jobs.py). 있으면 맨 뒤에 얹는다
-  [ -f "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}" ] && files+=(-f "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.yaml}")
+  [ -f "$(jobs_overlay_path "$project")" ] && files+=(-f "$(jobs_overlay_path "$project")")
   local envs=(--env-file "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
   [ -f "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}" ] && envs+=(--env-file "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}")
   [ -f "$DEPLOY_ROOT/.env" ] && envs+=(--env-file "$DEPLOY_ROOT/.env")

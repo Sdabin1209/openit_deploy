@@ -10,6 +10,19 @@ ROOT=$PWD; SCHEME=${SPLIT_SCHEME:-http}; ID="split-$$"
 PY=${DEPLOY_PY:-}; [ -n "$PY" ] || for c in "$ROOT/.venv/bin/python" "$ROOT/../../.venv/bin/python"; do [ -x "$c" ] && PY=$c && break; done
 AP="$(dirname "$PY")/ansible-playbook"; [ -x "$AP" ] || { echo "FAIL: ansible-playbook 이 없다: .venv/bin/pip install -r requirements-deploy-tools.txt" >&2; exit 1; }
 T=$(mktemp -d); trap 'rc=$?; if [ $rc -ne 0 ]; then for s in a b c; do docker ps -a --filter "label=com.docker.compose.project=deploy-$ID-$s" --format "{{.Names}} {{.Status}}" >&2; for n in $(docker ps -a -q --filter "label=com.docker.compose.project=deploy-$ID-$s"); do docker logs --tail 5 $n >&2 2>&1 || true; done; done; fi; [ "${SPLIT_KEEP:-0}" = 1 ] || { for s in a b c; do docker compose -p "deploy-$ID-$s" down -v --remove-orphans >/dev/null 2>&1 || true; done; rm -rf "$T" "$ROOT/build/placement/split-$$"-* 2>/dev/null; }; exit $rc' EXIT
+# 실패한 task 의 이름·대상·모듈만 보인다(no_log 로 가려진 값·비밀은 보이지 않는다): 묶음에서만 나는 실패의 원인 파악용
+failed_tasks() { awk '/^TASK \[/{t=$0} /^fatal:/{print "  실패 task: " t " / " substr($0, 1, 90)}' "$1" >&2; }
+failed_stderr() { python3 - "$1" >&2 <<'PY'   # 실패한 명령의 오류 출력 끝(compose 의 기동 진행 줄은 뺀다). no_log 로 가려진 task 는 가려진 채로 둔다
+import json, re, sys
+for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
+    if l.startswith("fatal:") and "=> " in l:
+        try: d = json.loads(l.split("=> ", 1)[1])
+        except ValueError: continue
+        if "censored" in d: print("  (no_log 로 가려진 task)"); continue
+        err = [x for x in (d.get("stderr") or "").splitlines() if not re.search(r"Network|Volume|Creating|Created|Starting|Started|Waiting|Running|Healthy", x)]
+        print("  오류:", " | ".join(err[-4:])[:600])
+PY
+}
 ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
 freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
 mkdir -p "$T/config/certs"; cp -r "$ROOT/test/split/config/." "$T/config/"
@@ -92,7 +105,7 @@ done
 inv "$T/inv.yml" "$A" "$B" "$C"
 "$PY" scripts/placement.py validate "$T/inv.yml" --compose test/split/compose.split.yaml >/dev/null && ok "인벤토리 점검 통과"
 export ANSIBLE_CONFIG="$ROOT/ansible/ansible.cfg" ANSIBLE_LOCAL_TEMP="$T/ans" ANSIBLE_HOME="$T/ansible-home"
-timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -30 "$T/run1.log" >&2; bad "플레이북 실패"; }
+timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.log" 2>&1 || { tail -30 "$T/run1.log" >&2; failed_tasks "$T/run1.log"; failed_stderr "$T/run1.log"; bad "플레이북 실패"; }
 ok "플레이북 1회차 완료"
 ex() { docker exec "deploy-$ID-$1-$2-1" python -c "$3"; } # ex <서버> <서비스> <파이썬 식>
 H="import urllib.request,ssl,os;print(urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/healthz',timeout=3,context=ssl._create_unverified_context()).status)"

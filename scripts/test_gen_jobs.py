@@ -79,6 +79,12 @@ class T(unittest.TestCase):
             self.assertNotIn('"python", "-m"', m.group(0), f"{m.group(1)}: 잡 명령을 손으로 적었다(이미지 라벨에서 와야 한다)")
         self.assertEqual(sorted(re.findall(r"^  (job-[a-z-]+):", s, re.M)), sorted(G.JOB_NAMES))
 
+    def test_overlay_is_per_project(self):   # 다른 프로젝트(분리 배치 시험의 작은 compose)가 남의 잡 덧씌우기에 걸려 거부당하지 않게 프로젝트마다 따로 둔다(묶음에서만 나던 실패의 원인)
+        import subprocess
+        out = subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source scripts/lib.sh; jobs_overlay_path a; jobs_overlay_path b'], cwd=ROOT, capture_output=True, text=True).stdout.split()
+        self.assertEqual(len(out), 2); self.assertNotEqual(out[0], out[1])
+        self.assertNotIn("compose.jobs.yaml", (ROOT / "scripts/lib.sh").read_text(encoding="utf-8").replace("compose.jobs.${1", ""))
+
     def test_run_job_enforces_the_timeout(self):
         s = (ROOT / "scripts/run-job.sh").read_text(encoding="utf-8")
         self.assertIn('timeout --signal=TERM', s); self.assertIn("x-openit-timeout-seconds", s)
