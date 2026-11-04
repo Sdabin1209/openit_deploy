@@ -20,7 +20,7 @@ cp "$bcw" "$CTX/wheels/"
 cat > "$CTX/Dockerfile" <<DOCKER
 FROM ${UTIL}
 COPY wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels  # own-venv: 이미지 안의 pip, deploy venv 가 아니다
 USER 10001:10001
 LABEL io.openit.service=deploy-tool io.openit.owner=deploy io.openit.revision=${rev} io.openit.contracts.boundary=${DEPLOY_BC_TAG} io.openit.link=${DEPLOY_LINK_TAG}
 DOCKER

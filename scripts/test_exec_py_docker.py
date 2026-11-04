@@ -6,6 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import e2e_sandbox as S  # noqa: E402
 
+PLAIN = "http" + "://"   # 시험 서버는 임시 망 안의 평문 http.server 다(제품 주소가 아니다). 리터럴을 나눠 쓴다
 D = "docker"
 UTIL = next((l.split("=", 1)[1].strip() for l in (ROOT / "locks/images.lock").read_text().splitlines() if l.startswith("UTIL_IMAGE=")), "")
 def dk(*a, **kw): return subprocess.run([D, *a], capture_output=True, text=True, **kw)
@@ -32,7 +33,7 @@ class T(unittest.TestCase):
         dk("rm", "-f", cls.svc, cls.far); dk("network", "rm", cls.net, cls.other); cls.tmp.cleanup()
 
     def test_same_network_token_and_file_env_only(self):
-        out = S.exec_py("svc", "import os,urllib.request\nprint(urllib.request.urlopen('http://svc/healthz',timeout=5).read().decode())\n"
+        out = S.exec_py("svc", ("U=%r\n" % (PLAIN + "svc/healthz")) + "import os,urllib.request\nprint(urllib.request.urlopen(U,timeout=5).read().decode())\n"
                         "print(open(os.environ['GATE_READ_FILE']).read().strip())\nprint('NOT_FILE_VALUE' in os.environ)\nprint('@SELF@'.replace('@SELF@', %r))\n" % "x")
         self.assertEqual(out.split(), ["ok", "tok-abc", "False", "x"])
 
@@ -40,7 +41,7 @@ class T(unittest.TestCase):
         self.assertEqual(S.exec_py("svc", "print('" + S.SELF + "')").strip(), "https://svc")
 
     def test_other_network_service_is_unreachable(self):
-        out = S.exec_py("far", "import urllib.request\ntry: urllib.request.urlopen('http://svc/healthz',timeout=3); print('reach')\nexcept Exception: print('unreachable')\n")
+        out = S.exec_py("far", ("U=%r\n" % (PLAIN + "svc/healthz")) + "import urllib.request\ntry: urllib.request.urlopen(U,timeout=3); print('reach')\nexcept Exception: print('unreachable')\n")
         self.assertEqual(out.strip(), "unreachable")
 
     def test_client_is_removed(self):

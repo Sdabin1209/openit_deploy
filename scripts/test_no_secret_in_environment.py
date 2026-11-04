@@ -10,6 +10,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SECRET_NAME = re.compile(r"(PASSWORD|SECRET|TOKEN|PRIVATE_KEY|API_KEY)")
 EXEMPT = {   # (서비스, 변수): 이유
     ("gateway", "GATEWAY_PUBLIC_TLS_PORT"): "이름에 비밀 단어가 없다(예시 아님: 안 걸린다)",
+    ("pki-tokens", "STEP_TOKEN_NAMES"): "토큰 이름(서비스 이름) 목록이다. 계약 StepCaEnv.STEP_TOKEN_NAMES: 비밀 값이 아니라 발급할 토큰의 이름들(3.4.17)",
 }
 
 

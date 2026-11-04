@@ -21,7 +21,7 @@ def pairs():
     return out
 
 
-STRICT_EXCEPTIONS = {"job-ops-feedback": "별도 프로그램(ops_feedback.job): 게이트 토큰·비식별 salt 가 더 필요하고 서버 토큰은 필요 없다"}
+STRICT_EXCEPTIONS = {"job-identity-register-users": "별도 프로그램(사용자 등록 잡 register-users): 관리 암호 파일과 루트만 받고 IdP 서버의 다른 환경은 필요 없다(계약 JobsDeclaration, 3.4.16)", "job-ops-feedback": "별도 프로그램(ops_feedback.job): 게이트 토큰·비식별 salt 가 더 필요하고 서버 토큰은 필요 없다"}
 
 
 class T(unittest.TestCase):

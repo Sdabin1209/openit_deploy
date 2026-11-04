@@ -18,7 +18,11 @@ class T(unittest.TestCase):
             self.assertTrue(c, path)
             for n, v in c.items():
                 if True:   # 두 파일 모두 platform step-ca 이미지의 cert 부명령: 만료 검증·발급·갱신·HEALTHCHECK 는 이미지가 하고 platform 시험이 본다
-                    self.assertEqual(v.get("command"), ["cert", "${INFERENCE_TLS_NAME}" if path == "compose.inference.yaml" else n[:-5]], f"{n}: platform step-ca 이미지의 cert 부명령이어야 한다(추론 서버는 토큰이 정한 이름)")
+                    env = v.get("environment") or {}
+                    self.assertNotIn("command", v, f"{n}: 이미지 부명령을 deploy 가 적지 않는다(3.4.17: 역할은 StepCaEnv.STEP_ROLE)")
+                    self.assertNotIn("user", v, f"{n}: 이미지가 선언한 사용자를 바꾸지 않는다(3.4.17)")
+                    self.assertEqual(env.get("STEP_ROLE"), "cert", n)
+                    self.assertEqual(env.get("STEP_CERT_NAME"), "${INFERENCE_TLS_NAME}" if path == "compose.inference.yaml" else n[:-5], f"{n}: 인증서 이름은 서비스 이름(추론 서버는 토큰이 정한 이름)")
                     self.assertTrue("openit/step-ca@" in v["image"] or "INFERENCE_STEP_IMAGE" in v["image"], n)
                     self.assertNotIn("entrypoint", v, f"{n}: 손으로 쓴 셸 한 줄 금지")
                     continue

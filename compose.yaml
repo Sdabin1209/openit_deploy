@@ -1697,7 +1697,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}
     volumes: [gateway-data:/data, pki-root:/etc/openit/pki:ro]
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/gateway/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gateway-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gateway-repo-password, INGRESS_ROOT_CA: /etc/openit/pki/root_ca.crt}
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/gateway/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gateway-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gateway-repo-password, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, INGRESS_ROOT_CA: /etc/openit/pki/root_ca.crt}
     secrets: [backup-gateway-credentials, backup-gateway-repo-password]
     networks: [backup-gateway]
     security_opt: ["no-new-privileges:true"]
@@ -1715,7 +1715,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     volumes: [pki-ca:/home/step, pki-root:/etc/openit/pki:ro]
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/pki/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-pki-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-pki-repo-password, STEP_CA_HOME: /home/step}
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/pki/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-pki-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-pki-repo-password, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, STEP_CA_HOME: /home/step}
     secrets: [backup-pki-credentials, backup-pki-repo-password]
     networks: [backup-pki]
     security_opt: ["no-new-privileges:true"]
@@ -1733,7 +1733,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}
     volumes: [gateway-data:/data, pki-root:/etc/openit/pki:ro]
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/gateway/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gateway-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gateway-repo-password, INGRESS_ROOT_CA: /etc/openit/pki/root_ca.crt}
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/gateway/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gateway-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gateway-repo-password, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, INGRESS_ROOT_CA: /etc/openit/pki/root_ca.crt}
     secrets: [backup-gateway-credentials, backup-gateway-repo-password]
     networks: [backup-gateway]
     security_opt: ["no-new-privileges:true"]
@@ -1751,7 +1751,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
     volumes: [pki-ca:/home/step, pki-root:/etc/openit/pki:ro]
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/pki/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-pki-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-pki-repo-password, STEP_CA_HOME: /home/step}
+    environment: {<<: *commonenv, OPENIT_BACKUP_URL: "https://backup-store/pki/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-pki-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-pki-repo-password, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, STEP_CA_HOME: /home/step}
     secrets: [backup-pki-credentials, backup-pki-repo-password]
     networks: [backup-pki]
     security_opt: ["no-new-privileges:true"]
