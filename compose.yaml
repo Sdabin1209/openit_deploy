@@ -204,8 +204,6 @@ configs:
     file: ${DEVICE_TLS_CONF:-./config/device-tls.caddy}   # 클라이언트 인증서 검증 조각(기본은 꺼짐, ADR 0040)
   gateway-device-ca:
     file: ${DEVICE_CA_FILE:-./config/device-ca.pem}   # 키오스크 기기 인증서의 신뢰 CA(비밀 아님)
-  gateway-devices:
-    file: ${SECRETS_DIR:-./secrets}/gateway-devices.caddy    # 키오스크 기기 토큰 목록(비밀, D85 F절)
 
 # 비밀(D84): 토큰·salt는 환경 변수가 아니라 파일로 마운트한다(/run/secrets/<이름>, 읽기 전용). 서비스에는 NAME_FILE=/run/secrets/<이름> 경로만 환경 변수로 준다(경로는 비밀이 아니다).
 # 파일은 scripts/gen-secrets.sh 가 ${SECRETS_DIR}/tokens/<이름> 에 만든다(값 하나, 목록 값은 서비스가 받는 형식 그대로 한 줄).
@@ -1175,7 +1173,6 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}   # platform 공개 입구(S9): 경로 표는 시작할 때 마운트한 영역 Exposure 선언에서 만든다. 설정은 이미지 안에 있다
     cap_add: ["NET_BIND_SERVICE"]   # caddy 바이너리에 파일 권한이 있어 cap_drop ALL이면 실행이 거부된다. 실제로는 8080을 연다
     configs:
-      - {source: gateway-devices, target: /etc/caddy/devices.caddy}
       - {source: gateway-tls-cert, target: /etc/openit/gateway-tls/server.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
     secrets: [gateway-tls-key, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
@@ -1209,6 +1206,7 @@ services:
     volumes:
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
+      - {type: bind, source: "${SECRETS_DIR:-./secrets}/devices", target: /run/secrets/devices, read_only: true, bind: {create_host_path: false}}   # 기기 토큰 폴더(계약 PublicIngressEnv.INGRESS_DEVICE_TOKENS_DIR 기본값): 기기마다 파일 하나, 지우면 폐기
       - {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/exposures", target: /etc/openit/exposures, read_only: true, bind: {create_host_path: false}}   # 영역마다 낸 Exposure 선언(이미지 라벨 io.openit.exposure)
     tmpfs: ["/tmp", "/config:uid=10001,gid=10001"]
     ports:
@@ -1310,7 +1308,6 @@ services:
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
       SURVEY_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &survey_secrets [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data, pki-root:/etc/openit/pki:ro]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
     network_mode: "service:survey-service-net"   # 망·별칭·sysctls 는 survey-service-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
@@ -1359,7 +1356,6 @@ services:
       QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
       QA_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
     tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
     network_mode: "service:question-authoring-net"   # 망·별칭·sysctls 는 question-authoring-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
@@ -1476,7 +1472,6 @@ services:
       OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
       OAUTH2_PROXY_AUTH_LOGGING: "true"
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [oauth2-proxy-client-secret, oauth2-proxy-cookie-secret]
     network_mode: "service:oauth2-proxy-net"   # 망·별칭·sysctls 는 oauth2-proxy-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
@@ -1542,7 +1537,6 @@ services:
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn   # 실패 사례(PostgreSQL). 앱 계정
       OPS_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-app-dsn, db-ops-failure-app-dsn]
     tmpfs: ["/tmp", "/data"]
     network_mode: "service:ops-feedback-ingest-net"   # 망·별칭·sysctls 는 ops-feedback-ingest-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
@@ -1591,7 +1585,6 @@ services:
       GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn   # 릴리스 레지스트리는 PostgreSQL(D85). 번들 파일(releases/)은 gate-data 볼륨 그대로
       GATE_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: &gate_secrets [gate-read-tokens, gate-write-tokens, qa-read-release-gate, model-registry-read-release-gate, db-gate-dsn]
     volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]
     network_mode: "service:release-gate-net"   # 망·별칭·sysctls 는 release-gate-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
@@ -1631,7 +1624,6 @@ services:
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/gate-read-model-serving
       MODEL_RUNTIME_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [model-runtime-tokens, gate-read-model-serving]
     volumes:
       - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다)
@@ -1668,7 +1660,6 @@ services:
       MODEL_REGISTRY_WRITE_TOKENS_FILE: /run/secrets/model-registry-write-tokens
       MODEL_REGISTRY_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [model-registry-read-tokens, model-registry-write-tokens]
     volumes: [models-data:/data, pki-root:/etc/openit/pki:ro]
     network_mode: "service:model-registry-net"   # 망·별칭·sysctls 는 model-registry-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
@@ -1703,7 +1694,6 @@ services:
       DATASET_STORE_WRITE_TOKENS_FILE: /run/secrets/dataset-store-write-tokens
       DATASET_STORE_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [dataset-store-read-tokens, dataset-store-write-tokens]
     volumes: [datasets-data:/data, pki-root:/etc/openit/pki:ro]   # 이미지의 DATASET_STORE_ROOT=/data (uid 10001 소유). 서버의 임시 폴더(/data/.tmp)도 같은 볼륨이라 게시 rename 이 원자적이다. 루트는 read_only
     network_mode: "service:dataset-store-net"   # 망·별칭·sysctls 는 dataset-store-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
@@ -1730,7 +1720,6 @@ services:
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn
       OPS_DB_SCHEMA: verify   # L08: 잡도 스키마를 만들지 않는다(apply 는 시작 거부). 계약 OpsFeedbackServerEnv 기본값과 같다
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-      REQUESTS_CA_BUNDLE: /etc/openit/pki/root_ca.crt   # requests 계열
     secrets: [deid-salt, gate-read-ops-feedback, gate-write-ops-feedback, db-ops-log-app-dsn, db-ops-failure-app-dsn]
     depends_on:
       ops-feedback-migrate: {condition: service_completed_successfully}

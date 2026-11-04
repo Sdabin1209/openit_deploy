@@ -96,12 +96,12 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
 }
 demo_kiosk_prepare() { # 제품 경로 그대로: 기기 토큰을 만들고 게이트웨이 목록에 넣는다(scripts/kiosk-add-device.sh). 토큰 값은 출력하지 않는다
   SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" ${DEMO_QS:+--question-set "$DEMO_QS"} >/dev/null 2>&1 || die "기기 토큰 생성 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
-  [ -s "$SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE" ] || die "기기 토큰 파일이 없다: $SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE"
+  [ -s "$SECRETS_DIR/devices/$DEMO_KIOSK_DEVICE" ] || die "기기 토큰 파일이 없다: $SECRETS_DIR/devices/$DEMO_KIOSK_DEVICE"
 }
 demo_kiosk_url() { # 키오스크 시작 주소(계약 KioskStartFragment: #device=<기기 토큰>)를 600 파일에만 쓴다. 터미널·로그에는 토큰을 내지 않는다(U75: 데모 전용 /config.json 분기 제거)
   local gw=$1 host=$2 f="$W/kiosk-url.txt"
   # 문진표 ID(--question-set)를 주면 조각에 question_set_id 를 붙인다(계약 KioskStartFragment, 조각이 기기 설정보다 먼저). 안 주면 활성 문진표가 둘이므로 키오스크 첫 화면에서 고른다
-  ( umask 077; printf 'https://%s:%s/#device=%s%s\n' "$host" "$gw" "$(tr -d '\n' < "$SECRETS_DIR/tokens/kiosk-device-$DEMO_KIOSK_DEVICE")" "${DEMO_QS:+&question_set_id=$DEMO_QS}" > "$f" ); echo "$f"
+  ( umask 077; printf 'https://%s:%s/#device=%s%s\n' "$host" "$gw" "$(tr -d '\n' < "$SECRETS_DIR/devices/$DEMO_KIOSK_DEVICE")" "${DEMO_QS:+&question_set_id=$DEMO_QS}" > "$f" ); echo "$f"
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }

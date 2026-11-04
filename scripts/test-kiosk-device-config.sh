@@ -11,7 +11,7 @@ add() { SECRETS_DIR="$T" bash "$HERE/kiosk-add-device.sh" add "$1"; }
 ok "정상: 기기 추가" add dev-a
 ok "정상: 산출물이 계약 DeviceConfig 를 통과한다" "$DEPLOY_PY" -W ignore -c "import json,sys;from boundary_contracts import validator;d=json.load(open('$T/kiosk-config/dev-a.json'));e=list(validator('DeviceConfig').iter_errors(d));sys.exit(1 if e or not d.get('device_token') else 0)"
 ok "정상: 산출물 모드가 600" bash -c "[ \"\$(stat -c %a '$T/kiosk-config/dev-a.json')\" = 600 ]"
-printf 'has space token' > "$T/tokens/kiosk-device-dev-b"; chmod 600 "$T/tokens/kiosk-device-dev-b"
+printf 'has space token' > "$T/devices/dev-b"; chmod 600 "$T/devices/dev-b"
 no "계약을 어기는 토큰(공백)이면 add 가 실패한다" add dev-b
 no "실패하면 산출물을 만들지 않는다" test -e "$T/kiosk-config/dev-b.json"
 no "실패 출력에 토큰 값이 없다" bash -c "SECRETS_DIR='$T' bash '$HERE/kiosk-add-device.sh' add dev-b 2>&1 | grep -q 'has space'"

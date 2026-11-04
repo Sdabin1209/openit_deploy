@@ -117,6 +117,18 @@ ConsistencyCheckResult = TypedDict(
 )
 
 
+class DbSecretsRequest(TypedDict):
+    db_host: str
+    root_ca_path: NotRequired[str]
+    declaration: Dict[str, Any]
+    passwords: Dict[str, str]
+
+
+class DbSecretsResult(TypedDict):
+    account_files: Dict[str, str]
+    url_files: Dict[str, str]
+
+
 Role = str
 
 

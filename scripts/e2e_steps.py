@@ -88,7 +88,8 @@ if a.gw_ca:   # 게이트웨이 호출(urlopen)이 HTTPS 이고 이 CA 만 신�
 PORTS = json.loads(a.ports); IMAGES = json.loads(a.images); ROOT = pathlib.Path(a.root); WORK = pathlib.Path(a.work)
 WORK.mkdir(parents=True, exist_ok=True)
 RID = a.run_id
-TOK = lambda n: (pathlib.Path(a.secrets) / "tokens" / n).read_text().strip()
+_tokpath = lambda n: pathlib.Path(a.secrets) / (("devices" / pathlib.Path(n[len("kiosk-device-"):])) if n.startswith("kiosk-device-") else ("tokens" / pathlib.Path(n)))   # 기기 토큰은 devices/<device_id>(계약 INGRESS_DEVICE_TOKENS_DIR)
+TOK = lambda n: _tokpath(n).read_text().strip()
 def INF_TOK():   # 추론 서버가 호출자(survey-service)에게 기대하는 토큰
     if a.ms_token_file:
         t = pathlib.Path(a.ms_token_file).read_text().strip()
@@ -285,7 +286,7 @@ def _c1_gw(method, path, *, account=None, token=None, body=None, data=None, head
 
 def _c1_tok(name):
     """시험 기기 토큰처럼 게이트웨이에 내는 자격(운영에서는 기기 등록 때 운영자가 받는 값, scripts/kiosk-add-device.sh). 서비스 내부 토큰은 읽지 않는다: 그것은 컨테이너 안에서만 읽는다."""
-    return (pathlib.Path(a.secrets) / "tokens" / name).read_text().strip()
+    return _tokpath(name).read_text().strip()
 
 # 컨테이너 안에서 도는 코드의 앞부분. tok(): /run/secrets 의 비밀 파일(단일 토큰 또는 '역할=토큰,...' 목록)에서 토큰을 읽는다(값은 출력하지 않는다). call(): 표준 라이브러리 HTTP.
 _C1_PRE = r'''
@@ -1710,7 +1711,7 @@ _C3_ACCT = {"approver": "trainer-e2e", "operator": "operator-e2e", "reviewer": "
 _C3_SVC = {"qa": "question-authoring", "gate": "release-gate", "ops": "ops-feedback-ingest", "survey": "survey-service"}   # 단계가 쓰는 짧은 이름 -> compose 서비스
 
 def _c3_tok(name):   # 시험 비밀 폴더의 토큰 파일(값은 출력하지 않는다, D84)
-    return (pathlib.Path(a.secrets) / "tokens" / name).read_text().strip()
+    return _tokpath(name).read_text().strip()
 
 def _c3_gw(method, path, role=None, body=None, headers=None, timeout=30):
     """게이트웨이 경유 한 요청(사람 역할 계정 = OIDC 로그인 세션 쿠키). (상태, JSON 또는 문자열 본문, 소문자 헤더). role=None 이면 인증 없이."""

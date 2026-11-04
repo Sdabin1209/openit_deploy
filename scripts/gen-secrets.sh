@@ -103,15 +103,17 @@ putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
 
 # 게이트웨이(Caddy): 개별 계정 인증(D85 E절)과 키오스크 기기 토큰(F절). 서비스 토큰은 위의 개별 토큰 파일을 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 없음).
 #   사람 계정(U82, ADR 0057): 비밀 파일이 아니라 Keycloak(realm openit)에 있다. 여기서 만드는 것은 Keycloak·oauth2-proxy 의 비밀(위 gen_idp)뿐이다.
-#   기기: tokens/kiosk-device-<id> -> secrets/gateway-devices.caddy. 기본은 기기 0대(--test-fixtures 에서만 시험 기기 e2e 등). 더하려면 scripts/kiosk-add-device.sh add <id>
+#   기기: devices/<id>(내용 = 토큰 한 줄, 계약 3.4.10 INGRESS_DEVICE_TOKENS_DIR). 기본은 기기 0대(--test-fixtures 에서만 시험 기기 e2e 등). 더하려면 scripts/kiosk-add-device.sh add <id>
 source "$(dirname "$0")/gateway-lib.sh"
 if [ $TEST_FIX = 1 ]; then ( umask 077; : > "$D/.test-fixtures" ); fi
 [ -e "$D/.test-fixtures" ] && TEST_FIX=1   # 표시가 있는 폴더는 시험 폴더로 계속 취급한다
-[ $TEST_FIX = 0 ] || tok kiosk-device-e2e >/dev/null
+mkdir -p "$D/devices"; chmod 750 "$D/devices"
+dev() { [ -s "$D/devices/$1" ] || ( umask 077; rnd > "$D/devices/$1" ); }   # 기기 토큰: devices/<device_id> 한 줄(계약 INGRESS_DEVICE_TOKENS_DIR)
+[ $TEST_FIX = 0 ] || dev e2e
 # 시험 사용자(test/gateway-oidc/accounts.test.conf)의 로그인 암호: 호스트 전용(600). E2E·데모가 Keycloak 에 사용자를 만들 때(scripts/idp-test-users.sh)와 로그인할 때 읽는다. 운영 realm 에는 들어가지 않는다
 [ $TEST_FIX = 0 ] || while read -r _acc _; do case "$_acc" in ""|\#*) continue;; esac; tok "idp-test-$_acc-password" >/dev/null; done < "$DEPLOY_ROOT/test/gateway-oidc/accounts.test.conf"
 # E2E 단계 5d(기기 사이 세션 격리, 폐기): 시험 기기 a·b 와 폐기 시험용 c. 운영에서는 kiosk-add-device.sh 로 실제 기기만 만든다(이 시험 기기는 운영 비밀 폴더에서 remove 한다)
-[ $TEST_FIX = 0 ] || for _d in e2e-a e2e-b e2e-c; do tok "kiosk-device-$_d" >/dev/null; done
+[ $TEST_FIX = 0 ] || for _d in e2e-a e2e-b e2e-c; do dev "$_d"; done
 gw_write_devices "$D"
 old=$(cd "$D" && ls *.env 2>/dev/null | tr '\n' ' ') || true
 [ -z "$old" ] || echo "알림: 예전 방식의 비밀 env 파일이 남아 있다($old). 더는 쓰지 않는다(환경 변수로 평문이 노출됐다). 지워도 된다: (cd $D && rm -f $old)" >&2

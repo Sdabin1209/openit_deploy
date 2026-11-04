@@ -30,6 +30,6 @@ for svc in ("kiosk-frontend", "gateway", "survey-service", "release-gate", "ques
 ms_a, ms_b = prod["services"]["model-serving"], demo["services"]["model-serving"]
 assert ms_a["image"] == ms_b["image"]   # 같은 model-runtime 이미지. 백엔드만 mimic (모델 대역, 허용 차이 1)
 PY
-ok "demo.sh 는 기기 토큰 값을 출력하지 않는다(안내문은 파일 경로만)" bash -c '! grep -nE "cat .*kiosk-device-|echo .*kiosk-device-" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
+ok "demo.sh 는 기기 토큰 값을 출력하지 않는다(안내문은 파일 경로만)" bash -c '! grep -nE "cat .*devices/|echo .*devices/" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
 echo; [ "$FAILS" = 0 ] && echo "test-demo-parity: 전부 통과" || echo "test-demo-parity: 실패 $FAILS건"
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)
