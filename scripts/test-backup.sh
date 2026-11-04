@@ -4,6 +4,7 @@
 # 파일 저장소(models-data)·레지스트리·gateway-data 볼륨 백업·복구, 중도 실패한 덤프가 성공으로 남지 않음, 보관 기간 정리, 정기 복원 시험 스크립트. 끝나면 모두 지운다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
+export DEPLOY_NO_STACK_FILES=1   # 영역 DB 만 띄우는 시험: 이미지 라벨 입력이 필요 없다
 ID=$$; P=deploy-bktest-$ID; W="$DEPLOY_ROOT/state/bktest-$ID"; mkdir -p "$W/backups"; chmod 700 "$W"
 export DEPLOY_PROJECT=$P SECRETS_DIR="$W/secrets" DEPLOY_REGISTRY_ENV="$W/registry.env" REGISTRY_PROJECT=deploy-bkreg-$ID
 echo "DEPLOY_REGISTRY=127.0.0.1:1" > "$DEPLOY_REGISTRY_ENV"

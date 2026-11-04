@@ -24,6 +24,8 @@ STAGES = [["step-ca"], ["@db"], ["keycloak"],   # "@db": 이름이 -db 로 끝�
           ["oauth2-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3
 def container_port(n):
+    if n == "backup-store":
+        return 443   # platform 백업 저장소(restic REST, TLS 443, 영역 게이트웨이의 external:backup 허용 상대 backup-store:443)
     return 5432 if n.endswith("-db") else 8080   # 영역 DB 는 PostgreSQL 5432, 나머지는 8080(이미지 규칙, HTTP.md)
 
 

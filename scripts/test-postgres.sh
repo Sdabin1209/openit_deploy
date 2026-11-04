@@ -4,6 +4,7 @@
 # 암호 값은 출력하지 않는다. 끝나면 컨테이너·볼륨·임시 폴더를 지운다.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
+export DEPLOY_NO_STACK_FILES=1   # 영역 DB 만 띄우는 시험이라 이미지 라벨 입력이 필요 없다
 ID=$$; P=deploy-pgtest-$ID; W="$DEPLOY_ROOT/state/pgtest-$ID"; mkdir -p "$W/backups"
 export DEPLOY_PROJECT=$P SECRETS_DIR="$W/secrets" DEPLOY_REGISTRY_ENV="$W/registry.env"
 echo "DEPLOY_REGISTRY=127.0.0.1:1" > "$DEPLOY_REGISTRY_ENV"

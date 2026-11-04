@@ -120,7 +120,8 @@ gen_stack_files() {
 dc() { # dc <project> <compose args...>
   local project=$1; shift
   case " $* " in *" up "*|*" run "*) [ -n "${DOCKER:-}" ] && ensure_pg_tls_volume "$project";; esac
-  if [ -z "${GEN_STACK_ACTIVE:-}" ] && [ -n "${DOCKER:-}" ] && case " $* " in *" up "*|*" run "*|*" create "*) true;; *) false;; esac; then
+  # 라벨에서 만드는 입력(영역 게이트웨이 exposure.json, 잡 덧씌우기)은 기동 때 만든다. 영역 DB 만 띄우는 단독 시험처럼 그 입력이 필요 없는 호출은 DEPLOY_NO_STACK_FILES=1 로 건너뛴다(이미지를 받지 않으려는 것이다)
+  if [ -z "${GEN_STACK_ACTIVE:-}" ] && [ -z "${DEPLOY_NO_STACK_FILES:-}" ] && [ -n "${DOCKER:-}" ] && case " $* " in *" up "*|*" run "*|*" create "*) true;; *) false;; esac; then
     GEN_STACK_ACTIVE=1 gen_stack_files "$project" || die "이미지 라벨에서 배치 입력(영역 게이트웨이 exposure.json, 잡 덧씌우기)을 만들지 못했다"
   fi
   # Keycloak realm 가져오기 파일(비밀 값 포함)은 비밀 폴더에 있다(SECRETS_DIR/keycloak-realm.json). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만들어 버리므로, 비밀이 있고 파일이 없으면 만든다(up.sh 는 매번 다시 만든다, ADR 0057)
