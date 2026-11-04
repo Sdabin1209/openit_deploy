@@ -1083,6 +1083,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-proxy@${IDENTITY_PROXY_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개): IDENTITY_ROOT_CA
     environment:
+      <<: *commonenv   # OPENIT_EGRESS_PROXY: identity 호출(공개 입구가 아니라 자기 영역 게이트웨이 identity-proxy-gw 의 loopback CONNECT 출구, R1.8). 이미지의 Exposure.egress 가 identity 를 허용한다
       IDENTITY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:?scripts/lib.sh}
       IDENTITY_CLIENT_SECRET_FILE: /run/secrets/identity-client-secret
       IDENTITY_COOKIE_SECRET_FILE: /run/secrets/identity-cookie-secret

@@ -54,6 +54,9 @@ volumes:
   serving-data:     # 번들 캐시(게이트에서 다시 받을 수 있다)
   # hf-cache:       # GPU 변형: Hugging Face 모델 캐시. 아래 model-serving 의 주석을 같이 푼다 (마운트 경로는 이미지가 준비한 /var/lib/model-runtime/hf)
 
+x-common-env: &commonenv   # CommonEnv(계약): compose.yaml 의 같은 이름 앵커와 같은 값. 이 파일은 compose.yaml 에 의존하지 않아(D72) 앵커를 다시 적는다. 자기 영역 게이트웨이(model-serving-gw)의 loopback CONNECT 출구다(R1.8): AREA_GATEWAY_EGRESS_PORT 와 같은 3128
+  OPENIT_EGRESS_PROXY: "http://127.0.0.1:3128"
+
 services:
   model-serving-net:   # model-serving 의 네트워크 공간만 갖는 작은 컨테이너(pause, RUNTIME.md R3.2): 게시 포트·extra_hosts·sysctls·network_mode 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-serving-net 으로 붙어 앱이 멈춰도 공간이 남는다(ADR 0060)
     image: ${INFERENCE_PAUSE_IMAGE:?INFERENCE_PAUSE_IMAGE(pause 이미지, digest 참조; deploy 잠금의 PAUSE_IMAGE)가 필요하다}
@@ -81,13 +84,14 @@ services:
     configs:
       - {source: gateway-ca, target: /etc/openit/gateway-ca.crt}   # 공개 인증서라 secrets 가 아니라 configs 다
     environment:
+      <<: *commonenv   # release-gate 호출은 자기 영역 게이트웨이(model-serving-gw)의 출구를 거친다. 같은 서버·다른 서버 배치 모두 이 파일의 model-serving-gw 가 출구다
       SSL_CERT_FILE: /etc/openit/gateway-ca.crt   # 왜: 번들 읽기 클라이언트(boundary_contracts)와 probe() 의 urllib 이 이 CA 만으로 게이트웨이 TLS 를 검증한다. 시스템 신뢰 저장소를 고치지 않는다
       MODEL_RUNTIME_HOST: ${INFERENCE_LISTEN_HOST:-127.0.0.1}   # 앱은 TLS 사이드카(같은 네임스페이스)에게만 닿는다(ADR 0060). 게시되는 것은 사이드카 443 뿐이다
       MODEL_RUNTIME_TOKENS_FILE: /run/secrets/model-runtime-tokens
       MODEL_RUNTIME_RELEASE_TOKEN_FILE: /run/secrets/model-runtime-release-token
       MODEL_RUNTIME_BACKEND: ${INFERENCE_BACKEND:-fake}
       MODEL_RUNTIME_ALLOW_FAKE: "${INFERENCE_ALLOW_FAKE:-}"   # fake 백엔드는 INFERENCE_ALLOW_FAKE=1 일 때만 시작한다(시험·개발 전용). vllm 에는 필요 없다
-      MODEL_RUNTIME_RELEASE_URL: https://release-gate   # 계약 R1.5: compose 밖 호출자는 받는 영역의 게이트웨이로 바로 간다. 이름은 extra_hosts(OUT-FILE hosts 표), 영역 게이트웨이의 나가는 쪽 허용 목록(egress)이 release-gate:443 이다
+      MODEL_RUNTIME_RELEASE_URL: https://release-gate   # 계약 R1.5·R1.8: 컴포넌트는 자기 영역 게이트웨이(model-serving-gw)의 출구(OPENIT_EGRESS_PROXY, CONNECT)를 거쳐 release-gate:443 으로 간다(compose 밖 영역 컴포넌트도 마찬가지). 이름은 extra_hosts(OUT-FILE hosts 표)로 풀리고, 출구의 허용 목록(Exposure.egress)이 release-gate:443 이다
       MODEL_RUNTIME_EXTRACT_DEADLINE_S: "20.0"   # 요청 상한: 계약 CONVENTIONS 시간표(D125) extract 20.0초·respond 25.0초. 서버 기본 respond 2.0초에 잘리지 않게 명시한다(config/model-serving.env 와 같은 값, scripts/test_time_chain.py 가 대조)
       MODEL_RUNTIME_RESPOND_DEADLINE_S: "25.0"
     # 읽기 전용 루트의 캐시·홈 위치와 원격 측정 차단은 model-runtime v0.5.3 부터 이미지 ENV 기본값이다(여기서 다시 정하지 않는다).
