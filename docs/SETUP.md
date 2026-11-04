@@ -47,6 +47,8 @@ bash scripts/e2e.sh                # 4. 전체 시험 (D절)
 4. 배포판 안에서 A절 1번(git, python3, python3-venv, curl)을 한다. Docker Engine은 **설치하지 않는다**(Docker Desktop이 준다).
 5. 확인: 배포판 안에서 `docker info`, `docker compose version`, `docker buildx version`이 된다. `bash scripts/doctor.sh`가 모두 OK.
 
+**(2026-11-05부터) deploy 는 사용자 전역 `~/.docker/config.json` 을 쓰지 않는다.** `scripts/lib.sh` 가 `DOCKER_CONFIG` 를 deploy 전용 폴더(`state/docker-config`, 빈 설정 `{}`)로 정한다(도커 공식 환경 변수). 인증이 필요한 외부 레지스트리를 쓰려면 자격을 넣은 폴더를 `DEPLOY_DOCKER_CONFIG` 로 준다. 그래서 아래 도우미 문제는 deploy 의 build·pull·push·compose 에 영향을 주지 않는다(doctor 는 deploy 가 쓰는 설정만 점검한다). 사용자가 직접 `docker` 를 부를 때를 위한 안내는 다음과 같다.
+
 **자격증명 도우미 설정 맞추기 (interop이 꺼진 배포판에서 필수).** `~/.docker/config.json`에 `"credsStore": "desktop.exe"`가 있으면 이미지 pull/build가 `error getting credentials … docker-credential-desktop.exe: exec format error`로 실패한다. interop이 꺼진 배포판(`/etc/wsl.conf`의 `[interop] enabled=false`)은 윈도 프로그램을 실행하지 못하기 때문이다. 이것은 환경 설정 문제라서 스크립트가 숨기지 않는다. doctor가 FAIL로 알려 주면 **사용자가 직접** 둘 중 하나를 한다.
 - (권장) `~/.docker/config.json`에서 `"credsStore"` 항목을 지운다. 이 프로젝트의 이미지는 익명 pull로 받으므로 영향이 없다(저장된 레지스트리 로그인만 쓸 수 없게 된다). 백업해 두고 편집한다. doctor는 이 파일을 읽기만 하고 고치지 않으며 내용도 출력하지 않는다.
 - 또는 interop을 켠다: `/etc/wsl.conf`에 `[interop]` / `enabled=true`를 쓰고 윈도에서 `wsl --shutdown` 후 다시 연다.

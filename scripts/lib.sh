@@ -4,6 +4,19 @@ DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # 비밀 파일의 그룹 gid(L02, ADR 0054): 컨테이너가 읽는 비밀은 640 이고 이 그룹이 읽는다. compose 의 x-hardening 이 group_add 로 컨테이너 프로세스에 이 gid 를 더한다.
 # 기본은 비밀을 만드는 호스트 사용자의 주 그룹(id -g): 만들 때 root 가 필요 없다. 다른 호스트로 옮기면 그 호스트의 값으로 SECRETS_GID 를 준다
 export SECRETS_GID="${SECRETS_GID:-$(id -g)}"
+# ---- deploy 전용 Docker 설정(D10(5)의 push 결정을 build·pull·compose 전체로 넓혔다, 2026-11-05) ----
+# 왜: 사용자 전역 설정 ~/.docker/config.json 의 credsStore(WSL 에서는 Windows 의 docker-credential-desktop.exe)가 응답하지 않으면 docker push·build(FROM 이미지 확인)·pull·compose 가
+# "error getting credentials ... accept4 failed 110" 으로 죽는다(3차 E2E, 2026-11-04 세 번). 로컬 레지스트리와 공개 기본 이미지는 인증이 필요 없다. 표준 방법은 도커 공식 환경 변수 DOCKER_CONFIG 로 설정 폴더를 바꾸는 것이다.
+# 사용자 ~/.docker 는 읽지도 고치지도 않는다(컨텍스트 엔드포인트는 docker CLI 에게 묻기만 한다). 조건 분기 없이 항상 같은 경로다: DEPLOY_DOCKER_CONFIG(인증이 필요한 외부 레지스트리용, 운영자가 자격을 넣은 폴더)가 있으면 그것, 없으면 deploy 가 만드는 빈 설정 {} (state/docker-config).
+# 사용자 컨텍스트가 기본(소켓)이 아닌 엔드포인트면 그 주소를 DOCKER_HOST 로 넘긴다(컨텍스트 정보는 설정 폴더에 있어서 빈 폴더에서는 사라진다). 하위 프로세스는 상속하므로 한 번만 한다(DEPLOY_DOCKER_CONFIG_SET 은 정한 폴더 경로).
+if [ -z "${DEPLOY_DOCKER_CONFIG_SET:-}" ] || [ "${DEPLOY_DOCKER_CONFIG_SET}" != "${DOCKER_CONFIG:-}" ]; then   # 하위 프로세스는 상속한다. 바깥에서 DOCKER_CONFIG 를 바꿔 부르면(= 사용자 설정) 표지가 달라 다시 정한다
+  if [ -z "${DOCKER_HOST:-}" ] && command -v docker >/dev/null 2>&1; then
+    _ctxh=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null | tr -d '\r' || true); [ -z "$_ctxh" ] || export DOCKER_HOST="$_ctxh"; unset _ctxh
+  fi
+  if [ -n "${DEPLOY_DOCKER_CONFIG:-}" ]; then export DOCKER_CONFIG="$DEPLOY_DOCKER_CONFIG"
+  else export DOCKER_CONFIG="$DEPLOY_ROOT/state/docker-config"; mkdir -p "$DOCKER_CONFIG"; [ -f "$DOCKER_CONFIG/config.json" ] || echo '{}' > "$DOCKER_CONFIG/config.json"; fi
+  export DEPLOY_DOCKER_CONFIG_SET="$DOCKER_CONFIG"
+fi
 WORKSPACE="$(cd "$DEPLOY_ROOT/.." && pwd)"
 # 작업 트리(git worktree, deploy/build/wt-*)에서는 부모가 deploy/build 라 이웃 영역이 없다: 본 리포(git 공통 폴더의 부모)의 부모를 워크스페이스로 쓴다
 [ -f "$DEPLOY_ROOT/.git" ] && { _c=$(git -C "$DEPLOY_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && WORKSPACE="$(cd "$_c/../.." && pwd)"; }; unset _c
@@ -265,18 +278,12 @@ PUBLISH_CONNECT_T=${PUBLISH_CONNECT_TIMEOUT:-3}; PUBLISH_PROBE_T=${PUBLISH_PROBE
 
 # 레지스트리로 이미지를 올린다(publish-image.sh 와 publish-images.sh 가 같은 이 함수를 쓴다: push 논리는 한 곳, 11/3 D10(5)에서 한 쪽만 고쳐져 E2E 경로가 사용자 credsStore 에 기대던 결함의 수정).
 # registry_push <ref>: 출력은 REGISTRY_PUSH_OUT, 종료 코드는 push 의 것(timeout 이면 124). 시간 상한은 PUBLISH_PUSH_TIMEOUT(기본값과 근거는 위 한 곳).
-# 왜 빈 DOCKER_CONFIG 인가: 로컬 레지스트리는 인증이 없는데 docker push 는 사용자 ~/.docker/config.json 의 credsStore(WSL 에서는 Windows 의 docker-credential-desktop.exe)를 먼저 불러 응답이 없으면 "error getting credentials ... accept4 failed 110" 으로 죽는다(3차 E2E, 2026-11-04 두 번).
+# (설정 폴더의 이유와 컨텍스트 처리는 파일 위쪽 'deploy 전용 Docker 설정' 한 곳.) 예전 이유: 로컬 레지스트리는 인증이 없는데 docker push 는 사용자 ~/.docker/config.json 의 credsStore(WSL 에서는 Windows 의 docker-credential-desktop.exe)를 먼저 불러 응답이 없으면 "error getting credentials ... accept4 failed 110" 으로 죽는다(3차 E2E, 2026-11-04 두 번).
 # 표준 방법은 도커 공식 환경 변수 DOCKER_CONFIG 로 설정 폴더를 바꾸는 것이다(사용자 ~/.docker 는 읽지도 고치지도 않는다). 사용자 컨텍스트의 엔드포인트는 설정 폴더에 있어 빈 폴더에서는 사라지므로 그 주소를 DOCKER_HOST 로 넘긴다.
-# 인증이 필요한 레지스트리에는 PUBLISH_DOCKER_CONFIG 로 자격이 든 폴더를 준다.
+# 인증이 필요한 레지스트리에는 DEPLOY_DOCKER_CONFIG 로 자격이 든 폴더를 준다.
 registry_push() {
-  local ref=$1 cfg=${PUBLISH_DOCKER_CONFIG:-} tmp="" ctxh rc=0
-  if [ -z "$cfg" ]; then
-    cfg=$(mktemp -d) && echo '{}' > "$cfg/config.json" && tmp=$cfg
-    ctxh=$("$DOCKER" context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null | tr -d '\r' || true)
-    [ -z "$ctxh" ] || [ -n "${DOCKER_HOST:-}" ] || export DOCKER_HOST="$ctxh"
-  fi
-  REGISTRY_PUSH_OUT=$(DOCKER_CONFIG="$cfg" timeout "$PUBLISH_PUSH_T" "$DOCKER" push "$ref" 2>&1) || rc=$?
-  [ -z "$tmp" ] || rm -rf "$tmp"
+  local ref=$1 rc=0
+  REGISTRY_PUSH_OUT=$(timeout "$PUBLISH_PUSH_T" "$DOCKER" push "$ref" 2>&1) || rc=$?   # DOCKER_CONFIG 는 위(deploy 전용 설정)에서 이미 정해졌다
   return $rc
 }
 # 올리고 확인한다(/v2/ 프로브 -> push -> digest 읽기 -> 레지스트리 HEAD 대조): registry_publish_ref <레지스트리 host:port> <서비스> <태그> <ref>

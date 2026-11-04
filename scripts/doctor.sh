@@ -73,8 +73,8 @@ if [ -n "$D" ]; then
     if "$D" buildx version >/dev/null 2>&1; then ok "docker buildx"; else fail "docker buildx 플러그인이 없다" "이미지 빌드(--build-context)에 필요: sudo apt-get install -y docker-buildx-plugin (WSL은 Docker Desktop 통합)"; fi
   fi
 fi
-# 자격증명 도우미: ~/.docker/config.json 의 credsStore/credHelpers 가 가리키는 docker-credential-<이름> 이 실행 가능해야 pull/build 가 된다.
-# 이 파일은 읽기만 한다(내용은 출력하지 않고, 수정하지 않는다). 고치는 것은 사용자가 한다.
+# 자격증명 도우미: deploy 가 쓰는 Docker 설정(lib.sh 가 DOCKER_CONFIG 로 정한 폴더: 기본은 deploy 가 만든 빈 설정이라 도우미가 없다, DEPLOY_DOCKER_CONFIG 를 주면 그 폴더)의 credsStore/credHelpers 가
+# 가리키는 docker-credential-<이름> 이 실행 가능해야 pull/build 가 된다. 사용자 전역 ~/.docker 는 읽지도 고치지도 않는다(deploy 는 쓰지 않는다). 이 파일은 읽기만 한다(내용은 출력하지 않고, 수정하지 않는다).
 CFG="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
 if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
   HELPERS=$(python3 - "$CFG" <<'PY' 2>/dev/null
@@ -91,7 +91,7 @@ PY
     if ! command -v "$b" >/dev/null 2>&1; then BAD="$BAD $b(없음)"; continue; fi
     "$b" version >/dev/null 2>&1 </dev/null; rc=$?; if [ $rc = 126 ] || [ $rc = 127 ]; then BAD="$BAD $b(실행 불가)"; fi
   done
-  if [ -z "$BAD" ]; then ok "docker 자격증명 도우미 이상 없음$([ -z "$HELPERS" ] && echo ' (도우미 설정 없음)')"
+  if [ -z "$BAD" ]; then ok "docker 자격증명 도우미 이상 없음$([ -z "$HELPERS" ] && echo ' (deploy 전용 설정에 도우미 없음)') [$CFG]"
   else fail "docker 자격증명 도우미를 실행할 수 없다:$BAD -> 이미지 pull/build 가 'error getting credentials … exec format error' 로 실패한다" "사용자가 직접 고친다(이 스크립트는 $CFG 를 수정하지 않는다): (1) 그 파일에서 \"credsStore\" 항목을 지운다(저장된 레지스트리 로그인은 쓸 수 없게 된다, 익명 pull 에는 영향 없음), 또는 (2) WSL 이면 interop 을 켠다(/etc/wsl.conf 의 [interop] enabled=true 후 윈도에서 wsl --shutdown). docs/SETUP.md B절"; fi
 else
   ok "docker 자격증명 설정 파일 없음 또는 확인 불가 (도우미 문제 없음으로 본다)"

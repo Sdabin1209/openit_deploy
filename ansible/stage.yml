@@ -4,6 +4,7 @@
 # 이 서버에 인증서가 아직 없는 서비스만 받는다(다시 실행하면 건너뛴다). 이 단계의 <서비스>-cert 기동 직전에 한다.
 - name: "단계 {{ stage_i }}: 인증서가 아직 없는 서비스 찾기"
   ansible.builtin.shell: |
+    DEPLOY_NO_DOCKER=1 . "{{ p_dir }}/scripts/lib.sh"   # deploy 전용 Docker 설정(DOCKER_CONFIG): 사용자 전역 자격증명 도우미에 기대지 않는다
     UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ p_dir }}/locks/images.lock")
     for n in {{ plan.stage_tokens[stage_i] | join(' ') }}; do
       case "$n" in *-db) v={{ p_project }}_$n-pgtls; f=server.crt;; *) v={{ p_project }}_certs-$n; f=tls.crt;; esac # else v={{ p_project }}_certs-$n; f=tls.crt; fi
@@ -35,6 +36,7 @@
   when: plan.stage_tokens[stage_i] | length > 0 and (missing.stdout_lines | length) > 0
 - name: "단계 {{ stage_i }}: 이 서버의 토큰 볼륨에 쓰기 (640)"
   ansible.builtin.shell: |
+    DEPLOY_NO_DOCKER=1 . "{{ p_dir }}/scripts/lib.sh"   # deploy 전용 Docker 설정(DOCKER_CONFIG): 사용자 전역 자격증명 도우미에 기대지 않는다
     set -e
     UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ p_dir }}/locks/images.lock")
     for v in pki-tokens pki-root; do
@@ -64,6 +66,7 @@
 # 게시된 서비스의 https /readyz 를 지휘 기계에서 보려면 step-ca 루트(공개 인증서)가 필요하다: step-ca 서버의 pki-root 볼륨에서 읽어 지휘 기계에 둔다. 인벤토리에 placement_ca_path 가 있으면 그것을 쓴다
 - name: "단계 {{ stage_i }}: step-ca 루트(공개)를 지휘 기계로"
   ansible.builtin.shell: |
+    DEPLOY_NO_DOCKER=1 . "{{ p_dir }}/scripts/lib.sh"   # deploy 전용 Docker 설정(DOCKER_CONFIG): 사용자 전역 자격증명 도우미에 기대지 않는다
     UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "{{ ca_dir }}/locks/images.lock")
     docker run --rm --network none -v "{{ ca_project }}_pki-root:/r:ro" "$UTIL" cat /r/root_ca.crt
   args: {executable: /bin/bash}

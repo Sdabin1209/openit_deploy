@@ -86,11 +86,22 @@ expect_rc 0 "사용자 Docker 설정의 자격증명 도우미가 죽어 있어�
 # publish-images.sh(E2E 가 쓰는 복수 게시)도 같은 push 함수(lib.sh registry_push)를 쓴다: 같은 badcreds 에서 게시되어야 한다(11/3 에 publish-image.sh 만 고쳐져 E2E 경로가 같은 오류로 죽었다, 2026-11-04)
 printf 'dataset-store deploy-pubtest-%s/b:1 bbb2222\n' "$ID" > "$W/images.env"
 check "publish-images.sh: 자격증명 도우미가 죽어 있어도 게시된다(registry_push 의 빈 DOCKER_CONFIG)" env DOCKER_CONFIG="$W/badcreds" DEPLOY_IMAGES_ENV="$W/images.env" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
-# 변이: registry_push 에서 빈 DOCKER_CONFIG 를 빼면(사용자 설정으로 push) 같은 상황에서 실패해야 한다
+# deploy 의 모든 docker 호출은 사용자 전역 설정과 무관하다(lib.sh 가 DOCKER_CONFIG 를 deploy 전용 폴더로 정한다, 2026-11-05): build(로컬에 없는 외부 이미지 FROM)·compose 도 badcreds 에서 자격증명 오류로 죽지 않아야 한다.
+# 외부 이미지는 일부러 존재하지 않는 이름이다(받을 수 없어 실패하는 것은 같다). 시험하는 것은 실패 사유에 "getting credentials" 가 있느냐 없느냐다(있으면 자격증명 도우미를 불렀다는 뜻).
+mkdir -p "$W/ctx-ext"; printf 'FROM docker.io/library/openit-nonexistent-base-%s:1\n' "$ID" > "$W/ctx-ext/Dockerfile"
+check "재현 조건: 사용자 설정(badcreds)으로 그냥 docker build 하면 자격증명 오류가 난다" bash -c "DOCKER_CONFIG=$W/badcreds timeout 120 $DOCKER build -q $W/ctx-ext 2>&1 | grep -q 'getting credentials'"
+check "deploy 경로(lib.sh)의 docker build 는 사용자 설정이 badcreds 여도 자격증명 도우미를 부르지 않는다" bash -c "! DOCKER_CONFIG=$W/badcreds bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; timeout 120 \$DOCKER build -q $W/ctx-ext' 2>&1 | grep -q 'getting credentials'"
+check "deploy 경로(lib.sh)의 compose 는 badcreds 에서도 설정을 읽는다(config -q)" bash -c "DOCKER_CONFIG=$W/badcreds bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; \$DOCKER compose -f $DEPLOY_ROOT/compose.registry.yaml --env-file $DEPLOY_LOCK config -q'"
+check "lib.sh 가 DOCKER_CONFIG 를 deploy 전용 폴더로 정한다(사용자 값이 아니다)" bash -c "DOCKER_CONFIG=$W/badcreds bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; [ \"\$DOCKER_CONFIG\" = \"$DEPLOY_ROOT/state/docker-config\" ] && [ \"\$(cat \$DOCKER_CONFIG/config.json)\" = \"{}\" ]'"
+# 변이: lib.sh 의 DOCKER_CONFIG export 를 빼면(사용자 설정이 그대로 쓰이면) 같은 build 가 자격증명 오류로 실패해야 한다
+LMUT="$DEPLOY_ROOT/scripts/.lib.mut-$ID.sh"
+sed 's|^  else export DOCKER_CONFIG="$DEPLOY_ROOT/state/docker-config"; mkdir -p "$DOCKER_CONFIG"; \[ -f "$DOCKER_CONFIG/config.json" \] \|\| echo .{}. > "$DOCKER_CONFIG/config.json"; fi|  else :; fi|' "$DEPLOY_ROOT/scripts/lib.sh" > "$LMUT"
+check "변이 확인: DOCKER_CONFIG export 를 빼면 같은 build 가 자격증명 오류로 실패한다(시험이 껍데기가 아니다)" bash -c "! cmp -s $LMUT $DEPLOY_ROOT/scripts/lib.sh && DOCKER_CONFIG=$W/badcreds bash -c 'source $LMUT; timeout 120 \$DOCKER build -q $W/ctx-ext' 2>&1 | grep -q 'getting credentials'"
+# 같은 변이 lib 로 publish-images.sh 를 돌리면 badcreds 에서 push 가 실패해야 한다(publish 경로도 같은 한 곳에 기댄다)
 MUT="$DEPLOY_ROOT/scripts/.publish-images.mut-$ID.sh"
-sed 's|^source "$(dirname "$0")/lib.sh"|&\nregistry_push() { REGISTRY_PUSH_OUT=$(timeout 60 "$DOCKER" push "$1" 2>\&1) \|\| return $?; }|' "$DEPLOY_ROOT/scripts/publish-images.sh" > "$MUT"
-check "변이 확인: 빈 DOCKER_CONFIG 를 빼면 publish-images.sh 가 같은 상황에서 실패한다" bash -c "! env DOCKER_CONFIG=$W/badcreds DEPLOY_IMAGES_ENV=$W/images.env bash $MUT"
-rm -f "$MUT"
+sed "s|^source \"\$(dirname \"\$0\")/lib.sh\"|source $LMUT|" "$DEPLOY_ROOT/scripts/publish-images.sh" > "$MUT"
+check "변이 확인: DOCKER_CONFIG export 를 빼면 publish-images.sh 도 같은 상황에서 실패한다" bash -c "! grep -q 'scripts/lib.sh' $MUT && ! env DOCKER_CONFIG=$W/badcreds DEPLOY_IMAGES_ENV=$W/images.env bash $MUT"
+rm -f "$MUT" "$LMUT"
 check "check-compose.sh 가 이 잠금 형식을 받아들인다" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
 echo; if [ "$FAILS" = 0 ]; then echo "test-publish: 전부 통과"; else echo "test-publish: 실패 $FAILS건"; fi
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)

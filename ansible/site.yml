@@ -130,6 +130,7 @@
     - name: gateway CA 볼륨의 소유자(비루트 uid 10001, 처음 한 번)
       ansible.builtin.shell: |
         set -e
+        DEPLOY_NO_DOCKER=1 . "{{ p_dir }}/scripts/lib.sh"   # deploy 전용 Docker 설정(DOCKER_CONFIG): 사용자 전역 자격증명 도우미에 기대지 않는다
         V="{{ p_project }}_gateway-data"
         docker volume inspect "$V" >/dev/null 2>&1 && exit 0
         docker volume create --label "com.docker.compose.project={{ p_project }}" --label "com.docker.compose.volume=gateway-data" "$V" >/dev/null
