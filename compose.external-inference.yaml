@@ -11,7 +11,7 @@ services:
     profiles: ["local-inference"]          # 프로필로 비활성: 기본으로는 뜨지 않는다
   model-serving-net:
     profiles: ["local-inference"]          # 공간 소유자도 함께 꺼진다(ADR 0060)
-  model-serving-tls:
+  model-serving-gw:
     profiles: ["local-inference"]          # 사이드카는 앱의 네임스페이스에 붙으므로 앱과 함께 꺼진다(ADR 0060)
   model-serving-cert:
     profiles: ["local-inference"]

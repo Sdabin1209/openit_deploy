@@ -15,6 +15,7 @@ def pairs():
     out = {}
     for j, js in S.items():
         if not j.startswith("job-"): continue
+        if "OPENIT_BACKUP_URL" in (js.get("environment") or {}): continue   # 백업 잡은 서버와 다른 프로그램이다(자격·저장소 암호를 받고 영역 pod 안에서 돈다): test_backup_wiring.py 가 본다
         cands = [n for n, x in S.items() if not n.startswith("job-") and n not in ONESHOT and x.get("image") == js.get("image")]
         out[j] = sorted(set(cands))
     return out

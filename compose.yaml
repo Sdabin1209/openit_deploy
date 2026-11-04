@@ -1818,7 +1818,7 @@ services:
     group_add: *secretgid
     tmpfs: ["/tmp", "/data"]
 
-  job-ops-feedback-backup:   # ops-feedback 영역의 백업 잡(RUNTIME R10.1): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
+  job-ops-feedback-backup:   # ops-feedback 영역의 백업 잡(RUNTIME R10.1, 앱 계정으로 읽는다: 소유자 접속 문자열은 migrate 만): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
     profiles: ["jobs"]
     mem_limit: ${JOB_OPS_FEEDBACK_BACKUP_MEM_LIMIT:-512m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: 1.0
@@ -1826,8 +1826,8 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn, OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/ops/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-ops-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-ops-repo-password}
-    secrets: [db-ops-log-dsn, db-ops-failure-dsn, backup-ops-credentials, backup-ops-repo-password]
+    environment: {<<: *commonenv, OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-app-dsn, OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-app-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/ops/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-ops-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-ops-repo-password}
+    secrets: [db-ops-log-app-dsn, db-ops-failure-app-dsn, backup-ops-credentials, backup-ops-repo-password]
     network_mode: "service:ops-feedback-ingest-net"   # 영역 게이트웨이 출구(loopback 3128)는 영역 pod 안에만 있다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
