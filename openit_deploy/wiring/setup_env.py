@@ -17,6 +17,13 @@ def store() -> pathlib.Path:
     return ROOT / "state" / "setup-env"
 
 
+def work_root() -> pathlib.Path:
+    """영역 시험 환경(.venv, node_modules)이 있는 곳: 이 작업 트리의 state/areas/<영역> (git clone 사본). 실제 영역 리포의 작업 트리·.venv 는 쓰지 않는다(워크스페이스 규칙: 자기 리포 안에서만,
+    다른 실행이 영역 시험을 돌리는 도중 .venv 를 다시 설치해 시험을 깨뜨린 결함의 수정). 시험은 SETUP_ENV_WORK 로 바꾼다."""
+    if os.environ.get("SETUP_ENV_WORK"): return pathlib.Path(os.environ["SETUP_ENV_WORK"])
+    return ROOT / "state" / "areas"
+
+
 def head_commit(repo: pathlib.Path):
     r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"], capture_output=True, text=True)
     return r.stdout.strip() or None if r.returncode == 0 else None
@@ -39,7 +46,7 @@ def load(area: str):
 
 def _status(area: str, ws: pathlib.Path):
     rep = load(area)
-    exists = bool(rep and rep.get("environment") and (ws / area / rep["environment"]["path"]).exists())
+    exists = bool(rep and rep.get("environment") and (work_root() / area / rep["environment"]["path"]).exists())   # 환경은 사본에 있고, 낡음 판정은 실제 리포의 HEAD 와 보고의 커밋을 맞춘다
     return rep, call(setup_env_status, "SetupEnvStatusRequest", "SetupEnvStatusResult", {"area": area, "report": rep, "env_path_exists": exists, "report_commit": load_commit(area), "current_commit": head_commit(ws / area)})
 
 
@@ -52,7 +59,7 @@ def env_status(area: str, ws: pathlib.Path):
 def env_python(area: str, ws: pathlib.Path):
     """python-venv 영역의 파이썬 실행 파일 경로. kind 가 다르거나 환경이 없으면 None."""
     _, r = _status(area, ws)
-    return ws / area / r["python"] if r["status"] == "READY" and r["python"] else None
+    return work_root() / area / r["python"] if r["status"] == "READY" and r["python"] else None
 
 
 def record(area: str, stdout_lines: list, ws=None):

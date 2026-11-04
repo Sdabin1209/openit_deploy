@@ -113,7 +113,7 @@ def test_command(spec, ws, area):
         rep = SER.load(area)
         if rep is None or rep.get("status") != "ok":
             raise ConfigError(f"{area} 의 setup-env 보고가 없거나 실패다 (해결: bash scripts/prepare-areas.sh {area})")
-        return [tuple(rep["environment"]["test_command"])] + [tuple(c) for c in t.get("also", [])], ws / area
+        return [tuple(rep["environment"]["test_command"])] + [tuple(c) for c in t.get("also", [])], SER.work_root() / area   # 사본(state/areas/<영역>)에서 돈다
     return [tuple(c) for c in t["commands"]], DEPLOY_ROOT
 
 
@@ -123,7 +123,7 @@ def assemble(cfg, area, ws, *, changed=None, no_e2e_reason=None, tests_only=Fals
     rep = SER.load(area) if spec["tests"]["kind"] in ("pytest", "npm") else None
     tc = list(rep["environment"]["test_command"]) if rep and rep.get("status") == "ok" else None
     req = {"cfg": {k: v for k, v in cfg.items() if not k.startswith("_")}, "decls": _plain_decls(cfg["_decls"]), "order": cfg["_order"], "area": area,
-           "workspace": str(ws), "deploy_root": str(DEPLOY_ROOT), "changed": list(changed or []), "no_e2e_reason": no_e2e_reason, "tests_only": tests_only,
+           "workspace": str(SER.work_root()), "deploy_root": str(DEPLOY_ROOT), "changed": list(changed or []), "no_e2e_reason": no_e2e_reason, "tests_only": tests_only,
            "stale": list(stale), "test_command": tc}
     r = call(verify_plan, "VerifyPlanRequest", "VerifyPlanResult", req)
     if r["status"] == "NO_SETUP_ENV":

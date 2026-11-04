@@ -799,7 +799,7 @@ def run_area_tests(repo: str, d: Path):
         return "un", why
     cmd = rep["environment"]["test_command"]
     try:
-        p = subprocess.run(cmd, cwd=d, capture_output=True, text=True, timeout=900)
+        p = subprocess.run(cmd, cwd=ENV.work_root() / repo, capture_output=True, text=True, timeout=900)   # 영역 시험은 사본(state/areas/<영역>)에서 돈다: 실제 영역 리포를 건드리지 않는다
     except subprocess.TimeoutExpired as e:
         raw = e.stdout or b""
         path = save_area_log(repo, (raw.decode(errors="replace") if isinstance(raw, bytes) else raw) + "\n[check-all] 900초 시간 초과로 중단\n")

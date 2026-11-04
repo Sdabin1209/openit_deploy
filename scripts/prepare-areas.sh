@@ -38,7 +38,13 @@ else read -r -a TARGETS <<< "$ALL"; fi
 setup_one() {
   local a=$1 out rc py=${SETUP_PY:-$DEPLOY_ROOT/.venv/bin/python}   # deploy 자신의 .venv 는 위에서 먼저 준비한다(계약 패키지가 거기 있다)
   [ -x "$py" ] || die "deploy .venv 가 없다: 먼저 deploy 자신의 .venv 를 준비한다 (docs/SETUP.md)"
-  rc=0; out=$(cd "$WORKSPACE/$a" && bash scripts/setup-env.sh) || rc=$?
+  # 왜 사본인가: 실제 영역 리포(WORKSPACE/<영역>)에서 setup-env 를 돌리면 그 영역의 .venv 를 다시 설치해, 그 영역의 시험을 돌리는 다른 실행을 깨뜨린다(간섭 결함, 2026-11-04). 영역은 자기 리포 안에서만 일한다.
+  # 대조할 커밋(실제 리포의 HEAD)을 git clone 한 사본 state/areas/<영역> 에서 돌린다(.gitignore 의 state/). 보고의 커밋은 실제 리포 HEAD 와 같다(setup_env_status 의 낡음 판정과 맞는다).
+  local c=${SETUP_ENV_WORK:-$DEPLOY_ROOT/state/areas}/$a head; head=$(git -C "$WORKSPACE/$a" rev-parse HEAD) || return 1
+  mkdir -p "$(dirname "$c")"
+  if [ -d "$c/.git" ]; then git -C "$c" fetch -q "$WORKSPACE/$a" && git -C "$c" checkout -q --detach "$head" || return 1
+  else rm -rf "$c"; git clone -q --no-hardlinks "$WORKSPACE/$a" "$c" && git -C "$c" checkout -q --detach "$head" || return 1; fi
+  rc=0; out=$(cd "$c" && bash scripts/setup-env.sh) || rc=$?
   printf '%s\n' "$out" | sed '$d'
   printf '%s\n' "$out" | "$py" "$DEPLOY_ROOT/scripts/setup_env_report.py" record "$a" --ws "$WORKSPACE" || { [ $rc = 0 ] && rc=70; }
   return $rc

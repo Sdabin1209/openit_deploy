@@ -16,8 +16,12 @@ for a in a-ok b-fail c-none d-ok; do mkdir -p "$T/$a/scripts"; done
 export SETUP_ENV_DIR="$T/state-setup-env"
 rep() { printf "echo ran-%s; echo '{\"area\":\"%s\",\"status\":\"%s\",\"exit_code\":%s,\"seconds\":1,\"environment\":{\"kind\":\"python-venv\",\"path\":\".venv\",\"test_command\":[\".venv/bin/python\",\"-m\",\"pytest\"]}}'; exit %s\n" "$1" "$1" "$2" "$3" "$3"; }
 rep a-ok ok 0 > "$T/a-ok/scripts/setup-env.sh"
+# 간섭 결함 시험(2026-11-04): setup-env 는 실행 위치에 .venv 를 쓴다. 실제 영역 리포(여기서는 $T/<영역>)에는 쓰이면 안 되고 사본(SETUP_ENV_WORK/<영역>)에만 쓰인다
+sed -i '1i mkdir -p .venv; echo x > .venv/marker' "$T/a-ok/scripts/setup-env.sh"
 rep b-fail fail 3 > "$T/b-fail/scripts/setup-env.sh"
 rep d-ok ok 0 > "$T/d-ok/scripts/setup-env.sh"
+for a in a-ok b-fail c-none d-ok; do ( cd "$T/$a" && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm init ); done   # 사본은 실제 리포의 HEAD 를 clone 한다
+export SETUP_ENV_WORK="$T/work-areas"
 rc=0; N=0
 chk() { # chk <설명> <기대 종료코드> <기대 문자열|-> <인자...>
   local d=$1 want=$2 pat=$3; shift 3; N=$((N+1))
@@ -35,8 +39,17 @@ chk "성공하는 영역만 지정하면 종료 코드 0" 0 "전부 성공" a-ok
 chk "지정하지 않은 영역은 실행하지 않는다" 0 - a-ok
 out=$(bash "$HERE/prepare-areas.sh" --ws "$T" --no-self a-ok 2>&1); grep -q ran-d-ok <<<"$out" && { echo "  FAIL 지정 밖 실행"; rc=1; } || echo "  ok   지정 밖 영역은 실행하지 않았다"
 chk "성공하는 영역의 보고를 검증해 state 에 모은다" 0 - a-ok
+[ ! -e "$T/a-ok/.venv" ] && [ -z "$(git -C "$T/a-ok" status --porcelain)" ] && echo "  ok   실제 영역 리포에는 .venv 도 변경도 생기지 않았다" || { echo "  FAIL 실제 영역 리포가 바뀌었다(간섭 결함)"; rc=1; }
+[ -f "$SETUP_ENV_WORK/a-ok/.venv/marker" ] && [ "$(git -C "$SETUP_ENV_WORK/a-ok" rev-parse HEAD)" = "$(git -C "$T/a-ok" rev-parse HEAD)" ] && echo "  ok   setup-env 는 사본(실제 HEAD 커밋)에서 돌았다" || { echo "  FAIL 사본에서 돌지 않았다"; rc=1; }
+# 변이: 사본 대신 실제 리포에서 돌리는 옛 방식이면 위 단언이 실패해야 한다
+sed 's|rc=0; out=$(cd "$c" \&\& bash scripts/setup-env.sh)|rc=0; out=$(cd "$WORKSPACE/$a" \&\& bash scripts/setup-env.sh)|' "$HERE/prepare-areas.sh" > "$HERE/.prepare-areas.mut.sh"; trap 'rm -rf "$T" "$HERE/.prepare-areas.mut.sh"' EXIT
+grep -q 'cd "$WORKSPACE/$a" && bash scripts/setup-env.sh' "$HERE/.prepare-areas.mut.sh" || { echo "  FAIL 변이를 만들지 못했다"; rc=1; }
+bash "$HERE/.prepare-areas.mut.sh" --ws "$T" --no-self a-ok >/dev/null 2>&1
+[ -e "$T/a-ok/.venv" ] && echo "  ok   변이(옛 방식)에서는 실제 리포에 .venv 가 생겨 위 단언이 실패한다" || { echo "  FAIL 변이가 실제 리포를 바꾸지 않았다(시험이 껍데기)"; rc=1; }
+rm -rf "$T/a-ok/.venv"
 [ "$(python3 -c "import json;print(json.load(open('$SETUP_ENV_DIR/a-ok.json'))['environment']['path'])")" = .venv ] && echo "  ok   a-ok 보고가 저장됐다" || { echo "  FAIL 보고 저장"; rc=1; }
-printf 'echo not-a-report\n' > "$T/a-ok/scripts/setup-env.sh"; chk "마지막 줄이 SetupEnvReport 가 아니면 실패로 센다" 1 "계약 위반" a-ok
+printf 'echo not-a-report\n' > "$T/a-ok/scripts/setup-env.sh"; git -C "$T/a-ok" -c user.name=t -c user.email=t@t commit -qam bad;   # 사본은 커밋된 내용으로 돈다
+ chk "마지막 줄이 SetupEnvReport 가 아니면 실패로 센다" 1 "계약 위반" a-ok
 chk "대상이 아닌 이름은 사용 오류(2)" 2 "대상 영역이 아니다" nope
 rm -rf "$T/d-ok"; chk "영역 폴더가 없으면 실패로 보고" 1 "폴더없음" d-ok
 rm "$T/head/shared/areas.json"; chk "영역 목록을 읽지 못하면 실패(1)" 1 "영역 목록을 읽지 못했다"
