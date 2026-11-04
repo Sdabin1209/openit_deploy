@@ -517,7 +517,8 @@ for d in $PGDBS; do fp_before pg-fingerprint.sh $d "$W/fp-before-pg-$d.json"; do
 chk "백업(파일 저장소 3개, restic 스냅샷)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
 chk "백업(PostgreSQL ${NPG}개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
 repo_clean() { n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = "$((3+NPG))" ] || { echo "저장소(host)별 스냅샷이 $((3+NPG))개(파일 3 + 데이터베이스 ${NPG})가 아니다: $n"; return 1; }
-  ! "$DOCKER" run --rm -v "${PROJECT}_backup-target-data:/d:ro" "$UTIL_REF" sh -c "grep -rqa PGDMP /d" || { echo "저장소에 덤프 평문 표지가 있다"; return 1; }
+  local grc=0; "$DOCKER" run --rm -v "${PROJECT}_backup-target-data:/d:ro" "$UTIL_REF" sh -c "grep -rqa PGDMP /d" >/dev/null 2>&1 || grc=$?
+  [ $grc = 1 ] || { echo "저장소에 덤프 평문 표지가 있거나(종료 코드 0) 점검 명령이 실패했다(종료 코드 $grc): 1(일치 없음)일 때만 통과"; return 1; }   # `! 명령` 은 docker run 이 실패해도 통과로 센다
   [ ! -e "$W/backups" ] || { echo "서버 쪽 로컬 폴더에 저장소가 생겼다"; return 1; }
   echo "서버 밖(append-only) 저장소: 스냅샷 $((3+NPG))개(host별 1개), 덤프 평문 표지 없음, 서버 쪽 로컬 저장소 없음"; return 0; }
 NEED+=("백업(파일 저장소 3개, restic 스냅샷)" "백업(PostgreSQL ${NPG}개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)")   # 백업이 실패하면 아래 점검·볼륨 삭제·복구는 의미가 없다(볼륨을 지우지도 않는다)
