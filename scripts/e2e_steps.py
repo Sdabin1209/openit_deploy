@@ -2268,6 +2268,7 @@ def step5p():
         try: c, b, _ = _c3_probe(k, "/readyz"); return c, b
         except Exception as e: return 0, f"{type(e).__name__}"
     def healthy(k): return ready(k)[0] == 200
+    # 왜 행 지문이 아닌가(헤드 판단, ADR 0066): DB 행 수준 정합은 데이터 주인 영역의 백업→복구 왕복 시험이 맡는다(RUNTIME R10.1, DATA_OWNERSHIP). deploy 는 BackupJobResult 와 공개 API 값까지만 본다.
     # 데이터 보존은 공개 API 로 읽은 값(question-authoring 문항 버전, survey-service 의 Trace outbox 상태)으로 본다. 영역 DB 를 pg_dump 로 직접 읽는 행 지문은 쓰지 않는다(deploy 는 영역 안으로 들어가지 않는다, 구조 규칙 1·6)
     has_release = "pointers" in STATE
     if not has_release:
