@@ -7,6 +7,8 @@ DEPLOY_NO_DOCKER=1
 source "$(dirname "$0")/lib.sh"
 case "${1:-}" in
   venv)
+    # pip 의 git+ssh 설치(link, model-runtime)가 원격 동결 중에도 로컬 미러에서 같은 태그를 받게 한다(build-images.sh 와 같은 함수 git_mirror_env)
+    git_mirror_env || die "로컬 미러 git 설정을 만들지 못했다 (scripts/write-local-mirrors.sh)"
     [ -d "$DEPLOY_ROOT/.venv" ] || python3 -m venv "$DEPLOY_ROOT/.venv"
     "$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt" setuptools wheel 2>&1 | tail -1
     # 통신 기반 라이브러리 link 는 Git 태그로 설치한다(D118, 공통 규칙 "라이브러리는 Git 태그로 설치"). 기본은 GitHub 리포(openit_link). LINK_SOURCE 로 다른 위치(예: 로컬 리포 git+file:///.../link)를 가리킬 수 있다. 계약(boundary-contracts)은 wheels 단계가 설치하므로 --no-deps

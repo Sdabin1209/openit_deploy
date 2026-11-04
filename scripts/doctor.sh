@@ -87,12 +87,14 @@ if isinstance(c.get("credHelpers"), dict): n.update(v for v in c["credHelpers"].
 print("\n".join(sorted(n)))
 PY
 )
+  # 왜 '실행 파일이 없거나 실행 불가'만 FAIL 인가: 이 점검은 외부 레지스트리 pull 용이다(자격 도우미가 pull 때 불린다). 로컬 레지스트리 push 는 registry_push 가 빈 DOCKER_CONFIG(도커 공식 환경 변수)로
+  # 사용자 설정을 쓰지 않으므로 도우미가 응답하지 않아도 영향이 없다. 그래서 도우미가 응답하는지(예: version 의 종료 코드·시간)는 보지 않는다: 그것은 사용자 환경의 일시 상태이고 우리가 고칠 수 없다.
   BAD=""; for h in $HELPERS; do b="docker-credential-$h"
     if ! command -v "$b" >/dev/null 2>&1; then BAD="$BAD $b(없음)"; continue; fi
-    "$b" version >/dev/null 2>&1 </dev/null; rc=$?; if [ $rc = 126 ] || [ $rc = 127 ]; then BAD="$BAD $b(실행 불가)"; fi
+    [ -x "$(command -v "$b")" ] || BAD="$BAD $b(실행 불가)"
   done
   if [ -z "$BAD" ]; then ok "docker 자격증명 도우미 이상 없음$([ -z "$HELPERS" ] && echo ' (도우미 설정 없음)')"
-  else fail "docker 자격증명 도우미를 실행할 수 없다:$BAD -> 이미지 pull/build 가 'error getting credentials … exec format error' 로 실패한다" "사용자가 직접 고친다(이 스크립트는 $CFG 를 수정하지 않는다): (1) 그 파일에서 \"credsStore\" 항목을 지운다(저장된 레지스트리 로그인은 쓸 수 없게 된다, 익명 pull 에는 영향 없음), 또는 (2) WSL 이면 interop 을 켠다(/etc/wsl.conf 의 [interop] enabled=true 후 윈도에서 wsl --shutdown). docs/SETUP.md B절"; fi
+  else fail "docker 자격증명 도우미를 실행할 수 없다:$BAD -> 외부 레지스트리 이미지 pull 이 'error getting credentials … exec format error' 로 실패한다" "사용자가 직접 고친다(이 스크립트는 $CFG 를 수정하지 않는다): (1) 그 파일에서 \"credsStore\" 항목을 지운다(저장된 레지스트리 로그인은 쓸 수 없게 된다, 익명 pull 에는 영향 없음), 또는 (2) WSL 이면 interop 을 켠다(/etc/wsl.conf 의 [interop] enabled=true 후 윈도에서 wsl --shutdown). docs/SETUP.md B절"; fi
 else
   ok "docker 자격증명 설정 파일 없음 또는 확인 불가 (도우미 문제 없음으로 본다)"
 fi

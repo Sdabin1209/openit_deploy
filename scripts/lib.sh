@@ -102,7 +102,9 @@ jobs_overlay_path() { echo "${JOBS_OVERLAY:-$DEPLOY_ROOT/state/compose.jobs.${1:
 gen_stack_files() {
   local project=$1 cfg
   cfg=$(mktemp); rm -f "$(jobs_overlay_path "$project")"   # 이전 덧씌우기가 아래 config 입력에 섞이지 않게
-  GEN_STACK_ACTIVE=1 dc "$project" --profile jobs --profile local-inference config --format json > "$cfg"   # local-inference: 외부 추론 모드에서 꺼진 model-serving 의 선언도 만든다(다른 호스트의 추론 서버가 같은 선언을 쓴다) || { rm -f "$cfg"; return 1; }
+  # local-inference: 외부 추론 모드에서 꺼진 model-serving 의 선언도 만든다(다른 호스트의 추론 서버가 같은 선언을 쓴다)
+  # 왜 || 가 주석 밖인가: compose 해석이 실패했는데 빈 $cfg 로 생성기를 돌리면 원인(compose 오류)이 아니라 생성기의 JSON 오류가 보인다
+  GEN_STACK_ACTIVE=1 dc "$project" --profile jobs --profile local-inference config --format json > "$cfg" || { rm -f "$cfg"; return 1; }
   mkdir -p "$DEPLOY_ROOT/state"
   "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-jobs.py" --out "$(jobs_overlay_path "$project")" --compose-json "$cfg" >/dev/null || { rm -f "$cfg"; return 1; }
   "$DEPLOY_PY" "$DEPLOY_ROOT/scripts/gen-gateways.py" --out "${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}" --compose-json "$cfg" >/dev/null || { rm -f "$cfg"; return 1; }
@@ -230,8 +232,39 @@ gateway_test_mounts() { # gateway_test_mounts <gateway_test_pki 폴더>: 게이�
   printf '%s\n' -v "$DEPLOY_ROOT/config/gateway-tls:/etc/caddy/gateway-tls:ro" -v "$1/root_ca.crt:/etc/openit/pki/root_ca.crt:ro" -e GATEWAY_TLS_MODE=internal
 }
 
+# 대기 한 곳(wait_ready): 명령이 성공할 때까지 1초 간격으로 확인한다. 상한을 넘으면 설명과 마지막 출력을 표준 오류에 남기고 return 1 (호출자가 die/exit 로 실패를 낸다: 준비 안 된 채 다음 단계로 가지 않는다).
+# 사용: wait_ready <설명> <상한초> <명령...>. 명령의 출력은 성공하면 버리고, 실패하면 마지막 출력 3줄을 보인다. 상한은 호출하는 쪽이 근거와 함께 정한다(이 함수는 값을 정하지 않는다).
+# 왜 간격 1초: 대기 대상(컨테이너 기동, 내부 CA 생성, 레지스트리 응답)은 초 단위로 준비되고, 1초보다 짧게 두드리면 준비 중인 대상에 요청만 늘린다. 이 값은 측정한 것이 아니라 대기 대상의 규모(초 단위)에 맞춘 판단이다. 상한은 SECONDS(벽시계)로 센다: 명령 자체가 걸리는 시간도 상한에 들어간다.
+wait_ready() {
+  local what=$1 limit=$2 out="" end; shift 2
+  end=$((SECONDS + limit))
+  while :; do
+    out=$("$@" 2>&1) && return 0
+    [ "$SECONDS" -lt "$end" ] || break
+    sleep 1
+  done
+  echo "오류: 준비되지 않았다: $what (${limit}초 안에 성공하지 않았다). 마지막 출력: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')" >&2
+  return 1
+}
+# 원격이 동결된 동안 의존 리포(link, boundary-contracts, model-runtime)를 로컬 리포에서 받는 git 설정 하나(S14, git-config url.<base>.insteadOf). pip 의 git+ssh 설치가 이 설정으로 같은 태그를 받는다.
+# 이미 GIT_CONFIG_GLOBAL 이 있으면 그것을 쓴다(사용자 git 전역 설정 ~/.gitconfig 는 읽지도 고치지도 않는다: 이 변수가 가리키는 별도 파일만 쓴다). 쓰는 파일을 만들지 못하면 return 1.
+git_mirror_env() {
+  [ -z "${GIT_CONFIG_GLOBAL:-}" ] || return 0
+  bash "$DEPLOY_ROOT/scripts/write-local-mirrors.sh" >/dev/null || return 1
+  export GIT_CONFIG_GLOBAL="$DEPLOY_ROOT/build/gitconfig-local-mirrors"
+}
+
+# ---- 게시(publish-image.sh 와 publish-images.sh 가 같이 쓴다: 복사 논리는 이 한 곳) ----
+# 레지스트리 호출 상한(FAULT_POLICY 4: 의존 호출에 연결·읽기 timeout, 무한 대기 금지). 기본값은 여기 한 곳이고 환경 변수로 바꾼다. 아래 값은 모두 측정하지 않았다.
+# D125: 상한 = 측정한 최악 + 여유. 측정 전이므로 이 값들은 '측정 전 임시 상한'이다(측정하면 이 줄의 값과 근거를 바꾼다. 측정 대상: 큰 이미지(GPU 13GB)의 push 시간, 부하 중 /v2/ 응답 시간).
+#  PUBLISH_CONNECT_TIMEOUT(3s): 같은 호스트의 로컬 레지스트리라 연결은 즉시여야 한다는 판단(측정 안 함). 3초에 안 되면 장애로 본다.
+#  PUBLISH_PROBE_TIMEOUT(5s): push 전 /v2/ 응답 확인의 전체 상한(측정 안 함). 레지스트리가 멈춰 있으면(연결은 되고 응답이 없다) docker push 가 끝없이 기다리므로 먼저 걸러 스스로 실패한다.
+#  PUBLISH_HEAD_TIMEOUT(15s): digest 확인용 HEAD 요청 전체 상한(측정 안 함, 작은 응답이라 PROBE 의 3배로 둔 판단).
+#  PUBLISH_PUSH_TIMEOUT(900s): docker push 전체 상한(측정 안 함: 작은 이미지는 수 초이나 13GB GPU 이미지의 시간은 재지 않았다). 초과하면 124 로 실패하고, 메시지가 이 변수로 바꾸라고 알린다.
+PUBLISH_CONNECT_T=${PUBLISH_CONNECT_TIMEOUT:-3}; PUBLISH_PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; PUBLISH_HEAD_T=${PUBLISH_HEAD_TIMEOUT:-15}; PUBLISH_PUSH_T=${PUBLISH_PUSH_TIMEOUT:-900}
+
 # 레지스트리로 이미지를 올린다(publish-image.sh 와 publish-images.sh 가 같은 이 함수를 쓴다: push 논리는 한 곳, 11/3 D10(5)에서 한 쪽만 고쳐져 E2E 경로가 사용자 credsStore 에 기대던 결함의 수정).
-# registry_push <ref>: 출력은 REGISTRY_PUSH_OUT, 종료 코드는 push 의 것(timeout 이면 124). 시간 상한은 PUBLISH_PUSH_TIMEOUT(기본 900초, 측정하지 않은 시작값: 작은 이미지는 수 초, 13GB GPU 이미지는 더 걸릴 수 있어 넉넉히).
+# registry_push <ref>: 출력은 REGISTRY_PUSH_OUT, 종료 코드는 push 의 것(timeout 이면 124). 시간 상한은 PUBLISH_PUSH_TIMEOUT(기본값과 근거는 위 한 곳).
 # 왜 빈 DOCKER_CONFIG 인가: 로컬 레지스트리는 인증이 없는데 docker push 는 사용자 ~/.docker/config.json 의 credsStore(WSL 에서는 Windows 의 docker-credential-desktop.exe)를 먼저 불러 응답이 없으면 "error getting credentials ... accept4 failed 110" 으로 죽는다(3차 E2E, 2026-11-04 두 번).
 # 표준 방법은 도커 공식 환경 변수 DOCKER_CONFIG 로 설정 폴더를 바꾸는 것이다(사용자 ~/.docker 는 읽지도 고치지도 않는다). 사용자 컨텍스트의 엔드포인트는 설정 폴더에 있어 빈 폴더에서는 사라지므로 그 주소를 DOCKER_HOST 로 넘긴다.
 # 인증이 필요한 레지스트리에는 PUBLISH_DOCKER_CONFIG 로 자격이 든 폴더를 준다.
@@ -242,7 +275,46 @@ registry_push() {
     ctxh=$("$DOCKER" context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null | tr -d '\r' || true)
     [ -z "$ctxh" ] || [ -n "${DOCKER_HOST:-}" ] || export DOCKER_HOST="$ctxh"
   fi
-  REGISTRY_PUSH_OUT=$(DOCKER_CONFIG="$cfg" timeout "${PUBLISH_PUSH_TIMEOUT:-900}" "$DOCKER" push "$ref" 2>&1) || rc=$?
+  REGISTRY_PUSH_OUT=$(DOCKER_CONFIG="$cfg" timeout "$PUBLISH_PUSH_T" "$DOCKER" push "$ref" 2>&1) || rc=$?
   [ -z "$tmp" ] || rm -rf "$tmp"
   return $rc
+}
+# 올리고 확인한다(/v2/ 프로브 -> push -> digest 읽기 -> 레지스트리 HEAD 대조): registry_publish_ref <레지스트리 host:port> <서비스> <태그> <ref>
+# 성공하면 REGISTRY_DIGEST 에 digest, return 0. 실패하면 사유를 표준 오류에 내고 return 1 (호출자가 자기 종료 코드로 바꾼다: publish-image.sh 는 4, publish-images.sh 는 die).
+registry_publish_ref() {
+  local reg=$1 svc=$2 tag=$3 ref=$4 prc=0 out reghead
+  REGISTRY_DIGEST=""
+  curl -fsS -o /dev/null --connect-timeout "$PUBLISH_CONNECT_T" --max-time "$PUBLISH_PROBE_T" "$(registry_scheme "$reg")://$reg/v2/" 2>/dev/null || { echo "거부: 레지스트리가 응답하지 않는다(${PUBLISH_PROBE_T}초): $reg" >&2; return 1; }
+  registry_push "$ref" || prc=$?; out=$REGISTRY_PUSH_OUT
+  [ $prc != 124 ] || { echo "$out" | tail -3 >&2; echo "거부: push 시간 초과(${PUBLISH_PUSH_T}초, timeout 종료 코드 124): $ref (PUBLISH_PUSH_TIMEOUT 로 바꿀 수 있다)" >&2; return 1; }
+  [ $prc = 0 ] || { echo "$out" | tail -3 >&2; echo "거부: push 실패(종료 코드 $prc): $ref" >&2; return 1; }
+  REGISTRY_DIGEST=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
+  [ -n "$REGISTRY_DIGEST" ] || { echo "$out" | tail -3 >&2; echo "거부: digest 를 읽지 못했다: $ref" >&2; return 1; }
+  reghead=$(curl -fsSI --connect-timeout "$PUBLISH_CONNECT_T" --max-time "$PUBLISH_HEAD_T" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+      "$(registry_scheme "$reg")://$reg/v2/openit/$svc/manifests/$tag" 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p') || reghead=""   # HEAD 가 실패해도(pipefail) 아래의 불일치 사유 출력이 돌게 한다
+  [ "$reghead" = "$REGISTRY_DIGEST" ] || { echo "거부: 레지스트리 digest('$reghead')와 push 출력('$REGISTRY_DIGEST')이 다르다" >&2; REGISTRY_DIGEST=""; return 1; }
+}
+# 잠금 기록: lock_set <잠금 파일> <서비스> <digest> <revision> [<서비스> <digest> <revision> ...]
+# flock 으로 직렬화하고(동시 게시가 서로의 줄을 지우지 않게) 임시 파일에 쓴 뒤 바꿔 넣는다. 외부 이미지 줄은 그대로 둔다.
+# 결과가 지금 잠금과 같으면 아무것도 바꾸지 않고(history 도 없음) return 3(UNCHANGED), 기록 실패는 return 5, 바꿨으면 0.
+# history 파일 이름의 %N(나노초): 같은 초에 두 번 바꿔도 이전 잠금이 덮어써지지 않게 한다.
+lock_set() {
+  local lock=$1 tmp body; shift
+  [ -f "$lock" ] || : > "$lock"
+  (
+    flock 9 || exit 5
+    tmp=$(mktemp "$lock.XXXXXX") || exit 5; body="$tmp.body"
+    grep -v '^#' "$lock" > "$body" || true
+    while [ $# -ge 3 ]; do
+      local var; var=$(echo "$1" | tr 'a-z-' 'A-Z_')
+      { grep -v "^${var}_DIGEST=" "$body" | grep -v "^${var}_REVISION=" || true; printf '%s_DIGEST=%s\n%s_REVISION=%s\n' "$var" "$2" "$var" "$3"; } > "$body.n" && mv "$body.n" "$body" || { rm -f "$tmp" "$body" "$body.n"; exit 5; }
+      shift 3
+    done
+    sort "$body" -o "$body"
+    if [ "$(grep -v '^#' "$lock" | sort)" = "$(cat "$body")" ]; then rm -f "$tmp" "$body"; exit 3; fi
+    { echo "# 코드 축: 이미지 digest 잠금(D07). 손으로 고치지 않는다. publish-image(s).sh 와 rollback.sh 가 바꾼다."; cat "$body"; } > "$tmp" || { rm -f "$tmp" "$body"; exit 5; }
+    rm -f "$body"
+    if [ -s "$lock" ]; then mkdir -p "$(dirname "$lock")/history" && cp "$lock" "$(dirname "$lock")/history/$(date -u +%Y%m%dT%H%M%S%NZ).lock" || { rm -f "$tmp"; exit 5; }; fi
+    mv "$tmp" "$lock" || { rm -f "$tmp"; exit 5; }
+  ) 9>"$lock.lock"
 }

@@ -2,12 +2,12 @@
 # 게이트웨이(Caddy 내부 CA)의 루트 인증서를 꺼낸다. 다른 호스트의 추론 서버(compose.inference.yaml 의 INFERENCE_CA_FILE)와 키오스크·직원 PC 의 신뢰 저장소에 넣는 파일이다.
 # 사용: export-gateway-ca.sh [--project <컴포즈 프로젝트>] [--retries N] <출력 파일>      (-h/--help)
 #   --project  기본 $DEPLOY_PROJECT, 없으면 deploy. 컨테이너 이름 <프로젝트>-gateway-1
-#   --retries  기본 15 (1초 간격). 왜: Caddy 는 첫 기동 직후 내부 CA 를 만들기 때문에 컨테이너가 떠 있어도 파일이 잠시 없을 수 있다.
+#   --retries  기본 15 (대기 상한 초, 1초 간격으로 확인). 왜: Caddy 는 첫 기동 직후 내부 CA 를 만들기 때문에 컨테이너가 떠 있어도 파일이 잠시 없을 수 있다.
 # 출력 파일은 공개 인증서다(비밀키는 게이트웨이 볼륨에만 있고 이 스크립트는 읽지 않는다). 모드 644 로 쓴다. 공인 인증서(ACME)로 바꾼 뒤에는 필요 없다.
 # 왜 docker cp: 루트 인증서는 Caddy 데이터 볼륨(/data/caddy/pki/authorities/local/root.crt)에만 있고 HTTP 로 내지 않는다(runbook 9절).
 set -uo pipefail
 usage() { sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; }
-PROJECT=${DEPLOY_PROJECT:-deploy}; RETRIES=15; OUT=""
+PROJECT=${DEPLOY_PROJECT:-deploy}; RETRIES=15   # 초. 측정하지 않았다(D125의 측정 최악 값 없음): Caddy 는 첫 기동 때 내부 CA 를 만들며 e2e.sh 는 up --wait 직후 부른다. 판단 근거: 초 단위 작업이라 기존 15초 유지. 넘으면 이유와 함께 실패한다; OUT=""
 while [ $# -gt 0 ]; do case "$1" in
   -h|--help) usage; exit 0;;
   --project) [ $# -ge 2 ] || { echo "오류: --project 에는 값이 필요하다" >&2; exit 2; }; PROJECT=$2; shift 2;;
@@ -23,12 +23,9 @@ C="$PROJECT-gateway-1"; SRC="$C:/data/caddy/pki/authorities/local/root.crt"
 [ -d "$(dirname "$OUT")" ] || die "출력 폴더가 없다: $(dirname "$OUT")"
 TMP=$(mktemp "$OUT.XXXXXX") || die "출력 파일을 만들 수 없다: $OUT"
 trap 'rm -f "$TMP"' EXIT
-ok=0
-for i in $(seq 0 "$RETRIES"); do
-  if "$DOCKER" cp "$SRC" "$TMP" >/dev/null 2>&1 && grep -q '^-----BEGIN CERTIFICATE-----' "$TMP"; then ok=1; break; fi
-  [ "$i" -lt "$RETRIES" ] && sleep 1
-done
-[ $ok = 1 ] || die "게이트웨이 CA 루트를 가져오지 못했다($C, 시도 $((RETRIES+1))회). 게이트웨이가 떠 있고 TLS 사이트가 'tls internal' 인지 확인하라(공인 인증서면 이 파일이 없다)"
+# 준비 확인은 파일이 실제로 꺼내지고 인증서 형식인지다(컨테이너가 떠 있어도 Caddy 가 내부 CA 를 만들기 전에는 파일이 없다)
+fetch_ca() { "$DOCKER" cp "$SRC" "$TMP" >/dev/null 2>&1 && grep -q '^-----BEGIN CERTIFICATE-----' "$TMP"; }
+wait_ready "게이트웨이 CA 루트 $C" "$RETRIES" fetch_ca || die "게이트웨이 CA 루트를 가져오지 못했다($C, ${RETRIES}초). 게이트웨이가 떠 있고 TLS 사이트가 'tls internal' 인지 확인하라(공인 인증서면 이 파일이 없다)"
 chmod 644 "$TMP" && mv -f "$TMP" "$OUT" || die "출력 파일을 쓰지 못했다: $OUT"
 trap - EXIT
 echo "게이트웨이 CA 루트 인증서를 썼다: $OUT (공개 인증서)"
