@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 def dups(text: str):
     found = []
     class L(yaml.SafeLoader): pass
+    for t in ("!reset", "!override"): L.add_multi_constructor(t, lambda l, s, n: None)   # compose 확장 태그
     def cm(loader, node, deep=False):
         seen = set()
         for k, _ in node.value:
