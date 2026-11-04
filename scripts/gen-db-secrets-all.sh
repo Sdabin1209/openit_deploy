@@ -6,12 +6,14 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 D=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
-set -a; . "$DEPLOY_ROOT/locks/images.lock"; [ -f "$DEPLOY_ROOT/state/registry.env" ] && . "$DEPLOY_ROOT/state/registry.env"; set +a
+# 잠금·레지스트리 주소는 실행별 경로(DEPLOY_LOCK, DEPLOY_REGISTRY_ENV)다: E2E 는 임시 잠금에 digest 를 게시한다. 고정 경로만 읽으면 임시 잠금의 DB digest 를 못 본다(2026-11-05 E2E).
+LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; REGENV="${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"
+set -a; . "$LOCK"; [ -f "$REGENV" ] && . "$REGENV"; set +a
 DBS=("$@"); [ ${#DBS[@]} -gt 0 ] || DBS=(survey-db question-authoring-db ops-feedback-db release-gate-db identity-db)
 for svc in "${DBS[@]}"; do
   var=$(echo "$svc" | tr 'a-z-' 'A-Z_')_DIGEST; digest=${!var:-}
-  [ -n "$digest" ] || die "$var 가 locks/images.lock 에 없다(영역이 $svc 이미지를 낸 뒤 publish-images.sh)"
-  "$DEPLOY_PY" -W ignore -I "$DEPLOY_ROOT/scripts/gen-db-secrets.py" --image "${DEPLOY_REGISTRY:?state/registry.env}/openit/$svc@$digest" --db-host "$svc" \
+  [ -n "$digest" ] || die "$var 가 $LOCK 에 없다(영역이 $svc 이미지를 낸 뒤 publish-images.sh)"
+  "$DEPLOY_PY" -W ignore -I "$DEPLOY_ROOT/scripts/gen-db-secrets.py" --image "${DEPLOY_REGISTRY:?$REGENV 에 DEPLOY_REGISTRY 가 없다}/openit/$svc@$digest" --db-host "$svc" \
     --accounts-dir "$D/db-accounts/$svc" --urls-dir "$D/db-urls/$svc"
   for d in "$D/db-accounts/$svc" "$D/db-urls/$svc"; do
     find "$d" -type d -exec chmod 750 {} +; find "$d" -type f -exec chmod 640 {} +

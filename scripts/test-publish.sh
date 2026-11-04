@@ -101,6 +101,14 @@ check "변이 확인: DOCKER_CONFIG export 를 빼면 같은 build 가 자격증
 MUT="$DEPLOY_ROOT/scripts/.publish-images.mut-$ID.sh"
 sed "s|^source \"\$(dirname \"\$0\")/lib.sh\"|source $LMUT|" "$DEPLOY_ROOT/scripts/publish-images.sh" > "$MUT"
 check "변이 확인: DOCKER_CONFIG export 를 빼면 publish-images.sh 도 같은 상황에서 실패한다" bash -c "! grep -q 'scripts/lib.sh' $MUT && ! env DOCKER_CONFIG=$W/badcreds DEPLOY_IMAGES_ENV=$W/images.env bash $MUT"
+# DOCKER_CONTEXT 를 정해 둔 호스트: 그 컨텍스트는 사용자 설정 폴더에만 있어 deploy 전용 빈 설정에서는 이름을 찾지 못한다 -> lib.sh 가 엔드포인트를 DOCKER_HOST 로 옮기고 DOCKER_CONTEXT 를 지운다.
+mkdir -p "$W/ctxcfg"; CTXEP=$("$DOCKER" context inspect --format '{{.Endpoints.docker.Host}}' default 2>/dev/null | tr -d '\r')
+DOCKER_CONFIG="$W/ctxcfg" "$DOCKER" context create openit-test-ctx-$ID --docker "host=$CTXEP" >/dev/null 2>&1
+check "재현 조건: 사용자 컨텍스트(openit-test-ctx)는 deploy 전용 빈 설정에서는 찾을 수 없다" bash -c "! env -u DOCKER_HOST DOCKER_CONTEXT=openit-test-ctx-$ID DOCKER_CONFIG=$DEPLOY_ROOT/state/docker-config $DOCKER version >/dev/null 2>&1"
+check "DOCKER_CONTEXT 가 있어도 deploy 경로(lib.sh)의 docker 는 그 컨텍스트의 엔드포인트로 닿는다" bash -c "env -u DOCKER_HOST -u DEPLOY_DOCKER_CONFIG_SET DOCKER_CONFIG=$W/ctxcfg DOCKER_CONTEXT=openit-test-ctx-$ID bash -c 'source $DEPLOY_ROOT/scripts/lib.sh; [ -z \"\${DOCKER_CONTEXT:-}\" ] && \$DOCKER version --format {{.Server.Version}}'"
+LMUT2="$DEPLOY_ROOT/scripts/.lib.mut2-$ID.sh"; sed -e 's|^    _ctxh=$(docker context inspect.*$|    :|' -e 's|^  unset DOCKER_CONTEXT .*$|  :|' "$DEPLOY_ROOT/scripts/lib.sh" > "$LMUT2"   # 변이: 컨텍스트 처리(엔드포인트를 DOCKER_HOST 로 옮기고 DOCKER_CONTEXT 를 지운다) 두 줄을 뺀다
+check "변이 확인: 컨텍스트 엔드포인트를 옮기지 않으면(deploy 설정에 컨텍스트가 없다) 같은 호출이 실패한다" bash -c "! cmp -s $LMUT2 $DEPLOY_ROOT/scripts/lib.sh && ! env -u DOCKER_HOST -u DEPLOY_DOCKER_CONFIG_SET DOCKER_CONFIG=$W/ctxcfg DOCKER_CONTEXT=openit-test-ctx-$ID bash -c 'source $LMUT2; \$DOCKER version --format {{.Server.Version}}' >/dev/null 2>&1"
+rm -f "$LMUT2"; DOCKER_CONFIG="$W/ctxcfg" "$DOCKER" context rm -f openit-test-ctx-$ID >/dev/null 2>&1
 rm -f "$MUT" "$LMUT"
 check "check-compose.sh 가 이 잠금 형식을 받아들인다" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
 echo; if [ "$FAILS" = 0 ]; then echo "test-publish: 전부 통과"; else echo "test-publish: 실패 $FAILS건"; fi

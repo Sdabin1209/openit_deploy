@@ -216,8 +216,9 @@ chk "버전 표 드리프트 없음 (check-versions: 빌드된 이미지 라벨 
 # (삭제) 게이트웨이 노출 대조(check-exposure: Caddyfile 대 영역 Exposure)는 두지 않는다: 공개 입구 경로 표는 platform public-ingress 이미지가 같은 Exposure 선언에서 만든다(S9). 대조할 deploy 쪽 손으로 쓴 경로가 없다.
 # 자체 점검 묶음: scripts/self-checks.list 가 정본이다(scripts/run-self-checks.sh 도 같은 목록을 돈다).
 export DEPLOY_ROOT VENV
+# DOCKER_CONFIG 등은 deploy 전용 Docker 설정이다: lib.sh 를 source 하지 않는 시험(python 시험 등)도 사용자 ~/.docker 가 아니라 이 설정으로 docker 를 부르게 넘긴다.
 # 왜 깨끗한 환경: 단독 시험은 E2E 가 내보낸 값(DEPLOY_LOCK 임시 잠금, SECRETS_DIR, COMPOSE_EXTRA, STEP_CA_PORT …)이 없는 상태를 전제로 자기 입력을 스스로 정한다. 새어 들어가면 단독으로는 통과하는 시험이 E2E 안에서만 실패했다(분리 배치 플레이북, DEPLOY_LOCK). 필요한 것만 이름으로 넘긴다.
-_keep=(PATH HOME LANG LC_ALL TMPDIR USER DOCKER_HOST DOCKER_CONTEXT GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM DEPLOY_ROOT VENV E2E_PRECHECK_DONE DEPLOY_SKIP_DOCTOR)
+_keep=(PATH HOME LANG LC_ALL TMPDIR USER DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG DEPLOY_DOCKER_CONFIG DEPLOY_DOCKER_CONFIG_SET GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM DEPLOY_ROOT VENV E2E_PRECHECK_DONE DEPLOY_SKIP_DOCTOR)
 for _k in $(compgen -v | grep -E '^GIT_CONFIG_(KEY|VALUE)_[0-9]+$'); do _keep+=("$_k"); done
 _cleanenv=(); for _k in "${_keep[@]}"; do [ -n "${!_k+x}" ] && _cleanenv+=("$_k=${!_k}"); done
 while IFS=$'\t' read -r _d _c; do chk "$_d" env -i "${_cleanenv[@]}" bash -c "$_c"; done < <(bash "$DEPLOY_ROOT/scripts/run-self-checks.sh" --print)

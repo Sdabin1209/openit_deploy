@@ -13,6 +13,7 @@ if [ -z "${DEPLOY_DOCKER_CONFIG_SET:-}" ] || [ "${DEPLOY_DOCKER_CONFIG_SET}" != 
   if [ -z "${DOCKER_HOST:-}" ] && command -v docker >/dev/null 2>&1; then
     _ctxh=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null | tr -d '\r' || true); [ -z "$_ctxh" ] || export DOCKER_HOST="$_ctxh"; unset _ctxh
   fi
+  unset DOCKER_CONTEXT   # 컨텍스트 이름은 위에서 엔드포인트(DOCKER_HOST)로 옮겼다. 사용자가 DOCKER_CONTEXT 로 정해 둔 호스트에서는 deploy 전용 빈 설정 폴더에 그 컨텍스트가 없어 docker 가 실패한다
   if [ -n "${DEPLOY_DOCKER_CONFIG:-}" ]; then export DOCKER_CONFIG="$DEPLOY_DOCKER_CONFIG"
   else export DOCKER_CONFIG="$DEPLOY_ROOT/state/docker-config"; mkdir -p "$DOCKER_CONFIG"; [ -f "$DOCKER_CONFIG/config.json" ] || echo '{}' > "$DOCKER_CONFIG/config.json"; fi
   export DEPLOY_DOCKER_CONFIG_SET="$DOCKER_CONFIG"
