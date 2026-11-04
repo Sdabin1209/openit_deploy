@@ -42,7 +42,7 @@ setup_one() {
   # 대조할 커밋(실제 리포의 HEAD)을 git clone 한 사본 state/areas/<영역> 에서 돌린다(.gitignore 의 state/). 보고의 커밋은 실제 리포 HEAD 와 같다(setup_env_status 의 낡음 판정과 맞는다).
   local c=${SETUP_ENV_WORK:-$DEPLOY_ROOT/state/areas}/$a head; head=$(git -C "$WORKSPACE/$a" rev-parse HEAD) || return 1
   mkdir -p "$(dirname "$c")"
-  if [ -d "$c/.git" ]; then git -C "$c" fetch -q "$WORKSPACE/$a" && git -C "$c" checkout -q --detach "$head" || return 1
+  if [ -d "$c/.git" ]; then git -C "$c" fetch -q --tags --force "$WORKSPACE/$a" && git -C "$c" checkout -q --detach "$head" || return 1
   else rm -rf "$c"; git clone -q --no-hardlinks "$WORKSPACE/$a" "$c" && git -C "$c" checkout -q --detach "$head" || return 1; fi
   rc=0; out=$(cd "$c" && bash scripts/setup-env.sh) || rc=$?
   printf '%s\n' "$out" | sed '$d'

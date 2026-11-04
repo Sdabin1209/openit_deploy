@@ -41,6 +41,15 @@ out=$(bash "$HERE/prepare-areas.sh" --ws "$T" --no-self a-ok 2>&1); grep -q ran-
 chk "성공하는 영역의 보고를 검증해 state 에 모은다" 0 - a-ok
 [ ! -e "$T/a-ok/.venv" ] && [ -z "$(git -C "$T/a-ok" status --porcelain)" ] && echo "  ok   실제 영역 리포에는 .venv 도 변경도 생기지 않았다" || { echo "  FAIL 실제 영역 리포가 바뀌었다(간섭 결함)"; rc=1; }
 [ -f "$SETUP_ENV_WORK/a-ok/.venv/marker" ] && [ "$(git -C "$SETUP_ENV_WORK/a-ok" rev-parse HEAD)" = "$(git -C "$T/a-ok" rev-parse HEAD)" ] && echo "  ok   setup-env 는 사본(실제 HEAD 커밋)에서 돌았다" || { echo "  FAIL 사본에서 돌지 않았다"; rc=1; }
+# 태그 시험(2026-11-05 E2E 사전 점검 실패): 사본을 다시 맞출 때 원본에 새로 생긴 태그도 가져와야 한다(URL 로 하는 git fetch 는 태그를 따라오지 않는다). 영역 시험이 계약 태그(vX.Y.Z)를 사본에서 읽는다
+git -C "$T/a-ok" tag v9.9.9-prep-test
+bash "$HERE/prepare-areas.sh" --ws "$T" --no-self a-ok >/dev/null 2>&1
+[ "$(git -C "$T/a-ok" tag | sort)" = "$(git -C "$SETUP_ENV_WORK/a-ok" tag | sort)" ] && git -C "$SETUP_ENV_WORK/a-ok" tag | grep -qx v9.9.9-prep-test && echo "  ok   사본의 태그가 원본과 같다(새 태그를 가져온다)" || { echo "  FAIL 사본에 새 태그가 오지 않았다"; rc=1; }
+git -C "$T/a-ok" tag v9.9.9-prep-test2
+sed 's/fetch -q --tags --force/fetch -q/' "$HERE/prepare-areas.sh" | sed 's|^source "$(dirname "${BASH_SOURCE\[0\]}")/lib.sh"|source "'"$HERE"'/lib.sh"|' > "$T/prepare-areas.nofetchtags.sh"
+grep -q 'fetch -q "\$WORKSPACE' "$T/prepare-areas.nofetchtags.sh" || { echo "  FAIL 태그 변이를 만들지 못했다"; rc=1; }
+bash "$T/prepare-areas.nofetchtags.sh" --ws "$T" --no-self a-ok >/dev/null 2>&1
+git -C "$SETUP_ENV_WORK/a-ok" tag | grep -qx v9.9.9-prep-test2 && { echo "  FAIL 변이(--tags 없음)에서도 태그가 왔다: 시험이 태그를 못 잡는다"; rc=1; } || echo "  ok   변이(--tags 를 뺌)에서는 새 태그가 오지 않아 위 단언이 실패한다"
 # 왜 변이 사본을 $T(실행별 mktemp, 종료 때 지워진다)에 두나: 소스 폴더의 고정 이름 파일은 동시 실행끼리 서로 지우고 소스 트리를 더럽힌다
 MUT="$T/prepare-areas.mut.sh"
 # 변이: 사본 대신 실제 리포에서 돌리는 옛 방식이면 위 단언이 실패해야 한다
