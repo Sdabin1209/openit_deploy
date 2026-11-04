@@ -191,12 +191,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   while [ $((SECONDS - t0)) -lt $((mins * 60)) ]; do
     sc=$(curl -s -o /dev/null -m 5 -w '%{http_code}' --cacert "$(demo_ca)" "https://localhost:$gp/readyz" 2>/dev/null || true)   # status-code-ok: 게이트웨이 /readyz 는 상태 코드가 계약이다(200 준비됨, 503 아님)
     if [ "$sc" = 200 ]; then echo "survey-service 준비됨(게이트웨이 /readyz 200): 활성 릴리스 적재를 마쳤다. 위 주소에서 키오스크를 눌러 본다"; return 0; fi
-    ms=$("$DOCKER" exec "$P-model-serving-1" python -c 'import json,urllib.request,urllib.error
-try:
-    r=urllib.request.urlopen("http://127.0.0.1:8080/readyz",timeout=5); d=json.load(r)
-except urllib.error.HTTPError as e:
-    d=json.load(e)
-print(d.get("status"),"사유:",d.get("reason") or "-")' 2>/dev/null || echo "응답 없음")
+    ms="(사유는 영역 안을 읽지 않는다: docker compose -p $P logs model-serving 로 본다)"   # 왜: deploy 는 실행 중에 영역 안으로 들어가지 않는다(구조 규칙 1·6, CONVENTIONS 13절)
     echo "  [$(((SECONDS - t0) / 60))분 경과] model-serving /readyz: $ms ; gateway /readyz(survey-service 반영): ${sc:-없음}"
     sleep 30
   done
