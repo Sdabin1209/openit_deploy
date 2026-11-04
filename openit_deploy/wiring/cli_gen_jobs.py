@@ -24,9 +24,29 @@ SYSTEMD = pathlib.Path(__file__).resolve().parents[2] / "config" / "systemd"
 
 
 def period_seconds(svc: str):
+    """deploy 가 정한 기본 주기(config/systemd 타이머의 OnUnitActiveSec). 없으면 None"""
     import re
     m = re.search(r"^OnUnitActiveSec=(\d+)s", (SYSTEMD / f"{TIMERS[svc]}.timer").read_text(encoding="utf-8"), re.M)
     return int(m.group(1)) if m else None
+
+
+def check_r93(result: dict):
+    """RUNTIME R9.3: 시간 상한은 실행 주기보다 짧아야 한다. 어기면 거부한다(주기를 만드는 규칙이 빠지면 여기서 걸린다)"""
+    bad = [f"{svc}: 시간 상한 {v['x-openit-timeout-seconds']}초가 실행 주기 {v['x-openit-period-seconds']}초 이상이다(R9.3)" for svc, v in result["services"].items()
+           if v["x-openit-timeout-seconds"] >= v["x-openit-period-seconds"]]
+    if bad: raise SystemExit("\n".join(bad))
+
+
+def derived_units(svc: str, timeout: int, period: int) -> dict:
+    """영역이 선언한 시간 상한과 규칙으로 정한 주기로 만든 systemd 유닛 사본(config/systemd 의 기본 유닛에서): {파일 이름: 내용}"""
+    import re
+    base = TIMERS[svc]
+    tm = (SYSTEMD / f"{base}.timer").read_text(encoding="utf-8")
+    sv = (SYSTEMD / f"{base}.service").read_text(encoding="utf-8")
+    tm = re.sub(r"^OnUnitActiveSec=\d+s", f"OnUnitActiveSec={period}s", tm, flags=re.M)
+    sv = re.sub(r"^TimeoutStartSec=\d+", f"TimeoutStartSec={timeout}", sv, flags=re.M)
+    sv = re.sub(r"(job-metrics\.sh \S+) \d+", rf"\1 {period}", sv)
+    return {f"{base}.timer": tm, f"{base}.service": sv}
 
 
 def image_labels(image: str) -> dict:
@@ -62,15 +82,13 @@ def build(compose: dict, labels_of, validator_of) -> dict:
         if job is None:
             problems.append(f"{svc}: 선언에 잡 {name} 가 없다: {[j['name'] for j in decl['jobs']]}")
             continue
-        per = period_seconds(svc) if svc in TIMERS else None
-        eff = job.get("timeout_seconds", job_overlay.DEFAULT_TIMEOUT_SECONDS)
-        if per is not None and eff >= per:
-            problems.append(f"{svc}: 시간 상한 {eff}초가 실행 주기 {per}초 이상이다(RUNTIME R9.3: 주기보다 짧은 timeout_seconds 를 영역이 선언해야 한다)")
-            continue
-        jobs.append({"compose_service": svc, "declared": job})
+        base = period_seconds(svc) if svc in TIMERS else None
+        jobs.append({"compose_service": svc, "declared": job, **({"base_period_seconds": base} if base else {})})
     if problems:
         raise SystemExit("\n".join(problems))
-    return call(job_overlay, "JobOverlayRequest", "JobOverlayResult", {"jobs": jobs})
+    res = call(job_overlay, "JobOverlayRequest", "JobOverlayResult", {"jobs": jobs})
+    check_r93(res)
+    return res
 
 
 def main(argv, labels_of=image_labels) -> int:
@@ -83,6 +101,11 @@ def main(argv, labels_of=image_labels) -> int:
         return 0   # 잡 서비스가 없는 배치(서버를 나눈 한 쪽, 시험용 작은 compose)는 덧씌울 것이 없다
     res = build(compose, labels_of, validator)
     out = pathlib.Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
+    udir = out.parent / "systemd"; udir.mkdir(exist_ok=True)   # 선언한 상한과 규칙으로 정한 주기로 만든 유닛 사본(설치는 배포 몫: config/systemd 는 기본값이다)
+    for svc, v in res["services"].items():
+        if svc in TIMERS:
+            for name, body in derived_units(svc, v["x-openit-timeout-seconds"], v["x-openit-period-seconds"]).items():
+                (udir / name).write_text(body, encoding="utf-8")
     out.write_text(json.dumps(res, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(out)
     return 0

@@ -23,7 +23,7 @@ def labels(img): return {"io.openit.jobs": json.dumps(DECL[img])} if img in DECL
 class T(unittest.TestCase):
     def test_command_and_timeout_come_from_the_declaration(self):
         r = G.build(COMPOSE, labels, validator)["services"]
-        self.assertEqual(r["job-survey-purge"], {"command": ["python", "-m", "survey_service", "purge"], "x-openit-timeout-seconds": 120})
+        self.assertEqual(r["job-survey-purge"], {"command": ["python", "-m", "survey_service", "purge"], "x-openit-timeout-seconds": 120, "x-openit-period-seconds": 86400})
         self.assertEqual(r["job-release-gate-collect"]["command"], ["gate", "collect"])
         self.assertEqual(r["job-question-authoring-purge"]["x-openit-timeout-seconds"], 3600)   # R9.3 기본
         self.assertNotIn("gateway", r)
@@ -37,11 +37,35 @@ class T(unittest.TestCase):
             G.build(COMPOSE, lambda i: {"io.openit.jobs": json.dumps(bad[i])} if i in bad else {}, validator)
         self.assertIn("ops-feedback-job", str(e.exception))
 
-    def test_timeout_not_shorter_than_period_is_refused(self):   # R9.3: 상한은 주기보다 짧아야 한다(수집기 주기 600초, 기본 3600초면 거부)
-        d = json.loads(json.dumps(DECL)); d["img/g"]["jobs"][1].pop("timeout_seconds")
-        with self.assertRaises(SystemExit) as e:
-            G.build(COMPOSE, lambda i: {"io.openit.jobs": json.dumps(d[i])} if i in d else {}, validator)
-        self.assertIn("실행 주기 600초 이상", str(e.exception))
+    def test_period_is_made_by_the_rule_longer_than_the_declared_timeout(self):   # R9.3: 상한 600 = 기본 주기 600 이면 주기가 900 이 된다(상한보다 큰 가장 작은 5분 배수)
+        r = G.build(COMPOSE, labels, validator)["services"]
+        c = r["job-release-gate-collect"]
+        self.assertEqual((c["x-openit-timeout-seconds"], c["x-openit-period-seconds"]), (300, 600))
+        d = json.loads(json.dumps(DECL)); d["img/g"]["jobs"][1]["timeout_seconds"] = 600
+        r2 = G.build(COMPOSE, lambda i: {"io.openit.jobs": json.dumps(d[i])} if i in d else {}, validator)["services"]["job-release-gate-collect"]
+        self.assertEqual((r2["x-openit-timeout-seconds"], r2["x-openit-period-seconds"]), (600, 900))
+        self.assertGreater(r2["x-openit-period-seconds"], r2["x-openit-timeout-seconds"])
+        from openit_deploy.components import job_overlay as JO
+        self.assertEqual([JO.period_for(t, 0) for t in (1, 299, 300, 600, 3600)], [300, 300, 600, 900, 3900])   # 규칙: 상한보다 큰 가장 작은 300 배수
+        self.assertEqual(JO.period_for(100, 86400), 86400)   # 기본 주기가 더 길면 그대로
+
+    def test_mutation_without_the_rule_r93_check_refuses(self):
+        from openit_deploy.components import job_overlay as JO
+        orig = JO.period_for
+        try:
+            JO.period_for = lambda timeout, base: base   # 규칙을 뺀다
+            d = json.loads(json.dumps(DECL)); d["img/g"]["jobs"][1]["timeout_seconds"] = 600
+            with self.assertRaises(SystemExit) as e:
+                G.build(COMPOSE, lambda i: {"io.openit.jobs": json.dumps(d[i])} if i in d else {}, validator)
+            self.assertIn("R9.3", str(e.exception))
+        finally:
+            JO.period_for = orig
+
+    def test_derived_units_carry_timeout_and_period(self):
+        u = G.derived_units("job-release-gate-collect", 600, 900)
+        self.assertIn("OnUnitActiveSec=900s", u["openit-release-gate-collector.timer"])
+        sv = u["openit-release-gate-collector.service"]
+        self.assertIn("TimeoutStartSec=600", sv); self.assertRegex(sv, r"job-metrics\.sh \S+ 900")   # JobStale 의 기준(주기의 2배 + 60초)이 같은 주기에서 나온다
 
     def test_timers_never_catch_up_missed_runs(self):   # R10.12: 놓친 실행을 몰아서 하지 않는다(Persistent 없음), 잡은 oneshot 이라 겹치지 않는다
         for t in (ROOT / "config/systemd").glob("*.timer"):

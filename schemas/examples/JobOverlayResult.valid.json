@@ -1,1 +1,1 @@
-{"services": {"job-survey-purge": {"command": ["python", "-m", "survey_service", "purge"], "x-openit-timeout-seconds": 3600}}}
+{"services": {"job-survey-purge": {"command": ["python", "-m", "survey_service", "purge"], "x-openit-timeout-seconds": 3600, "x-openit-period-seconds": 86400}}}

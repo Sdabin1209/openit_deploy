@@ -265,6 +265,7 @@ class Declared(TypedDict):
 class Job1(TypedDict):
     compose_service: str
     declared: Declared
+    base_period_seconds: NotRequired[int]
 
 
 class JobOverlayRequest(TypedDict):
@@ -276,6 +277,7 @@ Services = TypedDict(
     {
         'command': List[str],
         'x-openit-timeout-seconds': int,
+        'x-openit-period-seconds': int,
     },
 )
 

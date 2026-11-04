@@ -15,7 +15,8 @@
     "type": "object",
     "required": [
      "command",
-     "x-openit-timeout-seconds"
+     "x-openit-timeout-seconds",
+     "x-openit-period-seconds"
     ],
     "additionalProperties": false,
     "properties": {
@@ -27,6 +28,10 @@
       }
      },
      "x-openit-timeout-seconds": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "x-openit-period-seconds": {
       "type": "integer",
       "minimum": 1
      }

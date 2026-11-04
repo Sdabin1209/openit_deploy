@@ -48,6 +48,11 @@
        }
       },
       "description": "이미지 라벨 io.openit.jobs(계약 JobsDeclaration)의 잡 하나. 계약 검증은 내는 쪽(wiring)이 끝냈다"
+     },
+     "base_period_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "deploy 가 정한 기본 실행 주기(초, systemd 타이머의 OnUnitActiveSec). 없으면 0 으로 본다. 실제 주기는 max(기본 주기, 선언 상한보다 큰 가장 작은 5분 배수)다(RUNTIME R9.3)"
      }
     }
    }
