@@ -11,6 +11,7 @@ E2E 시험 위험 규칙 파일이 계약 SurveyRiskRulesFile 을 따르고 E2E 
 deploy 설정 파일 중 계약 스키마가 있는 것은 계약 validator 를 통과한다 (config/·test/ 파일 분류 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_config_contracts.py"
 check-versions 자기 점검 :: bash "$DEPLOY_ROOT/scripts/test-check-versions.sh"
 게이트웨이 인증 비밀 자체 점검 (계정·역할·기기 토큰, caddy validate) :: bash "$DEPLOY_ROOT/scripts/test-gateway-auth.sh"
+기기 토큰 생성·추가·폐기 (gen-secrets.sh --test-fixtures, kiosk-add-device.sh; Caddy 불필요) :: bash "$DEPLOY_ROOT/scripts/test-kiosk-devices.sh"
 시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검) :: bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
 images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다) :: bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
 build-images 자체 점검 (가짜 영역 진입점: BuildImageRequest 값, 서비스->리포 대응, 결과 검증 실패는 빌드 실패) :: bash "$DEPLOY_ROOT/scripts/test-build-images.sh"
