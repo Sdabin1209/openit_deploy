@@ -14,8 +14,6 @@ CONTRACT = {
     "test/risk-rules.e2e.json": "SurveyRiskRulesFile",
 }
 OWN = {   # deploy 자신의 형식(계약 스키마 없음)
-    "config/exposure-hosts.json": "Caddyfile 상류 호스트 -> 서비스 이름 대응(check-exposure 입력, ADR 0043)",
-    "config/exposure-known-diffs.json": "알려진 노출 어긋남 목록과 이유(ADR 0043)",
     "config/verify-areas.yaml": "영역 -> 시험·E2E 단계 대응표(verify_area.py)",
 }
 

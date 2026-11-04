@@ -13,15 +13,15 @@ from jsonschema import Draft202012Validator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # 리포 루트(openit_deploy/wiring/ 의 두 단계 위)
-FOUNDATION = ["step-ca", "keycloak", "gateway"]   # 기반 요소(명세 "배치" 행). compose 에 있는 것만 요구한다
-# 기동 순서(명세): 영역 DB(<서비스>-db) -> step-ca -> keycloak -> 나머지. 각 단계는 그 서버에 있는 서비스만 올린다
+FOUNDATION = ["step-ca", "identity", "gateway"]   # 기반 요소(명세 "배치" 행). compose 에 있는 것만 요구한다
+# 기동 순서(명세): 영역 DB(<서비스>-db) -> step-ca -> identity -> 나머지. 각 단계는 그 서버에 있는 서비스만 올린다
 # 서버를 넘나드는 기동 단계(ADR 0061): 앞 단계가 준비된 뒤에 다음 단계를 올린다. 목록에 없는 서비스는 3단계(저장소·서버 서비스)에 든다
-STAGES = [["step-ca"], ["@db"], ["keycloak"],   # "@db": 이름이 -db 로 끝나는 영역 DB 전부(영역마다 자기 DB 컨테이너)
+STAGES = [["step-ca"], ["@db"], ["identity"],   # "@db": 이름이 -db 로 끝나는 영역 DB 전부(영역마다 자기 DB 컨테이너)
    # step-ca 가 먼저: 모든 서비스의 인증서(postgres-cert 포함)를 받으려면 CA 가 떠 있어야 한다(ADR 0060)
          
           ["release-gate", "question-authoring", "ops-feedback-migrate", "ops-feedback-ingest", "model-registry", "dataset-store"],
           ["survey-service", "model-serving"],
-          ["oauth2-proxy", "kiosk-frontend", "admin-console", "gateway"]]
+          ["identity-proxy", "kiosk-frontend", "admin-console", "gateway"]]
 DEFAULT_STAGE = 3
 def container_port(n):
     if n == "backup-store":
@@ -38,18 +38,18 @@ def db_services(compose):
 
 
 def dsn_db(compose, secret_name):
-    """DSN 비밀(db-<계정>[-app]-dsn)이 가리키는 영역 DB 서비스: 그 계정의 암호 비밀(db-<계정>-password)을 받는 DB"""
-    m = re.match(r"^db-(.+?)(-app)?-dsn$", secret_name)
-    if not m:
-        return None
-    for d in db_services(compose):
-        if "db-%s-password" % m.group(1) in names(compose["services"][d].get("secrets")):
-            return d
-    return None
+    """DB 접속 URI 비밀이 가리키는 영역 DB 서비스: 비밀 파일이 놓이는 경로 .../db-urls/<DB 서비스>/<계정>/<환경 변수 이름> 의 <DB 서비스>(scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다)"""
+    f = (compose.get("secrets") or {}).get(secret_name, {}).get("file", "")
+    m = re.search(r"/db-urls/([a-z0-9-]+)/", f)
+    return m.group(1) if m and m.group(1) in db_services(compose) else None
+
+
+# 사람 인증 서비스 사이의 호출(계약 3.4.12: 공개 입구는 identity·identity-proxy 를 부르고 identity-proxy 는 identity 를 부른다). 주소·경로는 platform 이미지가 정하므로 compose 환경에는 나타나지 않는다
+HUMAN_AUTH_CALLS = {"identity-proxy": ("identity",), "gateway": ("identity", "identity-proxy")}
 STEP_CA_BOUND = ("pki-root", "pki-tokens")   # step-ca 서버에서만 돈다: pki-tokens 는 프로비저너 비밀(step-ca-password)을 읽고 pki-root 는 키가 든 pki-ca 볼륨을 읽는다. 둘 다 step-ca 서버 밖으로 나가지 않는다(ADR 0061)
 PUBLISH_NET = "placement-publish"      # 내부 전용 네트워크에만 붙은 서비스가 호스트 포트를 열 수 있게 더하는 일반 네트워크
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
-DSN_RE = re.compile(r"^db-.*-dsn$")
+DSN_RE = re.compile(r"^(db-.*-dsn|identity-db-url)$")   # DB 접속 URI 비밀(compose 의 비밀 이름)
 URL_RE = re.compile(r"^(https?)://([a-z0-9][a-z0-9-]*)(?::(\d+))?(.*)$")   # 포트 생략 = https 의 443(서비스 TLS 사이드카가 받는 포트, ADR 0060)
 
 
@@ -228,6 +228,9 @@ def call_targets(p, compose, n, srv, owner):
         m = URL_RE.match(v)
         if m and m.group(2) in owner and owner[m.group(2)] != srv:
             out.add(m.group(2))
+    for tgt in HUMAN_AUTH_CALLS.get(n, ()):   # 사람 인증 호출은 이미지 안에서 정해져 환경에서 보이지 않는다
+        if tgt in owner and owner[tgt] != srv:
+            out.add(tgt)
     for x in names(svc.get("secrets")):
         if DSN_RE.match(x):
             d = dsn_db(compose, x)
@@ -365,12 +368,12 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
     secrets = sorted({s for n in local for s in names(compose["services"][n].get("secrets"))})
     configs = sorted({c for n in local for c in names(compose["services"][n].get("configs"))})
     pre = "${SECRETS_DIR:-./secrets}/"
-    files = []
+    files, name_of = [], {}
     for kind, ns in (("secrets", secrets), ("configs", configs)):
         for nm in ns:
             f = (compose.get(kind) or {}).get(nm, {}).get("file", "")
             if f.startswith(pre):
-                files.append(f[len(pre):])
+                files.append(f[len(pre):]); name_of[f[len(pre):]] = nm   # 파일 -> compose 비밀 이름(파일 이름은 환경 변수 이름이라 비밀 이름과 다르다)
     # DB 접속 비밀(db-*-dsn)의 호스트: postgres 가 다른 서버면 그 서버 주소와 게시 포트로 바꿔 이 서버용 파일을 새로 만든다(원본은 그대로)
     generated = []
     if out and secrets_dir:
@@ -379,7 +382,7 @@ def render(p, compose, host, compose_dir, secrets_dir=None, out=None):
         if mode:
             q = "?sslmode=%s&sslrootcert=%s" % (mode, p.get("db_sslrootcert", "/etc/openit/pki/root_ca.crt"))
         for f in files:
-            dbn = dsn_db(compose, os.path.basename(f)) if DSN_RE.match(os.path.basename(f)) else None
+            dbn = dsn_db(compose, name_of[f]) if DSN_RE.match(name_of[f]) else None
             if dbn and owner.get(dbn) and owner[dbn] != host:   # 그 계정의 영역 DB 가 다른 서버에 있을 때만 호스트 포트로 바꾼다
                 src = open(os.path.join(secrets_dir, f), encoding="utf-8").read()
                 dst = src.replace("@%s:5432/" % dbn, "@%s:%d/" % (dbn, ports[dbn])).rstrip("\n")

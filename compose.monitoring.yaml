@@ -43,8 +43,8 @@ services:
     read_only: true
     network_mode: none
     volumes_from: [gateway:ro]
-    command: ["export-root", "/out"]
-    volumes: ["gateway-root:/out"]
+    command: ["export-root", "/config"]   # 출력 폴더는 이미지가 VOLUME 으로 선언한 쓰기 폴더(/config)를 쓴다: PublicIngressEnv 에 내보내기 폴더 입력이 없다(계약 빈칸: 헤드에 보고)
+    volumes: ["gateway-root:/config"]
     depends_on:
       gateway: {condition: service_healthy}
   monitoring-root:   # 감시가 믿을 루트 모음(MonitoringEnv.MONITORING_ROOT_CA 는 여러 PEM 을 이어 붙인 파일을 받는다): 서비스 인증서 루트(pki-root) + 공개 입구 루트(gateway-root)

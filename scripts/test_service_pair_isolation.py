@@ -12,8 +12,11 @@ from compose_nets import nets  # noqa: E402   # network_mode 를 따라가 앱�
 
 S = C.S
 # 계약이 정한 호출 중 compose 서비스 사이에서 일어나지 않는 것(오프 컴포즈 호출자: model-lab, synthetic-data 는 compose 서비스가 아니다). 현재 없음.
-EXTRA = set()
-DB_OF = {"survey": "survey-db", "qa": "question-authoring-db", "ops_log": "ops-feedback-db", "ops_failure": "ops-feedback-db", "gate": "release-gate-db", "keycloak": "keycloak-db"}   # DB 계정 -> 영역 DB 서비스
+EXTRA = {   # compose 의 환경·설정에서는 보이지 않는 계약 호출(이미지 안에서 정해지거나 라벨 선언으로 마운트되는 설정)
+    frozenset(("identity-proxy", "identity")),   # 인증 확인 프록시가 토큰을 identity 에 교환한다: 주소는 이미지가 IDENTITY_PUBLIC_URL·내장 경로에서 만든다(계약 3.4.12 IdentityProxyEnv)
+    frozenset(("ops-feedback-ingest", "release-gate")),   # ops 잡(영역 pod 안)의 release-gate 호출(I4): 주소는 config/ops-feedback-job.yaml 이고 그 파일은 잡 선언 config 로 덧씌우기가 마운트한다(gen-jobs)
+}
+DB_OF = {"survey": "survey-db", "qa": "question-authoring-db", "ops_log": "ops-feedback-db", "ops_failure": "ops-feedback-db", "gate": "release-gate-db", "identity": "identity-db"}   # DB 계정 -> 영역 DB 서비스
 
 
 def scope(svcs):

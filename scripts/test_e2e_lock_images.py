@@ -21,7 +21,7 @@ class T(unittest.TestCase):
             need |= set(re.findall(r"\$\{([A-Z0-9_]+)_IMAGE:\?", (ROOT / f).read_text(encoding="utf-8")))
         third = {n for n in need if re.search(rf"^{n}_IMAGE=", LOCK, re.M)}   # 잠금 파일에 고정 줄이 있는 외부 이미지(영역 이미지는 <NAME>_DIGEST 로 E2E 가 게시한다)
         self.assertEqual(sorted(third - copied), [], "compose 가 요구하는 외부 이미지가 E2E 임시 잠금에 복사되지 않는다")
-        self.assertTrue({"KEYCLOAK", "OAUTH2_PROXY"} <= third)
+        self.assertTrue({"PAUSE", "UTIL"} <= third)   # 배포 도구 이미지(pause·util)는 deploy 가 고른다. Keycloak·oauth2-proxy·postgres 는 platform·영역 이미지가 안에 담는다(계약 3.4.12)
 
     def test_dc_unsets_shell_overrides_for_every_locked_image(self):
         lib = (ROOT / "scripts/lib.sh").read_text(encoding="utf-8")

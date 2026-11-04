@@ -10,21 +10,12 @@ ALLOW = {}
 bad = []
 for f in subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split():
     p = ROOT / f
-    if f.startswith(("build/", "docs/", "test/")) or p.suffix not in {".py", ".env", ".yaml", ".yml", ".json", ".sh", ""} and p.name != "Caddyfile" or f == "scripts/test_no_plaintext_addresses.py" or not p.is_file():
+    if f.startswith(("build/", "docs/", "test/")) or p.suffix not in {".py", ".env", ".yaml", ".yml", ".json", ".sh", ""} or f == "scripts/test_no_plaintext_addresses.py" or not p.is_file():
         continue
     for i, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         if line.lstrip().startswith("#"):
             continue
         if (PLAIN.search(line) and f not in ALLOW and "noegress" not in line) or NOVERIFY.search(line):   # noegress: 바깥으로 못 나가는지 보는 음성 시험(일부러 외부 평문 주소)
             bad.append(f"{f}:{i}: {(PLAIN.search(line) or NOVERIFY.search(line)).group(0)}")
-# 게이트웨이 Caddyfile 과 import 되는 조각의 모든 상류 지시자는 https:// 로 시작해야 한다. 스킴 없는 `이름:포트`는 Caddy 가 평문으로 해석한다(forward_auth 가 그렇게 남아 인증이 503 이 된 결함, ADR 0060)
-UPSTREAM = re.compile(r"^\s*(reverse_proxy|forward_auth|php_fastcgi)\s+(?!\{)(\S+)")
-for f in ["config/Caddyfile", *sorted(str(x.relative_to(ROOT)) for x in (ROOT / "config").glob("*.caddy")), *sorted(str(x.relative_to(ROOT)) for x in (ROOT / "config/gateway-tls").glob("*.caddy"))]:
-    for i, line in enumerate((ROOT / f).read_text(encoding="utf-8").splitlines(), 1):
-        if line.lstrip().startswith("#"):
-            continue
-        m = UPSTREAM.match(line)
-        if m and not m.group(2).startswith("https://"):
-            bad.append(f"{f}:{i}: {m.group(1)} {m.group(2)} (상류는 https:// 로 쓴다)")
 print("\n".join(bad) or "통과: 평문 주소·검증 끄기 없음")
 sys.exit(1 if bad else 0)

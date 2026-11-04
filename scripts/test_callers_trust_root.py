@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 _Y = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
 S = _Y["services"]
 CONFIGS = _Y.get("configs") or {}
-TRUST_ENV = ("SSL_CERT_FILE", "OAUTH2_PROXY_PROVIDER_CA_FILES")   # 서비스별 CA 파일 변수(oauth2-proxy 는 자기 변수를 쓴다)
+TRUST_ENV = ("SSL_CERT_FILE", "IDENTITY_ROOT_CA", "MONITORING_ROOT_CA")   # 서비스별 CA 파일 변수(oauth2-proxy 는 자기 변수를 쓴다)
 # 호출하지 않는 서비스: 사이드카·인증서 컨테이너·일회용은 서비스를 https 로 부르지 않는다(이름 값만 있다)
 SKIP_SUFFIX = ("-tls", "-cert", "-net")
 
@@ -40,7 +40,7 @@ def callers(svcs):
         hit = sorted({m for m in names if m != n and re.search(r"https://%s(?![A-Za-z0-9-])" % re.escape(m), txt)})
         if n == "gateway":   # 공개 입구(platform 이미지)의 상류는 영역 Exposure 선언에서 온다(이미지 라벨). compose 에서는 기다리는 영역 게이트웨이(<서비스>-gw)와 인증(keycloak·oauth2-proxy)으로 안다
             dep = set((s.get("depends_on") or {}).keys())
-            hit = sorted(set(hit) | {d[:-3] for d in dep if d.endswith("-gw") and d[:-3] in svcs} | {d for d in ("keycloak", "oauth2-proxy") if d in dep})
+            hit = sorted(set(hit) | {d[:-3] for d in dep if d.endswith("-gw") and d[:-3] in svcs} | {d for d in ("identity", "identity-proxy") if d in dep})
         if hit: out[n] = hit
     return out
 

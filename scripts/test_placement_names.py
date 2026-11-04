@@ -30,10 +30,10 @@ def build(groups):
 DBS = [s for s in ALL if s.endswith("-db") or s == "backup-store"]   # 영역 DB(<서비스>-db)와 백업 저장소(데이터 서버에 같이 둔다)   # 영역마다 자기 DB 컨테이너(<서비스>-db)
 SPLITS = {
     "multi-example": None,
-    "edge-vs-core": {"edge": ["gateway", "oauth2-proxy", "keycloak", "kiosk-frontend", "admin-console"],
-                     "core": [s for s in ALL if s not in ("gateway", "oauth2-proxy", "keycloak", "kiosk-frontend", "admin-console")]},
+    "edge-vs-core": {"edge": ["gateway", "identity-proxy", "identity", "kiosk-frontend", "admin-console"],
+                     "core": [s for s in ALL if s not in ("gateway", "identity-proxy", "identity", "kiosk-frontend", "admin-console")]},
     "db-alone": {"db": DBS + ["step-ca"], "rest": [s for s in ALL if s not in DBS + ["step-ca"]]},
-    "three-way": {"a": DBS + ["step-ca", "keycloak", "oauth2-proxy"],
+    "three-way": {"a": DBS + ["step-ca", "identity", "identity-proxy"],
                   "b": ["release-gate", "question-authoring", "ops-feedback-ingest", "model-registry", "dataset-store"],
                   "c": ["survey-service", "model-serving", "gateway", "kiosk-frontend", "admin-console"]},
 }

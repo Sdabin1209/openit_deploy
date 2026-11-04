@@ -9,7 +9,7 @@ LIB = (ROOT / "scripts/lib.sh").read_text(encoding="utf-8")
 class T(unittest.TestCase):
     def test_e2e_uses_canonical_list(self):
         self.assertRegex(E2E, r'PGDBS="\$PG_DBS"')
-        self.assertIn("keycloak", re.search(r'^PG_DBS="([^"]*)"', LIB, re.M).group(1))
+        self.assertIn("identity", re.search(r'^PG_DBS="([^"]*)"', LIB, re.M).group(1))
 
     def test_no_hardcoded_db_names_or_counts(self):
         self.assertNotRegex(E2E, r'PGDBS="[a-z_ ]+"', "데이터베이스 이름 목록 하드코딩")

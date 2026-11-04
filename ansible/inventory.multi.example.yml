@@ -3,15 +3,15 @@
 all:
   vars:
     placement_scheme: https
-    placement_ports: {step-ca: 19000, backup-store: 18443, survey-db: 15432, keycloak: 18080, ops-feedback-ingest: 18081, release-gate: 18082}
+    placement_ports: {step-ca: 19000, backup-store: 18443, survey-db: 15432, identity: 18080, ops-feedback-ingest: 18081, release-gate: 18082}
   hosts:
     data-1:
       ansible_host: 10.0.0.11
       placement_bind_address: 10.0.0.11
       placement_region: region-a
-      placement_services: [survey-db, question-authoring-db, ops-feedback-db, release-gate-db, keycloak-db, backup-store, step-ca, keycloak, question-authoring, ops-feedback-ingest, release-gate, model-registry, dataset-store]
+      placement_services: [survey-db, question-authoring-db, ops-feedback-db, release-gate-db, identity-db, backup-store, step-ca, identity, question-authoring, ops-feedback-ingest, release-gate, model-registry, dataset-store]
     app-1:
       ansible_host: 10.0.0.12
       placement_bind_address: 10.0.0.12
       placement_region: region-b
-      placement_services: [oauth2-proxy, gateway, kiosk-frontend, admin-console, survey-service, model-serving]
+      placement_services: [identity-proxy, gateway, kiosk-frontend, admin-console, survey-service, model-serving]

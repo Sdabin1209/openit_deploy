@@ -55,12 +55,12 @@ DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진
 # 사용: areas_list [--kind python,node,library,compose,docs] [--train] [--except 이름,이름]  -> 공백으로 이은 이름. 시험용 위치: AREAS_FILE
 areas_list() { "$DEPLOY_PY" -W ignore "$(dirname "${BASH_SOURCE[0]}")/areas.py" --file "${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}" "$@"; }
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름(영역 목록이 아니다: model-registry 는 model-lab 영역의 이미지)
-SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console area-gateway backup-store public-ingress step-ca monitoring"
+SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console area-gateway backup-store public-ingress step-ca monitoring identity identity-proxy identity-db survey-db question-authoring-db ops-feedback-db release-gate-db"
 # 선택 이미지: 기본 빌드·게시 흐름에 들어가지 않는다(약 13GB). build-images.sh --gpu 로 만든다 (compose.llm.yaml)
 SERVICES_OPTIONAL="model-serving-gpu"   # 선택 이미지: 기본 빌드에 넣지 않는다(13GB)
 # 서비스 -> 소스 리포·variant 대응(U42, 한 곳). build-images.sh 가 이것으로 영역 리포를 고르고 계약 BuildImageRequest 의 variant 를 채운다. 서비스 목록과 같은 자리에 둔다
-service_repo() { case "$1" in area-gateway|public-ingress|monitoring|backup-store|step-ca) echo platform;; model-registry) echo model-lab;; dataset-store) echo synthetic-data;; model-serving|model-serving-gpu) echo model-runtime;; *) echo "$1";; esac; }
-service_variant() { case "$1" in model-serving-gpu) echo gpu;; public-ingress|monitoring|backup-store|step-ca) echo "$1";; *) echo "";; esac; }
+service_repo() { case "$1" in area-gateway|public-ingress|monitoring|backup-store|step-ca|identity|identity-proxy|identity-db) echo platform;; survey-db) echo survey-service;; question-authoring-db) echo question-authoring;; ops-feedback-db) echo ops-feedback;; release-gate-db) echo release-gate;; model-registry) echo model-lab;; dataset-store) echo synthetic-data;; model-serving|model-serving-gpu) echo model-runtime;; *) echo "$1";; esac; }
+service_variant() { case "$1" in model-serving-gpu) echo gpu;; public-ingress|monitoring|backup-store|step-ca|identity|identity-proxy|identity-db) echo "$1";; survey-db|question-authoring-db|ops-feedback-db|release-gate-db) echo db;; *) echo "";; esac; }
 # build/images.env 의 선택 이미지(GPU) 기록을 유지해도 되는지: gpu_record_valid <기록 파일>. 유효하면 그 줄을 stdout 으로 내고 0, 아니면 이유를 stderr 로 내고 1.
 # 유효 = (1) 기록의 커밋이 현재 기준 model-runtime 태그(DEPLOY_MR_TAG)의 커밋과 같고 (2) 이미지가 로컬에 실제로 있다. 기록이 없으면 조용히 1.
 # 13GB 이미지를 따로 빌드한 사용자가 있어, 맞지 않는 기록은 버리되 이미지 자체는 지우지 않는다(디스크 회수는 사용자가 판단한다).
@@ -194,7 +194,7 @@ pg_container() {
   "$DOCKER" ps -q --filter "label=com.docker.compose.project=$1" --filter "label=com.docker.compose.service=${2:?DB 서비스 이름}" --filter status=running | head -1 | tr -d '\r'
 }
 PG_APP_DBS="ops_log ops_failure"   # 앱 계정(<이름>_app, DML만, L08)을 따로 두는 데이터베이스: 소유자 계정은 스키마를 만드는 admin migrate 전용
-PG_DBS="survey qa ops_log ops_failure gate keycloak"   # 데이터베이스 = 계정 이름(config/postgres/initdb/10-roles.sh 의 기본값과 같다)
+PG_DBS="survey qa ops_log ops_failure gate identity"   # 데이터베이스 = 계정 이름(config/postgres/initdb/10-roles.sh 의 기본값과 같다)
 
 # 비밀 파일 모드(docs/adr/0022-secret-file-permissions.md, 0054). compose 의 파일 secrets/configs 는 호스트 소유자·그룹·모드를 그대로 마운트하고 uid/gid/mode 옵션은 적용되지 않는다.
 # 컨테이너가 읽는 파일(compose.yaml 의 secrets/configs 가 가리키는 이름)은 640 + 파일 그룹 SECRETS_GID, 컨테이너는 group_add 로 그 그룹을 더해 읽는다(0054). 폴더는 700.

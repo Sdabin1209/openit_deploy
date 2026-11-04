@@ -129,33 +129,6 @@ class DbSecretsResult(TypedDict):
     url_files: Dict[str, Dict[str, str]]
 
 
-Role = str
-
-
-class Inspect(TypedDict):
-    labels: Optional[Dict[str, Any]]
-    exposed_ports: NotRequired[List[str]]
-    user: NotRequired[Optional[str]]
-
-
-class ExposureCheckRequest(TypedDict):
-    caddyfile: str
-    roles: List[Role]
-    hosts: Dict[str, str]
-    known: NotRequired[List[str]]
-    inspect: Dict[str, Inspect]
-
-
-class ExposureCheckResult(TypedDict):
-    status: Literal['MATCH', 'DIFF', 'UNVERIFIED']
-    new_diffs: List[str]
-    stale_known: List[str]
-    unverified: List[str]
-    held_count: int
-    notes: List[str]
-    services: int
-
-
 class GatewayEnv(TypedDict):
     GATEWAY_HOSTS: NotRequired[str]
     GATEWAY_HOST_NAMES: NotRequired[str]

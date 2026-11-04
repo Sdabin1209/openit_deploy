@@ -38,7 +38,7 @@ def name(cn): return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 ck = ec.generate_private_key(ec.SECP256R1())
 ca = x509.CertificateBuilder().subject_name(name("split-test-ca")).issuer_name(name("split-test-ca")).public_key(ck.public_key()).serial_number(1).not_valid_before(now).not_valid_after(now + datetime.timedelta(hours=2)).add_extension(x509.BasicConstraints(ca=True, path_length=None), True).sign(ck, hashes.SHA256())
 lk = ec.generate_private_key(ec.SECP256R1())
-names = ["survey-db", "keycloak", "gateway", "survey-service", "release-gate", "question-authoring"]
+names = ["survey-db", "identity", "gateway", "survey-service", "release-gate", "question-authoring"]
 leaf = x509.CertificateBuilder().subject_name(name("stub")).issuer_name(ca.subject).public_key(lk.public_key()).serial_number(2).not_valid_before(now).not_valid_after(now + datetime.timedelta(hours=2)).add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), False).sign(ck, hashes.SHA256())
 open(d + "/ca.pem", "wb").write(ca.public_bytes(serialization.Encoding.PEM))
 open(d + "/stub.crt", "wb").write(leaf.public_bytes(serialization.Encoding.PEM))
@@ -46,14 +46,14 @@ open(d + "/stub.key", "wb").write(lk.private_bytes(serialization.Encoding.PEM, s
 PYEOF
 chmod 644 "$T/config/certs/"*
 fi
-PORT_GATE=$(freeport); PORT_QA=$(freeport); PORT_PG=$(freeport)
-mkdir -p "$T/secrets/tokens" "$T/r" ; { echo 'UTIL_IMAGE=python:3.12-slim'; echo "SPLIT_SCHEME=$SCHEME"; [ -z "${SPLIT_IMAGE:-}" ] || echo "SPLIT_IMAGE=$SPLIT_IMAGE"; } > "$T/images.lock"   # 실제 이미지 참조는 잠금 파일(--env-file)로 준다
-printf 'postgresql://survey:x@survey-db:5432/survey\n' > "$T/secrets/tokens/db-survey-dsn"; echo x > "$T/secrets/tokens/db-survey-password"
+PORT_GATE=$(freeport); PORT_QA=$(freeport); PORT_PG=$(freeport); PORT_ID=$(freeport)
+mkdir -p "$T/secrets/tokens" "$T/secrets/db-urls/survey-db/survey" "$T/r" ; { echo 'UTIL_IMAGE=python:3.12-slim'; echo "SPLIT_SCHEME=$SCHEME"; [ -z "${SPLIT_IMAGE:-}" ] || echo "SPLIT_IMAGE=$SPLIT_IMAGE"; } > "$T/images.lock"   # 실제 이미지 참조는 잠금 파일(--env-file)로 준다
+printf 'postgresql://survey:x@survey-db:5432/survey\n' > "$T/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE"; echo x > "$T/secrets/tokens/db-survey-password"
 # 서버 주소: 컨테이너에서 이 PC 를 부르는 이름(host-gateway). 서버가 바뀌어도 이 값만 인벤토리에서 바뀐다
 # 서버 주소는 IP 여야 한다(extra_hosts <서비스 이름>:<주소>). 이 PC 에서는 컨테이너가 호스트를 보는 docker 기본 브리지의 게이트웨이 주소
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1)   # Docker Desktop(WSL2): host.docker.internal 의 IP
 [ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')   # 그 밖의 리눅스: 기본 브리지의 게이트웨이
-PORTS_YAML="{survey-db: $PORT_PG, release-gate: $PORT_GATE, question-authoring: $PORT_QA}"
+PORTS_YAML="{survey-db: $PORT_PG, release-gate: $PORT_GATE, question-authoring: $PORT_QA, identity: $PORT_ID}"
 CAVAR=""; [ "$SCHEME" != https ] || CAVAR="placement_ca_path: $T/config/certs/ca.pem"
 inv() { # inv <파일> <a의 서비스> <b> <c>
 cat > "$1" <<YML
@@ -77,17 +77,17 @@ all:
 YML
 }
 # (4) 잘못된 배치는 서버에 닿기 전에 거부된다
-A="[survey-db, keycloak, release-gate]"; B="[survey-service, gateway]"; C="[question-authoring]"
+A="[survey-db, identity, release-gate]"; B="[survey-service, gateway]"; C="[question-authoring]"
 reject() { # reject <이름> <기대 메시지> <a> <b> <c>
   inv "$T/bad-$1.yml" "$3" "$4" "$5"
   ! "$PY" scripts/placement.py validate "$T/bad-$1.yml" --compose test/split/compose.split.yaml 2>"$T/e" || bad "잘못된 배치($1)를 통과시켰다"
   grep -q "$2" "$T/e" || { cat "$T/e" >&2; bad "거부 사유($1)에 '$2' 가 없다"; }; ok "거부: $1"
 }
-reject dup "두 곳" "[survey-db, keycloak, release-gate, survey-service]" "[release-gate, gateway]" "$C"
-reject found "keycloak" "[survey-db, release-gate]" "[survey-service, gateway]" "$C"
-reject name "nonesuch" "[survey-db, keycloak, release-gate, nonesuch]" "$B" "$C"
-SAVE=$PORTS_YAML; PORTS_YAML="{survey-db: $PORT_PG, question-authoring: $PORT_QA}"; reject noport "release-gate.*placement_ports" "$A" "$B" "$C"
-PORTS_YAML="{survey-db: $PORT_PG, release-gate: $PORT_GATE, question-authoring: $PORT_QA, gateway: 19999}"; reject extraport "gateway.*필요 없는" "$A" "$B" "$C"
+reject dup "두 곳" "[survey-db, identity, release-gate, survey-service]" "[release-gate, gateway]" "$C"
+reject found "identity" "[survey-db, release-gate]" "[survey-service, gateway]" "$C"
+reject name "nonesuch" "[survey-db, identity, release-gate, nonesuch]" "$B" "$C"
+SAVE=$PORTS_YAML; PORTS_YAML="{survey-db: $PORT_PG, question-authoring: $PORT_QA, identity: $PORT_ID}"; reject noport "release-gate.*placement_ports" "$A" "$B" "$C"
+PORTS_YAML="{survey-db: $PORT_PG, release-gate: $PORT_GATE, question-authoring: $PORT_QA, identity: $PORT_ID, gateway: 19999}"; reject extraport "gateway.*필요 없는" "$A" "$B" "$C"
 PORTS_YAML=$SAVE
 # (3) 서버 1개 배치는 기존 up.sh 와 같다: 예시 인벤토리(서버 1개)의 override 는 비어 있다
 "$PY" scripts/placement.py render ansible/inventory.example.yml --host core-1 --out "$T/one" >/dev/null
@@ -109,14 +109,14 @@ timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run1.
 ok "플레이북 1회차 완료"
 ex() { docker exec "deploy-$ID-$1-$2-1" python -c "$3"; } # ex <서버> <서비스> <파이썬 식>
 H="import urllib.request,ssl,os;print(urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/healthz',timeout=3,context=ssl._create_unverified_context()).status)"
-for pair in a:survey-db a:keycloak a:release-gate b:survey-service b:gateway c:question-authoring; do
+for pair in a:survey-db a:identity a:release-gate b:survey-service b:gateway c:question-authoring; do
   [ "$(ex "${pair%%:*}" "${pair#*:}" "$H")" = 200 ] || bad "${pair#*:} 의 /healthz"; done; ok "세 묶음의 /healthz"
 C1="import urllib.request,ssl,os;print(urllib.request.urlopen(os.environ.get('STUB_SCHEME','http')+'://127.0.0.1:8080/call?env=%s',timeout=8,context=ssl._create_unverified_context()).read().decode())"
 r=$(ex b survey-service "${C1/\%s/SURVEY_RELEASE_READER_URL}"); [ "${r##* }" = 200 ] || bad "survey-service -> release-gate: $r"; ok "묶음 사이 호출 survey-service -> release-gate ($r)"
 case "$r" in "$SCHEME://release-gate:$PORT_GATE/"*) ok "상대 주소 = $SCHEME://<서비스 이름>:<게시 포트>, 이름은 extra_hosts 가 서버 주소로 돌림";; *) bad "주소 계산: $r";; esac
 r=$(ex a release-gate "${C1/\%s/GATE_I1_URL}"); [ "${r##* }" = 200 ] || bad "release-gate -> question-authoring: $r"; ok "묶음 사이 호출 release-gate -> question-authoring, 내부 전용 네트워크의 서비스를 게시 포트로 ($r)"
 # 다른 서버의 survey-db: DSN 의 호스트가 인벤토리 값으로 계산되고, 그 게시 포트에 닿는다
-DSN=$(cat "$T/r/b/secrets/tokens/db-survey-dsn")
+DSN=$(cat "$T/r/b/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE")
 case "$DSN" in *"@survey-db:$PORT_PG/survey"*) ok "survey-service 의 DSN 호스트 = 서비스 이름 survey-db + 게시 포트(extra_hosts 로 돌림)";; *) bad "DSN 호스트 계산";; esac
 case "$SCHEME" in https) case "$DSN" in *sslmode=verify-full*sslrootcert=*) ok "DSN sslmode=verify-full, sslrootcert";; *) bad "DSN 에 sslmode=verify-full 이 없다";; esac;; *) case "$DSN" in *sslmode*) bad "http 시험인데 DSN 에 sslmode";; esac;; esac
 S="import socket;socket.create_connection(('survey-db',$PORT_PG),timeout=5);print('connected')"
@@ -131,8 +131,8 @@ N="import socket;print(socket.getaddrinfo('release-gate',8080)[0][4][0])"
 [ "$(ex b survey-service "$N")" = "$HOSTADDR" ] || bad "survey-service 가 본 release-gate 의 주소가 서버 주소($HOSTADDR)가 아니다(같은 네트워크로 닿고 있다)"; ok "상대 서비스 이름이 서버 주소로 돌려짐(같은 네트워크가 아님)"
 [ "$(docker network ls --filter "name=deploy-$ID-" --format '{{.Name}}' | sed 's/_.*//' | sort -u | wc -l)" -ge 3 ] || bad "네트워크가 3개 미만"; ok "Docker 네트워크 3개 이상"
 # 비밀 권한 640, 다른 서버 몫은 배포되지 않는다
-M=$(stat -c %a "$T/r/b/secrets/tokens/db-survey-dsn"); [ "$M" = 640 ] || bad "비밀 파일 권한 $M"; ok "비밀 파일 640"
-[ ! -e "$T/r/a/secrets/tokens/db-survey-dsn" ] || bad "다른 서버의 비밀이 배포됐다"; ok "서버는 자기 몫의 비밀만 받는다"
+M=$(stat -c %a "$T/r/b/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE"); [ "$M" = 640 ] || bad "비밀 파일 권한 $M"; ok "비밀 파일 640"
+[ ! -e "$T/r/a/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE" ] || bad "다른 서버의 비밀이 배포됐다"; ok "서버는 자기 몫의 비밀만 받는다"
 # (5) 멱등
 timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -30 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
 if grep -E '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 ' ; then bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi; ok "플레이북 2회차 changed=0 (멱등)"

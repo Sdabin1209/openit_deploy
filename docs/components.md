@@ -10,7 +10,6 @@
 | --- | --- | --- |
 | 이미지 빌드·게시·digest 잠금·롤백·기동 | `scripts/*.sh`, `compose*.yaml` | 아니다(운영 절차, ADR 0045 "셸은 컴포넌트가 아니다") |
 | 이미지 라벨이 계약을 따르는지(게시 전 관문) | `image_label_check` | 예 |
-| 게이트웨이 노출이 라벨 선언과 같은지 | `exposure_check` | 예 |
 | 비밀 이름이 compose 와 영역 코드에서 맞는지 | `secret_name_check` | 예 |
 | 영역을 가로지르는 정적 일관성 | `consistency_check` | 예 |
 | deploy 내부 파일 형식(images.env, images.lock, verify-areas) | `internal_file_check` | 예 |
@@ -18,6 +17,7 @@
 | 영역 환경 보고(setup-env) 기록·판정 | `setup_env_record`, `setup_env_status` | 예 |
 | 영역 목록 읽기 | `area_list` | 예 |
 | 바뀐 영역의 확인 범위 계획 | `verify_plan` | 예 |
+| 영역 DB 가 선언한 계정의 비밀 파일 만들기 | `db_secrets` | 예 |
 | 영역이 선언한 잡의 명령 조립·실패 설명 | `job_select`, `job_command`, `job_overlay`, `job_failure_text` | 예 |
 | 추론 서버 측정(호출·집계) | `link_serving_probe`, `link_serving_info`, `serving_probe` | 예 |
 | 복구 검증(이웃 HTTP 로 다시 읽기) | `link_restore_verify` | 예 |
@@ -34,9 +34,9 @@
 | area_list | `openit_deploy/components/area_list.py` | AreaListRequest | AreaListResult | 영역 목록에서 조건(kind, 버전 열차, 제외)에 맞는 영역 이름을 고른다 |
 | config_contract_check | `openit_deploy/components/config_contract_check.py` | ConfigContractCheckRequest | ConfigContractCheckResult | 컨테이너에 주입·배치하는 설정·환경이 기동 전에 계약 스키마를 따르는지 판정한다 |
 | consistency_check | `openit_deploy/components/consistency_check.py` | ConsistencyCheckRequest | ConsistencyCheckResult | 영역을 가로지르는 정적 일관성 규칙(버전표, 예시 키 순서, 삭제된 이름 등)을 점검한다 |
-| exposure_check | `openit_deploy/components/exposure_check.py` | ExposureCheckRequest | ExposureCheckResult | Caddyfile 의 노출이 이미지 노출 선언(라벨 io.openit.exposure)과 같은지 대조한다 |
 | image_label_check | `openit_deploy/components/image_label_check.py` | ImageLabelCheckRequest | ImageLabelCheckResult | 이미지 라벨이 계약 ImageLabels(와 jobs·exposure 안쪽 JSON)를 따르는지 판정한다 |
 | internal_file_check | `openit_deploy/components/internal_file_check.py` | InternalFileCheckRequest | InternalFileCheckResult | images.env·images.lock·verify-areas.yaml 을 deploy 내부 스키마로 검증한다 |
+| db_secrets | `openit_deploy/components/db_secrets.py` | DbSecretsRequest | DbSecretsResult | 영역 DB 이미지가 선언한 계정(io.openit.database)에서 계정 암호 파일과 접속 URI 파일 내용을 만든다(계약 3.4.12) |
 | job_overlay | `openit_deploy/components/job_overlay.py` | JobOverlayRequest | JobOverlayResult | 이미지가 선언한 잡(io.openit.jobs)에서 compose 잡 서비스의 command 와 시간 한도를 만든다(S10) |
 | gateway_exposure | `openit_deploy/components/gateway_exposure.py` | GatewayExposureRequest | GatewayExposureResult | 영역 이미지의 Exposure 선언 라벨을 영역 게이트웨이에 마운트할 파일 내용으로 꺼낸다 |
 | job_command | `openit_deploy/components/job_command.py` | JobCommandRequest | JobCommandResult | 선택한 잡을 docker run 명령(argv)으로 조립한다 |

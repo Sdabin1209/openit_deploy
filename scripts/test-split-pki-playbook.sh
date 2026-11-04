@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 분리 배치의 인증서·DB 경로를 실제 플레이북(ansible/site.yml, stage.yml)으로 시험한다(ADR 0060, 0061). E2E 밖, 단독.
 # 가상 서버 2개 = compose 프로젝트 2개(서로 다른 Docker 망). 제품 compose.yaml 에서 아래 서비스만 뽑은 compose 로 돈다(제품 정의 그대로, 서비스 수만 줄임).
-#   data 서버: step-ca, pki-root, pki-tokens, release-gate-db, release-gate-db-cert, release-gate-db-reload   (실제 잠금 이미지)
+#   data 서버: step-ca, pki-root, pki-tokens, release-gate-db(영역 DB 이미지), release-gate-db-cert   (platform·영역 이미지)
 #   app 서버 : release-gate(응답만 하는 대역 앱), release-gate-cert, release-gate-gw(실제 인증서 컨테이너·platform 영역 게이트웨이 이미지)
 # 확인: (1) 토큰 전달 단계가 돌아 app 서버 토큰 볼륨에 release-gate.ott 가 640 으로 있다 (2) app 서버 -cert 가 extra_hosts step-ca:<호스트> + 게시 포트(STEP_CA_PORT)로 다른 망의 step-ca 에서
 #       서비스 이름 인증서를 받았다 (3) app 서버의 DSN(sslmode=verify-full)로 다른 망의 release-gate-db 에 접속하고 pg-tls 소유자는 999 다 (4) 2회차 changed=0
@@ -35,13 +35,17 @@ LOCK="$T/images.lock"; cp locks/images.lock "$LOCK"; export DEPLOY_LOCK="$LOCK" 
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK"); PGIMG=$(sed -n 's/^POSTGRES_IMAGE=//p' "$LOCK"); CAIMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$LOCK")
 # 비밀: PostgreSQL 비밀(gen-secrets --db-only)과 step-ca 비밀번호. 값은 출력하지 않는다
 mkdir -p "$T/secrets"; DEPLOY_NO_DOCKER=1 bash scripts/gen-secrets.sh --db-only "$T/secrets" >/dev/null
+# 영역 DB 계정 비밀: release-gate-db 이미지 라벨 io.openit.database 에서(계약 3.4.12). 시험 폴더라 모두가 읽게 둔다
+RGDB=$(awk '$1=="release-gate-db"{print $2}' "$ROOT/build/images.env"); [ -n "$RGDB" ] || { echo "FAIL: build/images.env 에 release-gate-db 가 없다(먼저 scripts/build-images.sh release-gate-db)" >&2; exit 1; }
+"$PY" -W ignore -I scripts/gen-db-secrets.py --image "$RGDB" --db-host release-gate-db --accounts-dir "$T/secrets/db-accounts/release-gate-db" --urls-dir "$T/secrets/db-urls/release-gate-db" >/dev/null
+chmod -R a+rX "$T/secrets/db-accounts" "$T/secrets/db-urls"
 ( umask 077; python3 -c 'import secrets;print(secrets.token_hex(24),end="")' > "$T/secrets/tokens/step-ca-password" ); chmod 640 "$T/secrets/tokens/step-ca-password"
 # 제품 compose 에서 서비스만 뽑는다. release-gate 는 앱만 대역(응답만 하는 파이썬)으로 바꾸고 인증서·사이드카·네트워크·sysctl·DB 비밀은 제품 정의 그대로 둔다
 mkdir -p "$T/gw"; echo '{"service":"release-gate","routes":[{"paths":["/"],"methods":["GET"],"auth":{"kind":"none"},"user_header":"strip"}],"egress":[]}' > "$T/gw/exposure.json"
 "$PY" - "$ROOT/compose.yaml" "$T/compose.subset.yaml" "$ROOT/build/images.env" "$T/gw/exposure.json" <<'PYEOF'
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-keep = ["step-ca", "pki-root", "pki-tokens", "release-gate-db", "release-gate-db-cert", "release-gate-db-reload", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-gw", "certs-perms"]
+keep = ["step-ca", "pki-root", "pki-tokens", "release-gate-db", "release-gate-db-cert", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-gw", "certs-perms"]
 svc = {k: c["services"][k] for k in keep}
 rg = svc["release-gate"]
 for k in ("env_file", "environment", "volumes", "stop_grace_period"):
@@ -52,6 +56,7 @@ imgs = {l.split()[0]: l.split()[1] for l in open(sys.argv[3], encoding="utf-8") 
 for k, v in svc.items():
     if "openit/step-ca@" in str(v.get("image", "")): v["image"] = imgs["step-ca"]
     if "openit/area-gateway@" in str(v.get("image", "")): v["image"] = imgs["area-gateway"]
+    if "openit/release-gate-db@" in str(v.get("image", "")): v["image"] = imgs["release-gate-db"]   # 영역 DB 이미지(계약 3.4.12)
 for v in svc["release-gate-gw"]["volumes"]:
     if isinstance(v, dict) and v.get("target") == "/etc/openit/exposure.json": v["source"] = sys.argv[4]
 rg["entrypoint"] = ["python", "-c", "import http.server as h\nclass H(h.BaseHTTPRequestHandler):\n    def do_GET(s):\n        s.send_response(200); s.end_headers(); s.wfile.write(b'ok')\n    def log_message(s, *a): pass\nh.ThreadingHTTPServer(('127.0.0.1', 8080), H).serve_forever()"]
@@ -141,7 +146,7 @@ XC="import urllib.request;print(urllib.request.urlopen('https://release-gate:$XP
 [ "$(docker run --rm --add-host release-gate:$XADDR -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "$XC" 2>&1)" = ok ] && ok "(R1.5) compose 밖 호출자가 내보낸 루트 + hosts 표만으로 https 검증을 통과해 앱 응답을 받는다" || bad "R1.5: 내보낸 파일만으로 호출 실패"
 docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/null 2>&1 && bad "R1.5: 루트 없이 호출이 통과했다" || ok "(R1.5) 루트 없이는 검증 실패(변이 확인)"
 O=$(docker run --rm --network none -v ${D}_release-gate-db-pgtls:/p:ro "$UTIL" stat -c %u /p/tls.key); [ "$O" = 999 ] || bad "release-gate-db-pgtls 의 tls.key 소유자 $O"; ok "(3) release-gate-db-cert 의 pg-tls 소유자 999"
-DSN="$T/r/app/secrets/tokens/db-gate-dsn"; grep -q "@release-gate-db:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
+DSN="$T/r/app/secrets/db-urls/release-gate-db/gate/GATE_DATABASE_URL_FILE"; grep -q "@release-gate-db:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
 ok "(3) app 서버 DSN = release-gate-db:$PGP, sslmode=verify-full"
 R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 release-gate-db 에 verify-full 접속 실패"; }
 [ "$R" = 1 ] && ok "(3) 다른 망의 release-gate-db 에 sslmode=verify-full 로 접속했다(서버 인증서 이름 release-gate-db, step-ca 루트 검증)"

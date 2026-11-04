@@ -29,6 +29,7 @@ class T(unittest.TestCase):
             if isinstance(env, list): env = dict(x.split("=", 1) if "=" in x else (x, "") for x in env)
             for k, v in env.items():
                 if not SECRET_NAME.search(k) or (name.split(":")[1], k) in EXEMPT: continue
+                if k.endswith("_SECRETS_DIR") and str(v).startswith("/run/secrets/"): continue   # 비밀 파일이 든 폴더의 경로(계약 AreaDatabaseEnv.DB_ACCOUNT_SECRETS_DIR): 값이 아니라 위치다
                 if not (k.endswith("_FILE") and str(v).startswith("/run/secrets/")): bad.append(f"{name}.{k}={str(v)[:40]}")
         self.assertEqual(bad, [], "비밀 이름의 환경 변수는 *_FILE 이고 /run/secrets/ 경로여야 한다(값 직접 금지, D84)")
 
