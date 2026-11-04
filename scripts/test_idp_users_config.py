@@ -15,7 +15,7 @@ class T(unittest.TestCase):
     def run_cfg(self, text, users=()):
         self.acc.write_text(text)
         for u in users: (self.d / "pw" / f"idp-test-{u}-password").write_text("secret-" + u + "\n")
-        return C.main(["--accounts", str(self.acc), "--passwords", str(self.d / "pw"), "--secrets-out", str(self.d / "so"), "--out", str(self.d / "cfg.json")])
+        return C.main(["--accounts", str(self.acc), "--passwords", str(self.d / "pw"), "--secrets-out", str(self.d / "so"), "--out", str(self.d / "cfg.json"), "--compose-out", str(self.d / "ov.json")])
 
     def test_real_accounts_file_passes_the_contract(self):
         text = (ROOT / "test/gateway-oidc/accounts.test.conf").read_text()
@@ -24,6 +24,14 @@ class T(unittest.TestCase):
         cfg = json.loads((self.d / "cfg.json").read_text()); self.assertEqual([u["username"] for u in cfg["users"]], names)
         self.assertNotIn("secret-", json.dumps(cfg))   # 값은 설정에 없다
         f = self.d / "so" / names[0]; self.assertEqual(stat.S_IMODE(f.stat().st_mode), 0o640); self.assertEqual(f.read_text(), "secret-" + names[0] + "\n")
+
+    def test_override_connects_one_secret_per_user_and_no_values(self):
+        self.assertEqual(self.run_cfg("a-e2e staff\nb-e2e operator\n", ["a-e2e", "b-e2e"]), 0)
+        ov = json.loads((self.d / "ov.json").read_text())
+        self.assertEqual(sorted(ov["secrets"]), ["idp-user-a-e2e", "idp-user-b-e2e"])
+        self.assertIn("idp-user-b-e2e", ov["services"]["job-identity-register-users"]["secrets"])
+        self.assertNotIn("secret-", json.dumps(ov))
+        cfg = json.loads((self.d / "cfg.json").read_text()); self.assertEqual(cfg["users"][0]["password_file"], "/run/secrets/idp-user-a-e2e")
 
     def test_dash_means_no_groups(self):
         self.assertEqual(self.run_cfg("wait-e2e -\n", ["wait-e2e"]), 0)

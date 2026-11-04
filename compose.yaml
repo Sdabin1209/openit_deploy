@@ -1626,9 +1626,7 @@ services:
     cpus: 0.5
     pids_limit: 128
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity@${IDENTITY_DIGEST:?locks/images.lock}
-    volumes:
-      - pki-root:/etc/openit/pki:ro
-      - {type: bind, source: "${IDP_USERS_SECRETS:-./state/idp-users-secrets}", target: /run/idp-users, read_only: true, bind: {create_host_path: false}}   # 사용자 첫 암호 파일(IdentityUsersConfig.password_file 이 가리킨다). scripts/idp-test-users.sh 가 시험 암호를 여기에 둔다
+    volumes: [pki-root:/etc/openit/pki:ro]   # 사용자 첫 암호 파일은 compose 비밀로 /run/secrets/idp-user-<사용자> 에 온다(scripts/idp-test-users.sh 가 만든 덧씌우기 파일, D84). 설정의 password_file 이 그 경로를 가리킨다
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
     environment: {<<: *commonenv, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, IDENTITY_ADMIN_PASSWORD_FILE: /run/secrets/identity-admin-password}
     secrets: [identity-admin-password]
@@ -1718,9 +1716,9 @@ services:
     cpus: 1.0
     pids_limit: 256
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-db@${IDENTITY_DB_DIGEST:?locks/images.lock}
-    volumes: [pki-root:/etc/openit/pki:ro]
+    volumes: [pki-root:/etc/openit/pki:ro]   # 접속 문자열 파일(IDENTITY_DB_URL_FILE)·루트(IDENTITY_ROOT_CA)는 계약 기본 경로(/run/secrets/identity-db-url, /etc/openit/pki/root_ca.crt)를 쓴다
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, IDENTITY_DB_URL_FILE: /run/secrets/identity-db-url, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
+    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
     secrets: [identity-db-url, backup-identity-credentials, backup-identity-repo-password]
     networks: [db-identity, backup-identity]
     security_opt: ["no-new-privileges:true"]
@@ -1736,9 +1734,9 @@ services:
     cpus: 1.0
     pids_limit: 256
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-db@${IDENTITY_DB_DIGEST:?locks/images.lock}
-    volumes: [pki-root:/etc/openit/pki:ro]
+    volumes: [pki-root:/etc/openit/pki:ro]   # 접속 문자열 파일(IDENTITY_DB_URL_FILE)·루트(IDENTITY_ROOT_CA)는 계약 기본 경로(/run/secrets/identity-db-url, /etc/openit/pki/root_ca.crt)를 쓴다
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, IDENTITY_DB_URL_FILE: /run/secrets/identity-db-url, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
+    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
     secrets: [identity-db-url, backup-identity-credentials, backup-identity-repo-password]
     networks: [db-identity, backup-identity]
     security_opt: ["no-new-privileges:true"]
