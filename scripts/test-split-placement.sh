@@ -135,5 +135,5 @@ M=$(stat -c %a "$T/r/b/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE
 [ ! -e "$T/r/a/secrets/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE" ] || bad "다른 서버의 비밀이 배포됐다"; ok "서버는 자기 몫의 비밀만 받는다"
 # (5) 멱등
 timeout 500 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -30 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
-if grep -E '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 ' ; then bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi; ok "플레이북 2회차 changed=0 (멱등)"
+if grep -E '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 ' ; then grep -a -B1 "^changed:" "$T/run2.log" | cut -c1-200 >&2; bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi; ok "플레이북 2회차 changed=0 (멱등)"
 echo "PASS: 분리 배치 시험 (scheme=$SCHEME, 이미지=${SPLIT_IMAGE:-python:3.12-slim})"
