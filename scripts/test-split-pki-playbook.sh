@@ -46,7 +46,7 @@ mkdir -p "$T/gw"; echo '{"service":"release-gate","routes":[{"paths":["/"],"meth
 "$PY" - "$ROOT/compose.yaml" "$T/compose.subset.yaml" "$ROOT/build/images.env" "$T/gw/exposure.json" <<'PYEOF'
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-keep = ["step-ca", "pki-root", "pki-tokens", "release-gate-db", "release-gate-db-cert", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-gw", "certs-perms"]
+keep = ["step-ca", "pki-root", "pki-tokens", "release-gate-db", "release-gate-db-cert", "release-gate-net", "release-gate", "release-gate-cert", "release-gate-gw"]
 svc = {k: c["services"][k] for k in keep}
 rg = svc["release-gate"]
 for k in ("env_file", "environment", "volumes", "stop_grace_period"):

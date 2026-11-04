@@ -366,7 +366,6 @@ services:
     volumes: ["pki-ca:/home/step:ro", "pki-root:/out"]
     networks: [pki]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
   pki-tokens:   # 서비스마다 일회용 토큰(OTT, 수명 5분 = step 기본)을 발급해 pki-tokens 볼륨에 둔다. 프로비저너 비밀번호는 이 잡만 읽는다(인증서 컨테이너는 읽지 않는다). 다른 서버의 서비스는 이 토큰 파일을 배치 도구가 그 서버에 전달한다
     restart: "no"
@@ -381,13 +380,11 @@ services:
     volumes: ["pki-tokens:/tokens", "pki-root:/etc/openit/pki:ro"]
     networks: [pki]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
   survey-service-cert:   # survey-service 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -396,7 +393,6 @@ services:
   question-authoring-cert:   # question-authoring 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -405,7 +401,6 @@ services:
   ops-feedback-cert:   # ops-feedback 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -414,7 +409,6 @@ services:
   release-gate-cert:   # release-gate 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -423,7 +417,6 @@ services:
   model-serving-cert:   # model-serving 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -432,7 +425,6 @@ services:
   model-registry-cert:   # model-registry 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -441,7 +433,6 @@ services:
   dataset-store-cert:   # dataset-store 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -450,7 +441,6 @@ services:
   admin-console-cert:   # admin-console 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -459,7 +449,6 @@ services:
   kiosk-frontend-cert:   # kiosk-frontend 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -470,14 +459,12 @@ services:
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-identity:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
   identity-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity-proxy, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-identity-proxy:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
   survey-service-gw:   # survey-service 의 영역 게이트웨이(platform 이미지): https://survey-service 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
@@ -582,7 +569,6 @@ services:
     volumes: ["survey-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -623,7 +609,6 @@ services:
     volumes: ["question-authoring-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -664,7 +649,6 @@ services:
     volumes: ["ops-feedback-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -705,7 +689,6 @@ services:
     volumes: ["release-gate-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -746,7 +729,6 @@ services:
     volumes: ["identity-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
@@ -776,22 +758,9 @@ services:
     environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: backup-store, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-backup-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
-      step-out-perms: {condition: service_completed_successfully}
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-  backup-store-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 저장소(uid 1000)가 못 쓴다
-    image: ${UTIL_IMAGE:?locks/images.lock}
-    user: "0:0"
-    entrypoint: ["chown", "-R", "65534:65534", "/data"]
-    restart: "no"
-    cap_drop: ["ALL"]
-    cap_add: ["CHOWN", "DAC_OVERRIDE"]
-    security_opt: ["no-new-privileges:true"]
-    read_only: true
-    network_mode: none
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["backup-store-data:/data"]
   backup-store:   # 영역 백업 저장소(platform backup-store 이미지, restic REST, --private-repos: 자격의 사용자 이름이 곧 자기 저장소 경로, TLS 443, HTTP 기본 인증; append-only 가 아니다: 영역 백업 잡이 백업 직후 forget --prune 으로 보존 상한을 지킨다, 헤드 결정·ops-feedback ADR 0032): 영역마다 다른 자격·경로·저장소 암호(RUNTIME R10.1)
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/backup-store@${BACKUP_STORE_DIGEST:?locks/images.lock}
     restart: unless-stopped
@@ -827,32 +796,7 @@ services:
       backup-pki: {aliases: [backup-store]}
     depends_on:
       backup-store-cert: {condition: service_healthy}
-      backup-store-perms: {condition: service_completed_successfully}
 
-  step-out-perms:   # 일회용: 인증서·토큰·루트 출력 볼륨(새 이름 있는 볼륨은 root 소유)을 이미지 사용자가 쓰게 모드만 연다(0777). deploy 는 이미지의 uid 를 모른다(3.4.17, 구조 규칙 1): 쓰는 쪽만 읽기·쓰기로 마운트하고 읽는 쪽은 모두 읽기 전용이며, 키 파일은 이미지가 0640 + STEP_CERT_GID 로 만든다
-    image: ${UTIL_IMAGE:?locks/images.lock}
-    user: "0:0"
-    entrypoint: ["sh", "-c", "chmod 0777 /c/*"]
-    restart: "no"
-    cap_drop: ["ALL"]
-    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
-    security_opt: ["no-new-privileges:true"]
-    read_only: true
-    network_mode: none
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["certs-identity:/c/identity", "certs-identity-proxy:/c/identity-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback:/c/ops-feedback", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend", "survey-db-pgtls:/c/survey-db-pgtls", "question-authoring-db-pgtls:/c/question-authoring-db-pgtls", "ops-feedback-db-pgtls:/c/ops-feedback-db-pgtls", "release-gate-db-pgtls:/c/release-gate-db-pgtls", "identity-db-pgtls:/c/identity-db-pgtls"]
-  gateway-root-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 공개 입구(uid 10001)가 루트 인증서(출력 마운트)를 못 쓴다
-    image: ${UTIL_IMAGE:?locks/images.lock}
-    user: "0:0"
-    entrypoint: ["chown", "10001:10001", "/o"]
-    restart: "no"
-    cap_drop: ["ALL"]
-    cap_add: ["CHOWN", "DAC_OVERRIDE"]
-    security_opt: ["no-new-privileges:true"]
-    read_only: true
-    network_mode: none
-    logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["gateway-root:/o"]
   gateway:
     <<: *hardening
     mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
@@ -866,7 +810,6 @@ services:
     secrets: [{source: gateway-tls-key, target: /etc/openit/ingress-tls/tls.key}, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:   # 게이트웨이가 상류로 부르는 서비스는 모두 준비된 뒤에 뜬다: 앱과 그 TLS 사이드카가 둘 다 healthy (준비 전 요청은 503 이 된다, 정적 점검이 지킨다)
-      gateway-root-perms: {condition: service_completed_successfully}
       kiosk-frontend: {condition: service_healthy}
       kiosk-frontend-gw: {condition: service_healthy}
       survey-service: {condition: service_healthy}
