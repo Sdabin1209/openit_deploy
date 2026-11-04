@@ -46,7 +46,7 @@ detect_docker() {
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
 DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.12}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
-DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.20}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.21}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.18}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
@@ -74,17 +74,6 @@ gpu_record_valid() {
   printf '%s\n' "$rec"
 }
 # 이미지 이름은 영역 이름과 같다. 로컬 레지스트리 안의 저장소 이름은 openit/<영역>.
-# CSRF 방어가 허용하는 호스트 이름(L20, ADR 0056): GATEWAY_HOSTS("호스트:포트, ...")에서 포트를 뗀 이름을 Caddyfile 식에 그대로 넣을 따옴표 목록으로 만든다. 직접 정하지 않는다(인증서 이름과 같은 한 곳에서 나온다)
-# 이름 규칙은 계약 밖 deploy 내부 스키마 schemas/GatewayEnv 의 GATEWAY_HOSTS 패턴과 같다. 어기면 따옴표·식을 깨뜨릴 수 있어 여기서 멈춘다
-gateway_host_names() {
-  local h out="" list=${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
-  for h in ${list//,/ }; do
-    h=${h%:*}; [[ "$h" =~ ^[A-Za-z0-9.-]+$ ]] || die "GATEWAY_HOSTS 의 호스트 이름 규칙 위반(영문·숫자·.·- 만): '$h'"
-    out+="${out:+, }\"$h\""
-  done
-  [ -n "$out" ] || die "GATEWAY_HOSTS 가 비었다"
-  echo "$out"
-}
 # 밖에서 보이는 주소(U82, ADR 0057): 첫 GATEWAY_HOSTS 이름 + 밖에 보이는 HTTPS 포트(GATEWAY_PUBLIC_TLS_PORT, 기본 8443; 443 이면 생략). Keycloak 의 발급자(iss)와 oauth2-proxy 의 로그인·콜백 주소가 이 한 곳에서 나온다.
 # 사람 화면(직원·승인·검토·저작·admin)은 이 이름으로 연다: 다른 이름으로 열면 로그인 쿠키가 이 이름에만 생긴다
 gateway_public_url() {
@@ -125,9 +114,6 @@ dc() { # dc <project> <compose args...>
   if [ -z "${GEN_STACK_ACTIVE:-}" ] && [ -z "${DEPLOY_NO_STACK_FILES:-}" ] && [ -f "$DEPLOY_ROOT/scripts/gen-gateways.py" ] && [ -n "${DOCKER:-}" ] && case " $* " in *" up "*|*" run "*|*" create "*) true;; *) false;; esac; then
     GEN_STACK_ACTIVE=1 gen_stack_files "$project" || die "이미지 라벨에서 배치 입력(영역 게이트웨이 exposure.json, 잡 덧씌우기)을 만들지 못했다"
   fi
-  # Keycloak realm 가져오기 파일(비밀 값 포함)은 비밀 폴더에 있다(SECRETS_DIR/keycloak-realm.json). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만들어 버리므로, 비밀이 있고 파일이 없으면 만든다(up.sh 는 매번 다시 만든다, ADR 0057)
-  local sd=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}
-  [ -f "$sd/keycloak-realm.json" ] || [ ! -s "$sd/tokens/oauth2-proxy-client-secret" ] || [ ! -s "$sd/tokens/openit-initial-admin-password" ] || bash "$DEPLOY_ROOT/scripts/gen-keycloak-realm.sh" "$sd/keycloak-realm.json" >/dev/null
   local files=(-f "$DEPLOY_ROOT/compose.yaml")
   if [ -n "${COMPOSE_EXTRA:-}" ]; then
     for f in $COMPOSE_EXTRA; do files+=(-f "$f"); done

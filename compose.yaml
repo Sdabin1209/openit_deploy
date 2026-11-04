@@ -36,23 +36,6 @@ x-area-gateway: &areagw   # 영역 게이트웨이(platform 이미지, ADR 0063)
   group_add: *secretgid
   healthcheck: {test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/443"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}
 
-x-tls-sidecar: &tlssidecar   # 서비스 TLS 사이드카(ADR 0060): Caddy 공식 이미지(GATEWAY_IMAGE 와 같은 digest). 앱의 네트워크 네임스페이스에 붙어(network_mode: service:<앱>) <서비스>-cert 가 step-ca 에서 받은 파일 인증서로 TLS 를 끝내 127.0.0.1 의 앱으로 넘긴다(ACME 도전이 아니다: 서버를 나눠도 사이드카 -> step-ca 경로 하나면 된다)
-  image: ${GATEWAY_IMAGE:?locks/images.lock}
-  user: "1000:1000"   # 왜 1000: <서비스>-cert(step 사용자)가 쓴 키 파일(0600)을 읽어야 한다. 443 은 추가 capability 대신 앱(네임스페이스 소유자)의 sysctl net.ipv4.ip_unprivileged_port_start=0 이 연다
-  restart: unless-stopped
-  security_opt: ["no-new-privileges:true"]
-  cap_drop: ["ALL"]
-  entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --force --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]   # 왜 복사: caddy 바이너리의 파일 권한(cap_net_bind_service)이 cap_drop ALL 에서 exec 를 막는다(측정함). 인증서가 갱신되면(<서비스>-cert 의 renew 데몬) 60초 안에 caddy reload --force (설정이 그대로면 reload 가 건너뛰어 새 인증서를 못 쓴다, 실험 C6)
-  read_only: true
-  tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
-  mem_limit: 64m   # 측정 안 함(시작값)
-  cpus: 0.25
-  pids_limit: 64
-  logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-  configs: [{source: tls-sidecar, target: /etc/caddy/Caddyfile}]
-  group_add: *secretgid   # L02(ADR 0054): 설정 파일도 640 + 이 그룹으로 읽는다
-  healthcheck: {test: ["CMD", "nc", "-z", "127.0.0.1", "443"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}
-
 x-certinit: &certinit   # <서비스>-cert: step 사용자(uid 1000)가 인증서 볼륨(/home/step 에 마운트해 소유자 상속)에 쓴다
   restart: unless-stopped
   image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -176,24 +159,8 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   identity-db-pgtls:   # identity-db 서버 인증서·키(step-ca 발급)
 
 configs:
-  gateway-tls-internal:
-    file: ${CONFIG_DIR:-./config}/gateway-tls/internal.caddy
-  gateway-tls-files:
-    file: ${CONFIG_DIR:-./config}/gateway-tls/files.caddy
-  gateway-tls-acme:
-    file: ${CONFIG_DIR:-./config}/gateway-tls/acme.caddy
-  gateway-tls-cert:   # 공개 인증서(비밀 아님)
-    file: ${GATEWAY_TLS_CERT_FILE:-./config/gateway-tls/unused.pem}
-  tls-sidecar:
-    file: ${CONFIG_DIR:-./config}/tls-sidecar.caddy
-  gateway-caddyfile:
-    file: ${CONFIG_DIR:-./config}/Caddyfile
-  gateway-auth:
-    file: ${CONFIG_DIR:-./config}/gateway-auth.caddy   # 개별 계정 인증 블록(해시)과 계정 -> 역할(staff, operator, release-approver, reviewer) 매핑(비밀, D85 E절)
-  gateway-device-tls:
-    file: ${DEVICE_TLS_CONF:-./config/device-tls.caddy}   # 클라이언트 인증서 검증 조각(기본은 꺼짐, ADR 0040)
-  gateway-device-ca:
-    file: ${DEVICE_CA_FILE:-./config/device-ca.pem}   # 키오스크 기기 인증서의 신뢰 CA(비밀 아님)
+  gateway-tls-cert:   # 공개 인증서(비밀 아님). files 모드(GATEWAY_TLS_MODE=files)에서만 쓰인다(계약 PublicIngressEnv.INGRESS_TLS_DIR 의 tls.crt)
+    file: ${GATEWAY_TLS_CERT_FILE:-./config/unused.pem}
 
 # 비밀(D84): 토큰·salt는 환경 변수가 아니라 파일로 마운트한다(/run/secrets/<이름>, 읽기 전용). 서비스에는 NAME_FILE=/run/secrets/<이름> 경로만 환경 변수로 준다(경로는 비밀이 아니다).
 # 파일은 scripts/gen-secrets.sh 가 ${SECRETS_DIR}/tokens/<이름> 에 만든다(값 하나, 목록 값은 서비스가 받는 형식 그대로 한 줄).
@@ -202,7 +169,7 @@ configs:
 #   db-<이름>-dsn(접속 문자열)은 소유 서비스가 영역이 PostgreSQL로 바뀔 때 마운트한다(이름 규칙은 docs/RUN.md 4-1-1).
 secrets:
   gateway-tls-key:     # mode=files 일 때 인증서 키(비밀 파일, D84). 아니면 빈 파일
-    file: ${GATEWAY_TLS_KEY_FILE:-./config/gateway-tls/unused.pem}
+    file: ${GATEWAY_TLS_KEY_FILE:-./config/unused.pem}
   step-ca-password:     # step-ca 가 루트·중간 키를 암호화하는 비밀번호(gen-secrets.sh 가 1회 만든다)
     file: ${SECRETS_DIR:-./secrets}/tokens/step-ca-password
   backup-survey-credentials:

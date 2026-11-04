@@ -255,7 +255,7 @@ export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
 # 사람 인증(U82, ADR 0057): Keycloak 의 발급자와 oauth2-proxy 의 콜백은 밖에서 보이는 주소(첫 호스트 이름 + 밖에 보이는 포트)로 정해진다. 호스트 포트가 Docker 배정이므로 그 포트를 밖에 보이는 포트로 알린다
 export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT
 # 한 줄의 export 안에서는 $(...) 가 앞의 대입(GATEWAY_PUBLIC_TLS_PORT)보다 먼저 풀려 기본 포트 8443 이 들어갔다(3차 E2E: 사람 로그인 연결 거부 3건). 그래서 따로 쓴다
-export GATEWAY_PUBLIC_URL="$(gateway_public_url)"; export GATEWAY_HOST_NAMES="$(gateway_host_names)"
+export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
 if [ "$BIND" = 127.0.0.1 ]; then echo "  컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는다: 게이트웨이·추론 서버는 127.0.0.1 에 게시한다"
 else echo "  이 Docker 에서는 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿지 못한다: 시험 동안 게이트웨이·추론 서버를 0.0.0.0 에 게시한다(방화벽은 이 PC 밖에서 막는다. docs/RUN.md 7-1)"; fi
 INF_IMAGE="$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST"
@@ -369,8 +369,8 @@ chk "TLS(D88/U5): 평문은 308 https 로 이동, https 는 시험용 CA 로 검
 chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:[[:space:]]*#'"
 no_auto_pass() { inpy release-gate /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
-# 인증 없는 요청의 응답 기대값은 test/gateway-oidc/unauth-expectations.txt 한 곳(scripts/test-gateway-auth.sh 와 같은 파일): 화면 302(/oauth2/start), 사람 API 401, 닫힌 면 404, 기기 경로 401(D85, U82)
-chk "gateway: 인증 없는 요청의 응답이 기대표와 같다 (화면 302 /oauth2/start, 사람 API 401, 닫힌 면 404, 기기 경로 401: test/gateway-oidc/unauth-expectations.txt, test-gateway-auth.sh 와 같은 스크립트)" bash "$DEPLOY_ROOT/scripts/check-unauth-expectations.sh" "https://127.0.0.1:$PGWS" --cacert "$W/gateway-ca.crt"
+# 인증 없는 요청의 기대 응답은 공개 입구 이미지의 selfcheck-unauth 가 정본이다(platform): 선언에서 기대 행을 만든다. 주소의 이름은 공개 입구가 받는 이름(GATEWAY_PROBE_SITE)이다
+chk "gateway: 인증 없는 요청의 응답이 공개 입구 이미지의 기대 행(selfcheck-unauth)과 같다" bash "$DEPLOY_ROOT/scripts/check-unauth.sh" "$PROJECT" "https://${GATEWAY_PROBE_SITE:-gateway:8443}" "$W/gateway-ca.crt"
 chk "사람 화면 주소(GATEWAY_PUBLIC_URL)가 게이트웨이 HTTPS 호스트 포트와 같다 (Keycloak 발급자·로그인 쿠키가 이 주소에 묶인다, U82)" bash -c "[ \"\$GATEWAY_PUBLIC_URL\" = \"https://localhost:$PGWS\" ]"
 reach() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request;b=urllib.request.urlopen('https://$2/healthz',timeout=3).read().decode(); assert b.strip().startswith('ok') or json.loads(b).get('status')=='ok', b[:80]" >/dev/null 2>&1; }   # 서비스는 TLS 사이드카(443)로만 받는다(ADR 0060). 컨테이너의 SSL_CERT_FILE 이 step-ca 루트를 가리킨다
 reachu() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request;b=urllib.request.urlopen(sys.argv[1],timeout=10).read().decode(); assert b.strip().startswith('ok') or json.loads(b).get('status')=='ok', b[:80]" "$2" >/dev/null 2>&1; }   # 10초: 호스트를 거치는 경로(host.docker.internal)는 Docker Desktop 프록시라 부하 때 3초를 넘겼다(4차 실행)   # reachu <출발 서비스> <URL>
@@ -392,7 +392,7 @@ chk "차단: survey-service -> dataset-store (I2 는 datasets 네트워크뿐, A
 chk "차단: release-gate -> dataset-store" blocked release-gate dataset-store
 chk "차단: model-registry -> dataset-store" blocked model-registry dataset-store
 chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
-chk "gateway 설정(Caddyfile)에 dataset-store 경로가 없다" bash -c "! grep -q 'dataset-store\|datasets' $DEPLOY_ROOT/config/Caddyfile"
+chk "공개 입구에 낸 영역 Exposure 선언에 dataset-store 경로가 없다" bash -c "! grep -rq 'dataset-store\|datasets' ${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/exposures"
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
 for pair in "db-survey:survey-service:survey-db" "db-qa:question-authoring:question-authoring-db" "db-ops:ops-feedback-ingest:ops-feedback-db" "db-gate:release-gate:release-gate-db"; do   # 영역마다 자기 DB 컨테이너(구조 규칙 1)
   _n=${pair%%:*}; _r=${pair#*:}; _svc=${_r%%:*}; _db=${_r##*:}

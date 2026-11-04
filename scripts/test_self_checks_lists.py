@@ -31,7 +31,10 @@ class T(unittest.TestCase):
 
     def test_slow_list_is_opt_in(self):
         slow = [l.split(" :: ")[1] for l in entries(LISTS["느린"])]
-        self.assertTrue(any("test-cert-renewal.sh" in c for c in slow))
+        if not slow:   # 느린 시험이 없으면(옛 사이드카 인증서 갱신 시험은 platform 이미지로 옮겨 갔다) 기본 목록과 --slow 목록이 같아야 한다
+            self.assertEqual(subprocess.run(["bash", str(ROOT / "scripts/run-self-checks.sh"), "--print"], capture_output=True, text=True).stdout,
+                             subprocess.run(["bash", str(ROOT / "scripts/run-self-checks.sh"), "--print", "--slow"], capture_output=True, text=True).stdout)
+            return
         base = subprocess.run(["bash", str(ROOT / "scripts/run-self-checks.sh"), "--print"], capture_output=True, text=True).stdout
         withslow = subprocess.run(["bash", str(ROOT / "scripts/run-self-checks.sh"), "--print", "--slow"], capture_output=True, text=True).stdout
         self.assertNotIn("test-cert-renewal.sh", base)

@@ -96,7 +96,7 @@ export GATEWAY_TLS_PORT=$GWP
 # 사람 인증(U82, ADR 0057): Keycloak 의 발급자와 oauth2-proxy 의 콜백은 밖에서 보이는 주소(첫 호스트 이름 + 밖에 보이는 포트)로 정해진다. 호스트 포트를 시험이 먼저 정하므로 그 포트를 밖에 보이는 포트로 준다
 export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT
 # 한 줄의 export 안에서는 $(...) 가 앞의 대입보다 먼저 풀린다(e2e.sh 3차 E2E 와 같은 결함). 그래서 따로 쓴다
-export GATEWAY_PUBLIC_URL="$(gateway_public_url)"; export GATEWAY_HOST_NAMES="$(gateway_host_names)"
+export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
 OK=0
 for BIND in 127.0.0.1 $BRIDGE_GW 0.0.0.0; do
   [ -n "$BIND" ] || continue
