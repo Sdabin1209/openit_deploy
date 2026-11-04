@@ -17,10 +17,10 @@
     },
     "ports": {
       "type": "object",
-      "description": "서비스 이름 -> 호스트 게시 포트. 다른 서버에서 불리는 서비스는 반드시 명시한다(순서로 계산하지 않는다). 불리지 않는 서비스의 값은 거부",
+      "description": "서비스 이름 -> 호스트 게시 포트. 다른 서버에서 불리는 서비스는 반드시 명시한다(순서로 계산하지 않는다). 불리지 않는 서비스의 값은 거부. 1024 미만도 허용한다: 영역 게이트웨이의 나가는 쪽이 `release-gate:443` 만 여는 규칙(RUNTIME R1.8) 때문에 release-gate 의 게시 포트는 443 이어야 한다(다른 서버의 추론 서버가 https://release-gate 로 온다)",
       "additionalProperties": {
         "type": "integer",
-        "minimum": 1024,
+        "minimum": 1,
         "maximum": 65535
       }
     },
