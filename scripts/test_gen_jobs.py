@@ -77,7 +77,10 @@ class T(unittest.TestCase):
         s = (ROOT / "compose.yaml").read_text(encoding="utf-8")
         for m in re.finditer(r"^  (job-[a-z-]+):.*?(?=^  [a-z]|\Z)", s, re.M | re.S):
             self.assertNotIn('"python", "-m"', m.group(0), f"{m.group(1)}: 잡 명령을 손으로 적었다(이미지 라벨에서 와야 한다)")
-        self.assertEqual(sorted(re.findall(r"^  (job-[a-z-]+):", s, re.M)), sorted(G.JOB_NAMES))
+        # JOB_NAMES = compose 의 job-* 서비스 + 명령을 이미지 선언에서 받는 일회성 선행 서비스(ops-feedback-migrate, CONVENTIONS 13절 3.4.17). 일회성 서비스도 손으로 쓴 명령이 없어야 한다
+        self.assertEqual(sorted(re.findall(r"^  (job-[a-z-]+):", s, re.M) + ["ops-feedback-migrate"]), sorted(G.JOB_NAMES))
+        m = re.search(r"^  ops-feedback-migrate:.*?(?=^  [a-z]|\Z)", s, re.M | re.S).group(0)
+        self.assertNotIn('"python", "-m"', m, "ops-feedback-migrate: 명령을 손으로 적었다(이미지 라벨의 잡 선언에서 와야 한다)")
 
     def test_overlay_is_per_project(self):   # 다른 프로젝트(분리 배치 시험의 작은 compose)가 남의 잡 덧씌우기에 걸려 거부당하지 않게 프로젝트마다 따로 둔다(묶음에서만 나던 실패의 원인)
         import subprocess

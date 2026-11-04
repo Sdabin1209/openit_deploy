@@ -19,7 +19,9 @@ JOB_NAMES = {"job-survey-purge": "session-purge", "job-question-authoring-purge"
              "job-model-registry-backup": "backup", "job-dataset-store-backup": "dataset-backup",
              # 복구 잡(RUNTIME R10.1): 사람이 필요할 때 돌린다. 주기가 없어 TIMERS 에 없다
              "job-survey-restore": "restore", "job-question-authoring-restore": "restore", "job-release-gate-restore": "restore", "job-ops-feedback-restore": "ops-feedback-restore",
-             "job-model-registry-restore": "restore", "job-dataset-store-restore": "dataset-restore"}
+             "job-model-registry-restore": "restore", "job-dataset-store-restore": "dataset-restore",
+             # 상시 서비스의 일회성 선행 서비스(depends_on service_completed_successfully)도 명령은 이미지 선언에서 온다
+             "ops-feedback-migrate": "ops-feedback-migrate"}
 
 
 # compose 잡 서비스 -> 그 잡을 띄우는 타이머 파일(config/systemd). 주기는 타이머의 OnUnitActiveSec 이고 잡의 시간 상한은 그 주기보다 짧아야 한다(RUNTIME R9.3: 상한이 주기 이상이면 겹침 방지가 다음 주기를 막는다)
@@ -70,7 +72,7 @@ def image_labels(image: str) -> dict:
 def build(compose: dict, labels_of, validator_of) -> dict:
     jobs, problems = [], []
     for svc, body in sorted(compose["services"].items()):
-        if not svc.startswith("job-"):
+        if not svc.startswith("job-") and svc not in JOB_NAMES:
             continue
         name = JOB_NAMES.get(svc)
         if name is None:

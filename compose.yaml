@@ -906,7 +906,7 @@ services:
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     network_mode: "service:kiosk-frontend-net"   # 망·별칭·sysctls 는 kiosk-frontend-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   admin-console-net:   # admin-console 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:admin-console-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -933,7 +933,7 @@ services:
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
     network_mode: "service:admin-console-net"   # 망·별칭·sysctls 는 admin-console-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     cap_add: ["NET_BIND_SERVICE"]   # 공식 caddy 이미지의 바이너리에 파일 권한(cap_net_bind_service)이 있어 cap_drop ALL + no-new-privileges 에서는 exec 가 거부된다(측정함: "exec /usr/bin/caddy: operation not permitted"). 실제로는 8080 을 연다. gateway 와 같은 처리
-    healthcheck: {test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 3s, retries: 5, start_period: 20s, start_interval: 1s}
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   survey-service-net:   # survey-service 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:survey-service-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -977,9 +977,7 @@ services:
     secrets: &survey_secrets [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data, pki-root:/etc/openit/pki:ro]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
     network_mode: "service:survey-service-net"   # 망·별칭·sysctls 는 survey-service-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
-    healthcheck:
-      <<: *pyhealth
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
     depends_on:
       survey-db: {condition: service_healthy}
       ops-feedback: {condition: service_healthy}
@@ -1027,9 +1025,7 @@ services:
     network_mode: "service:question-authoring-net"   # 망·별칭·sysctls 는 question-authoring-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       question-authoring-db: {condition: service_healthy}
-    healthcheck:
-      <<: *pyhealth
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   identity-net:   # keycloak 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:identity-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -1116,7 +1112,7 @@ services:
     pids_limit: ${OPS_FEEDBACK_MIGRATE_PIDS_LIMIT:-128}
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/ops-feedback@${OPS_FEEDBACK_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 루트 인증서(공개). ADR 0060
-    command: ["python", "-m", "ops_feedback.admin", "migrate"]
+    command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]   # 명령은 이미지 라벨 io.openit.jobs 의 잡 ops-feedback-migrate 에서 온다(영역이 앎, CONVENTIONS 13절 3.4.17)
     environment:
       OPS_LOG_DATABASE_URL_FILE: /run/secrets/db-ops-log-dsn           # 소유자 계정(DDL)
       OPS_FAILURE_DATABASE_URL_FILE: /run/secrets/db-ops-failure-dsn
@@ -1175,9 +1171,7 @@ services:
     depends_on:
       ops-feedback-db: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
       ops-feedback-migrate: {condition: service_completed_successfully}   # L08: 스키마는 소유자 계정의 migrate 가 먼저 만든다. 서버는 verify 만 한다
-    healthcheck:
-      <<: *pyhealth
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   release-gate-net:   # release-gate 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:release-gate-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -1223,9 +1217,7 @@ services:
     stop_grace_period: 40s   # release-gate 최악 종료 시간 하드 상한 35초(요청 소켓 30s 등, 근거 release-gate docs/adr/0008-timeouts.md, 측정 안 함) + 여유 5초 -> SIGKILL 전에 끝나게 한다. 값은 scripts/test_e2e_constants.py 가 35초와 대조한다
     depends_on:
       release-gate-db: {condition: service_healthy}
-    healthcheck:
-      <<: *pyhealth
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   model-serving-net:   # model-serving 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-serving-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -1261,9 +1253,7 @@ services:
       - serving-data:/var/lib/model-runtime   # 번들 캐시 기본 경로(이미지가 uid 10001 소유로 만든다)
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
     network_mode: "service:model-serving-net"   # 망·별칭·sysctls 는 model-serving-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
-    healthcheck:
-      <<: *pyhealth
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   model-registry-net:   # model-registry 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:model-registry-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -1296,9 +1286,7 @@ services:
     secrets: [model-registry-read-tokens, model-registry-write-tokens]
     volumes: [models-data:/data, pki-root:/etc/openit/pki:ro]
     network_mode: "service:model-registry-net"   # 망·별칭·sysctls 는 model-registry-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
-    healthcheck:
-      <<: *pyhealth
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   dataset-store-net:   # dataset-store 의 네트워크 공간만 갖는 작은 컨테이너(Kubernetes Pod 의 pause 와 같은 방식, RUNTIME.md R3.2/DC-NET.1): 망·별칭·게시 포트·extra_hosts·sysctls 는 여기에만 둔다. 앱·사이드카가 network_mode: service:dataset-store-net 으로 붙는다. 앱이 멈춰도 공간이 남아 사이드카가 살아 있다(ADR 0060)
     image: ${PAUSE_IMAGE:?locks/images.lock}
@@ -1332,9 +1320,7 @@ services:
     volumes: [datasets-data:/data, pki-root:/etc/openit/pki:ro]   # 이미지의 DATASET_STORE_ROOT=/data (uid 10001 소유). 서버의 임시 폴더(/data/.tmp)도 같은 볼륨이라 게시 rename 이 원자적이다. 루트는 read_only
     network_mode: "service:dataset-store-net"   # 망·별칭·sysctls 는 dataset-store-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     stop_grace_period: 40s   # 서버는 SIGTERM 에서 진행 중 요청을 끝까지 기다린다(daemon_threads=False). 요청 소켓 timeout 30초(DATASET_STORE_SOCKET_TIMEOUT 기본) + 여유 10초. 하드 상한은 그 영역이 확정하지 않았다(큰 게시·느린 읽기는 더 걸릴 수 있다, 측정 안 함). SIGKILL 이어도 게시는 임시 폴더 후 rename 이라 반쯤 쓴 버전이 보이지 않는다(synthetic-data ADR 0008·0012). 근거 docs/adr/0032-dataset-store-boundary.md
-    healthcheck:
-      <<: *pyhealth
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2)"]
+    # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
 
   # 주기 잡: 상시 서비스가 아니다. systemd timer(config/systemd/openit-<잡>.timer, ADR 0036)가 scripts/run-job.sh 로 `docker compose run --rm <잡>` 을 한 번 실행한다(D39).
   # 이웃 서비스와 같은 이미지·볼륨·네트워크를 쓰되 쓰기 주체는 같은 영역이다.
