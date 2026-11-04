@@ -83,6 +83,14 @@ check "레지스트리에서 digest 로 받을 수 있다" bash -c "curl -fsSI -
 mkdir -p "$W/badcreds"; echo '{"credsStore":"openit-nonexistent-helper"}' > "$W/badcreds/config.json"
 check "재현 조건: 이 설정에서는 그냥 docker push 가 자격증명 오류로 실패한다" bash -c "DOCKER_CONFIG=$W/badcreds $DOCKER push 127.0.0.1:1/x:y 2>&1 | grep -q 'getting credentials'"
 expect_rc 0 "사용자 Docker 설정의 자격증명 도우미가 죽어 있어도 게시된다(push 만 빈 설정을 쓴다)" env DOCKER_CONFIG="$W/badcreds" $P dataset-store deploy-pubtest-$ID/b:1
+# publish-images.sh(E2E 가 쓰는 복수 게시)도 같은 push 함수(lib.sh registry_push)를 쓴다: 같은 badcreds 에서 게시되어야 한다(11/3 에 publish-image.sh 만 고쳐져 E2E 경로가 같은 오류로 죽었다, 2026-11-04)
+printf 'dataset-store deploy-pubtest-%s/b:1 bbb2222\n' "$ID" > "$W/images.env"
+check "publish-images.sh: 자격증명 도우미가 죽어 있어도 게시된다(registry_push 의 빈 DOCKER_CONFIG)" env DOCKER_CONFIG="$W/badcreds" DEPLOY_IMAGES_ENV="$W/images.env" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
+# 변이: registry_push 에서 빈 DOCKER_CONFIG 를 빼면(사용자 설정으로 push) 같은 상황에서 실패해야 한다
+MUT="$DEPLOY_ROOT/scripts/.publish-images.mut-$ID.sh"
+sed 's|^source "$(dirname "$0")/lib.sh"|&\nregistry_push() { REGISTRY_PUSH_OUT=$(timeout 60 "$DOCKER" push "$1" 2>\&1) \|\| return $?; }|' "$DEPLOY_ROOT/scripts/publish-images.sh" > "$MUT"
+check "변이 확인: 빈 DOCKER_CONFIG 를 빼면 publish-images.sh 가 같은 상황에서 실패한다" bash -c "! env DOCKER_CONFIG=$W/badcreds DEPLOY_IMAGES_ENV=$W/images.env bash $MUT"
+rm -f "$MUT"
 check "check-compose.sh 가 이 잠금 형식을 받아들인다" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
 echo; if [ "$FAILS" = 0 ]; then echo "test-publish: 전부 통과"; else echo "test-publish: 실패 $FAILS건"; fi
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)

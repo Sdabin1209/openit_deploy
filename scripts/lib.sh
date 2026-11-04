@@ -229,3 +229,20 @@ gateway_test_pki() {
 gateway_test_mounts() { # gateway_test_mounts <gateway_test_pki 폴더>: 게이트웨이 컨테이너에 더할 인자(루트 인증서, TLS 출처 조각)
   printf '%s\n' -v "$DEPLOY_ROOT/config/gateway-tls:/etc/caddy/gateway-tls:ro" -v "$1/root_ca.crt:/etc/openit/pki/root_ca.crt:ro" -e GATEWAY_TLS_MODE=internal
 }
+
+# 레지스트리로 이미지를 올린다(publish-image.sh 와 publish-images.sh 가 같은 이 함수를 쓴다: push 논리는 한 곳, 11/3 D10(5)에서 한 쪽만 고쳐져 E2E 경로가 사용자 credsStore 에 기대던 결함의 수정).
+# registry_push <ref>: 출력은 REGISTRY_PUSH_OUT, 종료 코드는 push 의 것(timeout 이면 124). 시간 상한은 PUBLISH_PUSH_TIMEOUT(기본 900초, 측정하지 않은 시작값: 작은 이미지는 수 초, 13GB GPU 이미지는 더 걸릴 수 있어 넉넉히).
+# 왜 빈 DOCKER_CONFIG 인가: 로컬 레지스트리는 인증이 없는데 docker push 는 사용자 ~/.docker/config.json 의 credsStore(WSL 에서는 Windows 의 docker-credential-desktop.exe)를 먼저 불러 응답이 없으면 "error getting credentials ... accept4 failed 110" 으로 죽는다(3차 E2E, 2026-11-04 두 번).
+# 표준 방법은 도커 공식 환경 변수 DOCKER_CONFIG 로 설정 폴더를 바꾸는 것이다(사용자 ~/.docker 는 읽지도 고치지도 않는다). 사용자 컨텍스트의 엔드포인트는 설정 폴더에 있어 빈 폴더에서는 사라지므로 그 주소를 DOCKER_HOST 로 넘긴다.
+# 인증이 필요한 레지스트리에는 PUBLISH_DOCKER_CONFIG 로 자격이 든 폴더를 준다.
+registry_push() {
+  local ref=$1 cfg=${PUBLISH_DOCKER_CONFIG:-} tmp="" ctxh rc=0
+  if [ -z "$cfg" ]; then
+    cfg=$(mktemp -d) && echo '{}' > "$cfg/config.json" && tmp=$cfg
+    ctxh=$("$DOCKER" context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null | tr -d '\r' || true)
+    [ -z "$ctxh" ] || [ -n "${DOCKER_HOST:-}" ] || export DOCKER_HOST="$ctxh"
+  fi
+  REGISTRY_PUSH_OUT=$(DOCKER_CONFIG="$cfg" timeout "${PUBLISH_PUSH_TIMEOUT:-900}" "$DOCKER" push "$ref" 2>&1) || rc=$?
+  [ -z "$tmp" ] || rm -rf "$tmp"
+  return $rc
+}
