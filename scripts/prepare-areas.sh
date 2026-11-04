@@ -12,7 +12,7 @@ set -uo pipefail
 DEPLOY_NO_DOCKER=1
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # 원격이 동결된 동안 영역 환경 준비(setup-env)가 의존 리포(link, boundary-contracts, model-runtime)를 로컬 전용 태그로 받는다: 로컬 미러 git 설정을 준다(S14, git-config url.<base>.insteadOf)
-if [ -z "${GIT_CONFIG_GLOBAL:-}" ]; then bash "$DEPLOY_ROOT/scripts/write-local-mirrors.sh" >/dev/null && export GIT_CONFIG_GLOBAL="$DEPLOY_ROOT/build/gitconfig-local-mirrors"; fi
+git_mirror_env
 LIST=0; SELF=1; ONLY=()
 while [ $# -gt 0 ]; do case "$1" in
   --list) LIST=1; shift;;

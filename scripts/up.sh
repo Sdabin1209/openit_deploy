@@ -34,4 +34,5 @@ dc "$P" config --format json > "$CFGJ" 2> "$CFGE" || { echo "docker compose conf
 "$DEPLOY_PY" -W ignore "$DEPLOY_ROOT/scripts/check_config_contracts.py" --compose-json "$CFGJ" || die "설정·환경이 계약을 어긴다: 기동하지 않는다(위 FAIL 의 서비스·위치를 고친다)"
 # 영역 DB 의 계정 암호·접속 URI 파일: DB 이미지 라벨 io.openit.database(DatabaseDeclaration)대로 만든다(계약 3.4.12). 이미 있으면 그대로(멱등). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만든다
 bash "$DEPLOY_ROOT/scripts/gen-db-secrets-all.sh" >/dev/null || die "영역 DB 비밀을 만들지 못했다(DB 이미지 라벨 io.openit.database 를 확인한다)"
-dc "$P" up -d --wait "$@"
+# --wait 에 상한이 없으면 기동이 끝없이 걸릴 수 있다. UP_WAIT_TIMEOUT 초(기본 120)는 측정하지 않은 시작값이다(D125: 측정 최악 + 여유가 되려면 이 호스트에서 재야 한다. e2e.sh 의 E2E_UP_WAIT_S 가 같은 값을 넘긴다).
+dc "$P" up -d --wait --wait-timeout "${UP_WAIT_TIMEOUT:-120}" "$@"

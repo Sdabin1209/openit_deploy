@@ -8,7 +8,14 @@ source "$(dirname "$0")/lib.sh"
 P=${1:-${DEPLOY_PROJECT:-deploy}}; D=${SECRETS_DIR:-$DEPLOY_ROOT/secrets}; ACC=$DEPLOY_ROOT/test/gateway-oidc/accounts.test.conf
 KC() { dc "$P" exec -T identity /opt/keycloak/bin/kcadm.sh "$@" --config /tmp/kcadm.config </dev/null; }   # </dev/null: exec 이 아래 while read 의 표준 입력(사용자 목록)을 먹지 않게 한다
 kc_pw=$(tr -d '\r\n' < "$D/tokens/identity-admin-password")
-KC config credentials --server http://127.0.0.1:8080/auth --realm master --user kcadmin --password "$kc_pw" >/dev/null 2>&1 || die "Keycloak 관리 로그인 실패(keycloak 컨테이너가 healthy 인지 확인)"
+# 준비 확인: compose 의 healthy 는 포트가 열렸다는 것뿐이라(이미지 내부 점검 경로를 deploy 가 알지 않는다) 관리 로그인과 realm openit 가져오기가 끝났는지는 여기서 본다. 사유를 버리지 않고 마지막 오류 끝을 보인다.
+# 상한 120초(3초 간격)는 측정하지 않은 시작값이다(D125: 측정 최악 + 여유가 되려면 이 호스트에서 재야 한다).
+IDP_READY_S=${IDP_READY_S:-120}; err=$(mktemp); trap 'rm -f "$err"' EXIT; ready=0
+for _i in $(seq 1 $((IDP_READY_S/3))); do
+  if KC config credentials --server http://127.0.0.1:8080/auth --realm master --user kcadmin --password "$kc_pw" >"$err" 2>&1 && KC get realms/openit --fields realm >>"$err" 2>&1; then ready=1; break; fi
+  sleep 3
+done
+[ $ready = 1 ] || { tail -3 "$err" >&2; die "Keycloak 관리 로그인 또는 realm openit 가 ${IDP_READY_S}초 안에 준비되지 않았다(identity 컨테이너 로그를 확인)"; }
 unset kc_pw
 n=0
 while read -r user groups _; do case "$user" in ""|\#*) continue;; esac

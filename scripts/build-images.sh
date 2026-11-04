@@ -23,9 +23,7 @@ for a in "$@"; do case "$a" in
   *) NAMES+=("$a");; esac; done
 detect_docker
 # 원격이 동결된 동안 의존 리포(link, boundary-contracts, model-runtime)를 로컬 리포에서 받는 git 설정 하나(S14, git-config url.<base>.insteadOf). 영역 진입점의 pip 가 이 설정으로 같은 태그를 받는다. 이미 GIT_CONFIG_GLOBAL 이 있으면 그것을 쓴다
-if [ -z "${GIT_CONFIG_GLOBAL:-}" ]; then
-  bash "$DEPLOY_ROOT/scripts/write-local-mirrors.sh" >/dev/null && export GIT_CONFIG_GLOBAL="$DEPLOY_ROOT/build/gitconfig-local-mirrors"
-fi
+git_mirror_env
 if [ $GPU = 1 ]; then
   [ ${#NAMES[@]} -gt 0 ] || NAMES=(model-serving-gpu)   # --gpu 단독: GPU 이미지만
   case " ${NAMES[*]} " in *" model-serving-gpu "*) ;; *) NAMES+=(model-serving-gpu);; esac
@@ -81,6 +79,7 @@ build_one() {
       [ "$(git -C "$cp" rev-parse HEAD)" = "$(git -C "$WORKSPACE/$repo" rev-parse HEAD)" ] || die "$svc: 영역 사본 $cp 의 커밋이 $repo 의 HEAD 와 다르다 (해결: bash scripts/prepare-areas.sh $repo)"
       src=$cp; tagref=HEAD
     else
+    echo "경고: 영역 사본 $cp 가 없어 실제 리포 $WORKSPACE/$repo 를 쓴다(가짜 워크스페이스 시험용 경로. 실제 빌드는 먼저 bash scripts/prepare-areas.sh $repo)" >&2
     src="$WORKSPACE/$repo"; tagref=HEAD
     if [ "${BUILD_ALLOW_DIRTY:-0}" != 1 ] && [ -n "$(git -C "$src" status --porcelain --untracked-files=no)" ]; then die "$svc: $repo 에 커밋 안 된 변경이 있다(이미지는 HEAD 커밋 $(git -C "$src" rev-parse --short HEAD)로 표시되므로 먼저 커밋한다. 개발 중에만 BUILD_ALLOW_DIRTY=1)"; fi
     fi

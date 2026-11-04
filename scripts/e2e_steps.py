@@ -148,6 +148,7 @@ def sh(cmd, env=None, inp=None, check=True):
     if check: assert r.returncode == 0, f"{cmd[:3]} 실패({r.returncode}): {(r.stderr or r.stdout)[-600:]}"
     return r
 def wait(fn, timeout, what, every=2):
+    # timeout 인자의 숫자(30/60/90/120/180/200/300/600)는 대부분 측정하지 않은 시작값이다(D125: 측정 최악 + 여유가 되려면 이 호스트에서 재야 한다. 값을 지어내지 않고 측정 안 함으로 적는다). 근거가 있는 것(_c1_gw 70초, _c2_gw 200초)만 그 자리에 근거가 있다.
     t = time.time()
     while time.time() - t < timeout:
         v = fn()
@@ -2449,6 +2450,10 @@ def _registry_container():
     assert rp, "REGISTRY_PROJECT 환경이 없다(e2e.sh 가 내보낸다)"
     return rp   # compose.registry.yaml: container_name: ${REGISTRY_PROJECT}
 
+# 5g 의 상한(초). 모두 측정하지 않은 시작값이다(D125: 측정 최악 + 여유가 되려면 이 호스트에서 재야 한다. 값을 지어내지 않는다). 한 곳에서만 바꾼다.
+_PUB_OK_S = 60      # 정상·중지 상태의 게시 한 번(작은 이미지 하나). 측정 안 함
+_PUB_HANG_S = 25    # 무응답 게시: PUBLISH_PROBE_TIMEOUT(5초) 보다 충분히 길어야 자체 상한이 먼저 듣는다. 측정 안 함
+_PUB_RETRY_S = 90   # 복구 뒤 재시도 성공을 기다리는 상한. 측정 안 함
 @step('5g', repos=('deploy:scripts,compose.registry.yaml,locks',), deps=(),
       why='STATE 를 읽지 않는다. e2e.sh 가 띄운 임시 레지스트리(REGISTRY_PROJECT)를 stop/start·pause/unpause 하고 publish-images.sh kiosk-frontend 를 부른다',
       also={'kiosk-frontend': '이 이미지(kiosk-frontend)를 올리는 로컬 레지스트리가 중지·무응답일 때 publish-images.sh 가 실패하고 잠금이 깨지지 않는다(G2 F1·F4)'})
@@ -2458,29 +2463,29 @@ def step5g():
     reg = _registry_container(); lock = pathlib.Path(os.environ["DEPLOY_LOCK"])
     def lock_hash(): return hashlib.sha256(lock.read_bytes()).hexdigest()
     pub = lambda t: subprocess.run(["timeout", str(t), "bash", str(ROOT / "scripts/publish-images.sh"), "kiosk-frontend"], capture_output=True, text=True)
-    r0 = pub(120); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다(종료 코드 {r0.returncode}): 표준 출력 끝 {r0.stdout[-300:]!r} / 표준 오류 끝 {r0.stderr[-300:]!r}"
+    r0 = pub(_PUB_OK_S * 2); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다(종료 코드 {r0.returncode}): 표준 출력 끝 {r0.stdout[-300:]!r} / 표준 오류 끝 {r0.stderr[-300:]!r}"
     h0 = lock_hash(); notes = []
     def live_ok(): return all(_c3_healthz(k) == 200 for k in ("qa", "gate", "ops"))
     sh([a.docker, "stop", reg])
     try:
-        r = pub(60); assert r.returncode not in (0, 124), f"F1: 레지스트리 중지 중 게시가 {'성공' if r.returncode == 0 else '60s 안에 끝나지 않았다'}(종료 코드 {r.returncode}): 표준 출력 끝 {r.stdout[-200:]!r} / 표준 오류 끝 {r.stderr[-200:]!r}"
+        r = pub(_PUB_OK_S); assert r.returncode not in (0, 124), f"F1: 레지스트리 중지 중 게시가 {'성공' if r.returncode == 0 else '60s 안에 끝나지 않았다'}(종료 코드 {r.returncode}): 표준 출력 끝 {r.stdout[-200:]!r} / 표준 오류 끝 {r.stderr[-200:]!r}"
         assert lock_hash() == h0, "F1: 실패한 게시가 잠금 파일을 바꿨다"
         assert live_ok(), "F1: 레지스트리 중지가 실행 중 서비스에 영향을 줬다"
         notes.append(f"F1 중지: 게시 종료 코드 {r.returncode}(실패), 잠금 불변, 실행 중 서비스 /healthz 200")
     finally:
         sh([a.docker, "start", reg])
-    wait(lambda: pub(60).returncode == 0 or None, 90, "레지스트리 기동 뒤 게시 재시도 성공", every=3)
+    wait(lambda: pub(_PUB_OK_S).returncode == 0 or None, _PUB_RETRY_S, "레지스트리 기동 뒤 게시 재시도 성공", every=3)
     h1 = lock_hash()
     sh([a.docker, "pause", reg])
     try:
-        r = pub(25)   # 무응답: publish-images.sh 는 자체 상한이 없다 -> 바깥 timeout(25s)으로 끊는다. 성공해서는 안 된다
+        r = pub(_PUB_HANG_S)   # 무응답: publish-images.sh 는 /v2/ 확인에 자체 상한(PUBLISH_PROBE_TIMEOUT 5초)이 있어 스스로 실패해야 한다. 바깥 timeout 은 그것이 깨졌을 때를 위한 안전망이다. 성공해서는 안 된다
         assert r.returncode != 0, f"F4: 레지스트리 무응답 중 게시가 성공했다(종료 코드 {r.returncode}): {r.stdout[-200:]!r}"
         assert lock_hash() == h1, "F4: 무응답 중 끊긴 게시가 잠금 파일을 바꿨다"
         assert live_ok(), "F4: 레지스트리 pause 가 실행 중 서비스에 영향을 줬다"
-        notes.append(f"F4 pause: 게시 종료 코드 {r.returncode}({'스스로 실패' if r.returncode != 124 else '자체 상한 없음, 바깥 25s timeout 이 끊음'}), 잠금 불변")
+        notes.append(f"F4 pause: 게시 종료 코드 {r.returncode}({'스스로 실패(자체 프로브 상한)' if r.returncode != 124 else '자체 상한이 듣지 않아 바깥 timeout 이 끊음'}), 잠금 불변")
     finally:
         sh([a.docker, "unpause", reg], check=False)
-    wait(lambda: pub(60).returncode == 0 or None, 90, "unpause 뒤 게시 재시도 성공", every=3)
+    wait(lambda: pub(_PUB_OK_S).returncode == 0 or None, _PUB_RETRY_S, "unpause 뒤 게시 재시도 성공", every=3)
     rec("5g", "REAL", "레지스트리 컨테이너: " + "; ".join(notes) + "; 복구 뒤 재시도 성공.")
 
 @step('5b', repos=('deploy:scripts,config,compose.yaml',), deps=(),

@@ -78,7 +78,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 mkdir -p "$W/backup-tls"; gateway_test_pki "$W/backup-tls" backup-target || { echo "시험 PKI 실패"; exit 1; }   # 백업 저장소 서버는 TLS 만(ADR 0060)
-export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_TLS_DIR="$W/backup-tls" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT= GATEWAY_TLS_PORT=
+export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_TLS_DIR="$W/backup-tls" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT=
 export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다
@@ -92,6 +92,15 @@ res() { local n=$1 st=$2; STAT["$n"]=$st; RESULT+=("$n|$st|$3"); [ "$st" = FAIL 
 blocked_by() { local d; for d in "${NEED[@]}" "$@"; do [ -n "$d" ] || continue; case "${STAT[$d]:-}" in FAIL) echo "$d"; return 0;; SKIP) echo "${ROOTF[$d]:-$d}"; return 0;; esac; done; return 1; }
 chk_dep() { local dep=$1; shift; local root; if root=$(blocked_by "$dep"); then ROOTF["$1"]=$root; res "$1" SKIP "SKIP(선행 실패: $root)"; else chk "$@"; fi; }
 chk() { local name=$1; local root; if root=$(blocked_by); then ROOTF["$name"]=$root; res "$name" SKIP "SKIP(선행 실패: $root)"; return 0; fi; shift; local out; if out=$("$@" 2>&1); then res "$name" PASS "$(echo "$out" | tail -1 | cut -c1-150)"; else mkdir -p "$W/diag"; { printf '## %s\n## 명령: %s\n' "$name" "$*"; printf '%s\n' "$out"; } > "$W/diag/chk-$(printf '%s' "$name" | tr -c 'A-Za-z0-9가-힣' '_' | cut -c1-80)-$RANDOM.txt" 2>/dev/null; res "$name" FAIL "$(echo "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"; fi; }   # 실패한 점검의 출력 전체를 진단 폴더(collect_diag 가 $W/diag 를 복사한다)에 남긴다: 한 줄 요약만으로는 원인을 못 찾는다(4차 E2E 분리 배치 플레이북)
+# 준비 단계(chk 로 세지 않는 명령)의 실패는 조용히 지나가지 않고 그 자리에서 멈춘다: 예전에는 venv·wheel·비밀 생성·지문 생성의 실패가 버려져 복구 검증이 헛통과할 수 있었다(정적 점검 A8, 2026-11-05)
+must() { "$@" || { echo "준비 단계 실패(종료 코드 $?): $*" >&2; exit 1; }; }
+# 대기 상한(초). 아래 값은 모두 측정하지 않은 시작값이다(D125: 측정 최악 + 여유가 되려면 이 호스트에서 재야 한다. 값을 지어내지 않고 측정 안 함으로 적는다). 한 곳에서만 바꾼다.
+E2E_UP_WAIT_S=120        # compose up --wait 한 번의 상한(제품·추론 서버·영역 DB 재기동). 측정 안 함
+export UP_WAIT_TIMEOUT=$E2E_UP_WAIT_S   # up.sh 가 같은 상한을 쓴다(한 값, 한 곳)
+E2E_MON_POLL_S=120       # 감시 스택이 탐침 결과를 낼 때까지(60회 x 2초). 측정 안 함
+E2E_ROLLBACK_READY_S=80  # 롤백 뒤 survey-service /readyz(40회 x 2초). 측정 안 함
+REACH_T=10               # 서비스 사이 도달 확인 한 번의 상한. reachu 가 10초로 늘린 관찰(4차 실행: 호스트 경유는 3초 초과)을 따른다. 측정 안 함
+TCP_T=3                  # 같은 호스트 내부 망의 TCP 연결(핸드셰이크 없음) 한 번의 상한. 측정 안 함
 finish() {
 {
 echo; echo "============================ 요약 ============================"
@@ -181,7 +190,7 @@ cat <<BANNER
 BANNER
 
 sect "준비: 이미지 빌드, 임시 레지스트리, digest 잠금"
-bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv
+must bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv
 have_images() { [ -f "$DEPLOY_ROOT/build/images.env" ] && [ "$(grep -vc '^model-serving-gpu ' "$DEPLOY_ROOT/build/images.env")" -ge 8 ] && while read -r n img _; do [ "$n" = model-serving-gpu ] && continue; "$DOCKER" image inspect "$img" >/dev/null 2>&1 || return 1; done < "$DEPLOY_ROOT/build/images.env"; }
 if [ $REUSE = 1 ] && have_images; then
   # 재사용은 소스(커밋)와 의존 태그가 이미지 라벨과 같을 때만이다. 다른 이미지만 다시 빌드한다(판정 코드: verify_area.py stale_images). 판정이 안 되면 전부 다시 빌드한다
@@ -192,11 +201,13 @@ if [ $REUSE = 1 ] && have_images; then
 else chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
 abort_if_failed() { [ "$FAILS" = 0 ] || { echo "준비 단계가 실패해 중단한다"; exit 1; }; }
 abort_if_failed
-bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
+must bash "$DEPLOY_ROOT/scripts/prepare-host.sh" wheels
 grep -E '^[A-Z0-9_]+_IMAGE=' "$DEPLOY_ROOT/locks/images.lock" > "$DEPLOY_LOCK"   # 잠금의 외부 이미지 줄 전부(목록을 손으로 적으면 새 이미지가 빠진다: D9c KEYCLOAK, 4차 STEP_CA)
 # 서버 밖 append-only 백업 저장소를 흉내 내는 컨테이너(compose.backup-target.yaml)의 인증 파일: 서버 자격(백업이 쓰는 것)을 만든다. 시험 폴더 안, 시험이 끝나면 지워진다
 BKPW="e2e-backup-target-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-printf '%s\n%s\n' "$BKPW" "$BKPW" | "$DOCKER" run --rm -i "$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n' | sed 's/^/srv:/' > "$W/backup-target.htpasswd"; echo >> "$W/backup-target.htpasswd"; chmod 644 "$W/backup-target.htpasswd"
+BKHASH=$(printf '%s\n%s\n' "$BKPW" "$BKPW" | "$DOCKER" run --rm -i "$(sed -n 's/^GATEWAY_IMAGE=//p' "$DEPLOY_LOCK")" caddy hash-password) || { echo "백업 대상 저장소의 비밀번호 해시를 만들지 못했다" >&2; exit 1; }
+BKHASH=$(printf '%s' "$BKHASH" | tail -1 | tr -d '\r\n'); case "$BKHASH" in '$2'*) ;; *) echo "백업 대상 저장소의 비밀번호 해시가 bcrypt 형식이 아니다" >&2; exit 1;; esac
+printf 'srv:%s\n' "$BKHASH" > "$W/backup-target.htpasswd"; unset BKHASH; chmod 644 "$W/backup-target.htpasswd"
 ( umask 077; printf 'RESTIC_REST_USERNAME=srv\nRESTIC_REST_PASSWORD=%s\n' "$BKPW" > "$W/backup-target.cred" ); unset BKPW
 chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/registry.sh" up
 chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
@@ -212,7 +223,7 @@ _cleanenv=(); for _k in "${_keep[@]}"; do [ -n "${!_k+x}" ] && _cleanenv+=("$_k=
 while IFS=$'\t' read -r _d _c; do chk "$_d" env -i "${_cleanenv[@]}" bash -c "$_c"; done < <(bash "$DEPLOY_ROOT/scripts/run-self-checks.sh" --print)
 abort_if_failed
 source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다(compose 변수 우선순위)
-bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null
+must bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null
 
 # ---- 샌드박스 기동(docs/adr/0050, 순서 고정). 제품은 compose.yaml 그대로이고 시험용 문이 없다. 추론 서버는 제품 밖(다른 호스트 역할)이다.
 #  (1) 추론 서버: compose.inference.yaml 을 별도 프로젝트 <P>-inf 로(가짜 백엔드는 이 쪽 env 만). (2) 제품: up.sh --external-inference <추론 서버>.
@@ -270,7 +281,7 @@ inf_up() { # inf_up <주 서버 프로젝트(inference-in 망의 주인)> <OUT-F
   local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" INFERENCE_RELEASE_NETWORK="${1}_inference-in" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
     INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal
     INFERENCE_GATEWAY_IMAGE="$SC_IMG" INFERENCE_EXPOSURE_FILE="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/model-serving/exposure.json" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
-  env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/compose.inference.samehost.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
+  env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/compose.inference.samehost.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout $E2E_UP_WAIT_S 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
 }
 export INFERENCE_TOKEN_FILE="$W/inference-token"
@@ -366,16 +377,36 @@ tls_checks() { # HTTPS 필수(D88/U5): 평문은 /healthz 만 답하고 나머�
   echo "평문: /healthz 만 ok, 나머지 308 https; https: 시험용 CA 검증 통과, HSTS·nosniff·X-Frame-Options, /config.json 404"
 }
 chk "TLS(D88/U5): 평문은 308 https 로 이동, https 는 시험용 CA 로 검증되고 HSTS·보안 헤더가 있다" tls_checks
-chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" bash -c "! grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' $DEPLOY_ROOT/compose.yaml $DEPLOY_ROOT/config/ | grep -v '^[^:]*:[0-9]*:[[:space:]]*#'"
+no_test_policy() { local out rc=0; out=$(grep -rEn --exclude=verify-areas.yaml 'test-gate|test_gate|smoke_fakes|GATE_POLICY_FILE|GATE_ALLOW_TEST|FAKE_RISK_PHRASE' "$DEPLOY_ROOT/compose.yaml" "$DEPLOY_ROOT/config/" 2>&1) || rc=$?
+  [ $rc -le 1 ] || { echo "grep 가 실패했다(종료 코드 $rc): 점검 대상을 읽지 못했다"; return 1; }   # rc 1 = 일치 없음, 2 = 오류(파일 없음 등): 오류를 "없음"으로 세지 않는다
+  ! printf '%s\n' "$out" | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' | grep -q .; }
+chk "운영 compose.yaml/config 에 시험용 정책·실행기·대역이 없다" no_test_policy
 no_auto_pass() { inpy release-gate /readyz | python3 -c "import sys,json;d=json.load(sys.stdin);print('gate /readyz',{k:d.get(k) for k in ('judging','awaiting_approval','gate_policy_version')});sys.exit(0 if d.get('judging')=='enabled' else 1)"; }
 chk "gate /readyz: 판정 켜짐(I1·I3 연결), 정책 파일 없이 기본 정책, 승인 대기 개수 항목" no_auto_pass
 # 인증 없는 요청의 기대 응답은 공개 입구 이미지의 selfcheck-unauth 가 정본이다(platform): 선언에서 기대 행을 만든다. 주소의 이름은 공개 입구가 받는 이름(GATEWAY_PROBE_SITE)이다
 chk "gateway: 인증 없는 요청의 응답이 공개 입구 이미지의 기대 행(selfcheck-unauth)과 같다" bash "$DEPLOY_ROOT/scripts/check-unauth.sh" "$PROJECT" "https://${GATEWAY_PROBE_SITE:-gateway:8443}" "$W/gateway-ca.crt"
 chk "사람 화면 주소(GATEWAY_PUBLIC_URL)가 게이트웨이 HTTPS 호스트 포트와 같다 (Keycloak 발급자·로그인 쿠키가 이 주소에 묶인다, U82)" bash -c "[ \"\$GATEWAY_PUBLIC_URL\" = \"https://localhost:$PGWS\" ]"
-reach() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request;b=urllib.request.urlopen('https://$2/healthz',timeout=3).read().decode(); assert b.strip().startswith('ok') or json.loads(b).get('status')=='ok', b[:80]" >/dev/null 2>&1; }   # 서비스는 TLS 사이드카(443)로만 받는다(ADR 0060). 컨테이너의 SSL_CERT_FILE 이 step-ca 루트를 가리킨다
-reachu() { "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request;b=urllib.request.urlopen(sys.argv[1],timeout=10).read().decode(); assert b.strip().startswith('ok') or json.loads(b).get('status')=='ok', b[:80]" "$2" >/dev/null 2>&1; }   # 10초: 호스트를 거치는 경로(host.docker.internal)는 Docker Desktop 프록시라 부하 때 3초를 넘겼다(4차 실행)   # reachu <출발 서비스> <URL>
-blockedu() { ! reachu "$@"; }
-blocked() { ! reach "$@"; }
+# 도달·차단 판정은 한 함수(probe_http / probe_tcp)가 세 값 중 하나를 낸다: ok(응답 확인) / unreachable(연결 실패·시간 초과·이름 안 풀림) / bad(응답은 왔으나 본문·상태가 다르다). 빈 값은 docker exec 자체가 실패한 것(컨테이너 없음 등)이라 판정할 수 없다.
+# 왜: 차단(부정) 단언이 `! 명령` 이면 컨테이너가 없거나 exec 가 실패해도 "차단됨"으로 통과한다(정적 점검 A11). 차단은 unreachable 일 때만 통과한다.
+probe_http() { # probe_http <출발 서비스> <URL> <초>: 본문이 ok 로 시작하거나 JSON status==ok 면 ok
+  "$DOCKER" exec "$(cn "$1")" python -c "import sys,json,urllib.request,urllib.error
+try:
+    b = urllib.request.urlopen(sys.argv[1], timeout=float(sys.argv[2])).read().decode()
+except urllib.error.HTTPError: print('bad')
+except (urllib.error.URLError, OSError): print('unreachable')
+else:
+    try: good = b.strip().startswith('ok') or json.loads(b).get('status') == 'ok'
+    except ValueError: good = False
+    print('ok' if good else 'bad')" "$2" "$3" 2>/dev/null | tail -1 | tr -d '\r'; }
+probe_tcp() { # probe_tcp <출발 서비스> <호스트> <포트> <초>: ok(연결됨) / unreachable
+  "$DOCKER" exec "${PROJECT}-$1-1" python -c "import socket,sys
+try:
+    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=float(sys.argv[3])); print('ok')
+except OSError: print('unreachable')" "$2" "$3" "$4" 2>/dev/null | tail -1 | tr -d '\r'; }
+reach() { [ "$(probe_http "$1" "https://$2/healthz" "$REACH_T")" = ok ]; }   # 서비스는 TLS 사이드카(443)로만 받는다(ADR 0060). 컨테이너의 SSL_CERT_FILE 이 step-ca 루트를 가리킨다
+reachu() { [ "$(probe_http "$1" "$2" "$REACH_T")" = ok ]; }   # reachu <출발 서비스> <URL>: 호스트를 거치는 경로(host.docker.internal)는 Docker Desktop 프록시라 부하 때 3초를 넘겼다(4차 실행)
+blockedu() { [ "$(probe_http "$1" "$2" "$REACH_T")" = unreachable ]; }
+blocked() { [ "$(probe_http "$1" "https://$2/healthz" "$REACH_T")" = unreachable ]; }   # body-judged: probe_http 가 본문 status 를 판정한다(차단은 unreachable 일 때만 통과)
 net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원이 정확히 그 컨테이너들이다
   local n=$1; shift; local got want
   got=$("$DOCKER" network inspect "${PROJECT}_$n" --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}' | sed '/^$/d' | sort | tr '\n' ' ')
@@ -392,27 +423,29 @@ chk "차단: survey-service -> dataset-store (I2 는 datasets 네트워크뿐, A
 chk "차단: release-gate -> dataset-store" blocked release-gate dataset-store
 chk "차단: model-registry -> dataset-store" blocked model-registry dataset-store
 chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
-chk "공개 입구에 낸 영역 Exposure 선언에 dataset-store 경로가 없다" bash -c "! grep -rq 'dataset-store\|datasets' ${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/exposures"
+no_dataset_route() { local d="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/exposures" rc=0; [ -n "$(ls "$d" 2>/dev/null)" ] || { echo "Exposure 선언 폴더가 비었거나 없다: $d"; return 1; }; grep -rq 'dataset-store\|datasets' "$d" || rc=$?; [ $rc = 1 ]; }   # 폴더가 비었으면 "경로 없음"으로 통과하지 않는다
+chk "공개 입구에 낸 영역 Exposure 선언에 dataset-store 경로가 없다" no_dataset_route
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
 for pair in "db-survey:survey-service:survey-db" "db-qa:question-authoring:question-authoring-db" "db-ops:ops-feedback:ops-feedback-db" "db-gate:release-gate:release-gate-db"; do   # 영역마다 자기 DB 컨테이너(구조 규칙 1)
   _n=${pair%%:*}; _r=${pair#*:}; _svc=${_r%%:*}; _db=${_r##*:}
   chk "db 네트워크 $_n 에는 $_db 와 $_svc 만 있다(다른 영역의 DB 에 닿지 않는다)" net_is "$_n" "${PROJECT}-$_db-1" "${PROJECT}-$_svc-1"
 done
-tcp() { "$DOCKER" exec "${PROJECT}-$1-1" python -c "import socket;socket.create_connection(('$2',$3),timeout=3)" >/dev/null 2>&1; }
+tcp() { [ "$(probe_tcp "$1" "$2" "$3" "$TCP_T")" = ok ]; }
 for pair in survey-service:survey-db question-authoring:question-authoring-db ops-feedback:ops-feedback-db release-gate:release-gate-db; do chk "도달: ${pair%%:*} -> ${pair##*:}:5432 (db 네트워크)" tcp "${pair%%:*}" "${pair##*:}" 5432; done
-tcp_blocked() { ! tcp "$@"; }
+no_published_port() { "$DOCKER" inspect "$1" >/dev/null 2>&1 || { echo "컨테이너가 없다: $1"; return 1; }; [ -z "$("$DOCKER" port "$1" 2>/dev/null)" ]; }   # 컨테이너가 없으면 "게시 없음"으로 통과하지 않는다
+tcp_blocked() { [ "$(probe_tcp "$1" "$2" "$3" "$TCP_T")" = unreachable ]; }
 for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do chk "차단: model-registry -> $_db" tcp_blocked model-registry $_db 5432; done
 chk "차단: survey-service -> 다른 영역의 DB(release-gate-db)" tcp_blocked survey-service release-gate-db 5432
-for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do chk "차단: 호스트에 $_db 포트 게시 없음" bash -c "[ -z \"\$($DOCKER port ${PROJECT}-$_db-1)\" ]"; done
+for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do chk "차단: 호스트에 $_db 포트 게시 없음" no_published_port "${PROJECT}-$_db-1"; done
 chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "https://host.docker.internal:$IPORT/healthz"   # body-judged: reachu 가 본문 status/ok 를 판정한다
 chk "도달: 추론 서버 -> 제품 입구(게이트웨이 TLS, 게이트웨이 CA 검증, I4 번들 읽기의 운영 경로 D72)" reachu model-serving "$GWTLS/healthz"
 chk "차단: 추론 서버 -> question-authoring (제품 내부 이름으로는 닿지 않는다)" blocked model-serving question-authoring
 chk "도달: question-authoring -> ops-feedback (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback
 chk "차단: ops-feedback -> model-registry" blocked ops-feedback model-registry
-noegress() { ! "$DOCKER" exec "${PROJECT}-release-gate-1" python -c "import urllib.request;urllib.request.urlopen('http://1.1.1.1',timeout=3)" >/dev/null 2>&1; }
+noegress() { [ "$(probe_http release-gate http://1.1.1.1 "$TCP_T")" = unreachable ]; }
 chk "내부 네트워크 밖으로 나가지 못함(release-gate -> 외부 인터넷)" noegress
 chk "보존 정리 잡이 Compose 에서 실행된다: release-gate prune --dry-run(멱등, release-gate CR-0008)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-release-gate-prune python -m release_gate prune --dry-run
-chk "보존 정리 잡이 Compose 에서 실행된다: survey purge(SURVEY_SESSION_RETENTION_DAYS=90, 지운 개수 JSON)" bash -c "bash $DEPLOY_ROOT/scripts/run-job.sh job-survey-purge | tail -1 | python3 -c 'import json,sys;json.loads(sys.stdin.read());print(\"purge 출력이 JSON 한 줄\")'"
+chk "보존 정리 잡이 Compose 에서 실행된다: survey purge(SURVEY_SESSION_RETENTION_DAYS=90, 지운 개수 JSON)" bash -c "set -o pipefail; bash $DEPLOY_ROOT/scripts/run-job.sh job-survey-purge | tail -1 | python3 -c 'import json,sys;json.loads(sys.stdin.read());print(\"purge 출력이 JSON 한 줄\")'"
 chk "보존 정리 잡이 Compose 에서 실행된다: question-authoring purge(멱등; 출력 한 줄은 지운 개수 요약)" bash -c "set -o pipefail; bash $DEPLOY_ROOT/scripts/run-job.sh job-question-authoring-purge | tail -1 | grep -q ."
 chk "컨테이너 격리 실제 확인(check-containers: 비루트·읽기 전용·cap_drop ALL·no-new-privileges·자원 한도·로그 회전)" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$PROJECT"
 nonroot() { [ "$("$DOCKER" exec "$(cn "$1")" id -u | tr -d '\r')" != 0 ]; }
@@ -438,7 +471,7 @@ if [ "$UPONLY" = 1 ]; then
   sect ""; finish; [ "$FAILS" = 0 ]; exit $?
 fi
 STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-$WORKSPACE/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/trust.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
+"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-${SETUP_ENV_WORK:-$DEPLOY_ROOT/state/areas}/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/trust.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 # 단계별 상태(steps.json)를 항목 상태표에 올린다: '단계 N' 이름으로 뒤 항목이 선행으로 쓴다. 단계 안의 SKIP 은 SKIP 개수에 더한다
 if [ -f "$W/work/steps.json" ]; then
@@ -459,9 +492,9 @@ chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_J
 # 주기 실행은 systemd timer 의 몫이다(ADR 0036). 유닛 파일은 정적 시험으로 확인하고(주기·oneshot·스크립트·systemd-analyze verify), 실제 잡 실행은 위 run-job.sh 호출이 Compose 안에서 확인한다
 # 감시 스택(ADR 0037): 같은 프로젝트에 compose.monitoring.yaml 의 서비스를 올려 실제 gateway·release-gate·model-serving 를 탐침하는지 본다.
 # (이전 구간은 check-health.sh 가 gateway /healthz 평문·HTTPS 를 읽었다. HTTPS 탐침은 서버 밖 감시의 몫이라 external-targets.yml 에 둔다.)
-export METRICS_DIR="$W/metrics"; mkdir -p "$METRICS_DIR"; chmod 755 "$METRICS_DIR"; SERVICE_RESULT=success bash "$DEPLOY_ROOT/scripts/job-metrics.sh" e2e-demo 600
-chk "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" bash -c "source '$DEPLOY_ROOT/scripts/lib.sh'; COMPOSE_EXTRA='$COMPOSE_EXTRA $DEPLOY_ROOT/compose.monitoring.yaml' dc '$PROJECT' up -d --wait prometheus alertmanager >/dev/null 2>&1"
-chk_dep "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" "감시 스택이 실제 서비스를 본다 (탐침 probe_success=1 이 하나 이상이고 0 이 없다, platform 감시 이미지의 Prometheus API)" bash -c 'for i in $(seq 1 60); do out=$('"$DOCKER"' exec "'"$PROJECT"'-prometheus-1" wget -qO- "http://127.0.0.1:9090/api/v1/query?query=probe_success" 2>/dev/null); ok=$(printf "%s" "$out" | grep -o "\"1\"\]" | wc -l); bad=$(printf "%s" "$out" | grep -o "\"0\"\]" | wc -l); [ "$ok" -ge 1 ] && [ "$bad" = 0 ] && exit 0; sleep 2; done; exit 1'
+export METRICS_DIR="$W/metrics"; mkdir -p "$METRICS_DIR"; chmod 755 "$METRICS_DIR"; SERVICE_RESULT=success must bash "$DEPLOY_ROOT/scripts/job-metrics.sh" e2e-demo 600   # 600초: 시험용 임의 주기(알람 판정이 아니라 지표 파일 형식 시험용, 측정 안 함)
+chk "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" bash -c "source '$DEPLOY_ROOT/scripts/lib.sh'; COMPOSE_EXTRA='$COMPOSE_EXTRA $DEPLOY_ROOT/compose.monitoring.yaml' dc '$PROJECT' up -d --wait --wait-timeout $E2E_UP_WAIT_S prometheus alertmanager"
+chk_dep "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" "감시 스택이 실제 서비스를 본다 (탐침 probe_success=1 이 하나 이상이고 0 이 없다, platform 감시 이미지의 Prometheus API)" bash -c 'for i in $(seq 1 '"$((E2E_MON_POLL_S/2))"'); do out=$('"$DOCKER"' exec "'"$PROJECT"'-prometheus-1" wget -qO- "http://127.0.0.1:9090/api/v1/query?query=probe_success" 2>/dev/null); ok=$(printf "%s" "$out" | grep -o "\"1\"\]" | wc -l); bad=$(printf "%s" "$out" | grep -o "\"0\"\]" | wc -l); [ "$ok" -ge 1 ] && [ "$bad" = 0 ] && exit 0; sleep 2; done; exit 1'
 chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 없다(서빙 서버 밖, D40)" bash -c "! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
 fi
@@ -473,12 +506,14 @@ chk "보관 기간이 비어 있으면 백업 거부" bash -c "BACKUP_CONFIG=$W/
 # 시험용 저장소 암호: 시험 폴더($W, 모드 700) 안에서만 만들고 출력·로그에 내지 않는다. 시험이 끝나면 $W 째로 지워진다
 ( umask 077; head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$W/backup.pass" )
 printf '# 시험 전용 값(사용자 결정이 아니다)\nBACKUP_REPOSITORY=rest:https://backup-target:8000/openit\nBACKUP_CACERT_FILE=%s/backup-tls/root_ca.crt\nBACKUP_REST_CREDENTIAL_FILE=%s\nBACKUP_DOCKER_NETWORK=%s_backup\nBACKUP_RETENTION_DAYS=7\nBACKUP_PASSWORD_FILE=%s\n' "$W" "$W/backup-target.cred" "$PROJECT" "$W/backup.pass" > "$W/backup-test.env"
-export BACKUP_CONFIG="$W/backup-test.env"
+export BACKUP_CONFIG="$W/backup-test.env" BACKUP_LOCK_FILE="$W/backup.lock"   # 잠금 파일도 이 실행의 임시 폴더에 둔다(고정 경로 state/backup.lock 이면 같은 트리의 다른 E2E·실제 백업과 겹쳐 flock 이 거부한다)
 # 서비스는 모두 멈추고 postgres 만 남긴다(pg_dump 는 서버가 떠 있어야 한다). 파일 저장소는 번들뿐(gate-data, models-data, datasets-data), 데이터베이스는 PostgreSQL(D85)
 dc "$PROJECT" --profile jobs stop $(dc "$PROJECT" --profile jobs config --services | grep -vx -e backup-target $(printf -- "-e %s " $PG_SERVICES | sed "s/^/ /") | tr '\n' ' ') >/dev/null 2>&1
 STORES="gate-data models-data datasets-data"; PGDBS="$PG_DBS"; NPG=$(set -- $PGDBS; echo $#)   # 정본은 lib.sh 의 PG_DBS(keycloak 포함): 하드코딩하면 Keycloak(직원 계정·역할)이 백업·복구·지문 검사에서 빠진다
-for s in $STORES; do bash "$DEPLOY_ROOT/scripts/fingerprint.sh" $s > "$W/fp-before-$s.json"; done
-for d in $PGDBS; do bash "$DEPLOY_ROOT/scripts/pg-fingerprint.sh" $d > "$W/fp-before-pg-$d.json"; done
+# 지문 생성이 실패하면(빈 파일) 지운 뒤 지문 비교와 복구 뒤 일치 비교가 둘 다 빈 값끼리 맞아 헛통과한다: 실패하면 그 자리에서 멈추고 빈 지문도 거부한다
+fp_before() { local out; out=$(bash "$DEPLOY_ROOT/scripts/$1" "$2") && [ -n "$out" ] || { echo "지문을 만들지 못했다: $1 $2" >&2; exit 1; }; printf '%s\n' "$out" > "$3"; }
+for s in $STORES; do fp_before fingerprint.sh $s "$W/fp-before-$s.json"; done
+for d in $PGDBS; do fp_before pg-fingerprint.sh $d "$W/fp-before-pg-$d.json"; done
 chk "백업(파일 저장소 3개, restic 스냅샷)" bash "$DEPLOY_ROOT/scripts/backup.sh" $STORES
 chk "백업(PostgreSQL ${NPG}개 데이터베이스, pg_dump -Fc 를 restic 으로 바로 저장)" bash "$DEPLOY_ROOT/scripts/pg-backup.sh" $PGDBS
 repo_clean() { n=$(bash -c "source $DEPLOY_ROOT/scripts/lib.sh; source $DEPLOY_ROOT/scripts/backup-lib.sh; backup_load_config; backup_restic -- snapshots --json" | python3 -c 'import json,sys;print(len({s["hostname"] for s in json.load(sys.stdin)}))'); [ "$n" = "$((3+NPG))" ] || { echo "저장소(host)별 스냅샷이 $((3+NPG))개(파일 3 + 데이터베이스 ${NPG})가 아니다: $n"; return 1; }
@@ -495,8 +530,9 @@ chk "서버 자격으로는 백업을 지울 수 없다(append-only)" append_onl
 chk "저장소 쪽 관리 자격으로 보관 정리(host마다 최신 1개 이상 유지)" bash "$DEPLOY_ROOT/scripts/backup-prune.sh" "${PROJECT}_backup-target-data" openit "$W/backup.pass" 7
 dc "$PROJECT" down >/dev/null 2>&1
 chk "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)" bash -c "$DOCKER volume rm ${PROJECT}_survey-data ${PROJECT}_gate-data ${PROJECT}_models-data ${PROJECT}_datasets-data $(for _s in $PG_SERVICES; do printf "%s_%s-data " "$PROJECT" "$_s"; done) >/dev/null"
-dc "$PROJECT" up -d --wait --wait-timeout 120 $PG_SERVICES backup-target >/dev/null 2>&1   # 빈 볼륨에서 초기화 스크립트가 데이터베이스·계정을 다시 만든다. 백업 저장소(볼륨 backup-target-data 는 down 으로 지워지지 않는다)도 다시 올린다
-chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
+chk_dep "볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)" "영역 DB·백업 저장소 재기동(빈 볼륨 초기화)" dc "$PROJECT" up -d --wait --wait-timeout $E2E_UP_WAIT_S $PG_SERVICES backup-target   # 빈 볼륨에서 DB 이미지가 계정을 다시 만든다. 백업 저장소(볼륨 backup-target-data 는 down 으로 지워지지 않는다)도 다시 올린다. 실패하면 뒤 항목이 SKIP 으로 센다(예전에는 결과를 버렸다)
+NEED+=("영역 DB·백업 저장소 재기동(빈 볼륨 초기화)")
+chk_dep "영역 DB·백업 저장소 재기동(빈 볼륨 초기화)" "지운 뒤 지문이 달라졌다(빈 볼륨, 빈 데이터베이스)" bash -c "[ \"\$(bash $DEPLOY_ROOT/scripts/fingerprint.sh gate-data)\" != \"\$(cat $W/fp-before-gate-data.json)\" ] && [ \"\$(bash $DEPLOY_ROOT/scripts/pg-fingerprint.sh survey)\" != \"\$(cat $W/fp-before-pg-survey.json)\" ]"
 NEED+=("볼륨 삭제(데이터를 실제로 지운다: 파일 저장소와 영역 DB 볼륨)")
 for s in $STORES; do chk "복구 $s" bash "$DEPLOY_ROOT/scripts/restore.sh" $s latest --yes; done
 for d in $PGDBS; do chk "복구 pg-$d" bash "$DEPLOY_ROOT/scripts/pg-restore.sh" $d latest --yes; done
@@ -524,7 +560,7 @@ chk_dep "새 버전 빌드(시험: 시험 라벨 openit.test-build=test2, revisi
 cp "$W/images.env.bak" "$DEPLOY_ROOT/build/images.env"   # 시험용 test2 빌드가 build/images.env 에 남지 않게 한다
 chk_dep "새 버전 publish -> 잠금 갱신(이전 잠금은 history에 보관)" "새 잠금으로 적용 -> survey-service가 새 digest 이미지로 교체" bash -c "bash $DEPLOY_ROOT/scripts/up.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" != \"$OLD_REF\" ]"
 chk_dep "새 잠금으로 적용 -> survey-service가 새 digest 이미지로 교체" "롤백: 잠금을 이전 것으로 되돌리고 적용 -> 이전 digest 이미지로 복귀" bash -c "bash $DEPLOY_ROOT/scripts/rollback.sh $PROJECT >/dev/null && [ \"\$($DOCKER inspect ${PROJECT}-survey-service-1 --format '{{.Config.Image}}' | tr -d '\r')\" = \"$OLD_REF\" ]"
-survey_ready_after() { for i in $(seq 1 40); do o=$(inpy survey-service /readyz 2>/dev/null); echo "$o" | grep -q '"ready": true' && { echo "$o" | cut -c1-120; return 0; }; sleep 2; done; echo "$o"; return 1; }
+survey_ready_after() { for i in $(seq 1 $((E2E_ROLLBACK_READY_S/2))); do o=$(inpy survey-service /readyz 2>/dev/null); echo "$o" | grep -q '"ready": true' && { echo "$o" | cut -c1-120; return 0; }; sleep 2; done; echo "$o"; return 1; }
 chk_dep "롤백: 잠금을 이전 것으로 되돌리고 적용 -> 이전 digest 이미지로 복귀" "롤백 뒤 survey-service /readyz 200 (복구한 포인터의 릴리스를 HTTP로 다시 적재)" survey_ready_after
 
 fi
