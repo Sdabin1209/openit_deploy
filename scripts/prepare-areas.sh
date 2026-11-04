@@ -40,7 +40,7 @@ setup_one() {
   [ -x "$py" ] || die "deploy .venv 가 없다: 먼저 deploy 자신의 .venv 를 준비한다 (docs/SETUP.md)"
   rc=0; out=$(cd "$WORKSPACE/$a" && bash scripts/setup-env.sh) || rc=$?
   printf '%s\n' "$out" | sed '$d'
-  printf '%s\n' "$out" | "$py" "$DEPLOY_ROOT/scripts/setup_env_report.py" record "$a" || { [ $rc = 0 ] && rc=70; }
+  printf '%s\n' "$out" | "$py" "$DEPLOY_ROOT/scripts/setup_env_report.py" record "$a" --ws "$WORKSPACE" || { [ $rc = 0 ] && rc=70; }
   return $rc
 }
 NAMES=(); STATUS=(); SECS=(); FAILS=0

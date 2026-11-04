@@ -24,6 +24,20 @@
   "env_path_exists": {
    "type": "boolean",
    "description": "<워크스페이스>/<영역>/<environment.path> 가 있는지(wiring 이 본다)"
+  },
+  "report_commit": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "description": "보고를 저장할 때의 영역 커밋(없으면 null). 낡은 보고 판정에 쓴다"
+  },
+  "current_commit": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "description": "지금 대조하는 영역 커밋(wiring 이 영역 리포의 HEAD 를 읽는다). 알 수 없으면 null"
   }
  }
 }

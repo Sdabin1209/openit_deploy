@@ -529,10 +529,14 @@ class SetupEnvStatusRequest(TypedDict):
     area: str
     report: Optional[Dict[str, Any]]
     env_path_exists: bool
+    report_commit: NotRequired[Optional[str]]
+    current_commit: NotRequired[Optional[str]]
 
 
 class SetupEnvStatusResult(TypedDict):
-    status: Literal['READY', 'NO_REPORT', 'SETUP_FAILED', 'PATH_MISSING']
+    status: Literal[
+        'READY', 'NO_REPORT', 'SETUP_FAILED', 'PATH_MISSING', 'STALE_REPORT'
+    ]
     reason: str
     python: NotRequired[Optional[str]]
 

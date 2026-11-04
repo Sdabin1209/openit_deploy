@@ -16,6 +16,9 @@ def run(request: "SetupEnvStatusRequest") -> "SetupEnvStatusResult":
         return {"status": "NO_REPORT", "reason": f"{area} 의 setup-env 보고가 없다 {fix}"}
     if rep.get("status") != "ok":
         return {"status": "SETUP_FAILED", "reason": f"{area} 의 setup-env 가 실패했다(status={rep.get('status')}, exit_code={rep.get('exit_code')}) {fix}"}
+    rc, cc = request.get("report_commit"), request.get("current_commit")
+    if cc and rc != cc:   # 다른 실행·트리의 낡은 보고를 이어받지 않는다: 보고는 그것을 만든 영역 커밋과 지금 대조하는 커밋이 같을 때만 쓴다
+        return {"status": "STALE_REPORT", "reason": f"{area} 의 setup-env 보고가 낡았다(보고 커밋 {rc or '없음'}, 지금 {cc}) {fix}"}
     env = rep["environment"]
     if not request["env_path_exists"]:
         return {"status": "PATH_MISSING", "reason": f"{area} 의 환경 경로 {env['path']} 가 없다 {fix}"}

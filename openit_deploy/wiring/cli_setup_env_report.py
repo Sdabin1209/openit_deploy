@@ -28,6 +28,7 @@ def main(argv) -> int:
         _, why = SE.env_status(area, ws)
         if why: print(why); return 1
         return 0
-    rc, msg = SE.record(area, sys.stdin.read().splitlines())
+    ws = pathlib.Path(argv[argv.index("--ws") + 1]) if "--ws" in argv else None   # 영역 리포가 있는 워크스페이스: 보고에 그 영역 커밋을 적는다
+    rc, msg = SE.record(area, sys.stdin.read().splitlines(), ws)
     if rc: print(msg, file=sys.stderr)
     return rc

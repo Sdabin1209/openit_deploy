@@ -14,7 +14,8 @@
     "READY",
     "NO_REPORT",
     "SETUP_FAILED",
-    "PATH_MISSING"
+    "PATH_MISSING",
+    "STALE_REPORT"
    ]
   },
   "reason": {

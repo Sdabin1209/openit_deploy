@@ -12,16 +12,21 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def store() -> pathlib.Path:
-    # 작업 트리(git worktree)에는 state/ 가 없다(영역 환경 준비는 본 리포에서 한 번 한다): 본 리포의 보고를 읽는다. 왜: 작업 트리에서 돌린 점검이 '보고 없음'으로 SKIP 되어 본 리포와 다른 결과가 나왔다
+    # 보고는 이 작업 트리(DEPLOY_ROOT)의 state/ 안에만 둔다: 다른 실행·트리의 보고를 이어받지 않는다(공용 가변 상태 금지). 시험은 SETUP_ENV_DIR 로 바꾼다
     if os.environ.get("SETUP_ENV_DIR"): return pathlib.Path(os.environ["SETUP_ENV_DIR"])
-    local = ROOT / "state" / "setup-env"
-    if not local.is_dir() and (ROOT / ".git").is_file():
-        try:
-            common = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, check=True).stdout.strip()
-            return pathlib.Path(common).parent / "state" / "setup-env"
-        except (OSError, subprocess.CalledProcessError):
-            pass
-    return local
+    return ROOT / "state" / "setup-env"
+
+
+def head_commit(repo: pathlib.Path):
+    r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"], capture_output=True, text=True)
+    return r.stdout.strip() or None if r.returncode == 0 else None
+
+
+def load_commit(area: str):
+    try:
+        return (store() / f"{area}.commit").read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
 
 
 def load(area: str):
@@ -35,7 +40,7 @@ def load(area: str):
 def _status(area: str, ws: pathlib.Path):
     rep = load(area)
     exists = bool(rep and rep.get("environment") and (ws / area / rep["environment"]["path"]).exists())
-    return rep, call(setup_env_status, "SetupEnvStatusRequest", "SetupEnvStatusResult", {"area": area, "report": rep, "env_path_exists": exists})
+    return rep, call(setup_env_status, "SetupEnvStatusRequest", "SetupEnvStatusResult", {"area": area, "report": rep, "env_path_exists": exists, "report_commit": load_commit(area), "current_commit": head_commit(ws / area)})
 
 
 def env_status(area: str, ws: pathlib.Path):
@@ -50,7 +55,7 @@ def env_python(area: str, ws: pathlib.Path):
     return ws / area / r["python"] if r["status"] == "READY" and r["python"] else None
 
 
-def record(area: str, stdout_lines: list):
+def record(area: str, stdout_lines: list, ws=None):
     """(종료 코드, 표준 오류 메시지). 계약 검증은 계약 패키지 validator."""
     errs = []
     lines = [l for l in stdout_lines if l.strip()]
@@ -68,4 +73,6 @@ def record(area: str, stdout_lines: list):
         return (2 if r["status"] == "NO_LINE" else 1), r["message"]
     d = store(); d.mkdir(parents=True, exist_ok=True)
     tmp = d / f".{area}.json.tmp"; tmp.write_text(json.dumps(r["report"], ensure_ascii=False), encoding="utf-8"); tmp.replace(d / f"{area}.json")
+    c = head_commit(pathlib.Path(ws) / area) if ws else None   # 보고를 만든 영역 커밋(낡은 보고 판정용)
+    if c: (d / f"{area}.commit").write_text(c + "\n", encoding="utf-8")
     return 0, ""
