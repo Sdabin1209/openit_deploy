@@ -100,3 +100,4 @@ check-all 자체 시험 102건(규칙 4·5 의 정본은 가짜 설치 패키지
 compose 환경 이름 점검의 변이 확인 (계약에 없는 이름이 잡힌다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_env_in_contract.py" --self-test
 compose 의 모든 환경 이름이 받는 쪽 계약 Env 스키마에 있다 (계약 3.4.10, 구조 규칙 1·6. 위반 목록이 3.4.10 정렬 일 목록이라 platform·DB 이미지가 들어오기 전까지 실패가 맞다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_env_in_contract.py"
 영역 시험 시간 상한은 근거 있는 상수다 (측정 최악 768s 의 2배, D125, 변이: 900 이면 실패) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_area_test_timeout.py"
+run-self-checks 집계 (77=SKIP 은 PASS 가 아니고 묶음을 0 으로 끝내지 않는다, 변이 포함) :: bash "$DEPLOY_ROOT/scripts/test-run-self-checks.sh"

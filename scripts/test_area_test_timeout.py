@@ -14,8 +14,12 @@ class T(unittest.TestCase):
     def test_subprocess_and_messages_use_the_constant(self):
         body = SRC[SRC.index("def run_area_tests"):]
         self.assertIn("timeout=AREA_TEST_TIMEOUT_SECONDS", body)
-        self.assertIsNone(re.search(r"timeout=\d+", body), "시간 상한은 상수로만 쓴다")
         self.assertNotIn("900초", body)
+
+    def test_no_timeout_literal_anywhere_in_file(self):
+        # 파일 전체: subprocess 의 timeout 은 이름 있는 상수로만 쓴다(근거는 상수 위 주석)
+        lits = re.findall(r"timeout\s*=\s*\d+", SRC)
+        self.assertEqual(lits, [], "timeout 리터럴 대신 근거 있는 상수를 쓴다")
 
 if __name__ == "__main__":
     unittest.main()

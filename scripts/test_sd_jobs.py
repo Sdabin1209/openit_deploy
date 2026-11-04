@@ -9,6 +9,9 @@ import sd_jobs
 from boundary_contracts import validator, PIPELINE_SCHEMA_VERSION
 from boundary_contracts.action_rules import load_rules
 
+# 실제 이미지 잡 실행의 상한. 측정하지 않았다: 합성 입력 몇 건을 file 저장소에 넣는 잡이라 정상일 때 수 초 규모로 판단하고, 멈춘 컨테이너가 묶음 전체를 막지 않게 하는 상한이다(D125: 측정하면 최악+여유로 바꾼다).
+DOCKER_RUN_TIMEOUT_SECONDS = 300
+
 DECL = {"jobs": [{"name": "synthetic-import", "argv": ["python", "-m", "x", "import", "--config", "/config/import.json"], "idempotent": True,
                   "secret_files": ["DATASET_STORE_WRITE_TOKEN_FILE"], "config": {"container_path": "/config/import.json", "schema": "SyntheticJobConfigImport"}}]}
 LABELS = {"io.openit.jobs": json.dumps(DECL)}
@@ -77,7 +80,7 @@ class T(unittest.TestCase):
             os.chmod(w, 0o755); sec = pathlib.Path(w) / "sec"; (sec / "tokens").mkdir(parents=True)
             (sec / "tokens/dataset-store-write-synthetic-data").write_text("x" * 32)
             cp = pathlib.Path(w) / "bad.json"; cp.write_text(json.dumps({"dataset_id": "ds-bad"}))   # 필수 키가 없는 설정(계약 위반)
-            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), network="none"), capture_output=True, text=True)
+            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), network="none"), capture_output=True, text=True, timeout=DOCKER_RUN_TIMEOUT_SECONDS)
             self.assertEqual(r.returncode, 2, r.stderr[-300:])
             msg = sd_jobs.describe_failure(r.returncode, r.stderr, validator)
             self.assertIn("설정 오류 CONFIG", msg, msg)
@@ -98,7 +101,7 @@ class T(unittest.TestCase):
                    "output": {"work_dir": f"{w}/work", "store": {"kind": "file", "root": f"{w}/store"}}}
             self.assertEqual(list(validator("SyntheticJobConfigImport").iter_errors(cfg)), [])
             cp = pathlib.Path(w) / "import.json"; cp.write_text(json.dumps(cfg))
-            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), extra_ro=[str(inp)], network="none"), capture_output=True, text=True)
+            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), extra_ro=[str(inp)], network="none"), capture_output=True, text=True, timeout=DOCKER_RUN_TIMEOUT_SECONDS)
             out = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
             self.assertEqual(r.returncode, 0, (r.stderr + r.stdout)[-600:])
             self.assertIn(out.get("status"), ("PUBLISHED", "ALREADY_PUBLISHED"), out)

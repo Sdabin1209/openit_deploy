@@ -214,7 +214,7 @@ def rule_versions() -> R:
         return r
     cmd = CFG["versions_cmd"]
     try:
-        p = subprocess.run(["bash", cmd] if cmd.endswith(".sh") else cmd.split(), capture_output=True, text=True, timeout=120)
+        p = subprocess.run(["bash", cmd] if cmd.endswith(".sh") else cmd.split(), capture_output=True, text=True, timeout=CHECK_VERSIONS_TIMEOUT_SECONDS)
     except Exception as e:
         r.fail("check-versions", f"deploy/scripts/check-versions.sh: 실행하지 못했다({type(e).__name__})")
         return r
@@ -401,7 +401,7 @@ def rule_relax() -> R:
         r.un.append((T, why or "model-runtime 의 환경이 python-venv 가 아니다"))
         return r
     try:
-        p = subprocess.run([py, "-I", "-c", RELAX_SNIPPET], capture_output=True, text=True, timeout=60, cwd="/")
+        p = subprocess.run([py, "-I", "-c", RELAX_SNIPPET], capture_output=True, text=True, timeout=RELAX_TIMEOUT_SECONDS, cwd="/")
     except Exception as e:
         r.fail(T, f"model-runtime: relax 를 부르지 못했다({type(e).__name__})")
         return r
@@ -794,6 +794,10 @@ def collect_area(repo: str):
 
 # 영역 시험 하나의 시간 상한(초). 근거: 측정한 최악이 platform 전체 시험 768.38초(2026-11-04, 헤드의 새 clone 재현, 52 passed)이고 D125(상한 = 측정 최악 + 여유)에 따라 측정 최악의 2배로 둔다.
 # 이전 값 900초는 근거가 없었고 측정 최악에 여유가 15% 뿐이라 부하가 겹치면 platform 시험이 시간 초과로 실패했다(2026-11-04). 영역 시험이 이보다 길어지면 값이 아니라 영역의 시험 시간을 먼저 본다.
+# 시간 상한 상수(D125: 상한 = 측정 최악 + 여유). 아래 둘은 측정하지 않았다: check-versions.sh 는 이미지 라벨 읽기(docker inspect 수십 번), relax 조각은 파이썬 한 번 기동이다.
+# 판단 근거: 둘 다 로컬 명령이라 정상일 때 수 초 규모로 보고, 멈춘 명령이 check-all 전체를 막지 않게 하는 것이 목적이다. 값이 모자라 FAIL 하면 실제 소요를 측정해 바꾸고 이 주석을 갱신한다.
+CHECK_VERSIONS_TIMEOUT_SECONDS = 120
+RELAX_TIMEOUT_SECONDS = 60
 AREA_TEST_TIMEOUT_SECONDS = 1800
 
 

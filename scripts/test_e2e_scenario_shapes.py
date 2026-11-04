@@ -56,7 +56,11 @@ def start_dicts():
 
 C = consts()
 
-FORMS = pathlib.Path(os.environ.get("E2E_FORMS_DIR") or HERE.parent.parent / "question-authoring" / "forms")   # 시험의 입력 위치(e2e.sh 가 넘기는 값과 같은 기본)
+def _areas_root():   # 이웃 영역의 읽기 위치: 이웃 작업 트리가 아니라 deploy 의 사본 state/areas/<영역>(setup_env.work_root, 시험은 SETUP_ENV_WORK 로 바꾼다). 이웃 작업 트리의 커밋 안 된 변경이 결과를 좌우하지 않게 한다
+    sys.path.insert(0, str(HERE.parent))
+    from openit_deploy.wiring import setup_env
+    return setup_env.work_root()
+FORMS = pathlib.Path(os.environ.get("E2E_FORMS_DIR") or _areas_root() / "question-authoring" / "forms")   # 시험의 입력 위치(e2e.sh 가 넘기는 값과 같은 기본)
 EXTRACT = (
     "import sys, base64, json\nfrom question_authoring.components import extract_textform as X\n"
     "r = X.run({'data_base64': base64.b64encode(open(sys.argv[1], 'rb').read()).decode(), 'filename': 'form.txt'})\nprint(json.dumps(r, ensure_ascii=False))\n")
@@ -82,6 +86,8 @@ def extract(path_or_text):
 
 
 class RealForms(unittest.TestCase):
+    def setUp(self):
+        if not FORMS.is_dir(): self.skipTest(f"SKIP: 양식 폴더({FORMS})가 없다: prepare-areas.sh 로 사본을 만들거나 E2E_FORMS_DIR 로 지정한다(확인 못 함)")
     """운영 문진표 양식 둘(question-authoring 의 forms/)을 실제로 추출해 QuestionBank 4.0.0 으로 검증하고, E2E 가 가정한 값(ID·제목·첫 문항·둘째 버전 문구)을 실제 양식에서 확인한다."""
     def bank(self, name, text=None):
         ext = extract(text if text is not None else FORMS / name)
@@ -154,4 +160,4 @@ class Shapes(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    from unittest_skip_rc import main; main()
