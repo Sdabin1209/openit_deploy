@@ -1117,19 +1117,10 @@ services:
     mem_limit: ${GATEWAY_MEM_LIMIT:-256m}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md
     cpus: ${GATEWAY_CPUS:-1.0}
     pids_limit: ${GATEWAY_PIDS_LIMIT:-256}
-    image: ${GATEWAY_IMAGE:?locks/images.lock}
-    user: "10001:10001"
+    image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/public-ingress@${PUBLIC_INGRESS_DIGEST:?locks/images.lock}   # platform 공개 입구(S9): 경로 표는 시작할 때 마운트한 영역 Exposure 선언에서 만든다. 설정은 이미지 안에 있다
     cap_add: ["NET_BIND_SERVICE"]   # caddy 바이너리에 파일 권한이 있어 cap_drop ALL이면 실행이 거부된다. 실제로는 8080을 연다
-    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
     configs:
-      - {source: gateway-caddyfile, target: /etc/caddy/Caddyfile}
-      - {source: gateway-auth, target: /etc/caddy/auth.caddy}
       - {source: gateway-devices, target: /etc/caddy/devices.caddy}
-      - {source: gateway-device-tls, target: /etc/caddy/device-tls.caddy}
-      - {source: gateway-device-ca, target: /etc/caddy/device-ca.pem}
-      - {source: gateway-tls-internal, target: /etc/caddy/gateway-tls/internal.caddy}
-      - {source: gateway-tls-files, target: /etc/caddy/gateway-tls/files.caddy}
-      - {source: gateway-tls-acme, target: /etc/caddy/gateway-tls/acme.caddy}
       - {source: gateway-tls-cert, target: /etc/openit/gateway-tls/server.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
     secrets: [gateway-tls-key, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
@@ -1163,6 +1154,7 @@ services:
     volumes:
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
+      - {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/exposures", target: /etc/openit/exposures, read_only: true, bind: {create_host_path: false}}   # 영역마다 낸 Exposure 선언(이미지 라벨 io.openit.exposure)
     tmpfs: ["/tmp", "/config:uid=10001,gid=10001"]
     ports:
       - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT-8080}:8080"      # 평문: /healthz 만 평문, 나머지는 HTTPS 로 308

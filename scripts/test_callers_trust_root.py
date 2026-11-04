@@ -38,6 +38,9 @@ def callers(svcs):
         if n.endswith(SKIP_SUFFIX) or n in ("step-ca", "pki-root", "pki-tokens"): continue
         txt = env_text(s)
         hit = sorted({m for m in names if m != n and re.search(r"https://%s(?![A-Za-z0-9-])" % re.escape(m), txt)})
+        if n == "gateway":   # 공개 입구(platform 이미지)의 상류는 영역 Exposure 선언에서 온다(이미지 라벨). compose 에서는 기다리는 영역 게이트웨이(<서비스>-gw)와 인증(keycloak·oauth2-proxy)으로 안다
+            dep = set((s.get("depends_on") or {}).keys())
+            hit = sorted(set(hit) | {d[:-3] for d in dep if d.endswith("-gw") and d[:-3] in svcs} | {d for d in ("keycloak", "oauth2-proxy") if d in dep})
         if hit: out[n] = hit
     return out
 
@@ -47,7 +50,7 @@ def trust_problems(svcs):
     for n in callers(svcs):
         s = svcs[n]; env = s.get("environment") or {}
         # 게이트웨이(Caddy)는 환경 변수가 아니라 설정의 tls_trusted_ca_certs 로 같은 루트 파일을 믿는다
-        via_caddy = "tls_trusted_ca_certs /etc/openit/pki/root_ca.crt" in env_text(s)
+        via_caddy = "tls_trusted_ca_certs /etc/openit/pki/root_ca.crt" in env_text(s) or (n == "gateway" and any("pki-root:/etc/openit/pki" in str(v) for v in s.get("volumes") or []))   # platform 공개 입구는 /etc/openit/pki/root_ca.crt 를 이미지 설정이 믿는다
         if not any(k in env for k in TRUST_ENV) and not via_caddy: bad.append(f"{n}: 루트 파일 환경 변수({'/'.join(TRUST_ENV)})가 없다")
         if not any("pki-root" in str(v) for v in s.get("volumes") or []): bad.append(f"{n}: pki-root 볼륨 마운트가 없다")
     return bad

@@ -38,7 +38,8 @@ def main(argv, labels_of=image_labels) -> int:
     from boundary_contracts import validator
     res = build(json.loads(raw), labels_of, validator)
     for svc, body in res.items():
-        d = pathlib.Path(a.out) / svc; d.mkdir(parents=True, exist_ok=True)
-        tmp = d / ".exposure.json.tmp"; tmp.write_text(body + "\n", encoding="utf-8"); tmp.chmod(0o644); tmp.replace(d / "exposure.json")   # 같은 폴더에서 rename: 읽는 쪽이 쓰는 도중 파일을 보지 않는다
+        for d, name in ((pathlib.Path(a.out) / svc, "exposure.json"), (pathlib.Path(a.out) / "exposures", svc + ".json")):   # 앞: 영역 게이트웨이용, 뒤: 공개 입구가 읽는 모든 영역의 선언 폴더
+            d.mkdir(parents=True, exist_ok=True)
+            tmp = d / f".{name}.tmp"; tmp.write_text(body + "\n", encoding="utf-8"); tmp.chmod(0o644); tmp.replace(d / name)   # 같은 폴더에서 rename: 읽는 쪽이 쓰는 도중 파일을 보지 않는다
     print(a.out)
     return 0

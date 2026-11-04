@@ -45,7 +45,7 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.8}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.9}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
 DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.19}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
 DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.14}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
@@ -55,9 +55,9 @@ DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진
 # 사용: areas_list [--kind python,node,library,compose,docs] [--train] [--except 이름,이름]  -> 공백으로 이은 이름. 시험용 위치: AREAS_FILE
 areas_list() { "$DEPLOY_PY" -W ignore "$(dirname "${BASH_SOURCE[0]}")/areas.py" --file "${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}" "$@"; }
 # 서비스 목록: 영역 리포지토리 이름 = 이미지 이름(영역 목록이 아니다: model-registry 는 model-lab 영역의 이미지)
-SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console area-gateway backup-store"
+SERVICES="survey-service question-authoring ops-feedback release-gate model-registry dataset-store model-serving kiosk-frontend admin-console area-gateway backup-store public-ingress"
 # 선택 이미지: 기본 빌드·게시 흐름에 들어가지 않는다(약 13GB). build-images.sh --gpu 로 만든다 (compose.llm.yaml)
-SERVICES_OPTIONAL="model-serving-gpu public-ingress monitoring step-ca"   # public-ingress·monitoring·backup-store·step-ca 는 platform 이미지다: 아직 compose 가 쓰지 않아 기본 빌드에 넣지 않는다(이름을 줄 때만)
+SERVICES_OPTIONAL="model-serving-gpu monitoring step-ca"   # public-ingress·monitoring·backup-store·step-ca 는 platform 이미지다: 아직 compose 가 쓰지 않아 기본 빌드에 넣지 않는다(이름을 줄 때만)
 # 서비스 -> 소스 리포·variant 대응(U42, 한 곳). build-images.sh 가 이것으로 영역 리포를 고르고 계약 BuildImageRequest 의 variant 를 채운다. 서비스 목록과 같은 자리에 둔다
 service_repo() { case "$1" in area-gateway|public-ingress|monitoring|backup-store|step-ca) echo platform;; model-registry) echo model-lab;; dataset-store) echo synthetic-data;; model-serving|model-serving-gpu) echo model-runtime;; *) echo "$1";; esac; }
 service_variant() { case "$1" in model-serving-gpu) echo gpu;; public-ingress|monitoring|backup-store|step-ca) echo "$1";; *) echo "";; esac; }

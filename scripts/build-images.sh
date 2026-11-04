@@ -22,6 +22,10 @@ for a in "$@"; do case "$a" in
   -*) die "알 수 없는 옵션: $a (사용: build-images.sh [--gpu [--yes-large]] [이름 ...])";;
   *) NAMES+=("$a");; esac; done
 detect_docker
+# 원격이 동결된 동안 의존 리포(link, boundary-contracts, model-runtime)를 로컬 리포에서 받는 git 설정 하나(S14, git-config url.<base>.insteadOf). 영역 진입점의 pip 가 이 설정으로 같은 태그를 받는다. 이미 GIT_CONFIG_GLOBAL 이 있으면 그것을 쓴다
+if [ -z "${GIT_CONFIG_GLOBAL:-}" ]; then
+  bash "$DEPLOY_ROOT/scripts/write-local-mirrors.sh" >/dev/null && export GIT_CONFIG_GLOBAL="$DEPLOY_ROOT/build/gitconfig-local-mirrors"
+fi
 if [ $GPU = 1 ]; then
   [ ${#NAMES[@]} -gt 0 ] || NAMES=(model-serving-gpu)   # --gpu 단독: GPU 이미지만
   case " ${NAMES[*]} " in *" model-serving-gpu "*) ;; *) NAMES+=(model-serving-gpu);; esac
