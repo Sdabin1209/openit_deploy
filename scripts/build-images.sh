@@ -74,8 +74,16 @@ build_one() {
   else
     # 영역 자신의 리포 루트에서 진입점을 부른다(계약 BuildImageRequest: source_dir = 영역 리포 루트). 영역의 빌드가 자기 시험 환경(node_modules 등 setup-env 가 준비한 것)을 쓸 수 있어야 하므로
     # git archive 사본(환경이 없다)이 아니다. 대신 이미지가 HEAD 와 같도록 추적 파일에 커밋 안 된 변경이 있으면 멈춘다(BUILD_ALLOW_DIRTY=1 로만 허용).
+    # 왜 사본인가(prepare-areas.sh 와 같은 규칙): 실제 영역 리포의 작업 트리(미커밋 변경, 다른 실행의 .venv)를 빌드에 쓰지 않는다. 영역의 HEAD 커밋을 clone 한 사본 state/areas/<영역>(setup-env 가 준비한 환경 포함)에서 돌리고,
+    # 사본의 HEAD 가 실제 리포의 HEAD 와 다르면(낡은 사본) 멈춘다. 사본이 없으면(시험의 가짜 워크스페이스) 아래 옛 경로(실제 리포 + 미커밋 변경 검사)를 쓴다.
+    local cp=${SETUP_ENV_WORK:-$DEPLOY_ROOT/state/areas}/$repo
+    if [ -d "$cp/.git" ]; then
+      [ "$(git -C "$cp" rev-parse HEAD)" = "$(git -C "$WORKSPACE/$repo" rev-parse HEAD)" ] || die "$svc: 영역 사본 $cp 의 커밋이 $repo 의 HEAD 와 다르다 (해결: bash scripts/prepare-areas.sh $repo)"
+      src=$cp; tagref=HEAD
+    else
     src="$WORKSPACE/$repo"; tagref=HEAD
     if [ "${BUILD_ALLOW_DIRTY:-0}" != 1 ] && [ -n "$(git -C "$src" status --porcelain --untracked-files=no)" ]; then die "$svc: $repo 에 커밋 안 된 변경이 있다(이미지는 HEAD 커밋 $(git -C "$src" rev-parse --short HEAD)로 표시되므로 먼저 커밋한다. 개발 중에만 BUILD_ALLOW_DIRTY=1)"; fi
+    fi
   fi
   commit=$(git -C "$WORKSPACE/$repo" rev-parse --short "$tagref")
   img="deploy-build/$svc:$commit"; req="$CTX/req-$svc.json"

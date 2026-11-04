@@ -67,7 +67,7 @@ export DOCKER="$T/docker" FAKE_OUT="$T/req"
 run() { ( cd "$D" && env DEPLOY_ROOT="" bash scripts/build-images.sh "$@" ) ; }
 echo "== 전체 빌드"
 # 실패하면 출력 끝을 보인다(예전엔 /dev/null 로 버려, 동시에 돌 때만 나는 간헐 실패의 사유가 남지 않았다. 재시도로 덮지 않는다)
-export EXPECT_REQ; EXPECT_REQ="$(for s in $SERVICES; do r=$(service_repo $s); v=$(service_variant $s); echo "${r}${v:+-$v}"; done | sort -u | tr '\n' ' ')"   # 요청 파일 이름 = 리포[-variant]: 서비스 목록과 대응 함수(lib.sh)에서 정한다
+export SETUP_ENV_WORK="$T/no-copies"; export EXPECT_REQ; EXPECT_REQ="$(for s in $SERVICES; do r=$(service_repo $s); v=$(service_variant $s); echo "${r}${v:+-$v}"; done | sort -u | tr '\n' ' ')"   # 요청 파일 이름 = 리포[-variant]: 서비스 목록과 대응 함수(lib.sh)에서 정한다
 NSVC=$(set -- $SERVICES; echo $#)   # 서비스 수는 lib.sh SERVICES 가 정본이다(하드코딩하지 않는다)
 ok "build-images.sh (서비스 ${NSVC}개)" bash -c "cd '$D' && bash scripts/build-images.sh >'$T/bi.out' 2>&1 || { tail -n 8 '$T/bi.out'; exit 1; }"
 ok "images.env 에 서비스 ${NSVC}개가 기록됐다" bash -c "[ \$(grep -vc '^model-serving-gpu ' '$D/build/images.env') = $NSVC ]"
