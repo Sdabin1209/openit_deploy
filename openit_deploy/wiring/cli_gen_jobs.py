@@ -78,7 +78,10 @@ def main(argv, labels_of=image_labels) -> int:
     a = ap.parse_args(argv)
     raw = sys.stdin.read() if a.compose_json == "-" else pathlib.Path(a.compose_json).read_text(encoding="utf-8")
     from boundary_contracts import validator
-    res = build(json.loads(raw), labels_of, validator)
+    compose = json.loads(raw)
+    if not any(n.startswith("job-") for n in compose["services"]):
+        return 0   # 잡 서비스가 없는 배치(서버를 나눈 한 쪽, 시험용 작은 compose)는 덧씌울 것이 없다
+    res = build(compose, labels_of, validator)
     out = pathlib.Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(out)

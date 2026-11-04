@@ -216,8 +216,6 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/backup-gate-credentials
   backup-gate-repo-password:
     file: ${SECRETS_DIR:-./secrets}/tokens/backup-gate-repo-password
-  backup-store-htpasswd:
-    file: ${SECRETS_DIR:-./secrets}/tokens/backup-store-htpasswd
   pg-superuser-survey:
     file: ${SECRETS_DIR:-./secrets}/tokens/pg-superuser-survey
   pg-superuser-qa:
@@ -1072,12 +1070,13 @@ services:
     volumes: ["certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
+    user: "65534:65534"   # 저장소 이미지 사용자가 키 파일(0600)을 읽는다
     entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate backup-store /home/step/tls.crt /home/step/tls.key --token \"$$(cat /tokens/backup-store.ott)\" --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt --force >/dev/null; chmod 600 /home/step/tls.key; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url https://step-ca:${STEP_CA_PORT:-9000} --root /etc/openit/pki/root_ca.crt"]
     volumes: ["certs-backup-store:/home/step", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   backup-store-perms:   # 일회용: 새 이름 있는 볼륨은 root 소유라 저장소(uid 1000)가 못 쓴다
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
-    entrypoint: ["chown", "-R", "1000:1000", "/data"]
+    entrypoint: ["chown", "-R", "65534:65534", "/data"]
     restart: "no"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "DAC_OVERRIDE"]
@@ -1089,7 +1088,7 @@ services:
   backup-store:   # 영역 백업 저장소(platform backup-store 이미지, restic REST, --private-repos: 자격의 사용자 이름이 곧 자기 저장소 경로, TLS 443, HTTP 기본 인증; append-only 가 아니다: 영역 백업 잡이 백업 직후 forget --prune 으로 보존 상한을 지킨다, 헤드 결정·ops-feedback ADR 0032): 영역마다 다른 자격·경로·저장소 암호(RUNTIME R10.1)
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/backup-store@${BACKUP_STORE_DIGEST:?locks/images.lock}
     restart: unless-stopped
-    user: "1000:1000"   # 왜 1000: backup-store-cert(step 사용자)가 쓴 키 파일(0600)을 읽어야 한다
+    user: "65534:65534"   # platform 이미지 입력: /data 는 uid 65534. 인증서 키는 backup-store-cert 가 이 사용자로 쓴다
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -1100,9 +1099,13 @@ services:
     pids_limit: 128
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
-    command: ["--path", "/data", "--listen", ":443", "--htpasswd-file", "/run/secrets/backup-store-htpasswd", "--private-repos", "--tls", "--tls-cert", "/certs/tls.crt", "--tls-key", "/certs/tls.key"]
-    secrets: [backup-store-htpasswd]
-    volumes: ["backup-store-data:/data", "certs-backup-store:/certs:ro"]
+    environment: {OPENIT_BACKUP_PORT: "443"}   # 영역 게이트웨이 출구가 backup-store:443 을 허용한다(platform backup-store 입력). 서버는 이미지 기본 인자(--private-repos, append-only 아님)
+    secrets:
+      - {source: backup-survey-credentials, target: areas/survey}
+      - {source: backup-qa-credentials, target: areas/qa}
+      - {source: backup-ops-credentials, target: areas/ops}
+      - {source: backup-gate-credentials, target: areas/gate}
+    volumes: ["backup-store-data:/data", "certs-backup-store:/run/tls:ro"]   # /run/secrets/areas/<영역>: 내용 '<영역>:<암호>', 파일 이름 = 사용자 이름(platform 입력)
     networks:
       backup-survey: {aliases: [backup-store]}
       backup-qa: {aliases: [backup-store]}

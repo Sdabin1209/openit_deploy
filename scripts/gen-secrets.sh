@@ -65,20 +65,6 @@ gen_backup() {
 }
 gen_backup
 [ "$ONLY_DB" = 0 ] || { echo "PostgreSQL 비밀 위치: $D/tokens (리포지토리에 커밋하지 않는다)"; exit 0; }
-# 백업 저장소(platform backup-store)의 htpasswd: 영역 자격에서 bcrypt(caddy hash-password)로 만든다. 자격이 바뀌면 다시 쓴다
-gen_backup_htpasswd() {
-  local a user pw line out="" img
-  [ -s "$D/tokens/backup-store-htpasswd" ] && [ "$(cut -d: -f1 "$D/tokens/backup-store-htpasswd" | tr '\n' ' ')" = "survey qa ops gate " ] && return 0   # 이미 있으면 그대로(bcrypt 는 매번 달라 값 비교가 안 된다; 자격이 바뀌면 이 파일을 지우고 다시 만든다)
-  img=$(sed -n 's/^GATEWAY_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")
-  for a in survey qa ops gate; do
-    user=$(cut -d: -f1 "$D/tokens/backup-$a-credentials"); pw=$(cut -d: -f2- "$D/tokens/backup-$a-credentials" | tr -d '\r\n')
-    line=$(printf '%s\n%s\n' "$pw" "$pw" | "$DOCKER" run --rm -i "$img" caddy hash-password 2>/dev/null | tail -1 | tr -d '\r\n') || return 1
-    [ -n "$line" ] || return 1; out+="$user:$line"$'\n'
-  done
-  [ -s "$D/tokens/backup-store-htpasswd" ] && [ "$(cut -d: -f1 "$D/tokens/backup-store-htpasswd" | tr '\n' ' ')" = "survey qa ops gate " ] && return 0   # 이미 있으면 그대로(bcrypt 는 매번 달라 값 비교가 안 된다; 자격이 바뀌면 이 파일을 지우고 다시 만든다)
-  ( umask 077; printf '%s' "$out" > "$D/tokens/backup-store-htpasswd" ); secret_fix "$D/tokens/backup-store-htpasswd" backup-store-htpasswd
-}
-gen_backup_htpasswd || { echo "백업 저장소 htpasswd 를 만들지 못했다" >&2; exit 1; }
 
 # 서버가 받는 목록 값(역할=토큰,...): 값 하나짜리 파일로 만든다
 GATE_R=$(roles gate read survey-service ops-feedback question-authoring model-lab synthetic-data model-serving release-approver operator)

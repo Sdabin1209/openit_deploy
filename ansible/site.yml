@@ -92,6 +92,15 @@
         dest: "{{ p_dir }}/state/registry.env"
         mode: "0644"
       when: (placement_registry_env | default(p_root + '/state/registry.env')) is file
+    - name: 영역 게이트웨이 입력(Exposure 선언)과 잡 덧씌우기(지휘 기계가 이미지 라벨에서 만든 것, 있으면)
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ p_dir }}/{{ item.dest }}"
+        mode: preserve
+      loop:
+        - {src: "{{ p_root }}/state/gateways/", dest: "state/gateways/"}
+        - {src: "{{ p_root }}/state/compose.jobs.yaml", dest: "state/compose.jobs.yaml"}
+      when: (item.src is directory) or (item.src is file)
     - name: 설정 폴더(비밀 아님. env, Caddyfile, 인증서)
       ansible.builtin.copy:
         src: "{{ placement_config_dir | default(p_root + '/config') }}/"

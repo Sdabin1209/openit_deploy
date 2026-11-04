@@ -57,6 +57,7 @@ all:
     placement_compose: $T/compose.subset.yaml
     placement_config_dir: $ROOT/config
     placement_lock: $T/images.lock
+    placement_no_lock: true   # 왜: 이 시험은 여러 번 동시에 돌 수 있다. 배치 잠금 자체는 test_placement_ops.py 가 본다(R10.12)
     placement_secrets_dir: $T/secrets
     placement_probe_address: 127.0.0.1
     placement_bind_address: 0.0.0.0

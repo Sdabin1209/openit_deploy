@@ -51,12 +51,16 @@ def check(S):
         others = {f"backup-{k}" for k in AREAS if k != key}
         if pn & others:
             errs.append(f"{pod}-net 이 다른 영역의 백업 망을 쓴다")
-    readers = [n for n, sv in S.items() if any((x if isinstance(x, str) else x.get("source")) == "backup-store-htpasswd" for x in sv.get("secrets", []))]
-    if readers != ["backup-store"]:
-        errs.append(f"htpasswd 를 읽는 서비스가 저장소뿐이 아니다: {readers}")
+    bsec = {(x if isinstance(x, str) else x.get("source")) for x in bs.get("secrets", [])}
+    if bsec != {f"backup-{k}-credentials" for k in AREAS}:
+        errs.append(f"저장소는 영역 자격 파일 4개(/run/secrets/areas/<영역>)만 받는다: {sorted(bsec)}")
+    for k in AREAS:
+        readers = [n for n, sv in S.items() if any((x if isinstance(x, str) else x.get("source")) == f"backup-{k}-credentials" for x in sv.get("secrets", []))]
+        if sorted(readers) != sorted([AREAS[k][0], "backup-store"]):
+            errs.append(f"{k} 자격을 읽는 서비스가 그 영역 백업 잡과 저장소뿐이 아니다: {readers}")
     cmd = bs.get("command") or []
-    if "--append-only" in cmd or "--private-repos" not in cmd:
-        errs.append("백업 저장소는 append-only 가 아니고 --private-repos(자격의 사용자 이름 = 자기 경로)여야 한다(영역 백업 잡이 forget --prune 으로 보존을 지킨다)")
+    if "--append-only" in cmd:
+        errs.append("백업 저장소는 append-only 가 아니다(영역 백업 잡이 forget --prune 으로 보존을 지킨다)")
     for sv in ("survey-service", "question-authoring", "ops-feedback-ingest", "release-gate"):
         if S.get(f"{sv}-gw", {}).get("user") is not None:
             errs.append(f"{sv}-gw: 이미지가 선언한 사용자를 deploy 가 바꾸지 않는다")
@@ -75,7 +79,7 @@ class T(unittest.TestCase):
         self.assertTrue(check(m), "일부러 qa 잡에 survey 자격을 줬는데 못 잡았다")
 
     def test_mutation_append_only_is_caught(self):
-        m = copy.deepcopy(S0); m["backup-store"]["command"] = list(m["backup-store"]["command"]) + ["--append-only"]
+        m = copy.deepcopy(S0); m["backup-store"]["command"] = ["--append-only"]
         self.assertTrue(check(m))
 
     def test_mutation_gateway_user_override_is_caught(self):

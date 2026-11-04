@@ -55,6 +55,7 @@ all:
     placement_config_dir: $T/config
     $CAVAR
     placement_lock: $T/images.lock
+    placement_no_lock: true   # 왜: 이 시험은 여러 번 동시에 돌 수 있다. 배치 잠금 자체는 test_placement_ops.py 가 본다(R10.12)
     placement_secrets_dir: $T/secrets
   hosts:
     $ID-a: {ansible_host: $HOSTADDR, placement_region: r1, placement_project: deploy-$ID-a, placement_remote_dir: $T/r/a, placement_services: $2}
@@ -80,7 +81,7 @@ PORTS_YAML=$SAVE
 grep -qx 'services: {}' "$T/one/compose.placement.yaml" || bad "서버 1개 배치의 override 가 비어 있지 않다"; ok "서버 1개 배치 = 기존 동작(override 없음)"
 "$PY" scripts/placement.py validate ansible/inventory.multi.example.yml >/dev/null && ok "서버 2개 예시 인벤토리(게시 포트 명시) 통과"
 # 계약 점검(제품 compose.yaml + 실제 config/*.env + 실제 비밀 이름): 서버 2개 예시의 서버별 환경을 check_config_contracts 로 검증한다. compose 해석에 필요한 digest 가 잠금에 없으면 자리 값만 더한 임시 잠금을 쓴다(이미지는 받지 않는다)
-{ cat "$ROOT/locks/images.lock"; for n in DATASET_STORE MODEL_REGISTRY MODEL_SERVING; do grep -q "^${n}_DIGEST" "$ROOT/locks/images.lock" || echo "${n}_DIGEST=sha256:$(printf '0%.0s' {1..64})"; done; echo "DEPLOY_REGISTRY=127.0.0.1:5000"; } > "$T/contract.lock"
+DEPLOY_ROOT=$ROOT; source scripts/testlib.sh; test_lock_copy "$T/contract.lock"; echo "DEPLOY_REGISTRY=127.0.0.1:5000" >> "$T/contract.lock"   # compose 해석에 필요한 digest 가 잠금에 없으면 자리 값만 채운 사본(이미지는 받지 않는다)
 for h in data-1 app-1; do
   "$PY" scripts/placement.py render ansible/inventory.multi.example.yml --host $h --out "$T/c-$h" >/dev/null
   ( export DEPLOY_LOCK="$T/contract.lock" SECRETS_DIR="$T/secrets" COMPOSE_EXTRA="$T/c-$h/compose.placement.yaml"; source scripts/lib.sh
