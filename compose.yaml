@@ -208,6 +208,22 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/identity-initial-admin-password
   identity-db-url:                # identity-db 접속 URI(scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다)
     file: ${SECRETS_DIR:-./secrets}/db-urls/identity-db/identity/IDENTITY_DB_URL_FILE
+  db-account-survey-survey:   # survey-db 의 계정 survey 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/survey-db/survey
+  db-account-question-authoring-qa:   # question-authoring-db 의 계정 qa 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/question-authoring-db/qa
+  db-account-ops-feedback-ops-log-owner:   # ops-feedback-db 의 계정 ops_log_owner 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/ops-feedback-db/ops_log_owner
+  db-account-ops-feedback-ops-log-app:   # ops-feedback-db 의 계정 ops_log_app 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/ops-feedback-db/ops_log_app
+  db-account-ops-feedback-ops-failure-owner:   # ops-feedback-db 의 계정 ops_failure_owner 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/ops-feedback-db/ops_failure_owner
+  db-account-ops-feedback-ops-failure-app:   # ops-feedback-db 의 계정 ops_failure_app 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/ops-feedback-db/ops_failure_app
+  db-account-release-gate-gate:   # release-gate-db 의 계정 gate 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/release-gate-db/gate
+  db-account-identity-identity:   # identity-db 의 계정 identity 암호(이미지 라벨 io.openit.database 의 계정, scripts/gen-db-secrets-all.sh 가 만든다). DB_ACCOUNT_SECRETS_DIR 아래 계정 이름의 파일
+    file: ${SECRETS_DIR:-./secrets}/db-accounts/identity-db/identity
   db-survey-dsn:
     file: ${SECRETS_DIR:-./secrets}/db-urls/survey-db/survey/SURVEY_DATABASE_URL_FILE   # scripts/gen-db-secrets-all.sh 가 DB 이미지 라벨에서 만든다
   db-qa-dsn:
@@ -309,7 +325,7 @@ services:
     pids_limit: 128
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
-    environment: {STEP_CA_PORT: "${STEP_CA_PORT:-9000}", STEP_CA_DNS_NAMES: "${STEP_CA_DNS_NAMES:-}"}   # 다른 서버·시험 배치가 step-ca 를 부르는 추가 이름(공백 구분, 인증서 SAN 과 토큰 audience 에 들어간다)
+    environment: {STEP_CA_PORT: "${STEP_CA_PORT:-9000}", STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_CA_DNS_NAMES: "${STEP_CA_DNS_NAMES:-}"}   # 다른 서버·시험 배치가 step-ca 를 부르는 추가 이름(공백 구분, 인증서 SAN 과 토큰 audience 에 들어간다)
     secrets: [step-ca-password]
     volumes: [pki-ca:/home/step]
     networks: [pki]
@@ -556,24 +572,24 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-survey   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
       DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
-    secrets: [pg-superuser-survey]
+    secrets: [pg-superuser-survey, {source: db-account-survey-survey, target: /run/secrets/db/survey}]
     volumes:
       - survey-db-data:/var/lib/postgresql/data
-      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/survey-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
       - survey-db-pgtls:/certs:ro
-    tmpfs: ["/tmp", "/var/run/postgresql"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]   # 영역 DB 이미지는 root 로 시작해 인증서 사본을 postgres 소유로 만들고 postgres 로 내린다(공식 postgres 진입점의 표준 동작: chown·gosu). 이미지가 읽는 인증서는 cert 컨테이너(999) 소유 0600 이라 DAC_OVERRIDE 도 필요하다. 나머지 능력은 cap_drop ALL 그대로
+    tmpfs: ["/tmp", "/run"]   # 이미지가 /run 아래에 인증서 사본·소켓을 만든다(읽기 전용 루트)
     networks: [db-survey]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
     stop_grace_period: 30s
     depends_on:
       survey-db-cert: {condition: service_healthy}
-    healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
+    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
       timeout: 3s
-      retries: 6
-      start_period: 30s
-      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
+      retries: 12
+      start_period: 60s
+      start_interval: 1s
   question-authoring-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -603,24 +619,24 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-qa   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
       DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
-    secrets: [pg-superuser-qa]
+    secrets: [pg-superuser-qa, {source: db-account-question-authoring-qa, target: /run/secrets/db/qa}]
     volumes:
       - question-authoring-db-data:/var/lib/postgresql/data
-      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/question-authoring-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
       - question-authoring-db-pgtls:/certs:ro
-    tmpfs: ["/tmp", "/var/run/postgresql"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]   # 영역 DB 이미지는 root 로 시작해 인증서 사본을 postgres 소유로 만들고 postgres 로 내린다(공식 postgres 진입점의 표준 동작: chown·gosu). 이미지가 읽는 인증서는 cert 컨테이너(999) 소유 0600 이라 DAC_OVERRIDE 도 필요하다. 나머지 능력은 cap_drop ALL 그대로
+    tmpfs: ["/tmp", "/run"]   # 이미지가 /run 아래에 인증서 사본·소켓을 만든다(읽기 전용 루트)
     networks: [db-qa]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
     stop_grace_period: 30s
     depends_on:
       question-authoring-db-cert: {condition: service_healthy}
-    healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
+    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
       timeout: 3s
-      retries: 6
-      start_period: 30s
-      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
+      retries: 12
+      start_period: 60s
+      start_interval: 1s
   ops-feedback-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -650,24 +666,24 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-ops   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
       DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
-    secrets: [pg-superuser-ops]
+    secrets: [pg-superuser-ops, {source: db-account-ops-feedback-ops-log-owner, target: /run/secrets/db/ops_log_owner}, {source: db-account-ops-feedback-ops-log-app, target: /run/secrets/db/ops_log_app}, {source: db-account-ops-feedback-ops-failure-owner, target: /run/secrets/db/ops_failure_owner}, {source: db-account-ops-feedback-ops-failure-app, target: /run/secrets/db/ops_failure_app}]
     volumes:
       - ops-feedback-db-data:/var/lib/postgresql/data
-      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/ops-feedback-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
       - ops-feedback-db-pgtls:/certs:ro
-    tmpfs: ["/tmp", "/var/run/postgresql"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]   # 영역 DB 이미지는 root 로 시작해 인증서 사본을 postgres 소유로 만들고 postgres 로 내린다(공식 postgres 진입점의 표준 동작: chown·gosu). 이미지가 읽는 인증서는 cert 컨테이너(999) 소유 0600 이라 DAC_OVERRIDE 도 필요하다. 나머지 능력은 cap_drop ALL 그대로
+    tmpfs: ["/tmp", "/run"]   # 이미지가 /run 아래에 인증서 사본·소켓을 만든다(읽기 전용 루트)
     networks: [db-ops]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
     stop_grace_period: 30s
     depends_on:
       ops-feedback-db-cert: {condition: service_healthy}
-    healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
+    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
       timeout: 3s
-      retries: 6
-      start_period: 30s
-      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
+      retries: 12
+      start_period: 60s
+      start_interval: 1s
   release-gate-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -697,24 +713,24 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-gate   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
       DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
-    secrets: [pg-superuser-gate]
+    secrets: [pg-superuser-gate, {source: db-account-release-gate-gate, target: /run/secrets/db/gate}]
     volumes:
       - release-gate-db-data:/var/lib/postgresql/data
-      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/release-gate-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
       - release-gate-db-pgtls:/certs:ro
-    tmpfs: ["/tmp", "/var/run/postgresql"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID"]   # 영역 DB 이미지는 root 로 시작해 인증서 사본을 postgres 소유로 만들고 postgres 로 내린다(공식 postgres 진입점의 표준 동작: chown·gosu). 이미지가 읽는 인증서는 cert 컨테이너(999) 소유 0600 이라 DAC_OVERRIDE 도 필요하다. 나머지 능력은 cap_drop ALL 그대로
+    tmpfs: ["/tmp", "/run"]   # 이미지가 /run 아래에 인증서 사본·소켓을 만든다(읽기 전용 루트)
     networks: [db-gate]
     shm_size: ${POSTGRES_SHM_SIZE:-256m}    # 측정 안 함(시작값). 기본 64m 은 병렬 쿼리·큰 덤프에서 부족할 수 있다(adr/0023-compose-resource-limits.md)
     stop_grace_period: 30s
     depends_on:
       release-gate-db-cert: {condition: service_healthy}
-    healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
+    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
       timeout: 3s
-      retries: 6
-      start_period: 30s
-      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
+      retries: 12
+      start_period: 60s
+      start_interval: 1s
   identity-db-cert:   # postgres 서버 인증서(step-ca 발급, 수명 24시간 = step-ca 기본)를 받고 8시간(수명의 1/3)마다 다시 받는다. postgres 가 시작하기 전에 파일이 있어야 하므로 healthy(파일 있음)가 postgres 의 선행 조건이다. 볼륨 소유자는 up.sh 가 999 로 맞춘다(gateway-data 와 같은 방식)
     restart: unless-stopped
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/step-ca@${STEP_CA_DIGEST:?locks/images.lock}
@@ -744,10 +760,9 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-superuser-identity   # 슈퍼유저 암호(공식 postgres 표준 변수, D84)
       DB_ACCOUNT_SECRETS_DIR: /run/secrets/db   # 계정마다 파일 하나(scripts/gen-db-secrets-all.sh 가 이미지 라벨 io.openit.database 로 만든다)
-    secrets: [pg-superuser-identity]
+    secrets: [pg-superuser-identity, {source: db-account-identity-identity, target: /run/secrets/db/identity}]
     volumes:
       - identity-db-data:/var/lib/postgresql/data
-      - {type: bind, source: "${SECRETS_DIR:-./secrets}/db-accounts/identity-db", target: /run/secrets/db, read_only: true, bind: {create_host_path: false}}
       - identity-db-pgtls:/certs:ro
     tmpfs: ["/tmp", "/var/run/postgresql"]
     networks: [db-identity]
@@ -755,13 +770,13 @@ services:
     stop_grace_period: 30s
     depends_on:
       identity-db-cert: {condition: service_healthy}
-    healthcheck:   # TCP(-h 127.0.0.1)로 묻는다: 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy가 된다
+    healthcheck:   # 영역 DB 이미지 대부분이 HEALTHCHECK 를 선언하지 않아(확인함: survey·question-authoring·ops-feedback·identity 이미지) 배치가 TCP 로 준비를 본다. 초기화 중의 임시 서버는 소켓만 열어 두므로 초기화가 끝나야 healthy 가 된다
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
       timeout: 3s
-      retries: 6
-      start_period: 30s
-      start_interval: 1s   # 왜: x-pyhealth 와 같다(start_period 동안만 1초 간격)
+      retries: 12
+      start_period: 60s
+      start_interval: 1s
 
   certs-perms:   # 일회용: 영역 게이트웨이 이미지 사용자(101)가 읽고, step-ca 이미지(uid 1000)가 토큰·루트를, 백업 저장소 이미지(65534)가 자기 인증서를 쓰게 <서비스>-cert 가 그 사용자로 쓰게 인증서 볼륨의 소유자를 맞춘다(새 이름 있는 볼륨은 root 소유)
     image: ${UTIL_IMAGE:?locks/images.lock}

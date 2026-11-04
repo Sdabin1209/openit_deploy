@@ -75,7 +75,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     [ -n "$GATEWAY_TLS_PORT" ] || die "게이트웨이 HTTPS 호스트 포트를 고르지 못했다(Docker 가 127.0.0.1 게시 포트를 못 연다?). 기본 8443 으로 넘어가지 않는다"
     mkdir -p "$W"; echo "$GATEWAY_TLS_PORT" > "$W/gw-tls-port"
   fi
-  export GATEWAY_TLS_PORT GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT; export GATEWAY_PUBLIC_URL="$(gateway_public_url)" GATEWAY_HOST_NAMES="$(gateway_host_names)"
+  export GATEWAY_TLS_PORT GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT; export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
   export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
   # 실제 LLM 모드(D73): up --llm 이 기록한 프로파일 이름을 이후 명령도 쓴다. 파일 순서가 중요하다: compose.llm.yaml 이 vllm 백엔드를 정한다(모방 백엔드 overlay 는 붙이지 않는다). 실제 LLM 모드에는 test/compose.fake-model.yaml(fake 진입점)을 붙이지 않는다.
 
