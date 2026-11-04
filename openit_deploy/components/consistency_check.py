@@ -669,6 +669,21 @@ def str_scalars(node):
             yield from str_scalars(v)
 
 
+NON_SECRET_LITERAL = re.compile(r"^(true|false|-?\d+)$", re.I)   # 참·거짓·정수 문자열은 비밀이 될 수 없다(비밀은 무작위 값이다). 파일별 예외 목록 대신 값 기준으로 거른다(gitleaks·detect-secrets 와 같은 방식)
+
+
+def inline_secret_findings(root) -> list:
+    """설정 문서 하나에서 비밀 이름의 키에 인라인 값을 둔 곳: [(줄, 경로)]"""
+    out = []
+    for path, key, val in walk(root):
+        if not SECRET_KEY.search(key):
+            continue
+        for sc in str_scalars(val):
+            if not ENV_NAME.match(sc.value) and not NON_SECRET_LITERAL.match(sc.value):
+                out.append((sc.start_mark.line + 1, path))
+    return out
+
+
 def rule_inline_secrets() -> R:
     r = R()
     if not yaml_ok():
@@ -688,12 +703,8 @@ def rule_inline_secrets() -> R:
                 r.na.append((rel, "빈 파일"))
                 continue
             r.ok.append(rel)
-            for path, key, val in walk(root):
-                if not SECRET_KEY.search(key):
-                    continue
-                for s in str_scalars(val):
-                    if not ENV_NAME.match(s.value):
-                        r.fail(rel, f"{rel}:{s.start_mark.line + 1}: {path} 에 인라인 값(환경 변수 이름이나 {{secret|env: NAME}} 형식이 아니다; 값은 출력하지 않는다)")
+            for line, path in inline_secret_findings(root):
+                r.fail(rel, f"{rel}:{line}: {path} 에 인라인 값(환경 변수 이름이나 {{secret|env: NAME}} 형식이 아니다; 값은 출력하지 않는다)")
     return r
 
 
