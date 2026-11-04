@@ -202,7 +202,7 @@ chk "레지스트리 기동(빈 포트 선택)" bash "$DEPLOY_ROOT/scripts/regis
 chk "publish: push + digest 잠금" bash "$DEPLOY_ROOT/scripts/publish-images.sh"
 chk "compose가 digest로만 이미지를 참조" bash "$DEPLOY_ROOT/scripts/check-compose.sh"
 chk "버전 표 드리프트 없음 (check-versions: 빌드된 이미지 라벨 == lib.sh 표; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-versions.sh"
-chk "게이트웨이 노출이 영역 이미지의 노출 선언(io.openit.exposure)과 같다 (check-exposure: Caddyfile 대조, ADR 0043; 검증하지 못하면(종료 3) 실패)" bash "$DEPLOY_ROOT/scripts/check-exposure.sh"
+# (삭제) 게이트웨이 노출 대조(check-exposure: Caddyfile 대 영역 Exposure)는 두지 않는다: 공개 입구 경로 표는 platform public-ingress 이미지가 같은 Exposure 선언에서 만든다(S9). 대조할 deploy 쪽 손으로 쓴 경로가 없다.
 # 자체 점검 묶음: scripts/self-checks.list 가 정본이다(scripts/run-self-checks.sh 도 같은 목록을 돈다).
 export DEPLOY_ROOT VENV
 # 왜 깨끗한 환경: 단독 시험은 E2E 가 내보낸 값(DEPLOY_LOCK 임시 잠금, SECRETS_DIR, COMPOSE_EXTRA, STEP_CA_PORT …)이 없는 상태를 전제로 자기 입력을 스스로 정한다. 새어 들어가면 단독으로는 통과하는 시험이 E2E 안에서만 실패했다(분리 배치 플레이북, DEPLOY_LOCK). 필요한 것만 이름으로 넘긴다.
