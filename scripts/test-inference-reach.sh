@@ -9,7 +9,7 @@ set -uo pipefail
 D=$(cd "$(dirname "$0")/.." && pwd); cd "$D"
 DEPLOY_NO_DOCKER=1; source scripts/lib.sh; detect_docker
 ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
-ID=$$; T=$(mktemp -d); NET=inf-reach-$ID; : > "$T/names"
+ID=$$; T=$(mktemp -d); NET=deploy-inf-reach-$ID; : > "$T/names"
 cleanup() { for n in $(cat "$T/names" 2>/dev/null); do "$DOCKER" rm -f "$n" >/dev/null 2>&1; done; "$DOCKER" network rm "$NET" >/dev/null 2>&1; rm -rf "$T"; }; trap cleanup EXIT
 GW_IMG=$(awk '$1=="area-gateway"{print $2}' build/images.env 2>/dev/null)
 [ -n "$GW_IMG" ] && "$DOCKER" image inspect "$GW_IMG" >/dev/null 2>&1 || { echo "SKIP: area-gateway 이미지가 없다(scripts/build-images.sh area-gateway)"; exit 77; }
@@ -29,18 +29,18 @@ class H(h.BaseHTTPRequestHandler):
 h.ThreadingHTTPServer(("127.0.0.1", 8080), H).serve_forever()
 PY
 "$DOCKER" network create --internal "$NET" >/dev/null || bad "시험 망 만들기 실패"
-P=rg-pod-$ID   # release-gate 영역 pod(pause) + 대역 상류 + 영역 게이트웨이. pod 는 망 $NET 에서 별칭 release-gate 를 가진다(주 서버 compose.yaml 의 release-gate-net 의 inference-in 별칭과 같다)
+P=deploy-rg-pod-$ID   # release-gate 영역 pod(pause) + 대역 상류 + 영역 게이트웨이. pod 는 망 $NET 에서 별칭 release-gate 를 가진다(주 서버 compose.yaml 의 release-gate-net 의 inference-in 별칭과 같다)
 "$DOCKER" run -d --name "$P" --network "$NET" --network-alias release-gate --sysctl net.ipv4.ip_unprivileged_port_start=0 --read-only --cap-drop ALL "$PAUSE" >/dev/null || bad "pause 실패"; echo "$P" >> "$T/names"
 "$DOCKER" run -d --name "$P-app" --network "container:$P" -v "$T/app:/app:ro" "$UTIL" python /app/app.py >/dev/null || bad "대역 상류 실패"; echo "$P-app" >> "$T/names"
 "$DOCKER" run -d --name "$P-gw" --network "container:$P" --read-only --tmpfs /tmp --cap-drop ALL -v "$T/certs:/certs:ro" -v "$T/exposure.json:/etc/openit/exposure.json:ro" \
   -e AREA_GATEWAY_UPSTREAM=127.0.0.1:8080 "$GW_IMG" >/dev/null || bad "영역 게이트웨이 실패"; echo "$P-gw" >> "$T/names"
-up=0; for i in $(seq 1 60); do "$DOCKER" exec "$P-app" python -c "import socket;socket.create_connection(('127.0.0.1',443),timeout=1)" >/dev/null 2>&1 && { up=1; break; }; sleep 0.5; done
-[ $up = 1 ] || { "$DOCKER" logs "$P-gw" 2>&1 | tail -5 >&2; bad "영역 게이트웨이가 443 을 열지 않았다"; }
+# 준비 확인: 게이트웨이가 443 을 열 때까지(상한 30초: 측정하지 않았다. 컨테이너 기동과 포트 열기는 수 초 규모라는 판단이며 부하 때 모자라면 사유와 함께 FAIL 한다, D125)
+wait_ready "release-gate 영역 게이트웨이 443" 30 "$DOCKER" exec "$P-app" python -c "import socket;socket.create_connection(('127.0.0.1',443),timeout=1)" || { "$DOCKER" logs "$P-gw" 2>&1 | tail -5 >&2; bad "영역 게이트웨이가 443 을 열지 않았다"; }
 # 추론 쪽: 같은 호스트 overlay 를 합친 compose 해석에서 model-serving-net 이 붙는 외부 망과 이름을 꺼낸다(더미 변수, 파일은 빈 파일)
 for f in tok rtok ca tlstok; do : > "$T/$f"; done; : > "$T/exposure.dummy"
 CFG=$(INFERENCE_IMAGE=x INFERENCE_PAUSE_IMAGE=x INFERENCE_STEP_IMAGE=x INFERENCE_GATEWAY_IMAGE=x INFERENCE_EXPOSURE_FILE="$T/exposure.dummy" INFERENCE_TOKENS_FILE="$T/tok" INFERENCE_RELEASE_TOKEN_FILE="$T/rtok" INFERENCE_CA_FILE="$T/ca" INFERENCE_PKI_ROOT_FILE="$T/pki/root_ca.crt" \
   INFERENCE_STEP_CA_URL=https://x INFERENCE_TLS_TOKEN_FILE="$T/tlstok" INFERENCE_TLS_NAME=x INFERENCE_RELEASE_NETWORK="$NET" SECRETS_GID=0 \
-  "$DOCKER" compose -p infreach-$ID -f compose.inference.yaml -f compose.inference.samehost.yaml config --format json 2>"$T/cfg.err") || { cat "$T/cfg.err" >&2; bad "compose.inference.yaml + samehost overlay 를 해석하지 못했다"; }
+  "$DOCKER" compose -p deploy-infreach-$ID -f compose.inference.yaml -f compose.inference.samehost.yaml config --format json 2>"$T/cfg.err") || { cat "$T/cfg.err" >&2; bad "compose.inference.yaml + samehost overlay 를 해석하지 못했다"; }
 JOINED=$(printf '%s' "$CFG" | python3 -c "import json,sys;d=json.load(sys.stdin);n=d['services']['model-serving-net'];nets=list((n.get('networks') or {}).keys());print('|'.join(d['networks'][k]['name'] for k in nets if d['networks'][k].get('external')), n.get('network_mode',''), len(nets))")
 [ "$JOINED" = "$NET  2" ] && ok "samehost overlay: model-serving-net 이 외부 망($NET)과 기본 망(게시 포트용)에 붙는다(network_mode 없음)" || bad "samehost overlay 해석: '$JOINED'"
 fetch() { # fetch <루트 파일> <망>: 추론 쪽 컨테이너를 그 망에 붙여 release-gate 의 /healthz 를 https 로 -> 본문 status 까지 보고 상태 코드, 실패면 ERR

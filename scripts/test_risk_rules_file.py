@@ -27,4 +27,4 @@ class T(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    from unittest_skip_rc import main; main()

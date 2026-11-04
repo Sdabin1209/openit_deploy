@@ -2,7 +2,9 @@
 # e2e.sh 옵션 처리 자체 시험(빠름, Docker·E2E 실행 없음). 사용: bash scripts/test-e2e-options.sh
 # 확인: --help/-h 는 사용법만 내고 0, 모르는 옵션·값 없는 옵션·잘못된 --sections·--only 와 --sections 조합은 사용법을 표준 오류로 내고 2. 모두 정적 점검(check-all)·doctor·빌드 앞에서 끝나야 한다(시험마다 20초 상한).
 HERE="$(cd "$(dirname "$0")" && pwd)"; E="$HERE/e2e.sh"; N=0; F=0
-t() { local name=$1 want=$2 grep_stream=$3 pat=$4; shift 4; N=$((N+1)); local o e rc; o=$(timeout 20 bash "$E" "$@" 2>"$HERE/.e2e-opt.err"); rc=$?; e=$(cat "$HERE/.e2e-opt.err"); rm -f "$HERE/.e2e-opt.err"
+# timeout 20: 옵션 오류는 e2e.sh 앞부분에서 즉시 끝난다(측정하지 않음; 실제 E2E 로 넘어가면 20초 안에 끝나지 않아 FAIL 로 잡히는 것이 목적)
+ERRF=$(mktemp); trap 'rm -f "$ERRF"' EXIT   # 실행별 임시 파일: 소스 폴더의 고정 이름 파일은 동시 실행(E2E 사전 점검과 run-self-checks)끼리 서로 지운다
+t() { local name=$1 want=$2 grep_stream=$3 pat=$4; shift 4; N=$((N+1)); local o e rc; o=$(timeout 20 bash "$E" "$@" 2>"$ERRF"); rc=$?; e=$(cat "$ERRF"); rm -f "$ERRF"
   local text=$o; [ "$grep_stream" = err ] && text=$e
   if [ $rc = "$want" ] && grep -q -- "$pat" <<<"$text" && ! grep -q "E2E 합격 시나리오 실행\|== 정적\|check-all" <<<"$o$e"; then echo "  PASS $name (종료 $rc)"; else echo "  FAIL $name (종료 $rc, 기대 $want, 패턴 '$pat')"; echo "$text" | head -3 | sed 's/^/       /'; F=$((F+1)); fi; }
 t "--help 는 사용법만 내고 0" 0 out "사용:" --help

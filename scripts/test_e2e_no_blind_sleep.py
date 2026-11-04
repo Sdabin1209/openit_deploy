@@ -20,7 +20,42 @@ def blind(text):
     return bad
 
 
+SH_LOOP = re.compile(r"\b(for|while|until)\b")
+SH_FILES = ("e2e.sh", "demo.sh", "export-gateway-ca.sh")   # E2E 가 부르는 셸: 고정 sleep 이 있을 수 있는 곳
+
+
+def in_loop(L, i):
+    """i 줄이 for/while/until 반복 안인가: 위로 올라가며 짝이 맞는 done 을 건너뛰고 닫히지 않은 반복 시작을 찾는다."""
+    if SH_LOOP.search(L[i]): return True
+    depth = 0
+    for j in range(i - 1, -1, -1):
+        if L[j].lstrip().startswith("#"): continue
+        depth += len(re.findall(r"\bdone\b", L[j]))
+        for _ in SH_LOOP.findall(L[j]):
+            if depth == 0: return True
+            depth -= 1
+    return False
+
+
+def blind_sh(text):
+    """셸의 sleep 은 (1) for/while/until 반복(폴링) 안에 있거나 (2) 같은 줄·앞 3줄에 이유 단어가 있어야 한다."""
+    L = text.splitlines(); bad = []
+    for i, l in enumerate(L):
+        if not re.search(r"\bsleep\s+[0-9]", l) or l.lstrip().startswith("#"): continue
+        if in_loop(L, i) or OK.search(l + " " + " ".join(L[max(0, i - 3):i])): continue
+        bad.append(i + 1)
+    return bad
+
+
 class T(unittest.TestCase):
+    def test_e2e_shell_has_no_blind_sleep(self):
+        for f in SH_FILES:
+            self.assertEqual(blind_sh((ROOT / "scripts" / f).read_text(encoding="utf-8")), [], f"{f}: 반복 밖의 이유 없는 sleep")
+
+    def test_detects_shell(self):
+        self.assertEqual(blind_sh("a\nb\nc\nd\ne\nf\ng\nsleep 2\n"), [8])
+        self.assertEqual(blind_sh("for i in 1 2; do x; sleep 1; done\n"), [])
+
     def test_e2e_steps_have_no_blind_sleep(self):
         self.assertEqual(blind((ROOT / "scripts/e2e_steps.py").read_text(encoding="utf-8")), [], "이유 없는 time.sleep: wait()/settled() 로 바꾸거나 이유 주석을 단다")
 
@@ -30,4 +65,4 @@ class T(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    from unittest_skip_rc import main; main()

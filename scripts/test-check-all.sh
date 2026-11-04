@@ -6,8 +6,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_NO_DOCKER=1; source "$HERE/lib.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-# pytest 가 있는 파이썬(규칙 8 시험용, 읽기 전용 호출). 없으면 그 시험만 건너뛴다
-PYT=""; for v in "$ROOT"/../*/.venv/bin/python; do [ -x "$v" ] && "$v" -c 'import pytest' 2>/dev/null && { PYT="$v"; break; }; done
+# pytest 가 있는 파이썬(규칙 8 시험용): 이웃 리포의 .venv 를 짐작해 쓰지 않는다. 환경 변수 CHECK_ALL_TEST_PYTHON(명시 경로)로만 받고, 없거나 pytest 가 없으면 그 시험은 하지 않은 것(SKIP, 끝에 종료 77)이다.
+PYT=""; if [ -n "${CHECK_ALL_TEST_PYTHON:-}" ] && [ -x "$CHECK_ALL_TEST_PYTHON" ] && "$CHECK_ALL_TEST_PYTHON" -c 'import pytest' 2>/dev/null; then PYT="$CHECK_ALL_TEST_PYTHON"; fi
+SKIPPED=0
 FAILS=0; N=0
 # mk <이름>... : 임시 워크스페이스 $W 에 영역(.git 과 올바른 README 포함)을 만든다
 mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; done; }
@@ -183,7 +184,7 @@ if [ -n "$PYT" ]; then
   report model-lab python-venv .venv .venv/bin/python -m pytest -q
   printf 'def test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "시험이 통과하면 PASS" PASS "검증됨 1/1"
   printf 'import 없는_모듈\ndef test_a():\n    pass\n' > "$W/model-lab/tests/test_a.py"; run 8; expect "시험 실패(수집 오류)는 FAIL" FAIL "model-lab"
-else echo "  skip pytest 가 있는 venv 가 없어 py 시험을 건너뛴다"; fi
+else echo "  SKIP CHECK_ALL_TEST_PYTHON(pytest 가 있는 파이썬 경로)이 없어 규칙 8 의 py 시험을 하지 않았다(통과 아님, 종료 77)"; SKIPPED=1; fi
 
 echo "== 11 compose 마운트 원본이 실제 파일"
 mk deploy; mkdir -p "$W/deploy/config"; printf 'services:\n  j:\n    image: x\n    volumes:\n      - ${J:-./config/job.yaml}:/config/job.yaml:ro\n' > "$W/deploy/compose.yaml"
@@ -223,4 +224,6 @@ envrow "2026-02-01 00:03" "서버-A" "DEPLOY_ENV_NAME 이 있으면 그것을 �
 envrow "2026-02-01 00:04" "직접 지정" "E2E_ENV 가 가장 우선" RECORD_E2E_HOSTNAME=gpu-dev DEPLOY_ENV_NAME=서버-A E2E_ENV=직접\ 지정
 
 echo
-[ $FAILS = 0 ] && echo "통과: 자체 시험 $N건 + 값 비출력 확인" || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }
+[ $FAILS = 0 ] || { echo "실패: $FAILS건 (시험 $N건)"; exit 1; }
+[ $SKIPPED = 0 ] || { echo "SKIP: 자체 시험 $N건 통과, 규칙 8 의 py 시험은 하지 않았다"; exit 77; }
+echo "통과: 자체 시험 $N건 + 값 비출력 확인"

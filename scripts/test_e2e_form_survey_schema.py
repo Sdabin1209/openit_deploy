@@ -5,9 +5,9 @@ version 은 저작 서비스가 정하는 값이라 이 시험이 정수 1 로 �
 import json, pathlib, subprocess, sys, tempfile, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-WS = ROOT.parent
 sys.path.insert(0, str(ROOT))
 from openit_deploy.wiring import setup_env
+WS = setup_env.work_root()   # 이웃 영역은 작업 트리가 아니라 deploy 의 사본 state/areas/<영역>에서 읽는다(시험은 SETUP_ENV_WORK 로 바꾼다)
 
 EXTRACT = '''
 import sys, base64, json
@@ -24,6 +24,8 @@ def ss_tag():
 
 class FormPassesSurveySchema(unittest.TestCase):
     def test_bank_from_e2e_form_passes_reference_schema(self):
+        for a in ("question-authoring", "survey-service"):
+            if not (WS / a).is_dir(): self.skipTest(f"SKIP: 영역 사본 {WS / a} 가 없다(prepare-areas.sh 필요; 확인 못 함)")
         tag = ss_tag()
         py = setup_env.env_python("question-authoring", WS) or sys.executable   # 보고가 없으면 이 시험의 파이썬(추출기는 영역 폴더(cwd)에서 import 한다)
         import tempfile as _tf
@@ -53,4 +55,4 @@ class FormPassesSurveySchema(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    from unittest_skip_rc import main; main()
