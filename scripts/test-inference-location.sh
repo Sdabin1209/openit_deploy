@@ -26,7 +26,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT="$REGP" REGISTRY_HOST_BIND="${LOC_REGISTRY_BIND:-127.0.0.1}" REGISTRY_HOST_PORT=
 export SECRETS_DIR="$W/secrets" GATEWAY_PORT= GATEWAY_TLS_PORT=
 # 왜 시험 호스트 이름을 넣는가: 추론 서버는 https://host.docker.internal:<포트> 로 부르고, 게이트웨이 인증서는 사이트 이름(GATEWAY_HOSTS)에 든 이름으로만 발급된다. 검증을 끄지 않는다
-export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"   # 첫 이름이 사람 화면의 공개 주소(Keycloak 발급자·로그인 쿠키)다: 시험 호스트가 풀 수 있는 localhost 를 앞에 둔다. 컨테이너 쪽 호출자는 host.docker.internal 로 부른다
+export GATEWAY_HOSTS="localhost:8443, host.docker.internal:8443"   # 첫 이름이 사람 화면의 공개 주소(Keycloak 발급자·로그인 쿠키)다: 시험 호스트가 풀 수 있는 localhost 를 앞에 둔다. 컨테이너 쪽 호출자는 host.docker.internal 로 부른다
 
 cleanup() {
   echo "== 정리 ($P, $INF, $REGP, state/loc-test)"

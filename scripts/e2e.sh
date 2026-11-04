@@ -251,7 +251,7 @@ export STEP_CA_PORT=$(docker_free_port) STEP_CA_BIND=$BIND STEP_CA_DNS_NAMES=hos
 [ -n "$STEP_CA_PORT" ] || { echo "step-ca 게시 포트 배정 실패" >&2; exit 1; }
 export COMPOSE_EXTRA="$COMPOSE_EXTRA $DEPLOY_ROOT/compose.step-ca-publish.yaml"
 # 추론 서버가 TLS 로 부르는 이름(host.docker.internal)이 게이트웨이 인증서에 있어야 한다: 운영 설정 변수 GATEWAY_HOSTS 에 호출자가 쓰는 이름을 적는 것과 같다(실제 배포는 병원 내부 도메인)
-export GATEWAY_HOSTS="localhost:8443, 127.0.0.1:8443, host.docker.internal:8443"
+export GATEWAY_HOSTS="localhost:8443, host.docker.internal:8443"
 # 사람 인증(U82, ADR 0057): Keycloak 의 발급자와 oauth2-proxy 의 콜백은 밖에서 보이는 주소(첫 호스트 이름 + 밖에 보이는 포트)로 정해진다. 호스트 포트가 Docker 배정이므로 그 포트를 밖에 보이는 포트로 알린다
 export GATEWAY_PUBLIC_TLS_PORT=$GATEWAY_TLS_PORT
 # 한 줄의 export 안에서는 $(...) 가 앞의 대입(GATEWAY_PUBLIC_TLS_PORT)보다 먼저 풀려 기본 포트 8443 이 들어갔다(3차 E2E: 사람 로그인 연결 거부 3건). 그래서 따로 쓴다
@@ -350,19 +350,19 @@ chk "/healthz model-serving (추론 서버, 별도 프로젝트, https, 본문 s
 chk "/readyz model-serving (추론 서버, 별도 프로젝트, https, 비어 있지 않은 JSON 객체)" readyz_obj getinf /readyz
 survey_noactive() { local o; o=$(inpy_code survey-service /readyz); case "$o" in 503*no_active_release*) echo "활성 릴리스가 없어 503 no_active_release (정상: 아직 게이트에 PASS 릴리스가 없다)";; *) echo "기대와 다름: $o" | cut -c1-200; return 1;; esac; }
 chk "/readyz survey-service: 활성 릴리스 전에는 503 no_active_release" survey_noactive
-gw_mirrors() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' --cacert "$W/gateway-ca.crt" "https://127.0.0.1:$PGWS/readyz"); echo "$o" | grep -q '\[503\]' && ! echo "$o" | grep -q 'survey' && echo "gateway /readyz 는 survey-service 를 반영한다: 활성 릴리스 전 503, 본문에 내부 정보 없음 ($o)"; }
+gw_mirrors() { local o; o=$(curl -s -m 5 -w ' [%{http_code}]' --cacert "$W/gateway-ca.crt" "https://localhost:$PGWS/readyz"); echo "$o" | grep -q '\[503\]' && ! echo "$o" | grep -q 'survey' && echo "gateway /readyz 는 survey-service 를 반영한다: 활성 릴리스 전 503, 본문에 내부 정보 없음 ($o)"; }
 chk "/readyz gateway: 정적 200 이 아니라 환자 경로 survey-service 를 반영(활성 릴리스 전 503, 내부 정보 없음)" gw_mirrors
 chk "/healthz gateway: 상류와 무관하게 200" getj "$PGW" /healthz
 tls_checks() { # HTTPS 필수(D88/U5): 평문은 /healthz 만 답하고 나머지는 308 로 https 로 보낸다. HTTPS 는 시험용 CA 로 검증되고 HSTS 가 있다
   local r; r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://127.0.0.1:$PGW/v1/sessions"); echo "$r" | grep -q '^308 https://' || { echo "평문 요청이 https 로 308 이동하지 않는다: $r"; return 1; }
   [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PGW/staff/")" = 308 ] || { echo "평문 /staff/ 가 308 이 아니다"; return 1; }
   curl -s "http://127.0.0.1:$PGW/healthz" | grep -Eq '"status": *"ok"' || { echo "평문 /healthz 본문이 HealthStatus(status=ok)가 아니다"; return 1; }
-  curl -s -o /dev/null "https://127.0.0.1:$PGWS/healthz" 2>/dev/null && { echo "시험용 CA 없이 https 가 검증을 통과했다(자체 서명 인증서를 신뢰하는 환경?)"; return 1; }   # status-code-ok: TLS 신뢰 점검(검증 실패를 보는 시험이라 본문은 무관)
-  local h; h=$($GWCURL -s -D - -o /dev/null "https://127.0.0.1:$PGWS/healthz") || { echo "시험용 CA 로 https 접속 실패"; return 1; }   # status-code-ok: TLS 신뢰 점검(응답 머리글만 본다)
+  curl -s -o /dev/null "https://localhost:$PGWS/healthz" 2>/dev/null && { echo "시험용 CA 없이 https 가 검증을 통과했다(자체 서명 인증서를 신뢰하는 환경?)"; return 1; }   # status-code-ok: TLS 신뢰 점검(검증 실패를 보는 시험이라 본문은 무관)
+  local h; h=$($GWCURL -s -D - -o /dev/null "https://localhost:$PGWS/healthz") || { echo "시험용 CA 로 https 접속 실패"; return 1; }   # status-code-ok: TLS 신뢰 점검(응답 머리글만 본다)
   echo "$h" | grep -qi '^strict-transport-security: max-age=31536000' || { echo "HSTS 헤더가 없다"; return 1; }
   echo "$h" | grep -qi '^x-content-type-options: nosniff' || { echo "X-Content-Type-Options 가 없다"; return 1; }
   echo "$h" | grep -qi '^x-frame-options: DENY' || { echo "X-Frame-Options 가 없다"; return 1; }
-  [ "$($GWCURL -s -o /dev/null -w '%{http_code}' "https://127.0.0.1:$PGWS/config.json")" = 404 ] || { echo "/config.json 이 막혀 있지 않다"; return 1; }
+  [ "$($GWCURL -s -o /dev/null -w '%{http_code}' "https://localhost:$PGWS/config.json")" = 404 ] || { echo "/config.json 이 막혀 있지 않다"; return 1; }
   echo "평문: /healthz 만 ok, 나머지 308 https; https: 시험용 CA 검증 통과, HSTS·nosniff·X-Frame-Options, /config.json 404"
 }
 chk "TLS(D88/U5): 평문은 308 https 로 이동, https 는 시험용 CA 로 검증되고 HSTS·보안 헤더가 있다" tls_checks

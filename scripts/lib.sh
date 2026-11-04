@@ -45,9 +45,9 @@ detect_docker() {
 }
 [ "${DEPLOY_NO_DOCKER:-0}" = 1 ] || detect_docker
 # 빌드가 쓰는 의존 태그: 한 곳에서 정한다(build-images.sh 와 doctor.sh 가 같은 값을 쓴다). 환경 변수로 덮어쓸 수 있다.
-DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.13}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
-DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.21}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
-DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.19}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
+DEPLOY_BC_TAG="${BOUNDARY_TAG_ALL:-v3.4.14}"          # boundary-contracts: 모든 이미지(dataset-store 의 I2 서버 포함, 계약 2.1.0 부터)와 호스트 실행(E2E 클라이언트·검증기·synthetic-data 잡)이 같은 값을 쓴다
+DEPLOY_MR_TAG="${MODEL_RUNTIME_TAG_ALL:-v0.11.22}"     # model-runtime: 모든 이미지가 같은 태그로 빌드된다(survey-service·release-gate·model-serving CPU/GPU, 중립 LoRA 패키지). 어긋나면 게이트가 CONTRACT_COMPAT 로 반려한다
+DEPLOY_LINK_TAG="${LINK_TAG_ALL:-v0.4.20}"            # link(통신 기반 라이브러리, D118): deploy 의 Python 이 이웃을 부르는 곳(link_* 컴포넌트, E2E)이 쓴다. 영역 이미지에 어느 link 가 들어갔는지의 기록은 ADR 0046
 # 노드 영역(admin-console, kiosk-frontend)의 시험·타입 검사를 호스트에서 돌리는 데 필요한 node 주 버전 하한. 두 영역의 package.json engines(">=24")와 Dockerfile(node:24)이 근거다. doctor.sh 가 읽는다
 DEPLOY_NODE_MIN_MAJOR=24
 DEPLOY_SS_TAG="survey-schema-v4.1.1"                 # survey-service 의 문진 스키마 태그 (question-authoring 빌드)
@@ -77,9 +77,10 @@ gpu_record_valid() {
 # 밖에서 보이는 주소(U82, ADR 0057): 첫 GATEWAY_HOSTS 이름 + 밖에 보이는 HTTPS 포트(GATEWAY_PUBLIC_TLS_PORT, 기본 8443; 443 이면 생략). Keycloak 의 발급자(iss)와 oauth2-proxy 의 로그인·콜백 주소가 이 한 곳에서 나온다.
 # 사람 화면(직원·승인·검토·저작·admin)은 이 이름으로 연다: 다른 이름으로 열면 로그인 쿠키가 이 이름에만 생긴다
 gateway_public_url() {
-  local first=${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443} p=${GATEWAY_PUBLIC_TLS_PORT:-8443}
+  local first=${GATEWAY_HOSTS:-localhost:8443} p=${GATEWAY_PUBLIC_TLS_PORT:-8443}
   first=${first%%,*}; first=${first// /}; first=${first%:*}
   [[ "$first" =~ ^[A-Za-z0-9.-]+$ ]] || die "GATEWAY_HOSTS 첫 항목의 호스트 이름 규칙 위반: '$first'"
+  [[ "$first" =~ ^[0-9.]+$ ]] && die "GATEWAY_HOSTS 는 DNS 이름만 쓴다(IP 주소는 TLS SNI 에 쓸 수 없다, 계약 3.4.14 RFC 6066 3절): '$first'"
   [[ "$p" =~ ^[0-9]{2,5}$ ]] || die "GATEWAY_PUBLIC_TLS_PORT 형식 위반: '$p'"
   if [ "$p" = 443 ]; then echo "https://$first"; else echo "https://$first:$p"; fi
 }

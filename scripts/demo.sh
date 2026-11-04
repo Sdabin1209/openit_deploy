@@ -189,7 +189,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   gp=$(port_of "$P-gateway-1" 8443)
   echo "== 실제 LLM 적재 대기 (최대 ${mins}분, 환경 변수 DEMO_LLM_WAIT_MIN 로 바꾼다). 첫 기동은 huggingface.co 에서 모델(약 4GB(Qwen3-1.7B 추정))을 받고 적재한다"
   while [ $((SECONDS - t0)) -lt $((mins * 60)) ]; do
-    sc=$(curl -s -o /dev/null -m 5 -w '%{http_code}' --cacert "$(demo_ca)" "https://127.0.0.1:$gp/readyz" 2>/dev/null || true)   # status-code-ok: 게이트웨이 /readyz 는 상태 코드가 계약이다(200 준비됨, 503 아님)
+    sc=$(curl -s -o /dev/null -m 5 -w '%{http_code}' --cacert "$(demo_ca)" "https://localhost:$gp/readyz" 2>/dev/null || true)   # status-code-ok: 게이트웨이 /readyz 는 상태 코드가 계약이다(200 준비됨, 503 아님)
     if [ "$sc" = 200 ]; then echo "survey-service 준비됨(게이트웨이 /readyz 200): 활성 릴리스 적재를 마쳤다. 위 주소에서 키오스크를 눌러 본다"; return 0; fi
     ms=$("$DOCKER" exec "$P-model-serving-1" python -c 'import json,urllib.request,urllib.error
 try:

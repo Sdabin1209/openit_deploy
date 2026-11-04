@@ -241,7 +241,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 ### 9-1. HTTPS와 내부 CA 루트 인증서 배포 (사람이 할 일)
 
 - gateway는 HTTPS가 필수다. 컨테이너 8443이 HTTPS, 8080은 평문이지만 `/healthz`만 답하고 나머지는 `308`로 https 주소로 보낸다. 호스트 포트는 `GATEWAY_PORT`(평문), `GATEWAY_TLS_PORT`(HTTPS, 기본 8443; 운영에서 443을 쓰려면 `GATEWAY_TLS_PORT=443`과 `GATEWAY_PUBLIC_TLS_PORT=443`).
-- 사이트 이름은 `GATEWAY_HOSTS`(기본 `localhost:8443, 127.0.0.1:8443`)다. 운영에서는 병원 내부 도메인으로 바꾼다(예: `GATEWAY_HOSTS=kiosk.hospital.local:8443`). 인증서는 Caddy 내부 CA가 발급하고, 루트와 발급 인증서는 볼륨 `gateway-data`(`/data/caddy/pki`)에 있어 재시작해도 유지된다(**볼륨을 지우면 루트가 바뀌어 모든 기기가 다시 신뢰해야 한다**; 이 볼륨은 CA 비밀키를 담으므로 유출·백업에 주의).
+- 사이트 이름은 `GATEWAY_HOSTS`(기본 `localhost:8443`, DNS 이름만: IP 주소는 SNI 에 쓸 수 없다, 계약 3.4.14)다. 운영에서는 병원 내부 도메인으로 바꾼다(예: `GATEWAY_HOSTS=kiosk.hospital.local:8443`). 인증서는 Caddy 내부 CA가 발급하고, 루트와 발급 인증서는 볼륨 `gateway-data`(`/data/caddy/pki`)에 있어 재시작해도 유지된다(**볼륨을 지우면 루트가 바뀌어 모든 기기가 다시 신뢰해야 한다**; 이 볼륨은 CA 비밀키를 담으므로 유출·백업에 주의).
 - 루트 인증서를 꺼낸다: `bash scripts/export-gateway-ca.sh --project deploy ./openit-root.crt`(내부적으로 `docker cp deploy-gateway-1:/data/caddy/pki/authorities/local/root.crt`; 재시도와 오류 처리 포함). 이 파일은 공개해도 되는 인증서다(비밀키는 서버에만 있다).
 - 키오스크와 직원 PC의 신뢰 저장소에 `openit-root.crt`를 넣는다(루트 권한이 필요한 사람 일): Windows는 `certutil -addstore -f ROOT openit-root.crt`, Ubuntu는 `/usr/local/share/ca-certificates/`에 복사 후 `sudo update-ca-certificates`, Firefox는 별도 저장소(설정에서 가져오기). 브라우저를 다시 시작한다.
 - 확인(서버나 PC에서): `curl --cacert openit-root.crt https://<도메인>:8443/healthz` 가 `ok`, `curl -I http://<도메인>:8080/` 가 `308`과 `Location: https://...`.

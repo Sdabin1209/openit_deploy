@@ -59,7 +59,7 @@ class T(unittest.TestCase):
 
     def test_gw_url_and_cache(self):
         self.f.stdout = "0.0.0.0:49153\n[::]:49153\n"
-        self.assertEqual(S.gw_url(), "https://127.0.0.1:49153"); n = len(self.f.calls)
+        self.assertEqual(S.gw_url(), "https://localhost:49153"); n = len(self.f.calls)
         S.gw_url(); self.assertEqual(len(self.f.calls), n)   # 캐시
         self.assertEqual(self.f.calls[0][0], ["docker", "port", "P1-gateway-1", "8443/tcp"])
 
@@ -85,7 +85,7 @@ class T(unittest.TestCase):
             S.session_cookie = orig
             if old is None: os.environ.pop("GATEWAY_PUBLIC_URL", None)
             else: os.environ["GATEWAY_PUBLIC_URL"] = old
-        c2 = S.gw_client(C, token="tok"); self.assertEqual(c2.token, "tok"); self.assertNotIn("Authorization", c2._headers); self.assertEqual(c2.base, "https://127.0.0.1:49153")
+        c2 = S.gw_client(C, token="tok"); self.assertEqual(c2.token, "tok"); self.assertNotIn("Authorization", c2._headers); self.assertEqual(c2.base, "https://localhost:49153")
         with self.assertRaises(ValueError): S.gw_client(C, account="a", token="t")
 
     def test_test_password_comes_from_file(self):

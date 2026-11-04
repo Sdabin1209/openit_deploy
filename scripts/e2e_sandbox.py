@@ -76,7 +76,7 @@ def _docker_port(container_or_none: Optional[str], service: str, cport: str) -> 
 
 
 def gw_url(refresh: bool = False, human: bool = False) -> str:
-    """게이트웨이 HTTPS 주소. 기본은 https://127.0.0.1:<배정 포트>(기기·기계 토큰 호출). 사람 계정(OIDC 로그인)은 human=True: 밖에서 보이는 주소 GATEWAY_PUBLIC_URL(첫 GATEWAY_HOSTS 이름 + 밖에 보이는 포트)을 쓴다.
+    """게이트웨이 HTTPS 주소. 기본은 https://localhost:<배정 포트>(기기·기계 토큰 호출). 사람 계정(OIDC 로그인)은 human=True: 밖에서 보이는 주소 GATEWAY_PUBLIC_URL(첫 GATEWAY_HOSTS 이름 + 밖에 보이는 포트)을 쓴다.
     왜: 로그인 쿠키와 Keycloak 의 허용 리다이렉트는 그 이름에만 묶인다(U82, ADR 0057). 포트는 캐시하고 refresh=True 로 다시 묻는다."""
     if refresh or "_gw_port" not in _C:
         p = _docker_port(None, "gateway", "8443")
@@ -88,7 +88,7 @@ def gw_url(refresh: bool = False, human: bool = False) -> str:
         if not pub:
             raise RuntimeError("GATEWAY_PUBLIC_URL 이 없다: scripts/lib.sh 를 source 한 셸(e2e.sh·demo.sh)에서 돌려야 한다")
         return pub
-    return f"https://127.0.0.1:{_C['_gw_port']}"
+    return f"https://localhost:{_C['_gw_port']}"
 
 
 def _test_password(account: str) -> str:

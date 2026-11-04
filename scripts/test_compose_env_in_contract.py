@@ -77,6 +77,9 @@ if __name__ == "__main__":
         good = violations({"services": {"survey-service": {"environment": {"SSL_CERT_FILE": "/x"}}}}, {})
         assert bad and not good, (bad, good); print("self-test OK"); sys.exit(0)
     v = run(FILES)
+    import re as _re   # 계약 3.4.14: GATEWAY_HOSTS 의 기본값에 IP 주소가 없다(SNI 는 DNS 이름만, RFC 6066 3절)
+    for m in _re.finditer(r"GATEWAY_HOSTS:\s*\$\{GATEWAY_HOSTS:-([^}]*)\}", (ROOT / "compose.yaml").read_text(encoding="utf-8")):
+        if _re.search(r"(^|[\s,])\d{1,3}(\.\d{1,3}){3}(:|,|$)", m.group(1)): v.append(f"compose.yaml: GATEWAY_HOSTS 기본값에 IP 주소가 있다: {m.group(1)}")
     for x in v: print("FAIL", x)
     print(f"계약 밖 환경 이름 {len(v)}개" if v else "OK 모든 환경 이름이 받는 쪽 계약 Env 에 있다")
     sys.exit(1 if v else 0)

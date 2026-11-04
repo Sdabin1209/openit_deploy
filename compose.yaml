@@ -876,7 +876,7 @@ services:
       identity-proxy-gw: {condition: service_healthy}   # 사람 인증(forward_auth): 사이드카의 healthcheck 가 oauth2-proxy 의 /ping 을 본다
       identity-proxy: {condition: service_started}
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
-      GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443, 127.0.0.1:8443}
+      GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443}
       INGRESS_DEVICE_CA_FILE: /etc/openit/device-ca.pem   # 기본 기기 인증(mTLS)의 기기 CA 경로(계약 3.4.13). 파일은 위 configs gateway-device-ca
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
       GATEWAY_PROBE_SITE: ${GATEWAY_PROBE_SITE:-gateway:8443}   # 감시(blackbox)가 게이트웨이를 https 로 부르는 사이트 이름. internal 모드에서는 내부 CA 가 이 이름 인증서도 발급한다. files/acme 모드에서는 그 인증서가 이 이름을 포함하거나 감시 대상을 GATEWAY_HOSTS 의 이름으로 바꾼다

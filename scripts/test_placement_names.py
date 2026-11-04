@@ -52,10 +52,11 @@ for label, groups in SPLITS.items():
         tmp = tempfile.mkdtemp()
         text, plan = pt.render(p, compose, host, CD, None, None)
         sd = os.path.join(tmp, "sec"); os.makedirs(sd)
-        for f in plan["secret_files"]:   # DSN 만 내용이 필요하다. 가짜 값(비밀 아님)
-            if re.match(r"^db-.*-dsn$", os.path.basename(f)):
+        for f in plan["secret_files"]:   # DB 접속 URI 만 내용이 필요하다(파일 경로 .../db-urls/<DB 서비스>/...). 가짜 값(비밀 아님)
+            m = re.match(r"^db-urls/([a-z0-9-]+)/", f)
+            if m:
                 os.makedirs(os.path.dirname(os.path.join(sd, f)), exist_ok=True)
-                open(os.path.join(sd, f), "w").write("postgresql://u:x@%s:5432/d?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt\n" % pt.dsn_db(compose, os.path.basename(f)))
+                open(os.path.join(sd, f), "w").write("postgresql://u:x@%s:5432/d?sslmode=verify-full&sslrootcert=/etc/openit/pki/root_ca.crt\n" % m.group(1))
         text, plan = pt.render(p, compose, host, CD, sd, os.path.join(tmp, "out"))
         cur = None
         for n_ in plan["services"]:   # P3: <서비스>-net 은 앱과 같은 서버에 선다
@@ -87,7 +88,7 @@ for label, groups in SPLITS.items():
             checked += 1
             body = open(os.path.join(tmp, "out", "secrets", f)).read()
             hm = re.search(r"@([^:/]+):(\d+)/", body)
-            if not hm or hm.group(1) != pt.dsn_db(compose, os.path.basename(f)):
+            if not hm or hm.group(1) != re.match(r"^db-urls/([a-z0-9-]+)/", f).group(1):
                 fails.append("%s/%s: %s 의 DSN 호스트가 그 계정의 영역 DB 서비스 이름이 아니다" % (label, host, f))
 for f in fails:
     print("FAIL: " + f, file=sys.stderr)
