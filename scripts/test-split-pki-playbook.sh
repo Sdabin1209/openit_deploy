@@ -141,7 +141,7 @@ if [ "$XPORT" = 443 ]; then   # 추론 서버(다른 호스트) 경로: compose.
   RMT=$(INFERENCE_RELEASE_ADDR="$XADDR" INFERENCE_IMAGE=x INFERENCE_PAUSE_IMAGE=x INFERENCE_STEP_IMAGE=x INFERENCE_GATEWAY_IMAGE=x INFERENCE_EXPOSURE_FILE="$T/gw/exposure.json" INFERENCE_TOKENS_FILE="$T/gw/exposure.json" INFERENCE_RELEASE_TOKEN_FILE="$T/gw/exposure.json" INFERENCE_CA_FILE="$EXP/root_ca.crt" INFERENCE_PKI_ROOT_FILE="$EXP/root_ca.crt" INFERENCE_STEP_CA_URL=https://x INFERENCE_TLS_TOKEN_FILE="$T/gw/exposure.json" INFERENCE_TLS_NAME=x SECRETS_GID=0 docker compose -p infrmt-$$ -f compose.inference.yaml -f compose.inference.remote.yaml config --format json 2>/dev/null | python3 -c "import json,sys;print(' '.join(json.load(sys.stdin)['services']['model-serving-net']['extra_hosts']))")
   case "$RMT" in *"release-gate=$XADDR"*|*"release-gate:$XADDR"*) ok "(R1.5) compose.inference.remote.yaml 의 extra_hosts 가 hosts 표의 release-gate 줄과 같다";; *) bad "remote overlay 해석: $RMT";; esac
   [ "$(docker run --rm --add-host "release-gate:$XADDR" -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "import urllib.request;print(urllib.request.urlopen('https://release-gate/',timeout=8).read().decode())" 2>&1)" = ok ] && ok "(R1.5) 추론 서버 경로: https://release-gate (포트 443 게시)가 OUT-FILE 루트 + hosts 표로 닿는다" || bad "https://release-gate:443 이 닿지 않는다"
-else echo "SKIP: 호스트의 443 이 사용 중이라 게시 포트 443 단언을 건너뛴다(통과로 세지 않는다)"; fi
+else echo "SKIP: 호스트의 443 이 사용 중이라 게시 포트 443 단언을 건너뛴다(통과로 세지 않는다, 종료 77)"; skipped=1; fi
 XC="import urllib.request;print(urllib.request.urlopen('https://release-gate:$XPORT/',timeout=8).read().decode())"
 [ "$(docker run --rm --add-host release-gate:$XADDR -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "$XC" 2>&1)" = ok ] && ok "(R1.5) compose 밖 호출자가 내보낸 루트 + hosts 표만으로 https 검증을 통과해 앱 응답을 받는다" || bad "R1.5: 내보낸 파일만으로 호출 실패"
 docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/null 2>&1 && bad "R1.5: 루트 없이 호출이 통과했다" || ok "(R1.5) 루트 없이는 검증 실패(변이 확인)"
@@ -154,4 +154,5 @@ R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR 
 timeout 600 "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -25 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
 if grep -aE '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 '; then bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi
 ok "(4) 플레이북 2회차 changed=0"
+[ "${skipped:-0}" = 1 ] && { echo "SKIP: 분리 배치 인증서·DB 경로 시험은 443 단언을 하지 않았다"; exit 77; }
 echo "PASS: 분리 배치 인증서·DB 경로 시험"

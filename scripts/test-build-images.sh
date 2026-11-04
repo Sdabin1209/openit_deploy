@@ -20,7 +20,7 @@ esac
 exit 0
 FP
 chmod +x "$D/.venv/bin/pip"
-[ -x "$D/.venv/bin/python" ] || { echo "SKIP: deploy .venv 가 없다(계약 validator 필요)"; exit 0; }
+[ -x "$D/.venv/bin/python" ] || { echo "SKIP: deploy .venv 가 없다(계약 validator 필요; 종료 77 = 검증하지 않음)"; exit 77; }
 DEPLOY_NO_DOCKER=1; source "$D/scripts/lib.sh"; BC=$DEPLOY_BC_TAG; MR=$DEPLOY_MR_TAG; SSTAG=$DEPLOY_SS_TAG
 G='git -c user.name=t -c user.email=t@t'
 mkrepo() { local n=$1; mkdir -p "$T/$n"; ( cd "$T/$n" && git init -q && echo "$n" > REPO_MARKER && mkdir -p scripts && git add -A && $G commit -q -m init ); }
@@ -53,7 +53,7 @@ AREAS_JSON="${AREAS_FILE:-$HERE/../../head/shared/areas.json}"   # 영역 목록
 for r in $("$DEPLOY_PY" "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node,library); do mkrepo "$r"; done
 for r in $("$DEPLOY_PY" "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node); do ( cd "$T/$r" && cp "$T/entry.sh" scripts/build-image.sh && git add -A && $G commit -q -m entry ); done
 REAL_BC="$(cd "$(git -C "$HERE" rev-parse --git-common-dir)/../.." && pwd)/boundary-contracts"
-[ -d "$REAL_BC" ] && git -C "$REAL_BC" rev-parse "$BC" >/dev/null 2>&1 || { echo "SKIP: 계약 리포($REAL_BC)에 태그 $BC 가 없다"; exit 0; }
+[ -d "$REAL_BC" ] && git -C "$REAL_BC" rev-parse "$BC" >/dev/null 2>&1 || { echo "SKIP: 계약 리포($REAL_BC)에 태그 $BC 가 없다(종료 77 = 검증하지 않음)"; exit 77; }
 git -C "$REAL_BC" archive "$BC" | tar -x -C "$T/boundary-contracts"   # 실제 계약 소스(요청·결과 검증기가 여기서 온다)
 ( cd "$T/boundary-contracts" && echo bc-src > SRC_BC && git add -A && $G commit -q -m s && git tag "$BC" ); ( cd "$T/model-runtime" && echo mr-src > SRC_MR && git add -A && $G commit -q -m s && git tag "$MR" )
 ( cd "$T/survey-service" && mkdir -p schema/survey_schema && echo '{}' > schema/x.json && touch schema/survey_schema/__init__.py && printf '[build-system]\nrequires=["setuptools>=61"]\nbuild-backend="setuptools.build_meta"\n[project]\nname="openit-survey-schema"\nversion="0.0.1"\n[tool.setuptools]\npackages=["survey_schema"]\n' > schema/pyproject.toml && git add -A && $G commit -q -m s && git tag "$SSTAG" )

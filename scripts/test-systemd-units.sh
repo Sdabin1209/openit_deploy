@@ -37,5 +37,7 @@ if command -v systemd-analyze >/dev/null 2>&1; then
   out=$(systemd-analyze verify "$T"/openit-*.timer "$T"/openit-*.service 2>&1) && [ -z "$out" ] && ok "systemd-analyze verify 통과(유닛 $(ls "$T" | wc -l)개)" || fail "systemd-analyze verify: $out"
   printf '[Unit]\n[Service]\nType=oneshot\nExecStart=relative/not-absolute\n' > "$T/bad.service"
   systemd-analyze verify "$T/bad.service" >/dev/null 2>&1 && fail "망가진 유닛을 통과시킨다(verify 가 시험으로 쓸모 없다)" || ok "망가진 유닛은 verify 가 거부한다"
-else echo "  SKIP systemd-analyze 가 없어 verify 를 하지 못했다(통과 아님)"; fi
-[ $rc = 0 ] && echo "통과: systemd 유닛 정적 시험 ${n}건" || echo "실패"; exit $rc
+else echo "  SKIP systemd-analyze 가 없어 verify 를 하지 못했다(통과 아님, 종료 77)"; skipped=1; fi
+[ $rc = 0 ] || { echo "실패"; exit $rc; }
+[ "${skipped:-0}" = 1 ] && { echo "SKIP: systemd 유닛 정적 시험 ${n}건 통과, verify 는 하지 않았다"; exit 77; }
+echo "통과: systemd 유닛 정적 시험 ${n}건"; exit 0

@@ -2,7 +2,8 @@
 # deploy 자체 점검을 한 번에 돌린다(커밋 전에 실행한다). 목록의 정본은 scripts/self-checks.list 한 곳이고 e2e.sh 도 같은 목록을 쓴다.
 # 사용: scripts/run-self-checks.sh [--print] [--slow]     --print: 실행하지 않고 "설명<TAB>명령" 줄만 낸다(e2e.sh 가 읽는다; 느린 시험은 안 낸다)
 #   --slow: 기본 목록 뒤에 느린 시험 목록(scripts/self-checks-slow.list: 실제 시간을 기다리는 시험, 분 단위)도 돌린다. 완료를 말하기 전에 1회는 `--slow` 로 돌린다
-# 종료 코드: 0 전부 통과, 1 하나라도 실패(실패한 것의 이름과 출력 끝을 보인다), 2 목록을 읽지 못함.
+# 종료 코드: 0 전부 통과(SKIP 없음), 1 하나라도 실패(실패한 것의 이름과 출력 끝을 보인다), 77 실패는 없고 SKIP 이 하나라도 있음, 2 목록을 읽지 못함.
+#   SKIP = 시험이 종료 코드 77(automake 관례; python 은 scripts/unittest_skip_rc.py)로 끝난 것. 검증하지 않은 것은 통과가 아니므로 PASS 로 세지 않고 묶음도 0 으로 끝내지 않는다.
 # 이 묶음에 없는 것(이유): publish·check-compose·check-versions·check-exposure 는 빌드한 이미지와 레지스트리가 있어야 의미가 있어 e2e.sh 의 준비 단계에서 직접 돈다.
 #   레지스트리·기동한 스택이 필요한 시험(test-publish, test-backup, test-monitoring 전체 등)도 이 목록에 없다. 전체 E2E(e2e.sh)는 이 묶음과 별개다.
 # 필요한 것: deploy .venv(계약 패키지가 설치된 파이썬), docker 데몬(일부 시험), 이웃 영역이 deploy 옆에 있는 작업 공간(check-all 계열). 작업 트리가 deploy/build/ 아래면 AREAS_FILE 을 지정한다.
@@ -16,9 +17,12 @@ entries() { cat "$LIST" $([ "${SLOW_ENTRIES:-0}" = 1 ] && echo "$SLOW_LIST") | g
 if [ "${1:-}" = --print ]; then entries; exit 0; fi
 [ "$SLOW" = 1 ] && [ ! -s "$SLOW_LIST" ] && { echo "느린 시험 목록을 읽지 못했다: $SLOW_LIST" >&2; exit 2; }
 export DEPLOY_ROOT VENV
-FAILS=0; N=0; FAILED=()
+FAILS=0; N=0; FAILED=(); SKIPS=0; SKIPPED=()
 while IFS=$'\t' read -r d c; do
   rc=0; N=$((N+1)); out=$(bash -c "$c" 2>&1) || rc=$?
-  if [ $rc = 0 ]; then echo "  [PASS] $d"; else echo "  [FAIL] $d (종료 $rc)"; printf '%s\n' "$out" | tail -8 | sed 's/^/         /'; FAILS=$((FAILS+1)); FAILED+=("$d"); fi
+  if [ $rc = 0 ]; then echo "  [PASS] $d"; elif [ $rc = 77 ]; then echo "  [SKIP] $d (종료 77: 검증하지 않음)"; printf '%s\n' "$out" | tail -3 | sed 's/^/         /'; SKIPS=$((SKIPS+1)); SKIPPED+=("$d"); else echo "  [FAIL] $d (종료 $rc)"; printf '%s\n' "$out" | tail -8 | sed 's/^/         /'; FAILS=$((FAILS+1)); FAILED+=("$d"); fi
 done < <(entries)
-echo; if [ $FAILS = 0 ]; then echo "run-self-checks: 전부 통과 ($N개)"; else echo "run-self-checks: 실패 $FAILS개 / $N개"; printf '  - %s\n' "${FAILED[@]}"; exit 1; fi
+echo
+if [ $FAILS != 0 ]; then echo "run-self-checks: 실패 $FAILS개 / SKIP $SKIPS개 / 전체 $N개"; printf '  - %s\n' "${FAILED[@]}"; [ $SKIPS = 0 ] || { echo "  SKIP:"; printf '  - %s\n' "${SKIPPED[@]}"; }; exit 1; fi
+if [ $SKIPS != 0 ]; then echo "run-self-checks: 실패 없음, 그러나 SKIP $SKIPS개 (통과 $((N-SKIPS))개 / 전체 $N개): 검증하지 않은 것이 있어 통과가 아니다"; printf '  - %s\n' "${SKIPPED[@]}"; exit 77; fi
+echo "run-self-checks: 전부 통과 ($N개)"

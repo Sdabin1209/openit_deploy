@@ -29,4 +29,4 @@ class T(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    from unittest_skip_rc import main; main()

@@ -41,10 +41,12 @@ out=$(bash "$HERE/prepare-areas.sh" --ws "$T" --no-self a-ok 2>&1); grep -q ran-
 chk "성공하는 영역의 보고를 검증해 state 에 모은다" 0 - a-ok
 [ ! -e "$T/a-ok/.venv" ] && [ -z "$(git -C "$T/a-ok" status --porcelain)" ] && echo "  ok   실제 영역 리포에는 .venv 도 변경도 생기지 않았다" || { echo "  FAIL 실제 영역 리포가 바뀌었다(간섭 결함)"; rc=1; }
 [ -f "$SETUP_ENV_WORK/a-ok/.venv/marker" ] && [ "$(git -C "$SETUP_ENV_WORK/a-ok" rev-parse HEAD)" = "$(git -C "$T/a-ok" rev-parse HEAD)" ] && echo "  ok   setup-env 는 사본(실제 HEAD 커밋)에서 돌았다" || { echo "  FAIL 사본에서 돌지 않았다"; rc=1; }
+# 왜 변이 사본을 $T(실행별 mktemp, 종료 때 지워진다)에 두나: 소스 폴더의 고정 이름 파일은 동시 실행끼리 서로 지우고 소스 트리를 더럽힌다
+MUT="$T/prepare-areas.mut.sh"
 # 변이: 사본 대신 실제 리포에서 돌리는 옛 방식이면 위 단언이 실패해야 한다
-sed 's|rc=0; out=$(cd "$c" \&\& bash scripts/setup-env.sh)|rc=0; out=$(cd "$WORKSPACE/$a" \&\& bash scripts/setup-env.sh)|' "$HERE/prepare-areas.sh" > "$HERE/.prepare-areas.mut.sh"; trap 'rm -rf "$T" "$HERE/.prepare-areas.mut.sh"' EXIT
-grep -q 'cd "$WORKSPACE/$a" && bash scripts/setup-env.sh' "$HERE/.prepare-areas.mut.sh" || { echo "  FAIL 변이를 만들지 못했다"; rc=1; }
-bash "$HERE/.prepare-areas.mut.sh" --ws "$T" --no-self a-ok >/dev/null 2>&1
+sed 's|rc=0; out=$(cd "$c" \&\& bash scripts/setup-env.sh)|rc=0; out=$(cd "$WORKSPACE/$a" \&\& bash scripts/setup-env.sh)|' "$HERE/prepare-areas.sh" | sed 's|^source "$(dirname "${BASH_SOURCE\[0\]}")/lib.sh"|source "'"$HERE"'/lib.sh"|' > "$MUT"
+grep -q 'cd "$WORKSPACE/$a" && bash scripts/setup-env.sh' "$MUT" || { echo "  FAIL 변이를 만들지 못했다"; rc=1; }
+bash "$MUT" --ws "$T" --no-self a-ok >/dev/null 2>&1
 [ -e "$T/a-ok/.venv" ] && echo "  ok   변이(옛 방식)에서는 실제 리포에 .venv 가 생겨 위 단언이 실패한다" || { echo "  FAIL 변이가 실제 리포를 바꾸지 않았다(시험이 껍데기)"; rc=1; }
 rm -rf "$T/a-ok/.venv"
 [ "$(python3 -c "import json;print(json.load(open('$SETUP_ENV_DIR/a-ok.json'))['environment']['path'])")" = .venv ] && echo "  ok   a-ok 보고가 저장됐다" || { echo "  FAIL 보고 저장"; rc=1; }
