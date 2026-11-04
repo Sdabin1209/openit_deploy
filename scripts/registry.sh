@@ -14,12 +14,16 @@ case "${1:-}" in
     port=${REGISTRY_HOST_PORT-5000}
     for try in 1 2 3 4 5; do
       [ -n "${REGISTRY_HOST_PORT+x}" ] && [ -z "${REGISTRY_HOST_PORT}" ] && port=$(free_port)
-      if REGISTRY_HOST_PORT=$port run up -d >/dev/null 2>&1; then break; fi
+      # 기동 출력은 버리지 않는다: 실패하면 마지막 줄을 보인다(포트 충돌인지 이미지 문제인지가 이 출력에만 있다)
+      if upout=$(REGISTRY_HOST_PORT=$port run up -d 2>&1); then break; fi
+      echo "레지스트리 기동 실패(시도 $try/5, 포트 $port): $(printf '%s' "$upout" | tail -3 | tr '\n' ' ')" >&2
       run down >/dev/null 2>&1 || true
       [ "$try" = 5 ] && die "레지스트리를 띄우지 못했다"
     done
     [ -n "$port" ] || die "레지스트리 포트를 읽지 못했다"
-    for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$port/v2/" >/dev/null 2>&1 && break; sleep 1; done
+    # 준비 확인은 /v2/ 응답이다(컨테이너가 떠도 레지스트리가 응답하기 전에 push 하면 연결 거부로 실패한다). 상한 30초: 측정하지 않았다(D125의 측정 최악 값 없음).
+    # 판단 근거: registry:2 는 단일 Go 프로세스라 초 단위로 뜬다고 보고 기존 값 30초를 유지했다. 넘으면 아래 wait_ready 가 마지막 curl 출력을 남기고 실패한다. REGISTRY_READY_TIMEOUT 로 바꾼다.
+    wait_ready "레지스트리 /v2/ 응답 (127.0.0.1:$port, 프로젝트 $P)" "${REGISTRY_READY_TIMEOUT:-30}" curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/v2/" || die "레지스트리가 준비되지 않았다 (registry.env 를 쓰지 않는다)"
     echo "DEPLOY_REGISTRY=127.0.0.1:$port" > "${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"
     echo "레지스트리: 127.0.0.1:$port (프로젝트 $P)" ;;
   down) run down "${@:2}" ;;

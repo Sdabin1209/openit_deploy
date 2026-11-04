@@ -76,37 +76,16 @@ vrc=0; vout=$(validate_image_labels "$IMG" "$SVC" 2>&1) || vrc=$?
 REV=$("$DOCKER" image inspect "$IMG" --format '{{index .Config.Labels "io.openit.revision"}}' | tr -d '\r')   # 태그 이름에 쓸 값만 읽는다(형식은 위 계약 검증이 보증한다)
 TAGREV=$(echo "$REV" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-100)
 
-# 레지스트리 호출 상한(FAULT_POLICY 4: 의존 호출에 연결·읽기 timeout, 무한 대기 금지). 값은 측정한 것이 아니라 판단이다(측정 안 함), 환경 변수로 바꾼다.
-#  PUBLISH_CONNECT_TIMEOUT(3s): 같은 호스트의 로컬 레지스트리라 연결은 즉시여야 한다. 3초에 안 되면 장애로 본다.
-#  PUBLISH_PROBE_TIMEOUT(5s): push 전에 /v2/ 응답을 확인하는 전체 상한. 레지스트리가 멈춰 있으면(pause: 연결은 되고 응답이 없다) docker push 가 끝없이 기다리므로 먼저 걸러 종료 코드 1/4 로 스스로 실패한다.
-#  PUBLISH_HEAD_TIMEOUT(15s): digest 확인용 HEAD 요청 전체 상한.
-#  PUBLISH_PUSH_TIMEOUT(900s): docker push 전체 상한. 이미지 크기·디스크 속도는 측정하지 않았다(작은 이미지는 수 초, 13GB GPU 이미지는 더 걸릴 수 있어 넉넉히 잡은 시작값). 초과하면 124 로 실패한다.
-CT=${PUBLISH_CONNECT_TIMEOUT:-3}; PROBE_T=${PUBLISH_PROBE_TIMEOUT:-5}; HEAD_T=${PUBLISH_HEAD_TIMEOUT:-15}; PUSH_T=${PUBLISH_PUSH_TIMEOUT:-900}
-# push 와 digest 확인(레지스트리가 아는 digest와 push 출력이 같아야 한다)
+# push 와 digest 확인(/v2/ 프로브, push, digest 읽기, 레지스트리 HEAD 대조)은 lib.sh 의 registry_publish_ref 하나가 한다(publish-images.sh 와 같은 함수). 시간 상한의 기본값과 근거도 lib.sh 한 곳이다
 REF="$REG/openit/$SVC:build-$TAGREV"
 "$DOCKER" tag "$IMG" "$REF"
-curl -fsS -o /dev/null --connect-timeout "$CT" --max-time "$PROBE_T" "$(registry_scheme "$REG")://$REG/v2/" 2>/dev/null || { echo "거부: 레지스트리가 응답하지 않는다(${PROBE_T}초): $REG" >&2; exit 4; }
-# push 는 lib.sh 의 registry_push 하나가 한다(빈 DOCKER_CONFIG, 컨텍스트 DOCKER_HOST, PUBLISH_DOCKER_CONFIG, 시간 상한): publish-images.sh 와 같은 함수
-prc=0; registry_push "$REF" || prc=$?; out=$REGISTRY_PUSH_OUT
-[ $prc != 124 ] || { echo "$out" | tail -3 >&2; echo "거부: push 시간 초과(${PUSH_T}초, timeout 종료 코드 124): $REF (PUBLISH_PUSH_TIMEOUT 로 바꿀 수 있다)" >&2; exit 4; }
-[ $prc = 0 ] || { echo "$out" | tail -3 >&2; echo "거부: push 실패(종료 코드 $prc): $REF" >&2; exit 4; }
-DIGEST=$(echo "$out" | tr -d '\r' | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
-[ -n "$DIGEST" ] || { echo "$out" | tail -3 >&2; echo "거부: digest 를 읽지 못했다" >&2; exit 4; }
-reg=$(curl -fsSI --connect-timeout "$CT" --max-time "$HEAD_T" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-      "$(registry_scheme "$REG")://$REG/v2/openit/$SVC/manifests/build-$TAGREV" 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p') || reg=""
-[ "$reg" = "$DIGEST" ] || { echo "거부: 레지스트리 digest('$reg')와 push 출력('$DIGEST')이 다르다" >&2; exit 4; }
+registry_publish_ref "$REG" "$SVC" "build-$TAGREV" "$REF" || exit 4
+DIGEST=$REGISTRY_DIGEST
 
-# 잠금 기록(직렬화, 임시 파일 -> 바꿔 넣기). 같은 digest면 아무것도 바꾸지 않는다
-VAR=$(echo "$SVC" | tr 'a-z-' 'A-Z_') || reg=""   # 레지스트리 HEAD 가 실패해도(set -e, pipefail) 아래의 거부 사유 출력과 종료 코드 4 가 돌게 한다
-exec 9>"$LOCK.lock"; flock 9
-CUR=$(sed -n "s/^${VAR}_DIGEST=//p" "$LOCK")
-if [ "$CUR" = "$DIGEST" ] && [ "$(sed -n "s/^${VAR}_REVISION=//p" "$LOCK")" = "$REV" ]; then
+# 잠금 기록은 lib.sh 의 lock_set 하나(flock 직렬화, 임시 파일 -> 바꿔 넣기, 같은 digest 면 변경 없음). 반환 3 = 이미 같은 digest
+lrc=0; lock_set "$LOCK" "$SVC" "$DIGEST" "$REV" || lrc=$?
+if [ $lrc = 3 ]; then
   echo "이미 같은 digest: $SVC $DIGEST (잠금 변경 없음)"; PUB_STATUS=UNCHANGED; PUB_DIGEST=$DIGEST; PUB_REV=$REV; exit 0
 fi
-tmp=$(mktemp "$LOCK.XXXXXX")
-{ grep -v '^#' "$LOCK" | grep -v "^${VAR}_DIGEST=" | grep -v "^${VAR}_REVISION=" || true; printf '%s_DIGEST=%s\n%s_REVISION=%s\n' "$VAR" "$DIGEST" "$VAR" "$REV"; } > "$tmp.body"
-{ echo "# 코드 축: 이미지 digest 잠금(D07). 손으로 고치지 않는다. publish-image(s).sh 와 rollback.sh 가 바꾼다."; sort "$tmp.body"; } > "$tmp" || { rm -f "$tmp" "$tmp.body"; echo "잠금 기록 실패" >&2; exit 5; }
-rm -f "$tmp.body"
-if [ -s "$LOCK" ]; then cp "$LOCK" "$HIST/$(date -u +%Y%m%dT%H%M%S%NZ).lock"; fi
-mv "$tmp" "$LOCK" || { echo "잠금 기록 실패" >&2; exit 5; }
+[ $lrc = 0 ] || { echo "잠금 기록 실패" >&2; exit 5; }
 echo "게시: $SVC@$DIGEST (revision $REV) -> $LOCK"; PUB_STATUS=PUBLISHED; PUB_DIGEST=$DIGEST; PUB_REV=$REV

@@ -31,7 +31,9 @@ dump_one() { # 병렬로 도는 한 데이터베이스: pg_dump -> restic --stdi
     local rc=0; "$DOCKER" exec "$C" pg_dump -Fc -U "$db" -d "$db" 2>"$W/$db.err" || rc=$?   # set -e 로 서브셸이 여기서 끝나면 아래 kill 이 실행되지 않아 EOF 가 가고 빈 스냅샷이 만들어진다
     echo $rc > "$W/$db.dumprc"
     if [ $rc != 0 ]; then   # restic 컨테이너가 아직 뜨는 중일 수 있어 죽일 수 있을 때까지 다시 시도한다(그동안 파이프는 열려 있어 EOF 가 가지 않는다)
-      for _ in $(seq 1 40); do "$DOCKER" kill "$name" >/dev/null 2>&1 && break; sleep 0.25; done
+      # 상한 KILL_WAIT_S(10초): 측정하지 않았다(D125의 측정 최악 값 없음). 판단 근거: restic 컨테이너는 이미지가 로컬에 있으면 초 단위로 뜬다고 보고 기존 값(40회 x 0.25초 = 10초)을 유지한다. 간격은 wait_ready 의 1초.
+      # 못 죽이면 EOF 가 가서 불완전한 덤프의 스냅샷이 남는다(append-only 라 지울 수 없다): 조용히 넘어가지 않고 CRIT 로 알린다(이 데이터베이스는 dumprc 가 0 이 아니라 어차피 실패로 집계된다)
+      wait_ready "restic 컨테이너 $name 를 죽일 수 있을 때까지" "${KILL_WAIT_S:-10}" "$DOCKER" kill "$name" || echo "CRIT: pg-$db 불완전한 덤프의 스냅샷이 만들어졌을 수 있다(restic 컨테이너를 죽이지 못했다): restic snapshots 로 확인하라" >&2
     fi
   } | backup_restic -i --name "$name" -- backup --stdin --stdin-filename "$db.dump" --host "pg-$db" --tag "set-$TS" --tag "pg-$VER" --json >"$W/$db.json" 2>>"$W/$db.err"
   local prc=${PIPESTATUS[1]}
