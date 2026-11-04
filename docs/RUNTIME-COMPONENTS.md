@@ -172,7 +172,7 @@
 | 입력 | `compose.monitoring.yaml`, 탐침 대상(게이트웨이 `/healthz`, 서비스 `/readyz`), 규칙 파일. |
 | 출력 | 지표·경보. 게이트웨이 평문 8080 `/healthz` 만 평문 탐침(상류와 무관한 정적 200, 컨테이너 내부 프로브 예외). |
 | 실패 동작 | 감시가 멈춰도 제품은 영향받지 않는다. |
-| 시험 | `scripts/test-monitoring.sh`, `scripts/check-monitoring-live.sh`. |
+| 시험 | `scripts/test_monitoring_targets.py`(대상 파일·감시 전용 망), 경보 규칙 시험은 platform 리포. |
 
 ### 12.1 경보 목록 (DC-MON.1)
 

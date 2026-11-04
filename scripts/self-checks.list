@@ -17,7 +17,6 @@ build-images 자체 점검 (가짜 영역 진입점: BuildImageRequest 값, 서�
 build-images 정적 점검 (영역 Dockerfile 인자·산출 파일 이름이 코드에 없다) :: bash "$DEPLOY_ROOT/scripts/test-build-images-static.sh"
 게시 서비스 목록(lib.sh) == 계약 PublishRequest.service enum :: "$VENV/bin/python" -I "$DEPLOY_ROOT/scripts/test_services_enum.py"
 e2e 옵션 처리 자기 점검 (--help 는 실행 없이 0, 모르는 옵션·--only 와 --sections 조합은 2) :: bash "$DEPLOY_ROOT/scripts/test-e2e-options.sh"
-감시 스택 정적 시험 (promtool check/test rules, 변이 시험, amtool, blackbox) :: bash "$DEPLOY_ROOT/scripts/test-monitoring.sh" --static
 job-metrics 자체 시험 (textfile 지표) :: bash "$DEPLOY_ROOT/scripts/test-job-metrics.sh"
 e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
 e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"

@@ -1,2 +1,0 @@
-# 제품 안 model-serving 의 /readyz 탐침 대상(기본). 외부 추론 모드에서는 no-local-inference-targets.yml 이 대신 걸린다(prometheus.yml 주석).
-- targets: ['https://model-serving/readyz']

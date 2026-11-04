@@ -40,8 +40,7 @@ class T(unittest.TestCase):
         self.assertIn('{"status":"ok"}', b[0]); self.assertIn('{"status":"not-ready"}', b[0])
 
     def test_readers_check_the_body(self):
-        bb = (ROOT / "config/prometheus/blackbox.yml").read_text(encoding="utf-8")
-        self.assertIn("fail_if_body_not_matches_regexp", bb.split("http_2xx_gateway:")[1].split("http_2xx:")[0], "게이트웨이를 보는 blackbox 모듈이 본문을 보지 않는다")
+        # 감시(blackbox) 설정은 platform 감시 이미지의 것이다(platform 시험이 본문 판정을 본다). deploy 는 읽는 쪽 E2E 가 본문을 보는지만 본다
         e2e = (ROOT / "scripts/e2e.sh").read_text(encoding="utf-8")
         self.assertNotIn("grep -q '^ok'", e2e)
 

@@ -13,9 +13,10 @@
 #   INFERENCE_STEP_CA_URL        deploy step-ca 주소(https://<step-ca 주소>:9000). 이 서버 -> step-ca 경로만 있으면 된다(도전 없음)
 #   INFERENCE_TLS_TOKEN_FILE     파일 경로. 지휘 쪽이 `step ca token <INFERENCE_TLS_NAME>` 으로 발급한 일회용 토큰(5분). 인증서의 SAN 은 토큰이 정한다(step 은 --token 과 --san 을 함께 받지 않는다): 같은 호스트에서 localhost 로도 부르려면 토큰을 `--san <이름> --san localhost` 로 발급한다
 #   INFERENCE_PAUSE_IMAGE  네트워크 공간만 잡는 컨테이너 이미지(pause, digest 참조; deploy 잠금의 PAUSE_IMAGE)
-#   INFERENCE_STEP_IMAGE         step-ca 이미지(digest 참조, 잠금의 STEP_CA_IMAGE)
+#   INFERENCE_STEP_IMAGE         platform step-ca 이미지(digest 참조, 잠금의 STEP_CA_DIGEST; cert 부명령으로 발급·갱신한다)
 #   INFERENCE_TLS_NAME   이 서버의 이름(호출자가 https://<이름> 으로 부르는 DNS 이름 = 인증서 이름)
-#   INFERENCE_SIDECAR_IMAGE  TLS 사이드카(Caddy 공식 이미지, digest 참조; deploy 잠금의 GATEWAY_IMAGE 와 같은 값)
+#   INFERENCE_GATEWAY_IMAGE  platform 영역 게이트웨이 이미지(area-gateway, digest 참조; 잠금의 AREA_GATEWAY_DIGEST): 들어오는 쪽 TLS 종단 + 나가는 쪽 loopback CONNECT 출구
+#   INFERENCE_EXPOSURE_FILE  파일 경로. 추론 서버 이미지의 라벨 io.openit.exposure 를 꺼낸 파일(deploy 의 scripts/gen-gateways.py 가 만든 state/gateways/model-serving/exposure.json)
 #   SECRETS_GID          토큰 파일들의 그룹 gid(제품 compose 와 같은 변수, scripts/lib.sh 의 기본값은 id -g). 파일은 640 이고 이 그룹이다
 #   INFERENCE_CA_FILE    파일 경로. 게이트웨이의 CA 루트 인증서(공개 인증서, 비밀 아님): deploy 호스트에서 scripts/export-gateway-ca.sh 로 꺼낸다. 공인 인증서를 쓰면 시스템 신뢰 저장소로 충분하다 -- 그래도 파일은 필요하니 공인 CA 번들을 준다
 #                        configs 로 /etc/openit/gateway-ca.crt 에 넣고 SSL_CERT_FILE 이 가리킨다(계약 클라이언트에 CA 인자가 없고 Python 기본 SSL 컨텍스트가 이 변수를 읽는다). 검증을 끄지 않는다
@@ -47,7 +48,7 @@ secrets:
   model-runtime-release-token: {file: "${INFERENCE_RELEASE_TOKEN_FILE:?INFERENCE_RELEASE_TOKEN_FILE(게이트 읽기 토큰이 든 파일 경로)이 필요하다}"}
 
 configs:
-  tls-sidecar: {file: "${INFERENCE_TLS_SIDECAR_CONFIG:-./config/tls-sidecar.caddy}"}   # deploy/config/tls-sidecar.caddy 와 같은 파일(이름·상류는 환경 변수)
+  exposure: {file: "${INFERENCE_EXPOSURE_FILE:?INFERENCE_EXPOSURE_FILE(영역 Exposure 선언 파일 경로)이 필요하다}"}
   pki-root: {file: "${INFERENCE_PKI_ROOT_FILE:?INFERENCE_PKI_ROOT_FILE(step-ca 루트 인증서 파일 경로)이 필요하다}"}
   gateway-ca: {file: "${INFERENCE_CA_FILE:?INFERENCE_CA_FILE(게이트웨이 CA 루트 인증서 파일 경로, scripts/export-gateway-ca.sh)가 필요하다}"}
 
@@ -64,7 +65,7 @@ services:
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 16m   # 측정 안 함(시작값)
+    mem_limit: 32m   # 측정 안 함(시작값)
     cpus: 0.1
     pids_limit: 16
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
@@ -108,43 +109,52 @@ services:
       timeout: 3s
       retries: 5
       start_period: 20s
+  certs-perms:   # 일회용: 인증서 볼륨의 소유자를 영역 게이트웨이 이미지 사용자(101)로 맞춘다(새 이름 있는 볼륨은 root 소유; 인증서 컨테이너도 101 로 돌아 키 파일 0600 을 같은 사용자가 쓰고 읽는다)
+    image: ${INFERENCE_STEP_IMAGE:?INFERENCE_STEP_IMAGE가 필요하다}
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["sh", "-c", "chown -R 101:101 /certs"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    network_mode: none
+    volumes: ["certs:/certs"]
   model-serving-cert:   # model-serving 의 인증서(ADR 0060): 지휘 쪽이 발급해 준 일회용 토큰(OTT, INFERENCE_TLS_TOKEN_FILE)으로 deploy step-ca 에서 한 번 받고, renew 데몬이 기존 인증서로 갱신한다. 필요한 경로는 이 컨테이너 -> step-ca 하나뿐이다
     group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}"]   # L02(ADR 0054): 비밀 파일은 640 + 이 그룹이다. 누구나 읽게(644) 하지 않는다
     image: ${INFERENCE_STEP_IMAGE:?INFERENCE_STEP_IMAGE(step-ca 이미지, digest 참조)가 필요하다}
-    user: "1000:1000"
+    user: "101:101"   # 영역 게이트웨이 이미지 사용자와 같다(키 파일 0600 을 둘이 같은 사용자로 쓰고 읽는다)
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
-    environment: {STEPPATH: /tmp}
-    entrypoint: ["sh", "-c", "step certificate verify /home/step/tls.crt --roots /etc/openit/pki/root_ca.crt >/dev/null 2>&1 || step ca certificate ${INFERENCE_TLS_NAME} /home/step/tls.crt /home/step/tls.key --token \"$$(cat /run/secrets/tls-token)\" --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt --force >/dev/null; exec step ca renew --daemon --force --expires-in 12h /home/step/tls.crt /home/step/tls.key --ca-url ${INFERENCE_STEP_CA_URL} --root /etc/openit/pki/root_ca.crt"]
-    secrets: [tls-token]
+    environment: {STEP_CA_URL: "${INFERENCE_STEP_CA_URL:?INFERENCE_STEP_CA_URL이 필요하다}", STEP_RENEW_EXPIRES_IN: 12h}
+    command: ["cert", "model-serving"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬 + HEALTHCHECK). 인증서 이름은 일회용 토큰이 정한다
+    secrets:
+      - {source: tls-token, target: /tokens/model-serving.ott}   # platform cert 가 /tokens/<이름>.ott 를 읽는다
     extra_hosts: ["host.docker.internal:host-gateway"]   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험). 다른 서버면 배치 값이 step-ca 주소를 준다
     configs:
       - {source: pki-root, target: /etc/openit/pki/root_ca.crt}
-    volumes: ["certs:/home/step"]
+    volumes: ["certs:/certs"]
+    depends_on:
+      certs-perms: {condition: service_completed_successfully}
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    healthcheck: {test: ["CMD", "step", "certificate", "verify", "/home/step/tls.crt", "--roots", "/etc/openit/pki/root_ca.crt"], interval: 5s, timeout: 3s, retries: 30, start_period: 5s, start_interval: 1s}
-  model-serving-tls:   # model-serving 의 TLS 사이드카(ADR 0060): 파일 인증서로 TLS 를 끝내 127.0.0.1:8080 으로 넘긴다
-    group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}"]   # L02(ADR 0054): 비밀 파일은 640 + 이 그룹이다. 누구나 읽게(644) 하지 않는다
-    image: ${INFERENCE_SIDECAR_IMAGE:?INFERENCE_SIDECAR_IMAGE(Caddy 이미지, digest 참조)가 필요하다}
-    user: "1000:1000"
+  model-serving-gw:   # model-serving 의 영역 게이트웨이(platform area-gateway 이미지): 들어오는 쪽 TLS 종단(서비스 이름 인증서) + 나가는 쪽 loopback CONNECT 출구(허용 목록은 영역 Exposure.egress)
+    group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}"]   # L02(ADR 0054)
+    image: ${INFERENCE_GATEWAY_IMAGE:?INFERENCE_GATEWAY_IMAGE(platform area-gateway 이미지, digest 참조)가 필요하다}
+    user: "101:101"
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    entrypoint: ["sh", "-c", "cp /usr/bin/caddy /tmp/caddy && until [ -s /certs/tls.crt ]; do sleep 1; done && touch /tmp/stamp && /tmp/caddy run --config /etc/caddy/Caddyfile & p=$$!; while sleep 60; do kill -0 $$p 2>/dev/null || exit 1; [ /certs/tls.crt -nt /tmp/stamp ] && touch /tmp/stamp && /tmp/caddy reload --force --config /etc/caddy/Caddyfile --address unix//tmp/caddy.sock >/dev/null 2>&1; done"]
     read_only: true
-    tmpfs: ["/tmp:exec", "/data:uid=1000,gid=1000"]
+    tmpfs: ["/tmp"]
     network_mode: "service:model-serving-net"
-    environment:
-      TLS_NAME: ${INFERENCE_TLS_NAME:?INFERENCE_TLS_NAME(호출자가 부르는 이름)이 필요하다}
-      TLS_UPSTREAM: "127.0.0.1:8080"
+    environment: {AREA_GATEWAY_UPSTREAM: "127.0.0.1:8080", AREA_GATEWAY_INGRESS_PORT: "443", AREA_GATEWAY_EGRESS_PORT: "3128"}
     configs:
-      - {source: tls-sidecar, target: /etc/caddy/Caddyfile}
+      - {source: exposure, target: /etc/openit/exposure.json}
     volumes: ["certs:/certs:ro"]
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    healthcheck: {test: ["CMD", "nc", "-z", "127.0.0.1", "443"], interval: 15s, timeout: 3s, retries: 5, start_period: 30s, start_interval: 1s}
     depends_on:
       model-serving: {condition: service_healthy}
       model-serving-cert: {condition: service_healthy}

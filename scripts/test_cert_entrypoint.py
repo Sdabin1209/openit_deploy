@@ -17,9 +17,9 @@ class T(unittest.TestCase):
             c = certs(path)
             self.assertTrue(c, path)
             for n, v in c.items():
-                if path == "compose.yaml":   # platform step-ca 이미지의 cert 부명령: 만료 검증·발급·갱신·HEALTHCHECK 는 이미지가 하고 platform 시험이 본다
+                if True:   # 두 파일 모두 platform step-ca 이미지의 cert 부명령: 만료 검증·발급·갱신·HEALTHCHECK 는 이미지가 하고 platform 시험이 본다
                     self.assertEqual(v.get("command"), ["cert", n[:-5]], f"{n}: platform step-ca 이미지의 cert 부명령이어야 한다")
-                    self.assertIn("openit/step-ca@", v["image"], n)
+                    self.assertTrue("openit/step-ca@" in v["image"] or "INFERENCE_STEP_IMAGE" in v["image"], n)
                     self.assertNotIn("entrypoint", v, f"{n}: 손으로 쓴 셸 한 줄 금지")
                     continue
                 cmd = " ".join(v.get("entrypoint") or [])
@@ -32,10 +32,7 @@ class T(unittest.TestCase):
     def test_healthcheck_is_verification(self):
         for path in ("compose.yaml", "compose.inference.yaml"):
             for n, v in certs(path).items():
-                if path == "compose.yaml":
-                    self.assertNotIn("healthcheck", v, f"{n}: 이미지 HEALTHCHECK 를 쓴다")
-                    continue
-                self.assertIn("verify", " ".join(map(str, v["healthcheck"]["test"])), f"{path} {n}")
+                self.assertNotIn("healthcheck", v, f"{path} {n}: 이미지 HEALTHCHECK 를 쓴다")
 
 
 if __name__ == "__main__":

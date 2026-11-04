@@ -1,2 +1,0 @@
-# 제품 안 model-serving 의 /metrics 수집 대상(기본). 외부 추론 모드는 no-local-inference-targets.yml 과 같은 빈 목록을 쓴다(PROMETHEUS_INFERENCE_METRICS_TARGETS).
-- targets: ['model-serving:443']

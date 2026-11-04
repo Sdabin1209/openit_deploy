@@ -265,18 +265,17 @@ cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; cp "$GWT
 #  (1) 제품: up.sh --external-inference <자리표시 주소>  (2) 제품 입구의 CA·포트, step-ca 루트를 꺼내고 이 서버 이름의 일회용 토큰(5분)을 발급
 #  (3) 추론 서버를 별도 프로젝트로(RELEASE_URL=제품 입구)  (4) 실제 추론 서버 주소를 제품(survey-service)에 알린다.
 mkdir -p "$W/pki"; : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
-STEP_IMG=$STEP_CA_IMAGE; SC_IMG=$GATEWAY_IMAGE; PAUSE_IMG=$PAUSE_IMAGE
+STEP_IMG="$DEPLOY_REGISTRY/openit/step-ca@$STEP_CA_DIGEST"; SC_IMG="$DEPLOY_REGISTRY/openit/area-gateway@$AREA_GATEWAY_DIGEST"; PAUSE_IMG=$PAUSE_IMAGE   # 추론 서버(다른 호스트 역할)도 platform 이미지(step-ca cert, area-gateway)를 쓴다
 inf_up() { # inf_up <RELEASE_URL> <게이트웨이 CA 파일>: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
   local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$W/gateway-inference-token" RELEASE_URL="$1" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
     INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal
-    INFERENCE_SIDECAR_IMAGE="$SC_IMG" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
+    INFERENCE_GATEWAY_IMAGE="$SC_IMG" INFERENCE_EXPOSURE_FILE="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/model-serving/exposure.json" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
   env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout 120 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
 }
 export INFERENCE_TOKEN_FILE="$W/inference-token"
 # 운영 모드 overlay(compose.external-inference.yaml)를 이 스크립트의 환경에 둔다: 이후 모든 dc/up.sh/rollback.sh 호출이 같은 제품 구성을 본다(INFERENCE_URL, COMPOSE_EXTRA 를 내보낸다)
 external_inference_setup "https://host.docker.internal:1"   # 자리표시: 추론 서버가 뜬 뒤 실제 주소로 바꾼다
-export PROMETHEUS_INFERENCE_METRICS_TARGETS=no-local-inference-targets.yml; export PROMETHEUS_INFERENCE_TARGETS=no-local-inference-targets.yml   # 외부 추론 모드: 제품 안에 model-serving 이 없으니 감시 스택이 그 탐침 대상을 갖지 않는다(config/prometheus/prometheus.yml 주석)
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
 chk "시험 사용자를 Keycloak(realm openit)에 만든다 (운영 입구 kcadm, 사람 계정은 OIDC 로그인)" bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$PROJECT"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
@@ -462,7 +461,7 @@ chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_J
 # (이전 구간은 check-health.sh 가 gateway /healthz 평문·HTTPS 를 읽었다. HTTPS 탐침은 서버 밖 감시의 몫이라 external-targets.yml 에 둔다.)
 export METRICS_DIR="$W/metrics"; mkdir -p "$METRICS_DIR"; chmod 755 "$METRICS_DIR"; SERVICE_RESULT=success bash "$DEPLOY_ROOT/scripts/job-metrics.sh" e2e-demo 600
 chk "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" bash -c "source '$DEPLOY_ROOT/scripts/lib.sh'; COMPOSE_EXTRA='$COMPOSE_EXTRA $DEPLOY_ROOT/compose.monitoring.yaml' dc '$PROJECT' up -d --wait prometheus alertmanager >/dev/null 2>&1"
-chk_dep "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" "감시 스택이 실제 서비스를 본다 (gateway healthz, release-gate·model-serving readyz 탐침 성공, 판정 루프 지표, 디스크 지표)" bash "$DEPLOY_ROOT/scripts/check-monitoring-live.sh" "$PROJECT"
+chk_dep "감시 스택 기동 (prometheus, alertmanager, blackbox/json/node exporter)" "감시 스택이 실제 서비스를 본다 (탐침 probe_success=1 이 하나 이상이고 0 이 없다, platform 감시 이미지의 Prometheus API)" bash -c 'for i in $(seq 1 60); do out=$('"$DOCKER"' exec "'"$PROJECT"'-prometheus-1" wget -qO- "http://127.0.0.1:9090/api/v1/query?query=probe_success" 2>/dev/null); ok=$(printf "%s" "$out" | grep -o "\"1\"\]" | wc -l); bad=$(printf "%s" "$out" | grep -o "\"0\"\]" | wc -l); [ "$ok" -ge 1 ] && [ "$bad" = 0 ] && exit 0; sleep 2; done; exit 1'
 chk "GPU 서버 잡(synthetic-data, model-lab, gate-worker)은 이 Compose에 없다(서빙 서버 밖, D40)" bash -c "! grep -E '^  (job-)?(synthetic-data|model-lab|gate-worker)' $DEPLOY_ROOT/compose.yaml"
 
 fi

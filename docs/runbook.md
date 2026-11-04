@@ -92,7 +92,7 @@ bash scripts/backup-check.sh                       # 읽기 전용 점검. 문�
 3. 새 서버라면 저장소와 암호 파일을 먼저 놓는다(`BACKUP_DIR`에 `restic/` 폴더, `BACKUP_PASSWORD_FILE`에 서버 밖 보관본의 암호). 어떤 스냅샷이 있는지: `docker run --rm -v $BACKUP_DIR:/backup -v $BACKUP_PASSWORD_FILE:/pw:ro -e RESTIC_REPOSITORY=/backup/restic -e RESTIC_PASSWORD_FILE=/pw <RESTIC_IMAGE> snapshots`(RESTIC_IMAGE 는 `locks/images.lock`).
 4. `bash scripts/pg-restore.sh <db> latest --yes`(또는 스냅샷 ID). 파일 저장소는 `bash scripts/restore.sh <저장소> latest --yes`(서비스 정지 필요, 볼륨을 비우고 `--verify`로 내용 해시를 확인하며 복원. 항목의 소유자·모드와 **볼륨 루트의 소유자·모드**도 백업 때 값으로 되돌린다: 새 볼륨의 루트는 root 소유라 이것이 없으면 비root 서비스가 못 써서 unhealthy 가 된다). 데이터베이스 5개는 가능하면 **같은 백업 세트(같은 `set-` 태그)**의 스냅샷 ID로 복구한다.
 5. 복호 단계는 없다(restic이 저장소 암호로 직접 읽는다). 평문 파일이 디스크에 남지 않는다.
-6. `bash scripts/up.sh deploy`, 그다음 gateway `/readyz`와 `bash scripts/check-monitoring-live.sh deploy`(감시 스택이 떠 있을 때).
+6. `bash scripts/up.sh deploy`, 그다음 gateway `/readyz`와 `Prometheus API(`/api/v1/query?query=probe_success`)`(감시 스택이 떠 있을 때).
 7. 게이트 INTEGRITY_ERROR(릴리스 파일 변조): 해당 릴리스를 활성화하지 말고, 활성이면 롤백 요청 후 이 절차로 gate 데이터베이스와 gate-data를 같은 세트로 복구한다(게이트 런북).
 
 ### 4-4. 복원 시험
@@ -153,27 +153,27 @@ journalctl -u openit-release-gate-collector.service -n 30   # 마지막 결과�
 
 ## 5-1. 상태 감시 (FAULT_POLICY 13·14, ADR 0037)
 
-Prometheus + blackbox_exporter + json_exporter + node_exporter + Alertmanager(`compose.monitoring.yaml`, 설정 `config/prometheus/`)가 이 서버의 상태를 본다. 서버 전체가 죽으면 이 스택도 죽으므로 서버 밖 감시(9절)는 따로 둔다.
+Prometheus + blackbox_exporter + json_exporter + node_exporter + Alertmanager(`compose.monitoring.yaml`, 설정 `platform 감시 이미지(설정·경보 규칙은 platform 리포)`)가 이 서버의 상태를 본다. 서버 전체가 죽으면 이 스택도 죽으므로 서버 밖 감시(9절)는 따로 둔다.
 
 ```
 COMPOSE_EXTRA=compose.monitoring.yaml bash scripts/up.sh deploy     # 감시 스택까지 올린다
-bash scripts/check-monitoring-live.sh deploy                          # 탐침·지표가 실제로 읽히는지 확인(Prometheus API)
+Prometheus API(`/api/v1/query?query=probe_success`)                          # 탐침·지표가 실제로 읽히는지 확인(Prometheus API)
 docker compose -p deploy port prometheus 9090                         # 화면/API 는 127.0.0.1 에만 열린다(Docker 배정 포트)
 ```
 
-| 대상 | 읽는 곳 | 경보(규칙 `config/prometheus/rules/openit.yml`) |
+| 대상 | 읽는 곳 | 경보(규칙 `platform 감시 이미지(설정·경보 규칙은 platform 리포)`) |
 |---|---|---|
 | 디스크 사용률 | node_exporter filesystem | 80% 이상 DiskUsageWarning, 90% 이상 DiskUsageCritical |
 | 살아 있음·준비됨 | blackbox: gateway `/healthz`, release-gate·model-serving `/readyz` | 2xx 가 아니거나 닿지 못함이 2분 지속되면 ProbeDown(critical) |
-| 서버 밖 대상 | `config/prometheus/external-targets.yml`(공개 주소가 정해지면 채운다) | 같은 ProbeDown |
+| 서버 밖 대상 | `platform 감시 이미지(설정·경보 규칙은 platform 리포)`(공개 주소가 정해지면 채운다) | 같은 ProbeDown |
 | release-gate 판정 루프 | json_exporter 가 `/readyz` 의 `judging_loop` 를 읽는다 | 연속 실패 1~2회 warning, 3회 이상 critical, `upstream_auth_failed` critical, 마지막 실행 900초 초과 warning |
 | 주기 잡 결과 | systemd 서비스의 `ExecStopPost=scripts/job-metrics.sh`가 node_exporter textfile(`state/metrics/*.prom`)로 남긴다 | 마지막 실행 실패 JobFailed(critical), 마지막 성공이 주기의 2배+60초를 넘으면 JobStale(critical). 백업 잡이면 '백업이 2일 넘게 안 됐다' |
 
 옛 `check-health.sh`와의 차이(알려진 것): (1) 백업 파일을 직접 열어 나이를 보지 않고 `backup` 잡의 마지막 성공 시각으로 본다. (2) 백업 암호화 설정 경고(평문 허용)는 없다: restic 저장소(3단계)는 항상 암호화다. (3) 판정 루프가 "한 번도 돌지 않았다"(`last_run_at` null)는 지표가 없어 경보가 없다. (4) gateway HTTPS 탐침은 서버 밖 감시의 몫이다. (5) '시작했지만 끝나지 않음 1시간'은 `TimeoutStartSec=3600`이 서비스를 죽이고 JobFailed 가 된다.
 
-경보 규칙 시험: `bash scripts/test-monitoring.sh`(promtool check/test rules + 변이 시험 + Docker 로 가짜 서비스에 실패를 주입해 경보가 firing 되는지). 정적만: `--static`. 한계값은 옛 점검 값 그대로이고 `for:` 값은 시작값이다(측정 안 함, ADR 0037).
+경보 규칙 시험: platform 의 감시 시험(promtool check/test rules + 변이 시험 + Docker 로 가짜 서비스에 실패를 주입해 경보가 firing 되는지). 정적만: `--static`. 한계값은 옛 점검 값 그대로이고 `for:` 값은 시작값이다(측정 안 함, ADR 0037).
 
-**알림 수단 연결 지점(미정, 만들지 않았다).** 경보를 "누구에게 어떻게" 보낼지는 사용자 결정이다. 지금 `config/prometheus/alertmanager.yml`에는 수신자가 없어 경보는 Alertmanager 화면/API에서만 보인다. 수단이 정해지면 그 파일의 `receivers`에 넣는다(비밀은 파일로).
+**알림 수단 연결 지점(미정, 만들지 않았다).** 경보를 "누구에게 어떻게" 보낼지는 사용자 결정이다. 지금 `platform 감시 이미지(설정·경보 규칙은 platform 리포)alertmanager.yml`에는 수신자가 없어 경보는 Alertmanager 화면/API에서만 보인다. 수단이 정해지면 그 파일의 `receivers`에 넣는다(비밀은 파일로).
 
 ## 5-2. 자동 롤백 요청(D3): 운영 잡 설정에 `rollback`·`gate_service`가 없는 이유
 
