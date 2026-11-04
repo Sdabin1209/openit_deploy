@@ -43,9 +43,11 @@ CFG=$(INFERENCE_IMAGE=x INFERENCE_PAUSE_IMAGE=x INFERENCE_STEP_IMAGE=x INFERENCE
   "$DOCKER" compose -p infreach-$ID -f compose.inference.yaml -f compose.inference.samehost.yaml config --format json 2>"$T/cfg.err") || { cat "$T/cfg.err" >&2; bad "compose.inference.yaml + samehost overlay 를 해석하지 못했다"; }
 JOINED=$(printf '%s' "$CFG" | python3 -c "import json,sys;d=json.load(sys.stdin);n=d['services']['model-serving-net'];nets=list((n.get('networks') or {}).keys());print('|'.join(d['networks'][k]['name'] for k in nets if d['networks'][k].get('external')), n.get('network_mode',''), len(nets))")
 [ "$JOINED" = "$NET  2" ] && ok "samehost overlay: model-serving-net 이 외부 망($NET)과 기본 망(게시 포트용)에 붙는다(network_mode 없음)" || bad "samehost overlay 해석: '$JOINED'"
-fetch() { # fetch <루트 파일> <망>: 추론 쪽 컨테이너를 그 망에 붙여 https://release-gate/healthz -> 상태 코드, 실패면 ERR
+fetch() { # fetch <루트 파일> <망>: 추론 쪽 컨테이너를 그 망에 붙여 release-gate 의 /healthz 를 https 로 -> 본문 status 까지 보고 상태 코드, 실패면 ERR
   "$DOCKER" run --rm --network "$2" -v "$1:/root_ca.crt:ro" -e SSL_CERT_FILE=/root_ca.crt "$UTIL" python -c "import urllib.request,sys
-try: print(urllib.request.urlopen('https://release-gate/healthz', timeout=8).status)
+import json
+try:
+    r = urllib.request.urlopen('https://release-gate/healthz', timeout=8); b = json.loads(r.read()); print(r.status if b.get('status') == 'ok' else 'BODY')   # 본문의 status 까지 판정한다(R5.1)
 except Exception as e: print('ERR', type(e).__name__)" 2>/dev/null | tail -1
 }
 [ "$(fetch "$T/out/root_ca.crt" "$NET")" = 200 ] && ok "외부 망의 별칭으로 https://release-gate/healthz 가 OUT-FILE 루트로 200 (Docker DNS)" || bad "추론 쪽에서 https://release-gate/healthz 가 200 이 아니다"
