@@ -499,10 +499,16 @@ services:
     <<: *certinit
     command: ["cert", "keycloak"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-keycloak:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    depends_on:
+      pki-tokens: {condition: service_completed_successfully}
+      certs-perms: {condition: service_completed_successfully}
   oauth2-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
     command: ["cert", "oauth2-proxy"]   # platform step-ca 이미지의 cert 부명령(발급 + 갱신 데몬, 이미지 HEALTHCHECK 가 만료 포함 검증)
     volumes: ["certs-oauth2-proxy:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
+    depends_on:
+      pki-tokens: {condition: service_completed_successfully}
+      certs-perms: {condition: service_completed_successfully}
   survey-service-gw:   # survey-service 의 영역 게이트웨이(platform 이미지): https://survey-service 으로 받고 영역 밖 호출은 loopback 3128 CONNECT 로 내보낸다
     <<: *areagw
     network_mode: "service:survey-service-net"
@@ -1100,7 +1106,7 @@ services:
   certs-perms:   # 일회용: 영역 게이트웨이 이미지 사용자(101)가 읽고, step-ca 이미지(uid 1000)가 토큰·루트를, 백업 저장소 이미지(65534)가 자기 인증서를 쓰게 <서비스>-cert 가 그 사용자로 쓰게 인증서 볼륨의 소유자를 맞춘다(새 이름 있는 볼륨은 root 소유)
     image: ${UTIL_IMAGE:?locks/images.lock}
     user: "0:0"
-    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback-ingest /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root; chown -R 65534:65534 /c/backup-store"]
+    entrypoint: ["sh", "-c", "chown -R 101:101 /c/survey-service /c/question-authoring /c/ops-feedback-ingest /c/release-gate /c/model-serving /c/model-registry /c/dataset-store /c/admin-console /c/kiosk-frontend; chown -R 1000:1000 /c/pki-tokens /c/pki-root /c/keycloak /c/oauth2-proxy; chown -R 65534:65534 /c/backup-store"]
     restart: "no"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "DAC_OVERRIDE"]
@@ -1108,7 +1114,7 @@ services:
     read_only: true
     network_mode: none
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    volumes: ["pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
+    volumes: ["certs-keycloak:/c/keycloak", "certs-oauth2-proxy:/c/oauth2-proxy", "pki-tokens:/c/pki-tokens", "pki-root:/c/pki-root", "certs-backup-store:/c/backup-store", "certs-survey-service:/c/survey-service", "certs-question-authoring:/c/question-authoring", "certs-ops-feedback-ingest:/c/ops-feedback-ingest", "certs-release-gate:/c/release-gate", "certs-model-serving:/c/model-serving", "certs-model-registry:/c/model-registry", "certs-dataset-store:/c/dataset-store", "certs-admin-console:/c/admin-console", "certs-kiosk-frontend:/c/kiosk-frontend"]
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
     user: "65534:65534"   # 저장소 이미지 사용자가 키 파일(0600)을 읽는다
