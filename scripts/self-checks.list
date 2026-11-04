@@ -111,3 +111,4 @@ run-self-checks 집계 (77=SKIP 은 PASS 가 아니고 묶음을 0 으로 끝내
 시험 사용자 등록 설정이 계약 IdentityUsersConfig 를 통과하고 암호 값이 설정에 없다 (변이: 모르는 그룹·암호 파일 없음) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_idp_users_config.py"
 일회용 토큰 발급은 계약 StepCaEnv 의 역할 입력(가짜 docker, 변이 포함); step 도구 직접 호출 없음 :: bash "$DEPLOY_ROOT/scripts/test-step-issue-token.sh"
 컴포즈 파일에 중복 키가 없다(PyYAML 은 조용히 덮어쓰고 docker compose 는 거부한다, 변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_no_duplicate_keys.py"
+시험 종료 코드 77 = SKIP: unittest 메서드 안 sys.exit(77) 금지(FAIL 로 센다), unittest_skip_rc 의 0·1·77 대응 (변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_skip_rc_usage.py"

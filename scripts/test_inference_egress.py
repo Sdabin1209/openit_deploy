@@ -49,7 +49,7 @@ class T(unittest.TestCase):
     def test_compose_matches_the_declared_egress(self):
         eg = label_egress()
         if eg is None:
-            print("SKIP: model-serving 이미지 라벨을 읽지 못했다(build/images.env, docker)"); sys.exit(77)
+            self.skipTest("model-serving 이미지 라벨을 읽지 못했다(build/images.env, docker)")   # SKIP 은 unittest_skip_rc 가 종료 코드 77 로 낸다(unittest 안의 sys.exit(77) 은 FAIL 로 센다)
         self.assertEqual(problems(C, eg), [])
 
     def test_mutation_is_caught(self):
@@ -63,4 +63,4 @@ class T(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    from unittest_skip_rc import main; main()
