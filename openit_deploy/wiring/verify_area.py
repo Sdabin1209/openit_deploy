@@ -240,6 +240,8 @@ def main(argv=None):
         if a.dry_run:
             continue
         t0 = time.time()
+        from openit_deploy.wiring import mirrors
+        mirrors.ensure_env()   # 영역 시험이 로컬 전용 태그를 받을 수 있게 한다(S14)
         rc = subprocess.run(argv_, cwd=cwd, env={**os.environ, **env}).returncode
         results.append((name, rc, time.time() - t0))
         if rc != 0:

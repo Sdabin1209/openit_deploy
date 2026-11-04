@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 from openit_deploy.components import consistency_check
-from openit_deploy.wiring import areas_file, setup_env
+from openit_deploy.wiring import areas_file, mirrors, setup_env
 from openit_deploy.wiring.call import call
 
 DEPLOY = pathlib.Path(__file__).resolve().parents[2]
@@ -30,6 +30,7 @@ DEPLOY_ONLY_ENV = ("HF_CACHE_VOLUME", "GATEWAY_HOST_NAMES", "GATEWAY_PUBLIC_URL"
 
 
 def build_request(argv) -> dict:
+    mirrors.ensure_env()   # 영역 시험(build_image·setup_env)이 로컬 전용 태그를 받을 수 있게 한다(S14)
     for k in DEPLOY_ONLY_ENV:
         os.environ.pop(k, None)
     ws = pathlib.Path(os.environ.get("CHECK_ALL_WORKSPACE") or workspace_of(DEPLOY))
