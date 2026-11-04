@@ -13,6 +13,7 @@ FAILS=0; N=0
 mk() { W="$(mktemp -d -p "$T")"; mkdir -p "$W/head/shared"; cp "$HERE/../../head/shared/areas.json" "$W/head/shared/areas.json"; for a in "$@"; do mkdir -p "$W/$a/.git"; done; }
 # run <규칙번호> [환경...] : 출력을 $OUT, 종료 코드를 $RC 에
 run() { local r=$1; shift; OUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" bash "$HERE/check-all.sh" 2>&1); RC=$?; }
+runfake() { local r=$1; shift; OUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY="$r" CHECK_ALL_EXCLUDE="${EXC:-/dev/null}" CHECK_ALL_ORDERED="${ORD:-$W/ordered.txt}" "$@" "$FV/bin/python" -I "$HERE/check_all.py" 2>&1); RC=$?; }   # 가짜 설치 패키지를 보는 파이썬(규칙 4·5)
 expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   N=$((N+1)); local ok=1
   grep -q ": $2\$" <<<"$OUT" || ok=0
@@ -21,6 +22,22 @@ expect() { # expect <설명> <PASS|FAIL|SKIP> [출력에 있어야 할 글]
   if [ $ok = 1 ]; then echo "  ok   $1"; else echo "  FAIL $1 (기대 $2 ${3:-})"; echo "$OUT" | sed 's/^/       /' | head -12; FAILS=$((FAILS+1)); fi
 }
 BC=boundary-contracts
+# 규칙 4·5 의 정본은 이웃 소스 파일이 아니라 "설치된 패키지의 공개 이름"이다(model_runtime.prompts.SUPPORTED_TEMPLATE_VERSIONS, boundary_contracts.PIPELINE_SCHEMA_VERSION).
+# 시험은 가짜 설치 패키지로 정본을 만든다: 임시 venv(.pth 로 진짜 deploy venv 의 패키지를 뒤에 잇고, 앞에 가짜 model_runtime·boundary_contracts 를 둔다). 진짜 venv·이웃 영역은 건드리지 않는다.
+REALSP=$("$DEPLOY_PY" -c 'import site;print(site.getsitepackages()[0])'); REALBC=$("$DEPLOY_PY" -c 'import boundary_contracts,os;print(os.path.dirname(boundary_contracts.__file__))')
+FV="$T/fakevenv"; "$DEPLOY_PY" -m venv --without-pip "$FV" >/dev/null 2>&1 || python3 -m venv --without-pip "$FV" >/dev/null; FSP=$(echo "$FV"/lib/python*/site-packages); FK="$T/fk"; mkdir -p "$FK/model_runtime" "$FK/boundary_contracts"
+printf '%s\n%s\n' "$FK" "$REALSP" > "$FSP/00-fake.pth"
+cat > "$FK/boundary_contracts/__init__.py" <<PY
+import os
+__path__ = ["$REALBC"]
+exec(compile(open("$REALBC/__init__.py", encoding="utf-8").read(), "$REALBC/__init__.py", "exec"))
+_v = os.environ.get("FAKE_PSV")
+if _v == "__DEL__": del PIPELINE_SCHEMA_VERSION
+elif _v == "__INT__": PIPELINE_SCHEMA_VERSION = 9
+elif _v: PIPELINE_SCHEMA_VERSION = _v
+PY
+echo "" > "$FK/model_runtime/__init__.py"
+fake_prompts() { printf '%s\n' "$1" > "$FK/model_runtime/prompts.py"; }   # 가짜 설치 model-runtime 의 공개 이름
 mkschema() { echo "Foo | 시험용 모델 출력" > "$W/ordered.txt"; mkdir -p "$W/$BC/schemas" "$W/$BC/examples"; cat > "$W/$BC/schemas/Foo.schema.json" <<'J'
 {"type":"object","properties":{"a":{"type":"string"},"b":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"}}}}}}
 J
@@ -76,49 +93,57 @@ import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["_retired"]=[{"name":"ol
 PY
 run 0; expect "_retired 에 있으면 제외(이유와 함께 출력)" PASS "퇴역 영역"
 echo "== 4 삭제된 이름의 잔존 (ast 로 읽는다): 지원하지 않는 프롬프트 템플릿, 퇴역한 turn_engine"
-truth(){ mkdir -p "$W/model-runtime/src/model_runtime" "$W/boundary-contracts/boundary_contracts"
-  printf 'def _u7(role, i):\n    return ""\n\n\n_USER = {"prompt-7": _u7}\n' > "$W/model-runtime/src/model_runtime/prompts.py"
-  printf 'PIPELINE_SCHEMA_VERSION = "9.9"\n' > "$W/boundary-contracts/boundary_contracts/schemas_api.py"; }
-mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "깨끗하면 PASS" PASS
-echo 'v = "prompt-7"' > "$W/deploy/app/a.py"; run 4; expect "정본에 있는 템플릿은 PASS" PASS
-echo 'v = "prompt-3"' > "$W/deploy/app/a.py"; run 4; expect "정본에 없는 템플릿(문자열 상수)은 FAIL" FAIL "deploy/app/a.py:1"
-printf 'from turn_engine import validate_extraction\n' > "$W/deploy/app/a.py"; run 4; expect "turn_engine import 는 FAIL(퇴역, D109)" FAIL "deploy/app/a.py:1"
-printf 'import turn_engine as te\n' > "$W/deploy/app/a.py"; run 4; expect "import turn_engine 도 FAIL" FAIL "퇴역"
-printf 'from turn_engine.validation import anything\n' > "$W/deploy/app/a.py"; run 4; expect "하위 모듈 import 도 FAIL" FAIL "deploy/app/a.py:1"
-printf 'import importlib\nimportlib.import_module("turn_engine.gone")\n' > "$W/deploy/app/a.py"; run 4; expect "importlib 의 turn_engine 도 FAIL" FAIL "deploy/app/a.py:2"
-printf '__import__("turn_engine")\n' > "$W/deploy/app/a.py"; run 4; expect "__import__ 의 turn_engine 도 FAIL" FAIL "deploy/app/a.py:1"
-printf 'from .turn_engine import plan\n' > "$W/deploy/app/a.py"; run 4; expect "상대 import 는 보지 않는다" PASS
-echo '# prompt-3 은 제거됨' > "$W/deploy/app/a.py"; run 4; expect "주석의 설명은 통과" PASS
-printf 'v = "prompt-" + "3"\n' > "$W/deploy/app/a.py"; run 4; expect "조합한 이름은 보지 못한다고 명시한다" PASS "조합"
-printf 'prompts:\n  - prompt-3\n' > "$W/deploy/app/c.yaml"; run 4; expect "YAML 의 없는 템플릿도 파서로 읽어 FAIL" FAIL "deploy/app/c.yaml"
+truth(){ fake_prompts 'SUPPORTED_TEMPLATE_VERSIONS = {"prompt-7"}'; export FAKE_PSV=9.9; }   # 가짜 설치 패키지의 정본: 템플릿 prompt-7, 계약 스키마 버전 9.9
+mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; runfake 4; expect "깨끗하면 PASS" PASS
+echo 'v = "prompt-7"' > "$W/deploy/app/a.py"; runfake 4; expect "정본에 있는 템플릿은 PASS" PASS
+echo 'v = "prompt-3"' > "$W/deploy/app/a.py"; runfake 4; expect "정본에 없는 템플릿(문자열 상수)은 FAIL" FAIL "deploy/app/a.py:1"
+printf 'from turn_engine import validate_extraction\n' > "$W/deploy/app/a.py"; runfake 4; expect "turn_engine import 는 FAIL(퇴역, D109)" FAIL "deploy/app/a.py:1"
+printf 'import turn_engine as te\n' > "$W/deploy/app/a.py"; runfake 4; expect "import turn_engine 도 FAIL" FAIL "퇴역"
+printf 'from turn_engine.validation import anything\n' > "$W/deploy/app/a.py"; runfake 4; expect "하위 모듈 import 도 FAIL" FAIL "deploy/app/a.py:1"
+printf 'import importlib\nimportlib.import_module("turn_engine.gone")\n' > "$W/deploy/app/a.py"; runfake 4; expect "importlib 의 turn_engine 도 FAIL" FAIL "deploy/app/a.py:2"
+printf '__import__("turn_engine")\n' > "$W/deploy/app/a.py"; runfake 4; expect "__import__ 의 turn_engine 도 FAIL" FAIL "deploy/app/a.py:1"
+printf 'from .turn_engine import plan\n' > "$W/deploy/app/a.py"; runfake 4; expect "상대 import 는 보지 않는다" PASS
+echo '# prompt-3 은 제거됨' > "$W/deploy/app/a.py"; runfake 4; expect "주석의 설명은 통과" PASS
+printf 'v = "prompt-" + "3"\n' > "$W/deploy/app/a.py"; runfake 4; expect "조합한 이름은 보지 못한다고 명시한다" PASS "조합"
+printf 'prompts:\n  - prompt-3\n' > "$W/deploy/app/c.yaml"; runfake 4; expect "YAML 의 없는 템플릿도 파서로 읽어 FAIL" FAIL "deploy/app/c.yaml"
 rm "$W/deploy/app/c.yaml"
-printf '_USER = {"prompt-7": missing_fn}\n' > "$W/model-runtime/src/model_runtime/prompts.py"; run 4; expect "정본의 키에 대응 함수가 없으면 FAIL(정본이 거짓)" FAIL "대응하는 템플릿 함수"
-printf 'def f(r, i):\n    return ""\n\n\n_USER: dict = dict(**{})\n' > "$W/model-runtime/src/model_runtime/prompts.py"; run 4; expect "정본을 읽지 못하는 모양이면 SKIP 이 아니라 FAIL" FAIL "dict 리터럴"
-printf 'def f(r, i):\n    return ""\n\n\n_USER: dict = dict(a=f)\n_USER |= {"b": f}\n' > "$W/model-runtime/src/model_runtime/prompts.py"; run 4; expect "AnnAssign·dict(...)·|= 를 읽는다" PASS
-rm -rf "$W/model-runtime"; echo 'x = 1' > "$W/deploy/app/a.py"; run 4; expect "정본을 못 읽으면 통과로 치지 않고 FAIL" FAIL "읽지 못했다"
-mk deploy; truth; echo '{"areas": []}' > "$W/head/shared/areas.json"; run 4; expect "영역이 0개면 PASS 가 아니라 FAIL" FAIL "0개"
-rm "$W/head/shared/areas.json"; run 4; expect "areas.json 이 없으면 FAIL" FAIL "0개"
+fake_prompts 'SUPPORTED_TEMPLATE_VERSIONS = {7}'; runfake 4; expect "정본이 문자열 집합이 아니면 FAIL" FAIL "문자열 집합이 아니다"
+fake_prompts 'raise ImportError("공개 이름 없음")'; runfake 4; expect "정본을 가져오지 못하면 SKIP 이 아니라 FAIL" FAIL "가져오지 못했다"
+fake_prompts 'SUPPORTED_TEMPLATE_VERSIONS = {"a", "b"}'; runfake 4; expect "설치된 정본의 집합을 읽는다" PASS
+truth; rm -f "$FK/model_runtime/prompts.py"; echo 'x = 1' > "$W/deploy/app/a.py"; runfake 4; expect "정본을 못 읽으면 통과로 치지 않고 FAIL(진짜 설치본이 아니라 가짜 패키지에 prompts 가 없다)" FAIL "가져오지 못했다"
+mk deploy; truth; echo '{"areas": []}' > "$W/head/shared/areas.json"; runfake 4; expect "영역이 0개면 PASS 가 아니라 FAIL" FAIL "0개"
+rm "$W/head/shared/areas.json"; runfake 4; expect "areas.json 이 없으면 FAIL" FAIL "0개"
 run 0; expect "areas.json 이 없으면 규칙 0 도 FAIL" FAIL "0개"
 
+# 변이 확인: 규칙 4 를 끄면(규칙 표에서 뺀다) 같은 어긋난 입력이 통과해 버린다 -> 위 FAIL 기대가 시험으로서 의미가 있다
+mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'v = "prompt-3"' > "$W/deploy/app/a.py"
+MUT=$(env CHECK_ALL_LOG_DIR="$W/logs" SETUP_ENV_DIR="$W/setup-env" CHECK_ALL_WORKSPACE="$W" CHECK_ALL_ONLY=4 CHECK_ALL_EXCLUDE=/dev/null CHECK_ALL_ORDERED="$W/ordered.txt" "$FV/bin/python" -I -c "
+import sys; sys.path.insert(0, '$ROOT')
+from openit_deploy.components import consistency_check as C
+C.RULES[:] = [r for r in C.RULES if r[0] != '4']
+from openit_deploy.wiring.cli_check_all import main
+sys.exit(main([]))" 2>&1); MRC=$?
+N=$((N+1)); if [ $MRC = 0 ] && ! grep -q "deploy/app/a.py:1" <<<"$MUT"; then echo "  ok   변이: 규칙 4 를 끄면 어긋난 입력이 통과한다(그래서 위 FAIL 기대가 규칙을 지킨다)"; else echo "  FAIL 변이: 규칙 4 를 꺼도 어긋남이 잡힌다"; FAILS=$((FAILS+1)); fi
 echo "== 5 박은 계약 문자열 (ast 와 파서)"
-mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'p = {"pipeline_schema_version": SCHEMA_VERSION}' > "$W/deploy/app/a.py"; run 5; expect "상수를 쓰면 PASS" PASS
-echo 'p = {"pipeline_schema_version": "9.9"}' > "$W/deploy/app/a.py"; run 5; expect "계약의 현재 값과 같으면 PASS" PASS
-echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/app/a.py"; run 5; expect "계약의 현재 값과 다른 값을 박으면 FAIL" FAIL "deploy/app/a.py:1"
-echo 'f(pipeline_schema_version="1.3", other="x")' > "$W/deploy/app/a.py"; run 5; expect "kwarg 로 박아도 FAIL" FAIL "deploy/app/a.py:1"
-echo 'p = dict(pipeline_schema_version="1.3")' > "$W/deploy/app/a.py"; run 5; expect "dict(...) 로 박아도 FAIL" FAIL "deploy/app/a.py:1"
-printf 'x: str = 1\npipeline_schema_version: str = "1.3"\n' > "$W/deploy/app/a.py"; run 5; expect "AnnAssign 로 박아도 FAIL" FAIL "deploy/app/a.py:2"
-echo 'd["pipeline_schema_version"] = "1.3"' > "$W/deploy/app/a.py"; run 5; expect "키 대입으로 박아도 FAIL" FAIL "deploy/app/a.py:1"
-echo 'f(pipeline_schema_version, "1.3")' > "$W/deploy/app/a.py"; run 5; expect "쉼표 뒤 다음 인자를 값으로 읽지 않는다(오탐 없음)" PASS
-printf 'pipeline_schema_version: "1.3"\n' > "$W/deploy/app/c.yaml"; rm "$W/deploy/app/a.py"; run 5; expect "YAML 값은 파서로 읽어 FAIL" FAIL "deploy/app/c.yaml"
-rm "$W/deploy/app/c.yaml"; printf '{"pipeline_schema_version": "9.9"}' > "$W/deploy/app/c.json"; run 5; expect "JSON 의 현재 값은 PASS" PASS
+mk deploy; truth; mkdir -p "$W/deploy/app"; echo 'p = {"pipeline_schema_version": SCHEMA_VERSION}' > "$W/deploy/app/a.py"; runfake 5; expect "상수를 쓰면 PASS" PASS
+echo 'p = {"pipeline_schema_version": "9.9"}' > "$W/deploy/app/a.py"; runfake 5; expect "계약의 현재 값과 같으면 PASS" PASS
+echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/app/a.py"; runfake 5; expect "계약의 현재 값과 다른 값을 박으면 FAIL" FAIL "deploy/app/a.py:1"
+echo 'f(pipeline_schema_version="1.3", other="x")' > "$W/deploy/app/a.py"; runfake 5; expect "kwarg 로 박아도 FAIL" FAIL "deploy/app/a.py:1"
+echo 'p = dict(pipeline_schema_version="1.3")' > "$W/deploy/app/a.py"; runfake 5; expect "dict(...) 로 박아도 FAIL" FAIL "deploy/app/a.py:1"
+printf 'x: str = 1\npipeline_schema_version: str = "1.3"\n' > "$W/deploy/app/a.py"; runfake 5; expect "AnnAssign 로 박아도 FAIL" FAIL "deploy/app/a.py:2"
+echo 'd["pipeline_schema_version"] = "1.3"' > "$W/deploy/app/a.py"; runfake 5; expect "키 대입으로 박아도 FAIL" FAIL "deploy/app/a.py:1"
+echo 'f(pipeline_schema_version, "1.3")' > "$W/deploy/app/a.py"; runfake 5; expect "쉼표 뒤 다음 인자를 값으로 읽지 않는다(오탐 없음)" PASS
+printf 'pipeline_schema_version: "1.3"\n' > "$W/deploy/app/c.yaml"; rm "$W/deploy/app/a.py"; runfake 5; expect "YAML 값은 파서로 읽어 FAIL" FAIL "deploy/app/c.yaml"
+rm "$W/deploy/app/c.yaml"; printf '{"pipeline_schema_version": "9.9"}' > "$W/deploy/app/c.json"; runfake 5; expect "JSON 의 현재 값은 PASS" PASS
 # 계약 2.2.0 의 거부 예시 폴더(conformance/examples_invalid)는 일부러 틀린 값을 담은 시험 데이터다(examples/ 와 같은 취급)
-rm "$W/deploy/app/c.json"; mkdir -p "$W/deploy/conformance/examples_invalid"; printf '{"pipeline_schema_version": "1.3"}' > "$W/deploy/conformance/examples_invalid/X.bad.json"; run 5; expect "거부 예시 폴더(examples_invalid)의 일부러 틀린 값은 대상 아님" PASS
+rm "$W/deploy/app/c.json"; mkdir -p "$W/deploy/conformance/examples_invalid"; printf '{"pipeline_schema_version": "1.3"}' > "$W/deploy/conformance/examples_invalid/X.bad.json"; runfake 5; expect "거부 예시 폴더(examples_invalid)의 일부러 틀린 값은 대상 아님" PASS
 rm -r "$W/deploy/conformance"; printf '{"pipeline_schema_version": "9.9"}' > "$W/deploy/app/c.json"
-printf 'x = ' > "$W/deploy/app/bad.py"; run 5; expect "파싱하지 못한 파일은 통과가 아니라 SKIP" SKIP "파싱하지 못했다"
+printf 'x = ' > "$W/deploy/app/bad.py"; runfake 5; expect "파싱하지 못한 파일은 통과가 아니라 SKIP" SKIP "파싱하지 못했다"
 rm "$W/deploy/app/bad.py"
-mkdir -p "$W/deploy/tests"; echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/tests/t.py"; run 5; expect "시험 픽스처는 대상 아님" PASS
-rm -rf "$W/boundary-contracts"; mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; run 5; expect "정본을 못 읽으면 FAIL" FAIL "읽지 못했다"
+mkdir -p "$W/deploy/tests"; echo 'p = {"pipeline_schema_version": "1.3"}' > "$W/deploy/tests/t.py"; runfake 5; expect "시험 픽스처는 대상 아님" PASS
+mkdir -p "$W/deploy/app"; echo 'x = 1' > "$W/deploy/app/a.py"; FAKE_PSV=__DEL__ runfake 5; expect "정본(계약의 PIPELINE_SCHEMA_VERSION)을 못 읽으면 FAIL" FAIL "가져오지 못했다"; FAKE_PSV=__INT__ runfake 5; expect "정본이 문자열이 아니면 FAIL" FAIL "문자열이 아니다"
 
+unset FAKE_PSV
 echo "== 6 설정 인라인 비밀"
 mk deploy; mkdir -p "$W/deploy/config"; printf 'api_key: MY_ENV_KEY\nauth:\n  token: {env: MY_TOKEN}\n  max_tokens: 5\n' > "$W/deploy/config/a.yaml"; run 6; expect "환경 변수 이름·env 형식은 PASS" PASS
 printf 'auth:\n  password: hunter2hunter2\n' > "$W/deploy/config/a.yaml"; run 6; expect "인라인 값은 FAIL(줄 번호)" FAIL "deploy/config/a.yaml:2"
