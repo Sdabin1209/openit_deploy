@@ -181,19 +181,20 @@ PY
 [ -n "$HCOOKIE" ] || bail "승인자 세션 쿠키가 비었다"
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404(공개 입구가 내보내지 않는다)" is "gw_code /v1/releases/does-not-exist -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
-chk "(ㄴ) 공개 입구에는 기계 토큰 경로가 없다: 읽기 토큰을 붙여도 GET /v1/active-pointer 는 404(3.4.7: 받는 영역이 직접 대조한다)" is "gw_code /v1/active-pointer -H 'Authorization: Bearer $RGTOK'" 404
+chk "(ㄴ) 공개 입구는 기계 토큰을 받지 않는다: 읽기 토큰을 붙여도 GET /v1/active-pointer 는 사람 인증 블록에 막혀 401 이다(3.4.7: 기계 호출자는 받는 영역으로 직접 간다)" is "gw_code /v1/active-pointer -H 'Authorization: Bearer $RGTOK'" 401
 chk "(ㄴ) 토큰 없이 GET /v1/releases/{id}/bundle 도 404 (경로 자체가 없다)" is "gw_code /v1/releases/does-not-exist/bundle" 404
 
 echo "== 4. 추론 서버 자신의 클라이언트가 release-gate 영역 게이트웨이(HTTPS, 읽기 토큰)로 release-gate 까지 간다"
 # 왜 없는 릴리스인가: 서버는 적재 신호(PUT /v1/releases/{id})를 받으면 계약 클라이언트로 GET /v1/releases/{id}(/bundle)를 한다. 릴리스를 만들려면 문항 세트·모델 패키지·승인·활성화가 필요한데
 # 운영 compose 에 시험용 문 없이는 게이트웨이로 할 수 없다(릴리스 생성은 e2e.sh 단계 1~4 가 덮는다). 그래서 이 시험은 번들이 실제로 적재되는 것까지는 보지 않는다(미확인).
-# 없는 ID 면 release-gate 의 NOT_FOUND 가 서버의 FAILED(code NOT_FOUND)로 돌아온다. TLS 검증 실패·토큰 거부·경로 차단이면 다른 코드(UNAVAILABLE/PERMISSION_DENIED 등)가 나오므로 구별된다.
+# 없는 ID 면 release-gate 의 404 가 서버의 FAILED(FAILED_PRECONDITION, "그 릴리스를 찾지 못했다")로 돌아온다. TLS 검증 실패·토큰 거부·경로 차단이면 다른 코드(UNAVAILABLE/PERMISSION_DENIED 등)가 나오므로 구별된다.
 MS_TOK=$(sed 's/^[^=]*=//; s/,.*//' "$SECRETS_DIR/tokens/model-runtime-tokens" | tr -d '\r\n')
 curl -sS --max-time 15 -X PUT -H "Authorization: Bearer $MS_TOK" "$MSURL/v1/releases/rel-loc-test-none" --resolve "$MSRES" --cacert "$W/pki/root_ca.crt" >/dev/null 2>&1
 sleep 3
 ST=$(curl -sS --max-time 10 -H "Authorization: Bearer $MS_TOK" "$MSURL/v1/releases/rel-loc-test-none" --resolve "$MSRES" --cacert "$W/pki/root_ca.crt" 2>&1)
+echo "  서버의 상태 본문: $(echo "$ST" | cut -c1-600)"
 echo "  서버의 상태: $(echo "$ST" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('state'), (d.get('error') or {}).get('code'), (d.get('error') or {}).get('details'))" 2>&1)"
-chk "서버가 release-gate 의 NOT_FOUND 를 받았다(FAILED, code NOT_FOUND: 게이트웨이 TLS·토큰·경로가 모두 통과)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get(\"state\")==\"FAILED\" and d[\"error\"][\"code\"]==\"NOT_FOUND\" else 1)"' _ "$ST"
+chk "서버가 release-gate 의 '릴리스 없음'(404)을 받았다(FAILED, FAILED_PRECONDITION '그 릴리스를 찾지 못했다': release-gate 영역 게이트웨이 TLS·토큰·경로가 모두 통과, 전송 실패는 UNAVAILABLE 로 구별된다)" bash -c 'echo "$1" | python3 -c "import json,sys;d=json.load(sys.stdin);e=d[\"error\"];sys.exit(0 if d.get(\"state\")==\"FAILED\" and e[\"code\"]==\"FAILED_PRECONDITION\" and \"찾지 못했다\" in e[\"message\"] else 1)"' _ "$ST"
 echo "  (미확인) 실제 번들 적재: 이 시험은 릴리스를 만들지 않는다. 활성 릴리스가 있는 환경에서는 docs/runbook.md 의 원격 추론 서버 절 확인 순서로 본다"
 echo; echo "위치 독립 시험: PASS $PASS / FAIL $FAIL (게시 바인드 $BIND)"
 [ $KEEP = 1 ] && echo "(--keep: 자원을 남겼다. 지우기: scripts/test-inference-location.sh --clean)"
