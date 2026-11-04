@@ -792,6 +792,11 @@ def collect_area(repo: str):
     return run_area_tests(repo, d)
 
 
+# 영역 시험 하나의 시간 상한(초). 근거: 측정한 최악이 platform 전체 시험 768.38초(2026-11-04, 헤드의 새 clone 재현, 52 passed)이고 D125(상한 = 측정 최악 + 여유)에 따라 측정 최악의 2배로 둔다.
+# 이전 값 900초는 근거가 없었고 측정 최악에 여유가 15% 뿐이라 부하가 겹치면 platform 시험이 시간 초과로 실패했다(2026-11-04). 영역 시험이 이보다 길어지면 값이 아니라 영역의 시험 시간을 먼저 본다.
+AREA_TEST_TIMEOUT_SECONDS = 1800
+
+
 def run_area_tests(repo: str, d: Path):
     """영역의 setup-env 보고(SetupEnvReport)가 알려 준 시험 명령을 영역 루트에서 그대로 실행한다. 환경 모양(.venv, node_modules)·시험 도구는 deploy 가 모른다(U43)."""
     rep, why = ENV.env_status(repo, WS)
@@ -799,11 +804,11 @@ def run_area_tests(repo: str, d: Path):
         return "un", why
     cmd = rep["environment"]["test_command"]
     try:
-        p = subprocess.run(cmd, cwd=ENV.work_root() / repo, capture_output=True, text=True, timeout=900)   # 영역 시험은 사본(state/areas/<영역>)에서 돈다: 실제 영역 리포를 건드리지 않는다
+        p = subprocess.run(cmd, cwd=ENV.work_root() / repo, capture_output=True, text=True, timeout=AREA_TEST_TIMEOUT_SECONDS)   # 영역 시험은 사본(state/areas/<영역>)에서 돈다: 실제 영역 리포를 건드리지 않는다
     except subprocess.TimeoutExpired as e:
         raw = e.stdout or b""
-        path = save_area_log(repo, (raw.decode(errors="replace") if isinstance(raw, bytes) else raw) + "\n[check-all] 900초 시간 초과로 중단\n")
-        return "fail", f"{cmd[0]} 시험 명령이 900초 안에 끝나지 않았다; 지금까지의 출력 {path}"
+        path = save_area_log(repo, (raw.decode(errors="replace") if isinstance(raw, bytes) else raw) + f"\n[check-all] {AREA_TEST_TIMEOUT_SECONDS}초 시간 초과로 중단\n")
+        return "fail", f"{cmd[0]} 시험 명령이 {AREA_TEST_TIMEOUT_SECONDS}초 안에 끝나지 않았다; 지금까지의 출력 {path}"
     except Exception as e:
         return "fail", f"{cmd[0]} 시험 명령을 실행하지 못했다({type(e).__name__})"
     out = p.stdout + p.stderr

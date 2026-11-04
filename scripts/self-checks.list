@@ -99,3 +99,4 @@ check-all 자체 시험 102건(규칙 4·5 의 정본은 가짜 설치 패키지
 영역 DB 비밀을 이미지 라벨 io.openit.database 에서 만든다 (계약 3.4.10 DatabaseDeclaration 예시, 변이 4건) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_gen_db_secrets.py"
 compose 환경 이름 점검의 변이 확인 (계약에 없는 이름이 잡힌다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_env_in_contract.py" --self-test
 compose 의 모든 환경 이름이 받는 쪽 계약 Env 스키마에 있다 (계약 3.4.10, 구조 규칙 1·6. 위반 목록이 3.4.10 정렬 일 목록이라 platform·DB 이미지가 들어오기 전까지 실패가 맞다) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_env_in_contract.py"
+영역 시험 시간 상한은 근거 있는 상수다 (측정 최악 768s 의 2배, D125, 변이: 900 이면 실패) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_area_test_timeout.py"
