@@ -8,9 +8,11 @@ import e2e_sandbox as S
 
 class Fake:
     def __init__(self, stdout="", rc=0): self.calls, self.stdout, self.rc = [], stdout, rc
+    by_verb = {}
     def __call__(self, cmd, **kw):
         self.calls.append((cmd, kw))
-        return subprocess.CompletedProcess(cmd, self.rc, self.stdout, "")
+        out = next((v for k, v in self.by_verb.items() if k in cmd[:3]), self.stdout)
+        return subprocess.CompletedProcess(cmd, self.rc, out, "")
 
 
 class T(unittest.TestCase):
@@ -27,19 +29,42 @@ class T(unittest.TestCase):
         with self.assertRaises(TypeError): S.init(project="p", secrets="s", bogus=1)
         with self.assertRaises(TypeError): S.init(project="p")
 
-    def test_exec_in(self):
-        S.exec_in("release-gate", ["ls", "/"], input="x", timeout=5)
-        c = self.last(); self.assertEqual(c[-6:], ["P1", "exec", "-T", "release-gate", "ls", "/"]); self.assertEqual(self.f.calls[-1][1]["input"], "x")
+    def _client(self, **kw):
+        self.f.by_verb = {"inspect": "bridge|[\"PATH=/x\",\"GATE_WRITE_TOKENS_FILE=/run/secrets/gate-write-tokens\",\"SOME_TOKEN=should-not-pass\"]|P1_a P1_b ", "create": "cid123\n", "start": "{\"ok\": 1}"}
+        S.init(project="P1", secrets=self.tmp.name, gw_ca="/ca/trust.crt", docker="docker", inference_project="P1-inf", root="/r", run=self.f, tool_image="deploy-tool:t", secrets_gid="1234", **kw)
 
-    def test_exec_in_check_raises(self):
-        self.f.rc = 3
-        with self.assertRaises(RuntimeError): S.exec_in("a", ["b"])
-        self.assertEqual(S.exec_in("a", ["b"], check=False).returncode, 3)
+    def test_exec_py_runs_in_a_client_on_the_same_networks(self):
+        self._client()
+        out = S.exec_py("release-gate", "print(@SELF@)".replace("@SELF@", S.SELF))
+        self.assertEqual(out, '{"ok": 1}')
+        verbs = [c[0][1] for c in self.f.calls[-6:]]
+        self.assertEqual(verbs, ["inspect", "create", "network", "start", "rm"])
+        insp = next(c for c in self.f.calls if c[0][1] == "inspect")[0]; self.assertEqual(insp[2], "P1-release-gate-1")   # 바깥에서 본다
+        create = next(c for c in self.f.calls if c[0][1] == "create")[0]
+        self.assertIn("--read-only", create); self.assertIn("P1_a", create); self.assertNotIn("exec", [c[0][1] for c in self.f.calls])
+        self.assertIn("GATE_WRITE_TOKENS_FILE=/run/secrets/gate-write-tokens", create)   # *_FILE(파일 경로) 만 옮긴다
+        self.assertFalse(any("should-not-pass" in x for x in create), "*_FILE 이 아닌 환경은 옮기지 않는다")
+        self.assertIn("SSL_CERT_FILE=/ca.crt", create); self.assertIn("/ca/trust.crt:/ca.crt:ro", create)   # 인증서 검증을 끄지 않는다
+        self.assertIn("1234", create)
+        conn = next(c for c in self.f.calls if c[0][1] == "network")[0]; self.assertEqual(conn[-2:], ["P1_b", "cid123"])
+        start = next(c for c in self.f.calls if c[0][1] == "start"); self.assertEqual(start[1]["input"], "print(https://release-gate)")   # SELF 가 영역 게이트웨이 주소가 된다
 
-    def test_exec_py_uses_stdin(self):
-        self.f.stdout = "{}"
-        self.assertEqual(S.exec_py("survey-service", "print(1)"), "{}")
-        self.assertEqual(self.last()[-3:], ["survey-service", "python", "-"]); self.assertEqual(self.f.calls[-1][1]["input"], "print(1)")
+    def test_exec_py_removes_the_client_even_when_it_fails(self):
+        self._client()
+        orig = self.f.__class__.__call__
+        calls = self.f.calls
+        class Boom(Exception): pass
+        def run(cmd, **kw):
+            calls.append((cmd, kw))
+            if cmd[1] == "start": return subprocess.CompletedProcess(cmd, 3, "", "boom")
+            return subprocess.CompletedProcess(cmd, 0, {"inspect": "bridge|[]|n ", "create": "c9"}.get(cmd[1], ""), "")
+        S._C["run"] = run
+        with self.assertRaises(RuntimeError): S.exec_py("survey-service", "x")
+        self.assertEqual(calls[-1][0][1:3], ["rm", "-f"])
+
+    def test_model_serving_is_the_inference_projects_container(self):
+        self._client(); S.exec_py("model-serving", "x")
+        self.assertEqual(next(c for c in self.f.calls if c[0][1] == "inspect")[0][2], "P1-inf-model-serving-1")
 
     def test_run_job(self):
         S.run_job("job-x", ["a", "b"], env={"K": "V"})
@@ -49,12 +74,8 @@ class T(unittest.TestCase):
         S.logs("gateway", since="30s")
         self.assertEqual(self.last()[-7:], ["P1", "logs", "--no-color", "--no-log-prefix", "--since", "30s", "gateway"])
 
-    def test_psql(self):
-        S.psql("postgres", "select 1", db="qa")
-        self.assertEqual(self.last()[-10:], ["postgres", "psql", "-U", "postgres", "-d", "qa", "-v", "ON_ERROR_STOP=1", "-tAc", "select 1"])
-
     def test_readyz_parses(self):
-        self.f.stdout = '[503, {"ready": false}]\n'
+        self._client(); self.f.by_verb["start"] = '[503, {"ready": false}]\n'
         self.assertEqual(S.readyz("survey-service"), (503, {"ready": False}))
 
     def test_gw_url_and_cache(self):

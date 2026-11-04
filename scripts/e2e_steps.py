@@ -326,7 +326,7 @@ def _c1_run(service, code, timeout=120):
     assert i >= 0, f"{service} 컨테이너의 스크립트가 결과를 내지 않았다: {txt[-300:]}"
     return json.loads(txt[i + 6:].strip().splitlines()[0])
 
-def _c1_in(service, method, path, *, auth=None, headers=None, body=None, raw=None, base="http://127.0.0.1:8080"):
+def _c1_in(service, method, path, *, auth=None, headers=None, body=None, raw=None, base="@SELF@"):
     """그 서비스 컨테이너 안에서 자기 포트를 부른다(서비스 자신의 인증·역할 검사를 본다). auth=(비밀 파일 이름, 역할 또는 None). (상태, 본문, 소문자 머리글)."""
     arg = {"m": method, "u": base + path, "auth": list(auth) if auth else None, "h": headers or {}, "b": body, "raw": raw}
     st, pb, hd = _c1_run(service, f"A = {_c1_lit(arg)}\nt = tok(*A['auth']) if A['auth'] else None\n"
@@ -620,7 +620,7 @@ def publish_packages(pk):
     """make_packages() 의 패키지 2건을 model-registry 에 HTTP 로 게시(멱등 확인)하고 읽기 토큰으로 다시 읽어 해시를 검증한다. 단계 3 과 demo.sh swap-adapters 가 같이 쓴다. {역할: 참조} 를 돌려준다.
     게시 주체(model-lab)의 쓰기 토큰은 model-registry 가 아는 쓰기 토큰 목록의 model-lab 항목이다: 쓰기는 model-registry 컨테이너 안에서, 읽기 검증은 release-gate 컨테이너 안(읽기 토큰 release-gate)에서 한다."""
     refs = _c1_run("model-registry", f"A = {_c1_lit(_c1_pack(pk))}\nimport base64, pathlib, shutil, tempfile\nfrom openit_link.clients import HttpModelRegistry\n"
-        "reg = HttpModelRegistry('http://127.0.0.1:8080', tok('model-registry-write-tokens', 'model-lab'))\nroot = pathlib.Path(tempfile.mkdtemp()); refs = {}\ntry:\n"
+        "reg = HttpModelRegistry('@SELF@', tok('model-registry-write-tokens', 'model-lab'))\nroot = pathlib.Path(tempfile.mkdtemp()); refs = {}\ntry:\n"
         "    for it in A:\n        d = root / it['role']\n        for rel, b in it['files'].items():\n            p = d / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(base64.b64decode(b))\n"
         "        mf = it['manifest']; rb = it['report'].encode()\n        got = reg.publish(mf, d, rb); again = reg.publish(mf, d, rb)\n        assert dict(again) == dict(got), 'publish is not idempotent'\n"
         "        refs[it['role']] = {'id': mf['package_id'], 'version': mf['version'], 'content_hash': mf['content_hash']}\nfinally: shutil.rmtree(root, ignore_errors=True)\nout(refs)\n", timeout=180)
@@ -718,7 +718,7 @@ def step4():
     # 접수: 운영에서는 수집기 잡이 한다(위 job). 같은 조합 접수가 멱등인지는 게이트 컨테이너 안에서 접수 면(operator 쓰기 토큰)을 두 번 불러 본다 -- 게이트웨이는 POST /v1/submissions 를 열지 않는다(수집기 전용)
     allsubj = {**subj, "u": subj_u}
     got = _c1_run("release-gate", f"A = {_c1_lit(allsubj)}\nfrom openit_link.clients import HttpGateService\n"
-        "gs = HttpGateService('http://127.0.0.1:8080', tok('gate-write-tokens', 'operator'), user='op-test')\nres = {}\n"
+        "gs = HttpGateService('@SELF@', tok('gate-write-tokens', 'operator'), user='op-test')\nres = {}\n"
         "for k, sj in A.items():\n    s1 = dict(gs.submit_candidate(sj, requested_by_role='operator')); s2 = dict(gs.submit_candidate(sj, requested_by_role='operator'))\n"
         "    res[k] = [s1, s2]\nout(res)\n")
     subs = {k: got[k][0] for k in subj}; sub_u = got["u"][0]
@@ -1028,7 +1028,7 @@ def _c2_ready(): return SB.readyz("survey-service")   # 상태 관찰: 컨테이
 
 _C2_IN_PY = ("import json,urllib.request,urllib.error\nP=json.loads(@@P@@)\n"
              "d=json.dumps(P['b']).encode() if P['b'] is not None else None\n"
-             "r=urllib.request.Request('http://127.0.0.1:8080'+P['path'],data=d,method=P['m'])\n"
+             "r=urllib.request.Request('@SELF@'+P['path'],data=d,method=P['m'])\n"
              "if P['t']: r.add_header('Authorization','Bearer '+P['t'])\n"
              "if d is not None: r.add_header('Content-Type','application/json')\n"
              "try:\n x=urllib.request.urlopen(r,timeout=P['to']); c,b,h=x.status,x.read(),dict(x.headers)\n"
@@ -1379,7 +1379,7 @@ def _c2_qa_read(method, *args, **kw):
             "tok=None\nfor ln in open('/run/secrets/qa-read-tokens'):\n n,_,v=ln.strip().partition('=')\n if n=='release-gate': tok=v.split(',')[0]\n"
             "assert tok, 'qa-read-tokens 에 release-gate 항목이 없다'\n"
             "P=json.loads(" + repr(json.dumps({"m": method, "a": list(args), "k": kw})) + ")\n"
-            "r=getattr(HttpQuestionReader('http://127.0.0.1:8080',tok),P['m'])(*P['a'],**P['k'])\n"
+            "r=getattr(HttpQuestionReader('@SELF@',tok),P['m'])(*P['a'],**P['k'])\n"
             "print(json.dumps(r,default=lambda o: dict(o) if hasattr(o,'keys') else list(o)))\n")
     return json.loads(SB.exec_py("question-authoring", code).strip().splitlines()[-1])
 
@@ -1774,7 +1774,7 @@ def _c3_probe(k, path):
     r = _c3_py(_C3_SVC[k], '''
 t = time.time()
 try:
-    r = urllib.request.urlopen("http://127.0.0.1:8080" + V["path"], timeout=10); st, b = r.status, r.read()
+    r = urllib.request.urlopen("@SELF@" + V["path"], timeout=10); st, b = r.status, r.read()
 except urllib.error.HTTPError as e: st, b = e.code, e.read()
 except Exception as e: st, b = 0, type(e).__name__.encode()
 try: b = json.loads(b)
@@ -1894,7 +1894,7 @@ def step7():
     # 서비스 동작 자체(저자 토큰은 200, 읽기 토큰은 403, 원문 없음)는 question-authoring 컨테이너 안에서 그 서비스의 토큰 목록으로 확인한다
     sg_in = _c3_py("question-authoring", '''
 au = next(t.split(":")[0] for t in _tokfile("QA_AUTHOR_TOKENS_FILE").split(",") if t.split(":")[1] == V["author"])
-rd = _list("QA_READ_TOKENS_FILE")["synthetic-data"]; B = "http://127.0.0.1:8080/v1/signals"
+rd = _list("QA_READ_TOKENS_FILE")["synthetic-data"]; B = "@SELF@/v1/signals"
 R = {"sig": call("GET", B + "?question_set_id=" + V["qs"], au)[:2], "read": call("GET", B, rd)[0]}''', qs=QS, author=_C3_ACCT["author"])
     c, sig = sg_in["sig"]; assert c == 200, (c, sig)
     blob = json.dumps(sig, ensure_ascii=False)
@@ -1908,7 +1908,7 @@ R = {"sig": call("GET", B + "?question_set_id=" + V["qs"], au)[:2], "read": call
     c, e2 = _c3_gw("POST", f"/v1/cases/{cid}/review", "reviewer", {"review_status": "CONFIRMED", "expected": GOOD_EXPECTED})[:2]; assert c == 400, (c, e2)
     # 읽기 토큰으로는 검토를 게시할 수 없다: 게이트웨이는 늘 검토 토큰을 붙이므로 ops-feedback 컨테이너 안에서 그 서비스의 읽기 토큰으로 확인한다
     c403 = _c3_py("ops-feedback", '''
-R = call("POST", "http://127.0.0.1:8080/v1/cases/" + V["cid"] + "/review", _list("OPS_READ_TOKENS_FILE")["synthetic-data"], V["bad"], {"X-Openit-User": "reader-e2e"})[0]''', cid=cid, bad=bad)
+R = call("POST", "@SELF@/v1/cases/" + V["cid"] + "/review", _list("OPS_READ_TOKENS_FILE")["synthetic-data"], V["bad"], {"X-Openit-User": "reader-e2e"})[0]''', cid=cid, bad=bad)
     assert c403 == 403, "읽기 토큰으로 검토 게시됨"
     assert _c3_gw("POST", "/v1/cases/nonexistent-case/review", "reviewer", {"review_status": "DISMISSED"})[0] == 404
     pi = dict(__import__("copy").deepcopy(STATE["extract_input"])); pi["user_utterance"] = "뇌졸중은 진단받은 적 없어요"   # 개인정보를 뺀 문장으로 검토자가 쓴 입력(시험 자료, ActionExtractionInput)
@@ -1988,7 +1988,7 @@ def step7d():
     # dataset-store 는 datasets 네트워크에만 있고 읽는 쪽(model-lab)·쓰는 쪽(synthetic-data)은 잡 컨테이너다. 이 시험은 dataset-store 컨테이너 안에서 그 서비스가 받는 두 토큰(쓰기=synthetic-data, 읽기=model-lab)으로 요청한다
     o7 = _c3_py("dataset-store", '''
 import base64, hashlib
-B = "http://127.0.0.1:8080"; TAR = "application/x-tar"; ID, VER = V["id"], V["ver"]
+B = "@SELF@"; TAR = "application/x-tar"; ID, VER = V["id"], V["ver"]
 WT = _list("DATASET_STORE_WRITE_TOKENS_FILE")["synthetic-data"]; RT = _list("DATASET_STORE_READ_TOKENS_FILE")["model-lab"]
 body, body2 = base64.b64decode(V["body"]), base64.b64decode(V["body2"]); vp = B + "/v1/datasets/" + V["qid"] + "/versions/" + V["qver"]
 R = {"dup": call("POST", B + "/v1/datasets", WT, raw=body, ctype=TAR)[:2],
@@ -2048,7 +2048,7 @@ def step8():
     c, tb = public_turn(sidb, "turn-1", "뇌졸중은 없어요"); assert c == 200, (c, tb)
     kiosk(f"/v1/sessions/{sidb}/end", {"session_id": sidb, "kind": "SESSION_END"})
     # 롤백 권한이 없는 역할(question-authoring 의 쓰기 토큰)은 거부된다: release-gate 컨테이너 안에서 그 서비스의 쓰기 토큰 목록의 다른 역할로 확인한다
-    cb, eb = _c3_py("release-gate", 'R = call("POST", "http://127.0.0.1:8080/v1/rollback", _list("GATE_WRITE_TOKENS_FILE")["question-authoring"], V["req"])[:2]', req={**req, "request_id": f"rbk-{RID}-2"})
+    cb, eb = _c3_py("release-gate", 'R = call("POST", "@SELF@/v1/rollback", _list("GATE_WRITE_TOKENS_FILE")["question-authoring"], V["req"])[:2]', req={**req, "request_id": f"rbk-{RID}-2"})
     assert cb in (400, 401, 403) and isinstance(eb, dict) and eb.get("code") == "PERMISSION_DENIED", ("허용되지 않은 역할이 롤백함", cb, str(eb)[:120])
     rec(8, "REAL", f"ops-feedback 잡의 토큰(잡 컨테이너 안)으로 RollbackRequest -> RollbackReceipt APPLIED(멱등), 활성 포인터(운영자 계정, 게이트웨이) {new}->{old}, 실제 survey-service가 /readyz에서 이전 릴리스로 복귀, 롤백 권한 없는 역할은 PERMISSION_DENIED(release-gate 컨테이너 안), 롤백 뒤 공개 API로 새 세션 한 턴 처리(이전 릴리스). 롤백을 요청한 주체는 e2e가 띄운 ops-feedback 잡 컨테이너이고 ops-feedback 잡의 자동 롤백 평가는 아님")
 
@@ -2079,7 +2079,7 @@ def _c3_ms_get(path, auth=True):
         except urllib.error.HTTPError as e: st, b = e.code, e.read()
         try: return st, json.loads(b or b"null")
         except ValueError: return st, b.decode(errors="replace")
-    r = _c3_py("model-serving", 'R = call("GET", "http://127.0.0.1:8080" + V["path"], _list("MODEL_RUNTIME_TOKENS_FILE")["survey-service"] if V["auth"] else None)[:2]', path=path, auth=auth)
+    r = _c3_py("model-serving", 'R = call("GET", "@SELF@" + V["path"], _list("MODEL_RUNTIME_TOKENS_FILE")["survey-service"] if V["auth"] else None)[:2]', path=path, auth=auth)
     return r[0], r[1]
 
 def _c3_ms_container(): return getattr(a, "ms_container", "") or f"{a.project}-model-serving-1"   # 호스트에서 docker inspect/exec 하는 대상(운영자 역할)
@@ -2090,7 +2090,7 @@ def _c3_ensure_sub(subj):
     sub = _c3_sub_for(subj)
     if sub: validate("SubmissionView", sub); return sub
     c, j = _c3_py("release-gate", '''
-R = call("POST", "http://127.0.0.1:8080/v1/submissions", _list("GATE_WRITE_TOKENS_FILE")["operator"], {"subject": V["subj"], "requested_by_role": "operator"}, {"X-Openit-User": V["user"]})[:2]''', subj=subj, user=_C3_ACCT["operator"])
+R = call("POST", "@SELF@/v1/submissions", _list("GATE_WRITE_TOKENS_FILE")["operator"], {"subject": V["subj"], "requested_by_role": "operator"}, {"X-Openit-User": V["user"]})[:2]''', subj=subj, user=_C3_ACCT["operator"])
     assert c in (200, 201, 202), ("후보 접수", c, str(j)[:200]); validate("GateSubmission", j)
     return j
 

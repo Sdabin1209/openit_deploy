@@ -3,7 +3,7 @@
 
 드라이버는 호스트(= 운영자 PC 역할)에서 돌고 제품(compose.yaml)에는 시험용 문이 없다. 허용되는 접근은 셋뿐이다.
   (a) 게이트웨이 호스트 포트(HTTPS, 게이트웨이 CA 만 신뢰): gw_url, gw_request, gw_client
-  (b) 제품 네트워크 안에서 제품의 컨테이너를 쓰는 것: exec_in, exec_py, run_job, readyz, psql, logs
+  (b) 제품 네트워크 안에서 제품의 컨테이너를 쓰는 것: exec_py, run_job, readyz, logs
   (c) 다른 호스트 역할인 추론 서버(compose.inference.yaml 을 별도 프로젝트로 띄운 것): inference_url
 내부 서비스의 호스트 포트를 부르는 코드는 이 모듈에 없다(없어야 한다: scripts/test_compose_no_test_doors.py 가 compose 쪽을, 단계 코드는 리뷰가 본다).
 전역 상태는 init() 이 채우는 설정 하나뿐이다. 비밀(계정 암호·토큰)은 파일에서 읽어 헤더에만 쓰고 출력·로그에 남기지 않는다.
@@ -27,14 +27,14 @@ _C: dict[str, Any] = {}   # init() 이 채운다: project, secrets, gw_ca, docke
 def init(**kw) -> None:
     """project(필수), secrets(필수: 비밀 폴더), gw_ca(게이트웨이 CA 루트 파일), docker, inference_project(추론 서버 프로젝트 이름), root(deploy 루트), run(시험용 실행기)."""
     # 왜 키를 검사하나: 단계 코드가 철자를 틀리면 조용히 무시되지 말고 첫 호출에서 드러나야 한다
-    unknown = set(kw) - {"project", "secrets", "gw_ca", "docker", "inference_project", "root", "run"}
+    unknown = set(kw) - {"project", "secrets", "gw_ca", "docker", "inference_project", "root", "run", "tool_image", "secrets_gid"}
     if unknown:
         raise TypeError(f"init 이 모르는 인자: {sorted(unknown)}")
     if not kw.get("project") or not kw.get("secrets"):
         raise TypeError("init 에는 project 와 secrets 가 필요하다")
     root = kw.get("root") or pathlib.Path(__file__).resolve().parents[1]
     _C.clear()
-    _C.update({"docker": "docker", "inference_project": "", "gw_ca": "", "run": subprocess.run, **kw})
+    _C.update({"docker": "docker", "inference_project": "", "gw_ca": "", "run": subprocess.run, "tool_image": os.environ.get("DEPLOY_TOOL_IMAGE", ""), **kw})
     if not _C["inference_project"]:
         _C["inference_project"] = f"{_C['project']}-inf"   # 왜 기본값: e2e.sh 가 추론 서버를 <P>-inf 로 띄운다. 단계 코드가 이름을 따로 알 필요가 없다
     _C["root"] = pathlib.Path(root)
@@ -229,14 +229,36 @@ def gw_client(cls, *, account: Optional[str] = None, token: Optional[str] = None
 
 
 # ---- (b) 제품 네트워크 안에서 ----
-def exec_in(service: str, argv: list[str], *, input: Optional[str] = None, timeout: float = 60, check: bool = True) -> subprocess.CompletedProcess:
-    """`docker compose -p P exec -T <service> argv`. 제품 컨테이너 안에서 명령을 실행한다."""
-    return _run(_dc("exec", "-T", service, *argv), input=input, timeout=timeout, check=check)
+SELF = "@SELF@"   # 코드 안에서 '대상 서비스의 영역 게이트웨이 주소'(https://<서비스>)가 될 자리표시자. exec_py 가 바꿔 넣는다(127.0.0.1:8080 같은 영역 내부 주소를 적지 않는다)
+
+
+def _container_of(service: str) -> str:
+    # 왜: model-serving 은 제품이 아니라 추론 서버 프로젝트의 것이다(e2e.sh cn() 과 같은 규칙)
+    return f"{_need('inference_project')}-model-serving-1" if service == "model-serving" else f"{_need('project')}-{service}-1"
 
 
 def exec_py(service: str, code: str, *, timeout: float = 60) -> str:
-    """그 컨테이너의 python 으로 code 를 실행한다(stdin 으로 넘긴다: 인자·프로세스 목록에 남기지 않는다). 반환은 stdout. 호출자가 JSON 으로 주고받는다."""
-    return exec_in(service, ["python", "-"], input=code, timeout=timeout).stdout
+    """service 와 같은 망에 붙은 클라이언트 컨테이너(deploy 도구 이미지)에서 python code 를 돌리고 stdout 을 돌려준다. SELF 는 https://<service> 가 된다.
+    왜 영역 컨테이너 안이 아닌가: deploy(시험 드라이버)는 실행 중인 영역 안으로 들어가지 않는다(구조 규칙 1·6, CONVENTIONS 13절). 외부 호출자와 같이 게이트웨이 HTTPS 로 부른다(R1.1~R1.3, 검증을 끄지 않는다: SSL_CERT_FILE 은 step-ca 루트).
+    망 소속은 docker inspect 로 바깥에서 읽고, 토큰은 deploy 가 가진 비밀 폴더(SECRETS_DIR/tokens)를 읽기 전용으로 /run/secrets 에 둔다. *_FILE 환경 변수(파일 경로뿐, 값 아님)는 그 서비스의 Config.Env 에서 그대로 옮긴다.
+    코드는 표준 입력으로 넘긴다(인자·프로세스 목록에 남기지 않는다)."""
+    d = _need("docker"); image = _need("tool_image"); ca = _need("gw_ca")
+    insp = _run([d, "inspect", _container_of(service), "--format", "{{.HostConfig.NetworkMode}}|{{json .Config.Env}}|{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}"], timeout=30).stdout.strip()
+    mode, envj, nets = insp.split("|", 2)
+    nets = nets.split()
+    first = mode if mode.startswith("container:") else (nets[0] if nets else "")
+    if not first: raise RuntimeError(f"{service}: 컨테이너의 망을 읽지 못했다")
+    envs = [x for kv in (json.loads(envj) or []) if kv.split("=", 1)[0].endswith("_FILE") for x in ("-e", kv)]
+    create = [d, "create", "-i", "--network", first, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", "10001:10001",
+              "--group-add", str(_C.get("secrets_gid") or os.environ.get("SECRETS_GID") or os.getgid()), "-e", "SSL_CERT_FILE=/ca.crt",
+              "-v", f"{ca}:/ca.crt:ro", "-v", f"{_need('secrets')}/tokens:/run/secrets:ro", *envs, image, "python", "-"]
+    cid = _run(create, timeout=60).stdout.strip()
+    try:
+        if not mode.startswith("container:"):
+            for n in nets[1:]: _run([d, "network", "connect", n, cid], timeout=30)
+        return _run([d, "start", "-a", "-i", cid], input=code.replace(SELF, "https://" + service), timeout=timeout).stdout
+    finally:
+        _run([d, "rm", "-f", cid], check=False, timeout=30)
 
 
 def run_job(job: str, args=(), *, env: Optional[dict] = None, timeout: float = 300) -> subprocess.CompletedProcess:
@@ -256,11 +278,6 @@ def readyz(service: str) -> tuple[int, dict]:
     """컨테이너 안에서 중계(TLS 종단)를 거쳐 https://<서비스 이름>/readyz (R4.3·R5.1: 앱 포트 직접 호출이 아니다). 왜 python: 서비스 이미지(파이썬)에는 wget 이 없고 python 은 있다(e2e.sh 의 reach 도 같은 방식)."""
     c, d = json.loads(exec_py(service, "SERVICE = %r\n" % service + _READYZ, timeout=30).strip().splitlines()[-1])
     return c, d
-
-
-def psql(db_service: str, sql: str, *, db: str = "postgres", user: str = "postgres", timeout: float = 60) -> str:
-    """postgres 컨테이너 안에서 psql -tA 로 SQL 한 문장을 실행하고 stdout 을 돌려준다. 왜 컨테이너 안: 데이터베이스는 호스트에 게시하지 않는다. 비밀은 쓰지 않는다(소켓 인증)."""
-    return exec_in(db_service, ["psql", "-U", user, "-d", db, "-v", "ON_ERROR_STOP=1", "-tAc", sql], timeout=timeout).stdout
 
 
 def logs(service: str, since: Optional[str] = None) -> str:
