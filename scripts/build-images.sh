@@ -118,10 +118,7 @@ print(r["image_id"])' "$img" "$svc" > "$CTX/id-$svc.txt" || die "$svc: 영역 �
 
 # 호스트에서 쓰는 wheel: E2E 클라이언트·검증기와 synthetic-data 잡용(같은 기준 태그의 boundary-contracts). 영역 진입점이 요청·결과를 계약 validator 로 검증하므로(영역은 PYTHON 의 계약을 쓴다)
 # 서비스를 빌드하기 **전에** deploy venv 의 계약을 기준표 태그로 맞춘다(낡은 계약이면 요청 검증이 어긋난다).
-mkdir -p "$DEPLOY_ROOT/build/hostwheels"; rm -f "$DEPLOY_ROOT/build/hostwheels"/*.whl
-d="$DEPLOY_ROOT/build/hostsrc-$BC"; rm -rf "$d"; mkdir -p "$d"; cp -a "$DEP/boundary/." "$d/"
-mkdir -p "$DEPLOY_ROOT/build/hostwheels/$BC"; "$PIP" wheel -q --no-deps --no-build-isolation -w "$DEPLOY_ROOT/build/hostwheels/$BC" "$d" >/dev/null 2>&1 || die "계약 $BC 의 호스트 wheel 을 만들지 못했다"
-mkdir -p "$DEPLOY_ROOT/build/hostwheels/survey-schema"; "$PIP" wheel -q --no-deps --no-build-isolation -w "$DEPLOY_ROOT/build/hostwheels/survey-schema" "$DEP/survey_schema/schema" >/dev/null 2>&1 || die "문진 스키마 호스트 wheel 을 만들지 못했다(E2E 검증기용)"
+bash "$DEPLOY_ROOT/scripts/build-hostwheels.sh" || die "호스트 wheel(계약 $BC, 문진 스키마)을 만들지 못했다"   # 호스트 wheel 만들기는 build-hostwheels.sh 한 곳(e2e.sh 도 도구 이미지 빌드 전에 부른다)
 # 빌드 단계는 deploy .venv 를 바꾸지 않는다(12-Factor V: 빌드·릴리스·실행 분리. 설치는 scripts/prepare-host.sh 몫). 예전엔 여기서 pip --force-reinstall 해서, 같은 venv 를 쓰는 다른 실행(E2E 단계, 자체 점검)이 도중에 "No module named boundary_contracts" 로 깨졌다(4차 E2E).
 # 판이 다르면 고칠 방법을 말하고 멈춘다. (같은 버전 번호로 태그만 다시 찍은 경우는 prepare-host.sh 가 --force-reinstall 로 맞춘다)
 have=$("$PY" -c 'import importlib.metadata as m;print(m.version("boundary-contracts"))' 2>/dev/null || echo 없음)

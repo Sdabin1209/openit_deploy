@@ -20,9 +20,9 @@ cp "$bcw" "$CTX/wheels/"
 cat > "$CTX/Dockerfile" <<DOCKER
 FROM ${UTIL}
 COPY wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels  # own-venv: 이미지 안의 pip, deploy venv 가 아니다
+RUN pip install --no-cache-dir --no-deps /wheels/*.whl && pip install --no-cache-dir 'jsonschema>=4.10' && rm -rf /wheels  # own-venv: 이미지 안의 pip, deploy venv 가 아니다. link 의 계약 의존은 git URL 이라 --no-deps 로 같은 wheel(위)을 쓰고 계약의 PyPI 의존(jsonschema)만 따로 받는다
 USER 10001:10001
 LABEL io.openit.service=deploy-tool io.openit.owner=deploy io.openit.revision=${rev} io.openit.contracts.boundary=${DEPLOY_BC_TAG} io.openit.link=${DEPLOY_LINK_TAG}
 DOCKER
-"$DOCKER" build -q --provenance=false -t "$TAG" "$CTX" >/dev/null || die "deploy 도구 이미지를 빌드하지 못했다"
+"$DOCKER" build --provenance=false -t "$TAG" "$CTX" >"$CTX/build.log" 2>&1 || die "deploy 도구 이미지를 빌드하지 못했다"
 echo "$TAG"

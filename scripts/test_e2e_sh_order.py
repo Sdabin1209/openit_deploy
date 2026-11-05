@@ -49,6 +49,8 @@ ORDER_PAIRS = [
     (r'gen-secrets\.sh" --test-fixtures', r'scripts/up\.sh" "\$PROJECT"', "비밀 파일은 기동 전에 있다"),
     (r'scripts/publish-images\.sh"', r'scripts/up\.sh" "\$PROJECT"', "digest 잠금은 기동 전에 있다"),
     (r'export-gateway-ca\.sh" --project', r'chk "추론 서버 기동', "추론 서버가 믿을 게이트웨이 CA 는 기동 전에 꺼내 둔다"),
+    (r'scripts/build-hostwheels\.sh', r'scripts/build-tool-image\.sh', "도구 이미지가 쓰는 계약 wheel 은 같은 실행 안에서 먼저 만든다(이전 실행의 남은 폴더에 기대지 않는다)"),
+    (r'scripts/build-hostwheels\.sh', r'prepare-host\.sh" wheels', "deploy venv 에 설치할 wheel 은 설치 전에 만든다"),
     (r'scripts/build-tool-image\.sh', r'scripts/e2e_steps\.py" --forms-dir', "시험 드라이버(exec_py)가 쓰는 deploy 도구 이미지는 단계 실행 전에 있다"),
 ]
 
@@ -97,6 +99,13 @@ class T(unittest.TestCase):
         t = (S / "e2e.sh").read_text(encoding="utf-8").splitlines()
         i = next(k for k, l in enumerate(t) if '> "$DEPLOY_LOCK"' in l); j = next(k for k, l in enumerate(t) if 'scripts/check-compose.sh' in l)
         t[i], t[j] = t[j], t[i]   # 잠금을 만드는 줄과 잠금을 읽는 스크립트의 줄을 맞바꾼다
+        self.assertTrue(violations("\n".join(t)))
+
+    def test_mutation_hostwheels_after_tool_image(self):
+        t = (S / "e2e.sh").read_text(encoding="utf-8").splitlines()
+        i = next(k for k, l in enumerate(t) if "scripts/build-hostwheels.sh" in l and not l.lstrip().startswith("#"))
+        j = next(k for k, l in enumerate(t) if "scripts/build-tool-image.sh" in l and l.startswith("chk"))
+        t[i], t[j] = t[j], t[i]
         self.assertTrue(violations("\n".join(t)))
 
     def test_mutation_reader_added_before_creation(self):

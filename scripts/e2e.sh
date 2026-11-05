@@ -199,6 +199,8 @@ if [ $REUSE = 1 ] && have_images; then
     [ -z "$STALE" ] || chk "빌드: 낡은 이미지만 ($STALE)" bash "$DEPLOY_ROOT/scripts/build-images.sh" $STALE
   else chk "빌드: 다섯 서비스 이미지 (낡은 이미지 판정 실패, 전부)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
 else chk "빌드: 다섯 서비스 이미지 (현재 HEAD)" bash "$DEPLOY_ROOT/scripts/build-images.sh"; fi
+# 호스트 wheel(계약·문진 스키마)을 이 실행 안에서 만든다: 도구 이미지 빌드와 prepare-host.sh wheels 가 쓴다. --reuse-build 로 이미지 빌드를 건너뛰어도 이전 실행이 남긴 폴더에 기대지 않는다
+must bash "$DEPLOY_ROOT/scripts/build-hostwheels.sh" >/dev/null
 # 시험 드라이버의 클라이언트 이미지(deploy 도구 이미지): 영역 컨테이너 안이 아니라 같은 망의 이 컨테이너에서 게이트웨이 HTTPS 로 부른다(e2e_sandbox.exec_py)
 chk "빌드: deploy 도구 이미지(link $DEPLOY_LINK_TAG, 계약 $DEPLOY_BC_TAG)" bash -c "bash $DEPLOY_ROOT/scripts/build-tool-image.sh > $W/tool-image.txt"
 DEPLOY_TOOL_IMAGE=$(tail -1 "$W/tool-image.txt" 2>/dev/null); export DEPLOY_TOOL_IMAGE
