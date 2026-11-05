@@ -1226,14 +1226,14 @@ def step5q():
     # 다시 올라오면 사람 손 없이 같은 주소로 응답한다(R4.1: 복구까지 걸린 시간을 Retry-After 와 비교하지 않고 준비 확인으로 기다린다, R4.3)
     sh([a.docker, "kill", "-s", "KILL", svc]); seen = None; t_kill = time.time()
     while time.time() - t_kill < 30 and seen is None:
-        c, b, h = _c2_gw("GET", f"/v1/sessions/{sid}", None, token=_c2_kdev(), timeout=10)
+        c, b, h = _c2_gw("GET", f"/v1/sessions/{sid}/state", None, token=_c2_kdev(), timeout=10)
         if c != 200: seen = (c, b, h)
         else: time.sleep(0.2)   # 폴링 간격(정지 구간 관찰 루프, 종료 조건은 비 200 응답)
     assert seen is not None, "프로세스를 죽였는데 30초 안에 정지 구간(비 200 응답)을 관찰하지 못했다"
     upstream_503_json(*seen, "프로세스 죽음 중 환자 세션 조회")
     wait(lambda: sh([a.docker, "inspect", "-f", "{{.State.Health.Status}}", svc]).stdout.strip() == "healthy", 120, "프로세스 죽음 뒤 survey-service healthy(restart 정책)", every=2)
     wait_gw_ready(300)
-    assert _c2_gw("GET", f"/v1/sessions/{sid}", None, token=_c2_kdev(), timeout=20)[0] == 200, "프로세스 죽음에서 복구한 뒤 세션 조회가 200이 아니다"
+    assert _c2_gw("GET", f"/v1/sessions/{sid}/state", None, token=_c2_kdev(), timeout=20)[0] == 200, "프로세스 죽음에서 복구한 뒤 세션 조회가 200이 아니다"
     _c2_kiosk(f"/v1/sessions/{sid}/end", {"session_id": sid, "kind": "SESSION_END"})
     rec("5q", "REAL", f"(프로세스 SIGKILL 도 503 JSON + restart 복구) survey-service stop 중 gateway 경유: 환자 턴 {obs['turn'][0]}({obs['turn'][1]}s) {{\"code\":\"UPSTREAM_UNAVAILABLE\"}} + Retry-After + JSON(본문에 내부 주소 없음), gateway /readyz {obs['readyz'][0]}({obs['readyz'][1]}s), /healthz {obs['healthz']}. start 뒤 gateway /readyz 200 까지 {t_rec:.0f}s. 세션 보존(Q1.D01 값 유지, 상류에 닿지 못한 턴은 기록 없음), 같은 turn_id 로 재전송하면 200 으로 확정")
 
