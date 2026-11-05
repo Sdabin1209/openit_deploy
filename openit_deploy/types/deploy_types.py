@@ -258,6 +258,15 @@ class JobOverlayRequest(TypedDict):
     jobs: List[Job1]
 
 
+class Config1(TypedDict):
+    container_path: str
+    schema_: str
+
+
+class XOpenitJobInput(TypedDict):
+    config: Config1
+
+
 Services = TypedDict(
     'Services',
     {
@@ -265,6 +274,7 @@ Services = TypedDict(
         'x-openit-timeout-seconds': int,
         'x-openit-period-seconds': int,
         'volumes': NotRequired[List[Dict[str, Any]]],
+        'x-openit-job-input': NotRequired[XOpenitJobInput],
     },
 )
 

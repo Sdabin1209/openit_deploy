@@ -9,6 +9,7 @@ from boundary_contracts import validator
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONTRACT = {
+    "config/release-gate-job.json": "GateJobConfig",
     "config/ops-feedback-job.yaml": "OpsFeedbackJobConfig",
     "test/ops-job/test-ops-job.yaml": "OpsFeedbackJobConfig",
     "test/risk-rules.e2e.json": "SurveyRiskRulesFile",

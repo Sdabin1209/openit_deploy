@@ -1,6 +1,6 @@
 """wiring/진입: check_config_contracts.py [--compose-json 파일|-]  — 컨테이너에 주입·배치하는 설정이 기동 전에 계약을 따르는지 본다(R7). up.sh 가 `compose up` 전에 부른다(합쳐진 compose 설정을 `dc ... config --format json` 으로 받아 표준 입력으로 넘긴다).
 검증 대상: 서비스 환경(ENV_SERVICES 표: 서비스마다 계약의 *Env 선언 스키마, 3.2.0 U73), 배치 파일(config/ops-feedback-job.yaml=OpsFeedbackJobConfig, test/fake-model/question_flow.json=RuntimeFlowFile).
-GateJobConfig·GatePolicy 는 deploy 가 만들지 않는다(release-gate 잡은 환경 변수로 설정되고 정책 파일은 O11 확정 전이라 없다): 만드는 코드가 생기면 여기에 문서를 더한다. 종료 코드: 0 통과, 1 위반(위치만 출력, 값은 출력하지 않는다)."""
+수집 잡 설정은 GateJobConfig로 검증한다. GatePolicy는 O11 확정 전이라 만들지 않는다. 종료 코드: 0 통과, 1 위반(위치만 출력, 값은 출력하지 않는다)."""
 import argparse
 import json
 import re
@@ -31,6 +31,7 @@ ENV_SERVICES = {   # compose 서비스 -> (계약 스키마, 환경 문서로 �
     "gateway": ("GatewayEnv", lambda env: env),   # deploy 소유 컨테이너: 내부 스키마 schemas/GatewayEnv(L20). 계약에 같은 이름이 없다
 }
 FILES = {"config/ops-feedback-job.yaml": "OpsFeedbackJobConfig",
+         "config/release-gate-job.json": "GateJobConfig",
          "test/fake-model/question_flow.json": "RuntimeFlowFile"}   # E2E·데모의 가짜 백엔드가 읽는 문항 흐름 파일(compose.fake-model.yaml 이 마운트): deploy 의 시험 설정
 
 
@@ -47,11 +48,7 @@ def make_validators(names):
             continue
         base, _, sub = n.partition("#")
         try:
-            if sub:
-                s = load_schema(base)
-                v = Draft202012Validator({"$ref": f"#/$defs/{sub}", "$defs": s["$defs"], "$schema": s.get("$schema")})
-            else:
-                v = validator(base)
+            v = validator(n)
         except Exception:
             continue   # 없는 스키마는 컴포넌트가 NO_SCHEMA 위반으로 센다(건너뛰지 않는다)
         out[n] = (lambda vv: lambda doc: [("/".join(map(str, e.absolute_path)), f"{e.validator} 위반") for e in sorted(vv.iter_errors(doc), key=lambda e: list(map(str, e.absolute_path)))])(v)
@@ -88,6 +85,29 @@ def _job_services():
     return set(JOB_NAMES)
 
 
+def job_config_documents(services: dict) -> list:
+    """Validate the actual mounted input, using the schema named by its owner."""
+    docs = []
+    for service, spec in sorted(services.items()):
+        config = (spec.get("x-openit-job-input") or {}).get("config")
+        if config is None:
+            continue
+        mounts = [v for v in spec.get("volumes", []) if isinstance(v, dict)
+                  and v.get("type") == "bind" and v.get("target") == config["container_path"] and v.get("read_only") is True]
+        if len(mounts) != 1:
+            raise ValueError(f"{service}: declared config must have one read-only bind mount")
+        path = pathlib.Path(mounts[0]["source"])
+        if not path.is_absolute():
+            path = ROOT / path
+        try:
+            text = path.read_text(encoding="utf-8")
+            value = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
+        except (OSError, ValueError, yaml.YAMLError):
+            raise ValueError(f"{service}: declared config is missing, unreadable or invalid") from None
+        docs.append({"label": service + ".config", "schema": config["schema"], "document": value})
+    return docs
+
+
 def build_documents(compose: dict, secrets_dir=None) -> list:
     docs = []
     services = compose.get("services") or {}
@@ -108,6 +128,7 @@ def build_documents(compose: dict, secrets_dir=None) -> list:
         docs.append({"label": svc, "schema": IMAGE_ENV[m.group(1)], "document": env})
     for rel, schema in FILES.items():
         docs.append({"label": rel, "schema": schema, "document": (json.loads if rel.endswith(".json") else yaml.safe_load)((ROOT / rel).read_text(encoding="utf-8"))})
+    docs += job_config_documents(services)
     docs += device_config_documents(secrets_dir if secrets_dir is not None else os.environ.get("SECRETS_DIR") or ROOT / "secrets")
     return docs
 
@@ -116,7 +137,11 @@ def main(argv, stdin=None) -> int:
     ap = argparse.ArgumentParser(); ap.add_argument("--compose-json", default="-")
     a = ap.parse_args(argv)
     raw = (stdin or sys.stdin).read() if a.compose_json == "-" else pathlib.Path(a.compose_json).read_text(encoding="utf-8")
-    docs = build_documents(json.loads(raw))
+    try:
+        docs = build_documents(json.loads(raw))
+    except ValueError as error:
+        print("FAIL " + str(error), file=sys.stderr)
+        return 1
     r = call(config_contract_check, "ConfigContractCheckRequest", "ConfigContractCheckResult", {"documents": docs}, validators=make_validators({d["schema"] for d in docs}))
     for v in r["violations"]:
         print(f"FAIL {v['label']} ({v['schema']}) {v['where']}: {v['message']}", file=sys.stderr)

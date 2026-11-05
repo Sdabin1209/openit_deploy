@@ -114,3 +114,5 @@ run-self-checks 집계 (77=SKIP 은 PASS 가 아니고 묶음을 0 으로 끝내
 컴포즈 파일에 중복 키가 없다(PyYAML 은 조용히 덮어쓰고 docker compose 는 거부한다, 변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_compose_no_duplicate_keys.py"
 시험 종료 코드 77 = SKIP: unittest 메서드 안 sys.exit(77) 금지(FAIL 로 센다), unittest_skip_rc 의 0·1·77 대응 (변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_skip_rc_usage.py"
 산출물 순서 대조: e2e.sh 가 읽는 잠금·비밀·$W 파일은 그 단계보다 앞에서 만들어진다 (실행 없이, 변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_e2e_sh_order.py"
+
+잡 실행기는 이미지가 선언한 argv 외의 명령 덮어쓰기를 거부한다 :: "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_run_job_command.py"

@@ -370,7 +370,7 @@ def form_for(set_id, text):
 def _c1_upload(set_id, text, fname):
     """저자 경로(게이트웨이, 저자 계정)로 자료 등록 -> 미리보기 -> 확인, 임상 검수자 계정이 임상 근거를 승인한다(4-eyes). (문항 세트 참조, 원본 바이트)."""
     raw = form_for(set_id, text).encode()
-    c, d, _ = _c1_gw("POST", f"/v1/materials?question_set_id={set_id}&filename={fname}", account=_C1_AUTHOR, data=raw, headers={"Content-Type": "text/plain"}); assert c in (200, 201), f"자료 등록 {c} {d}"
+    c, d, _ = _c1_gw("POST", f"/v1/materials?question_set_id={set_id}&filename={fname}", account=_C1_AUTHOR, data=raw, headers={"Content-Type": "application/octet-stream"}); assert c == 200, f"자료 등록 {c} {d}"
     c, pv, _ = _c1_gw("GET", f"/v1/drafts/{d['draft_id']}/preview", account=_C1_AUTHOR); assert c == 200 and pv["ready_to_confirm"], pv
     c, ref, _ = _c1_gw("POST", f"/v1/drafts/{d['draft_id']}/confirm", account=_C1_AUTHOR, body={"preview_hash": pv["preview_hash"]}); assert c == 200, ref
     # 1인 운영(QA_REQUIRE_TWO_PERSON=false, 사용자 결정 L13, 서비스 기본): 저자의 확정(confirm_finalize)이 clinical_basis_approved=true 를 함께 남긴다. 별도 임상 검수 호출은 없다

@@ -33,6 +33,16 @@ class T(unittest.TestCase):
         self.assertEqual(r["job-question-authoring-purge"]["x-openit-timeout-seconds"], 3600)   # R9.3 기본
         self.assertNotIn("gateway", r)
 
+    def test_collector_config_is_mounted_at_the_declared_path(self):
+        import copy
+        declarations = copy.deepcopy(DECL)
+        declarations["img/g"]["jobs"][1]["config"] = {"container_path": "/owned/collect.json", "schema": "GateJobConfig"}
+        def source(image):
+            return {"io.openit.jobs": json.dumps(declarations[image])} if image in declarations else {}
+        result = G.build(COMPOSE, source, validator)["services"]["job-release-gate-collect"]
+        self.assertEqual(result["volumes"], [{"type": "bind", "source": G.CONFIG_SOURCES["job-release-gate-collect"],
+                          "target": "/owned/collect.json", "read_only": True}])
+
     def test_missing_label_or_name_is_refused(self):
         with self.assertRaises(SystemExit) as e:
             G.build(COMPOSE, lambda i: {}, validator)

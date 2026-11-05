@@ -86,5 +86,32 @@ class Gate(unittest.TestCase):
             self.assertNotIn("SECRET-TOKEN-VALUE", json.dumps(bad))
 
 
+
+
+class DeclaredJobConfig(unittest.TestCase):
+    def test_actual_mounted_config_uses_owner_declared_schema(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / "actual.json"
+            source.write_text('{"data_dir":"/data"}')
+            services = {"job-example": {"x-openit-job-input": {"config": {"container_path": "/owner/input.json", "schema": "GateJobConfig"}},
+                        "volumes": [{"type": "bind", "source": str(source), "target": "/owner/input.json", "read_only": True}]}}
+            documents = G.job_config_documents(services)
+            self.assertEqual(documents[0]["schema"], "GateJobConfig")
+            self.assertEqual(documents[0]["document"], {"data_dir": "/data"})
+            source.write_text('{"unknown":"SENSITIVE_SENTINEL"}')
+            issues = G.make_validators({"GateJobConfig"})["GateJobConfig"](G.job_config_documents(services)[0]["document"])
+            self.assertTrue(issues)
+            self.assertNotIn("SENSITIVE_SENTINEL", repr(issues))
+            source.unlink()
+            with self.assertRaisesRegex(ValueError, "missing, unreadable or invalid"):
+                G.job_config_documents(services)
+
+    def test_missing_or_writable_config_mount_is_rejected(self):
+        services = {"job-example": {"x-openit-job-input": {"config": {"container_path": "/owner/input.json", "schema": "GateJobConfig"}}, "volumes": []}}
+        with self.assertRaisesRegex(ValueError, "read-only bind mount"):
+            G.job_config_documents(services)
+
+
 if __name__ == "__main__":
     unittest.main()

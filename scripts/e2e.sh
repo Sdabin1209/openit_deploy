@@ -438,7 +438,7 @@ chk "도달: question-authoring -> ops-feedback (authoring, 개선 신호가 I7�
 chk "차단: ops-feedback -> model-registry" blocked ops-feedback model-registry
 noegress() { [ "$(probe_http release-gate http://1.1.1.1 "$TCP_T")" = unreachable ]; }
 chk "내부 네트워크 밖으로 나가지 못함(release-gate -> 외부 인터넷)" noegress
-chk "보존 정리 잡이 Compose 에서 실행된다: release-gate prune --dry-run(멱등, release-gate CR-0008)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-release-gate-prune python -m release_gate prune --dry-run
+chk "보존 정리 잡이 이미지 선언의 argv로 실행된다: release-gate prune(멱등)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-release-gate-prune
 chk "보존 정리 잡이 Compose 에서 실행된다: survey purge(SURVEY_SESSION_RETENTION_DAYS=90, 지운 개수 JSON)" bash -c "set -o pipefail; bash $DEPLOY_ROOT/scripts/run-job.sh job-survey-purge | tail -1 | python3 -c 'import json,sys;json.loads(sys.stdin.read());print(\"purge 출력이 JSON 한 줄\")'"
 chk "보존 정리 잡이 Compose 에서 실행된다: question-authoring purge(멱등; 출력 한 줄은 지운 개수 요약)" bash -c "set -o pipefail; bash $DEPLOY_ROOT/scripts/run-job.sh job-question-authoring-purge | tail -1 | grep -q ."
 chk "컨테이너 격리 실제 확인(check-containers: 비루트·읽기 전용·cap_drop ALL·no-new-privileges·자원 한도·로그 회전)" bash "$DEPLOY_ROOT/scripts/check-containers.sh" "$PROJECT"
@@ -480,7 +480,7 @@ if [ "$FAST" = 0 ]; then   # --fast 에서는 아래 세 구간(스케줄러, �
 has_s9() { case ",$SECTIONS," in *",$1,"*) return 0;; esac; return 1; }
 if has_s9 jobs; then
 sect "단계 9: 주기 잡 (D39, systemd timer)"
-chk "잡 엔트리포인트가 Compose 안에서 이미지·볼륨·네트워크로 실행된다(ops_feedback.job --help)" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-ops-feedback python -m ops_feedback.job --help
+chk "ops-feedback 잡이 이미지 선언·설정·볼륨·네트워크로 실제 실행된다" bash "$DEPLOY_ROOT/scripts/run-job.sh" job-ops-feedback
 chk_dep "단계 4" "수집기 잡 엔트리포인트(release_gate collect, 단계 4에서 실제 실행됨)" bash -c "grep -a -q 'job-release-gate-collect\|수집기 run-once' $W/steps.log"
 chk "잡 설정이 없으면 run-job 은 거부(종료 코드 2)" bash -c "OPS_JOB_CONFIG=/nonexistent/job.yaml bash $DEPLOY_ROOT/scripts/run-job.sh job-ops-feedback; [ \$? = 2 ]"
 # 주기 실행은 systemd timer 의 몫이다(ADR 0036). 유닛 파일은 정적 시험으로 확인하고(주기·oneshot·스크립트·systemd-analyze verify), 실제 잡 실행은 위 run-job.sh 호출이 Compose 안에서 확인한다
