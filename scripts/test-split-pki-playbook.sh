@@ -63,6 +63,7 @@ for v in svc["release-gate-gw"]["volumes"]:
 rg["entrypoint"] = ["python", "-c", "import http.server as h\nclass H(h.BaseHTTPRequestHandler):\n    def do_GET(s):\n        s.send_response(200); s.end_headers(); s.wfile.write(b'ok')\n    def log_message(s, *a): pass\nh.ThreadingHTTPServer(('127.0.0.1', 8080), H).serve_forever()"]
 rg.pop("command", None)
 rg["secrets"] = ["db-gate-dsn"]
+rg["healthcheck"] = {"test": ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/',timeout=8)"], "interval": "3s", "timeout": "9s", "retries": 10}   # 대역 앱은 영역 이미지가 아니라 UTIL 이미지라 이미지 HEALTHCHECK 가 없다: 시험 픽스처가 자기 healthcheck 를 정의한다(제품 compose 는 healthcheck 를 덮어쓰지 않는다)
 for n, s in svc.items():
     d = s.get("depends_on")
     if isinstance(d, dict):
@@ -150,7 +151,7 @@ else echo "SKIP: 호스트의 443 이 사용 중이라 게시 포트 443 단언�
 XC="import urllib.request;print(urllib.request.urlopen('https://release-gate:$XPORT/',timeout=8).read().decode())"
 [ "$(docker run --rm --add-host release-gate:$XADDR -e SSL_CERT_FILE=/x/root_ca.crt -v "$EXP:/x:ro" "$UTIL" python -c "$XC" 2>&1)" = ok ] && ok "(R1.5) compose 밖 호출자가 내보낸 루트 + hosts 표만으로 https 검증을 통과해 앱 응답을 받는다" || bad "R1.5: 내보낸 파일만으로 호출 실패"
 docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/null 2>&1 && bad "R1.5: 루트 없이 호출이 통과했다" || ok "(R1.5) 루트 없이는 검증 실패(변이 확인)"
-O=$(docker run --rm --network none -v ${D}_release-gate-db-pgtls:/p:ro "$UTIL" stat -c %u /p/tls.key); [ "$O" = 999 ] || bad "release-gate-db-pgtls 의 tls.key 소유자 $O"; ok "(3) release-gate-db-cert 의 pg-tls 소유자 999"
+O=$(docker run --rm --network none -v ${D}_release-gate-db-pgtls:/p:ro "$UTIL" stat -c %a:%g /p/tls.key); [ "$O" = 640:10100 ] || bad "release-gate-db-pgtls 의 tls.key 모드:그룹 $O (기대 640:10100, 계약 StepCaEnv.STEP_CERT_GID)"; ok "(3) release-gate-db-cert 의 키는 0640, 그룹 10100(읽는 쪽 DB 는 보조 그룹으로 읽는다)"   # 3.4.17: 인증서 소유자는 이미지가 정하고 deploy 는 uid 를 모른다
 DSN="$T/r/app/secrets/db-urls/release-gate-db/gate/GATE_DATABASE_URL_FILE"; grep -q "@release-gate-db:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
 ok "(3) app 서버 DSN = release-gate-db:$PGP, sslmode=verify-full"
 R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 release-gate-db 에 verify-full 접속 실패"; }

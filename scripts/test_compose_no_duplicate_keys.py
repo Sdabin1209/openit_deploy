@@ -27,6 +27,16 @@ class T(unittest.TestCase):
         for f in sorted(ROOT.glob("compose*.yaml")) + sorted((ROOT / "test").glob("compose*.yaml")) + sorted((ROOT / "demo").glob("*.yaml")):
             self.assertEqual(dups(f.read_text(encoding="utf-8")), [], f.name)
 
+    def test_no_empty_service_keys(self):
+        """값이 빈 서비스 키(depends_on: 만 남음 등)는 docker compose 가 거부한다(perms 서비스 삭제 뒤 실제로 났다). !reset 로 일부러 비운 키는 예외다."""
+        class L(yaml.SafeLoader): pass
+        for t in ("!reset", "!override"): L.add_multi_constructor(t, lambda l, s, n: "RESET")
+        bad = []
+        for f in sorted(ROOT.glob("compose*.yaml")) + sorted((ROOT / "test").glob("compose*.yaml")) + sorted((ROOT / "demo").glob("*.yaml")):
+            for n, sv in (yaml.load(f.read_text(encoding="utf-8"), Loader=L).get("services") or {}).items():
+                bad += [f"{f.name}:{n}.{k}" for k, v in sv.items() if v is None]
+        self.assertEqual(bad, [])
+
     def test_mutation_duplicate_is_caught(self):
         self.assertEqual(dups("services:\n  a:\n    environment: {X: 1}\n    environment: {Y: 2}\n"), [("environment", 4)])
 

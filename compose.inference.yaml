@@ -120,7 +120,6 @@ services:
     configs:
       - {source: pki-root, target: /etc/openit/pki/root_ca.crt}
     volumes: ["certs:/certs"]
-    depends_on:
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
   model-serving-gw:   # model-serving 의 영역 게이트웨이(platform area-gateway 이미지): 들어오는 쪽 TLS 종단(서비스 이름 인증서) + 나가는 쪽 loopback CONNECT 출구(허용 목록은 영역 Exposure.egress)
     group_add: ["${SECRETS_GID:?SECRETS_GID(토큰 파일의 그룹 gid)가 필요하다}", "${STEP_CERT_GID:-10100}"]   # L02(ADR 0054) + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
