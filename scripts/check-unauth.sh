@@ -5,7 +5,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 PROJECT=${1:?사용: check-unauth.sh <프로젝트> <https://이름:포트> <루트 인증서 파일>}; URL=${2:?}; CA=${3:?}
-set -a; . "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; set +a
+UTIL_IMAGE=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")   # 제3자 이미지 고정은 리포 잠금 한 곳(임시 잠금은 영역 digest 를 더한 사본)
 detect_docker
 exec "$DOCKER" run --rm --network "${PROJECT}_edge" -v "${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/exposures:/exposures:ro" -v "$CA:/ca.crt:ro" -v "$DEPLOY_ROOT/scripts/check_unauth.py:/check_unauth.py:ro" \
   "${UTIL_IMAGE:?locks/images.lock}" python /check_unauth.py "$URL" --exposures /exposures --cacert /ca.crt

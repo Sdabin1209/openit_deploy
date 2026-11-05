@@ -11,7 +11,7 @@ git_mirror_env || die "로컬 미러 git 설정을 만들지 못했다 (scripts/
 rev=$(git -C "$DEPLOY_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 TAG="deploy-build/deploy-tool:${rev}-bc${DEPLOY_BC_TAG#v}-link${DEPLOY_LINK_TAG#v}"
 if "$DOCKER" image inspect "$TAG" >/dev/null 2>&1; then echo "$TAG"; exit 0; fi
-UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"); [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금에 없다"
+UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")   # 제3자 이미지 고정은 리포의 locks/images.lock 한 곳(e2e.sh UTIL_REF 와 같은 출처). 임시 잠금(DEPLOY_LOCK)은 영역 이미지 digest 를 더한 사본이라 이 시점에 없을 수 있다; [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금에 없다"
 CTX="$DEPLOY_ROOT/build/tool-image"; rm -rf "$CTX"; mkdir -p "$CTX/wheels"
 bcw=$(ls "$DEPLOY_ROOT/build/hostwheels/$DEPLOY_BC_TAG"/boundary_contracts-*.whl 2>/dev/null | head -1) || true
 [ -n "${bcw:-}" ] || die "계약 $DEPLOY_BC_TAG 의 호스트 wheel 이 없다: bash scripts/build-images.sh 가 만든다(또는 prepare-host.sh wheels 의 전제)"

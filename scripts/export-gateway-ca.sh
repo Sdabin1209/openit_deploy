@@ -21,7 +21,7 @@ DEPLOY_NO_DOCKER=1; source "$(dirname "$0")/lib.sh"; detect_docker
 C="$PROJECT-gateway-1"
 "$DOCKER" inspect "$C" >/dev/null 2>&1 || die "컨테이너 $C 가 없다. 프로젝트 이름을 확인하라(--project). 목록: $DOCKER ps --filter name=gateway"
 [ -d "$(dirname "$OUT")" ] || die "출력 폴더가 없다: $(dirname "$OUT")"
-UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"); [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금에 없다"
+UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); [ -n "$UTIL" ] || die "UTIL_IMAGE 가 잠금에 없다"
 VOL="${PROJECT}_gateway-root"; "$DOCKER" volume inspect "$VOL" >/dev/null 2>&1 || die "출력 마운트 볼륨 $VOL 이 없다(공개 입구 서비스가 이 볼륨을 INGRESS_ROOT_EXPORT_DIR 에 연결해 떠 있어야 한다)"
 TMP=$(mktemp "$OUT.XXXXXX") || die "출력 파일을 만들 수 없다: $OUT"
 trap 'rm -f "$TMP"' EXIT

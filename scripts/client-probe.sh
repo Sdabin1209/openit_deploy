@@ -6,7 +6,7 @@ set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 SRC=${1:?사용: client-probe.sh <출발 컨테이너> <루트 인증서 파일> <탐침 인자...>}; CA=${2:?}; shift 2
 detect_docker
-UTIL=${UTIL_IMAGE:-$(sed -n 's/^UTIL_IMAGE=//p' "${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}")}
+UTIL=${UTIL_IMAGE:-$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")}
 insp=$("$DOCKER" inspect "$SRC" --format '{{.HostConfig.NetworkMode}} {{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null | tr -d '\r') || { echo "출발 컨테이너가 없다: $SRC" >&2; exit 3; }
 [ -n "$insp" ] || { echo "출발 컨테이너가 없다: $SRC" >&2; exit 3; }
 mode=${insp%% *}; nets=${insp#* }
