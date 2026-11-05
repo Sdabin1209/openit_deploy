@@ -1,0 +1,9 @@
+{
+  "action": "NEXT",
+  "known": "최근 일주일 2일",
+  "next": {
+    "type": "END"
+  },
+  "topic": "최근 1주일 동안 근력 운동을 한 날 수",
+  "user_utterance": "근력 운동하는 날은 이틀이야"
+}

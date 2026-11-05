@@ -1,0 +1,13 @@
+{
+  "action": "NEXT",
+  "next_item": "END",
+  "values": [
+    {
+      "key": "Q10.days",
+      "precision": "exact",
+      "save": true,
+      "status": "ANSWERED",
+      "value": 2
+    }
+  ]
+}

@@ -14,7 +14,7 @@ from openit_deploy.components import link_serving_info, link_serving_probe, serv
 from openit_deploy.wiring.call import call
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXAMPLES = ROOT.parent / "boundary-contracts" / "examples"
+EXAMPLES = ROOT / "scripts" / "fixtures"   # 기본 입력은 deploy 가 갖는다(배치된 서버에는 이웃 리포가 없다). 계약을 따르는지는 scripts/test_fixtures_follow_contract.py 가 검증한다
 EXAMPLE = EXAMPLES / "ExtractRequest.with-fields.json"
 DEFAULT_UTTERANCES = [
     "십 년 전에 고혈압 진단을 받았어요.", "아니요 없어요.", "네 있어요.", "잘 모르겠어요.", "약은 안 먹어요.",
@@ -36,7 +36,7 @@ def build_inputs(path, repeat: int) -> list:
 def respond_inputs(repeat: int) -> list:
     files = sorted(EXAMPLES.glob("ResponseRequest*.json"))
     items = [json.loads(f.read_text(encoding="utf-8")) for f in files]
-    if not items: raise SystemExit("boundary-contracts/examples 에 ResponseRequest 예제가 없다")
+    if not items: raise SystemExit("scripts/fixtures 에 ResponseRequest 예제가 없다")
     return [dict(x) for _ in range(repeat) for x in items]
 
 
@@ -64,7 +64,7 @@ def main(argv=None) -> int:
     ap.add_argument("--repeat", type=int, default=3, help="입력 묶음을 몇 번 반복할지(기본 3)")
     ap.add_argument("--concurrency", type=int, default=1, help="첫 호출은 혼자 보내고, 나머지를 이 수만큼 동시에 보낸다")
     ap.add_argument("--timeout", type=float, default=120)
-    ap.add_argument("--endpoints", default="extract,respond", help="측정할 엔드포인트(쉼표): extract, respond. 기본 둘 다. respond 입력은 boundary-contracts 의 ResponseRequest 예제")
+    ap.add_argument("--endpoints", default="extract,respond", help="측정할 엔드포인트(쉼표): extract, respond. 기본 둘 다. respond 입력은 scripts/fixtures 의 ResponseRequest 예제")
     a = ap.parse_args(argv)
     if bool(a.demo) == bool(a.url): print("--demo 또는 --url 중 하나를 준다", file=sys.stderr); return 2
     if a.repeat < 1 or a.concurrency < 1: print("--repeat, --concurrency 는 1 이상", file=sys.stderr); return 2

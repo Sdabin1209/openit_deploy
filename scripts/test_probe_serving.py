@@ -20,7 +20,7 @@ def classify(status, headers, body):
     return rec
 
 
-EX = pathlib.Path(__file__).resolve().parents[2] / "boundary-contracts" / "examples"
+EX = pathlib.Path(__file__).resolve().parent / "fixtures"   # 시험 자료는 deploy 가 갖는다(계약 예시에서 가져옴, 이웃 리포 위치에 기대지 않는다)
 INFO = {**json.loads((EX / "RuntimeInfo.loaded.json").read_text(encoding="utf-8")), "loaded": ["rel-x"]}   # 계약 예시(클라이언트가 RuntimeInfo 로 검증한다)
 EXTRACT_OK = json.loads((EX / "ActionExtraction.next.json").read_text(encoding="utf-8"))
 INV = lambda v: {"pipeline_schema_version": "3.0", "code": "UNAVAILABLE", "message": "x", "retryable": True, "details": {"reason": "OUTPUT_INVALID", "attempts": 3, "violations": v}}

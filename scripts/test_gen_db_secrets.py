@@ -11,10 +11,9 @@ from openit_deploy.components import db_secrets  # noqa: E402
 from openit_deploy.wiring import cli_gen_db_secrets as G  # noqa: E402
 
 def example() -> dict:
-    import boundary_contracts, glob
-    cands = [pathlib.Path(p) for p in glob.glob(str(pathlib.Path(boundary_contracts.__file__).parent / "**" / "DatabaseDeclaration.json"), recursive=True)]
-    cands.append(ROOT.parent.parent.parent / "boundary-contracts" / "examples" / "DatabaseDeclaration.json")
-    return json.loads(next(p for p in cands if p.is_file()).read_text(encoding="utf-8"))
+    # 시험 자료는 deploy 가 갖는다(scripts/fixtures, 계약 예시에서 가져옴). 이웃 리포 폴더 위치에 기대지 않는다(구조 규칙 1). 계약을 따르는지는 아래 첫 시험이 검증한다
+    return json.loads((ROOT / "scripts" / "fixtures" / "DatabaseDeclaration.json").read_text(encoding="utf-8"))
+
 
 class T(unittest.TestCase):
     def test_example_is_valid_declaration(self):

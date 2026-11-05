@@ -1,0 +1,60 @@
+{
+  "input": {
+    "current_question": "다음으로, 최근 1주일 중에 근력 운동을 하신 날이 며칠인가요?",
+    "question_id": "Q10",
+    "state": {
+      "Q9_1.days": {
+        "value": 5,
+        "status": "ANSWERED"
+      }
+    },
+    "user_utterance": "근력 운동하는 날은 이틀이야"
+  },
+  "flow": {
+    "order": [
+      "Q10",
+      "Q1.D01",
+      "Q1.D02",
+      "Q4",
+      "Q4_1",
+      "Q5"
+    ],
+    "skips": [
+      {
+        "slot": "Q4.answer",
+        "op": "==",
+        "value": false,
+        "skip_item": "Q4_1"
+      }
+    ]
+  },
+  "fields": {
+    "fields": [
+      {
+        "slot": "Q10.days",
+        "data_type": "integer",
+        "unit": "day/week",
+        "minimum": 0,
+        "maximum": 7
+      },
+      {
+        "slot": "Q4.answer",
+        "data_type": "boolean"
+      },
+      {
+        "slot": "Q4_1.daily_count",
+        "data_type": "number",
+        "unit": "개비",
+        "minimum": 0
+      },
+      {
+        "slot": "Q4_1.status",
+        "data_type": "option",
+        "options": [
+          "current",
+          "past"
+        ]
+      }
+    ]
+  }
+}

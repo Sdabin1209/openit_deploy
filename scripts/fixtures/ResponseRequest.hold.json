@@ -1,0 +1,13 @@
+{
+  "action": "HOLD",
+  "hold": "고혈압",
+  "known": "",
+  "next": {
+    "question_id": "Q1.D04",
+    "text": "당뇨병으로 진단받은 적이 있으신가요, 아니면 약을 복용하고 계신가요?",
+    "type": "NEXT"
+  },
+  "reason": "UNCERTAIN",
+  "topic": "고혈압 진단을 받았는지와 지금 약을 먹는지",
+  "user_utterance": "음... 기억이 잘 안 나요. 고혈압 진단받았는지, 약 먹었는지도 잘 모르겠어요."
+}

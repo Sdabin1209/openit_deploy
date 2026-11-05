@@ -1,0 +1,23 @@
+{
+ "engine": "postgresql",
+ "major": 16,
+ "port": 5432,
+ "accounts": [
+  {
+   "name": "ops_log",
+   "database": "ops_log",
+   "privilege": "owner",
+   "url_env": [
+    "OPS_LOG_DATABASE_URL_FILE"
+   ]
+  },
+  {
+   "name": "ops_log_app",
+   "database": "ops_log",
+   "privilege": "dml",
+   "url_env": [
+    "OPS_LOG_APP_DATABASE_URL_FILE"
+   ]
+  }
+ ]
+}

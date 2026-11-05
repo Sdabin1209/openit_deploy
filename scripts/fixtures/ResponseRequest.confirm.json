@@ -1,0 +1,15 @@
+{
+  "action": "CONFIRM",
+  "ask": "이번에 말한 값(current)이 맞는지, 아까 말한 값(previous)이 맞는지",
+  "current": "지금 약 먹음",
+  "known": "",
+  "next": {
+    "question_id": "Q1.D01",
+    "text": "뇌졸중은 어떠세요? 진단을 받으셨거나 약을 복용 중이신가요?",
+    "type": "SAME"
+  },
+  "previous": "지금 약 안 먹음",
+  "reason": "CONFLICT_WITH_PREVIOUS",
+  "topic": "뇌졸중(중풍) 진단을 받았는지와 지금 약을 먹는지",
+  "user_utterance": "그 약은 지금 먹어요."
+}
