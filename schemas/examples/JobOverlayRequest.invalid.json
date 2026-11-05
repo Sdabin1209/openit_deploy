@@ -1,1 +1,1 @@
-{"jobs": [{"compose_service": "survey-purge", "declared": {"name": "p", "argv": ["x"]}}]}
+{"jobs": [{"compose_service": "Job-Survey-Purge", "declared": {"name": "p", "argv": ["x"]}}]}

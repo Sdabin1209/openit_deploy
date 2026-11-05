@@ -21,8 +21,8 @@
     "properties": {
      "compose_service": {
       "type": "string",
-      "pattern": "^job-[a-z][a-z0-9-]*$",
-      "description": "deploy compose 의 잡 서비스 이름"
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "덧씌우기를 받는 compose 서비스(job-* 와 명령을 이미지 선언에서 받는 일회성 서비스)"
      },
      "declared": {
       "type": "object",

@@ -20,6 +20,11 @@ DECL = {"img/s": {"jobs": [{"name": "session-purge", "argv": ["python", "-m", "s
 def labels(img): return {"io.openit.jobs": json.dumps(DECL[img])} if img in DECL else {}
 
 
+def validator_of_internal():
+    from jsonschema import Draft202012Validator
+    return Draft202012Validator(json.loads((ROOT / "schemas/JobOverlayRequest.schema.json").read_text(encoding="utf-8")))
+
+
 class T(unittest.TestCase):
     def test_command_and_timeout_come_from_the_declaration(self):
         r = G.build(COMPOSE, labels, validator)["services"]
@@ -81,6 +86,22 @@ class T(unittest.TestCase):
         self.assertEqual(sorted(re.findall(r"^  (job-[a-z-]+):", s, re.M) + ["ops-feedback-migrate"]), sorted(G.JOB_NAMES))
         m = re.search(r"^  ops-feedback-migrate:.*?(?=^  [a-z]|\Z)", s, re.M | re.S).group(0)
         self.assertNotIn('"python", "-m"', m, "ops-feedback-migrate: 명령을 손으로 적었다(이미지 라벨의 잡 선언에서 와야 한다)")
+
+    def test_every_constant_fits_the_overlay_request_schema(self):   # 실행 없이: JOB_NAMES·TIMERS·CONFIG_SOURCES 의 값이 JobOverlayRequest 스키마를 통과한다(ops-feedback-migrate 가 pattern 에 걸린 재발 방지)
+        v = validator_of_internal()
+        names = sorted(set(G.JOB_NAMES) | set(G.TIMERS) | set(G.CONFIG_SOURCES))
+        req = {"jobs": [{"compose_service": n, "declared": {"name": G.JOB_NAMES.get(n, "x"), "argv": ["x"]}, "base_period_seconds": 60,
+                         **({"config_source": G.CONFIG_SOURCES[n]} if n in G.CONFIG_SOURCES else {})} for n in names]}
+        self.assertEqual([e.message for e in v.iter_errors(req)], [])
+        self.assertTrue(all(isinstance(k, str) and isinstance(x, str) and x for d in (G.TIMERS, G.CONFIG_SOURCES) for k, x in d.items()))
+
+    def test_mutation_old_pattern_is_caught(self):
+        import copy
+        sch = copy.deepcopy(json.loads((ROOT / "schemas/JobOverlayRequest.schema.json").read_text(encoding="utf-8")))
+        sch["properties"]["jobs"]["items"]["properties"]["compose_service"]["pattern"] = "^job-[a-z][a-z0-9-]*$"
+        from jsonschema import Draft202012Validator
+        req = {"jobs": [{"compose_service": "ops-feedback-migrate", "declared": {"name": "x", "argv": ["x"]}}]}
+        self.assertTrue(list(Draft202012Validator(sch).iter_errors(req)))
 
     def test_overlay_is_per_project(self):   # 다른 프로젝트(분리 배치 시험의 작은 compose)가 남의 잡 덧씌우기에 걸려 거부당하지 않게 프로젝트마다 따로 둔다(묶음에서만 나던 실패의 원인)
         import subprocess
