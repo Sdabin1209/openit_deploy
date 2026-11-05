@@ -95,7 +95,7 @@ chk() { local name=$1; local root; if root=$(blocked_by); then ROOTF["$name"]=$r
 # 준비 단계(chk 로 세지 않는 명령)의 실패는 조용히 지나가지 않고 그 자리에서 멈춘다: 예전에는 venv·wheel·비밀 생성·지문 생성의 실패가 버려져 복구 검증이 헛통과할 수 있었다(정적 점검 A8, 2026-11-05)
 must() { "$@" || { echo "준비 단계 실패(종료 코드 $?): $*" >&2; exit 1; }; }
 # 대기 상한(초). 아래 값은 모두 측정하지 않은 시작값이다(D125: 측정 최악 + 여유가 되려면 이 호스트에서 재야 한다. 값을 지어내지 않고 측정 안 함으로 적는다). 한 곳에서만 바꾼다.
-E2E_UP_WAIT_S=120        # compose up --wait 한 번의 상한(제품·추론 서버·영역 DB 재기동). 측정 안 함
+E2E_UP_WAIT_S=340        # compose up --wait 한 번의 상한. 로그 기준(D125): 이전 E2E 진단 116건에서 시작부터 healthy 까지 최악 170초(state/e2e-diag-20261104-142243, ops-feedback-db; Health.Log 는 최근 5건만 남아 위쪽 추정이다) x 2 = 340 > 이전 120. 다른 상한은 로그에 측정 자료가 없어 지금 값을 둔다
 export UP_WAIT_TIMEOUT=$E2E_UP_WAIT_S   # up.sh 가 같은 상한을 쓴다(한 값, 한 곳)
 E2E_MON_POLL_S=120       # 감시 스택이 탐침 결과를 낼 때까지(60회 x 2초). 측정 안 함
 E2E_ROLLBACK_READY_S=80  # 롤백 뒤 survey-service /readyz(40회 x 2초). 측정 안 함
