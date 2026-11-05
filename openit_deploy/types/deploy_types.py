@@ -248,7 +248,7 @@ class Declared(TypedDict):
 
 
 class Job1(TypedDict):
-    compose_service: str
+    compose_service: Union[str, Literal['ops-feedback-migrate']]
     declared: Declared
     base_period_seconds: NotRequired[int]
     config_source: NotRequired[str]
