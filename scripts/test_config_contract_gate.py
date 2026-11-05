@@ -10,7 +10,8 @@ from openit_deploy.wiring import cli_check_config_contracts as G
 
 def rendered():
     env = dict(os.environ)
-    env.setdefault("GATEWAY_HOST_NAMES", '"localhost", "127.0.0.1"')   # lib.sh 가 GATEWAY_HOSTS 에서 만드는 값(L20). 자리표시 값 x 는 GatewayEnv 패턴 위반이다
+    env.setdefault("GATEWAY_HOST_NAMES", '"localhost", "127.0.0.1"')
+    env.setdefault("GATEWAY_PUBLIC_URL", "https://localhost:8443")   # lib.sh 가 GATEWAY_HOSTS 에서 만드는 공개 주소(IdentityEnv·IdentityProxyEnv 의 HttpsUrl 패턴). 자리표시 x 는 패턴 위반이다   # lib.sh 가 GATEWAY_HOSTS 에서 만드는 값(L20). 자리표시 값 x 는 GatewayEnv 패턴 위반이다
     for v in re.findall(r"\$\{([A-Za-z0-9_]+):\?", (ROOT / "compose.yaml").read_text(encoding="utf-8")): env.setdefault(v, "x")
     r = subprocess.run(["docker", "compose", "--project-directory", str(ROOT), "-f", str(ROOT / "compose.yaml"), "--profile", "jobs", "config", "--format", "json"], capture_output=True, text=True, env=env)
     assert r.returncode == 0, f"docker compose config 를 못 돌렸다(건너뛰지 않고 실패로 센다): {r.stderr[-200:]}"
@@ -27,6 +28,19 @@ def run(compose):
 
 
 class Gate(unittest.TestCase):
+    def test_every_openit_image_service_is_checked_against_an_env_contract(self):
+        # 우리 이미지(/openit/<이름>@)로 도는 서비스(잡 제외)는 모두 서비스 표(ENV_SERVICES) 또는 이미지 표(IMAGE_ENV)로 Env 계약 검사를 받는다.
+        # 손으로 적은 서비스 표가 platform 이미지·영역 DB 를 빼먹어 계약 Env 10개가 검사되지 않던 일(2026-11-06)이 다시 생기면 여기서 실패한다
+        c = rendered()   # docker compose config 결과(dict)
+        miss = []
+        for svc, spec in sorted(c["services"].items()):
+            m = re.search(r"/openit/([a-z0-9-]+)@", str(spec.get("image", "")))
+            if not m or svc.startswith("job-") or svc in G.ENV_SERVICES or svc in G._job_services():
+                continue
+            if m.group(1) not in G.IMAGE_ENV:
+                miss.append(f"{svc}({m.group(1)})")
+        self.assertEqual(miss, [], "Env 계약 검사 대상이 아닌 서비스")
+
     def test_real_production_environment_passes(self):
         rc, out, err = run(rendered())
         self.assertEqual(rc, 0, err + out)

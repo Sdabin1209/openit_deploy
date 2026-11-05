@@ -3,6 +3,7 @@
 GateJobConfig·GatePolicy 는 deploy 가 만들지 않는다(release-gate 잡은 환경 변수로 설정되고 정책 파일은 O11 확정 전이라 없다): 만드는 코드가 생기면 여기에 문서를 더한다. 종료 코드: 0 통과, 1 위반(위치만 출력, 값은 출력하지 않는다)."""
 import argparse
 import json
+import re
 import os
 import pathlib
 import sys
@@ -68,13 +69,43 @@ def device_config_documents(secrets_dir) -> list:
     return out
 
 
+# 이미지 -> 그 이미지 컨테이너의 계약 Env 스키마(2026-11-05). ENV_SERVICES 에 없는 서비스·잡은 이미지로 정한다:
+# 같은 이미지로 도는 잡도 그 이미지의 Env 계약을 지켜야 한다(12-Factor XII). 손으로 적은 서비스 목록이 platform 이미지와 영역 DB 를 빼먹어
+# identity 사용자 등록 잡에 필수 IDENTITY_PUBLIC_URL 이 없는 것을 기동 전에 잡지 못했다(E2E 기동 실패).
+IMAGE_ENV = {
+    "admin-console": "AdminConsoleEnv", "area-gateway": "AreaGatewayEnv", "backup-store": "BackupStoreEnv",
+    "identity": "IdentityEnv", "identity-proxy": "IdentityProxyEnv", "monitoring": "MonitoringEnv",
+    "public-ingress": "PublicIngressEnv", "step-ca": "StepCaEnv",
+    "survey-db": "AreaDatabaseEnv", "question-authoring-db": "AreaDatabaseEnv", "ops-feedback-db": "AreaDatabaseEnv",
+    "release-gate-db": "AreaDatabaseEnv", "identity-db": "AreaDatabaseEnv",
+}
+_IMAGE_RE = re.compile(r"/openit/([a-z0-9-]+)@")
+
+
+def _job_services():
+    """잡 선언(io.openit.jobs)으로 명령을 받는 compose 서비스(job-* 와 일회성 선행 서비스): 잡 덧씌우기의 정본 표(cli_gen_jobs.JOB_NAMES)"""
+    from openit_deploy.wiring.cli_gen_jobs import JOB_NAMES
+    return set(JOB_NAMES)
+
+
 def build_documents(compose: dict, secrets_dir=None) -> list:
     docs = []
+    services = compose.get("services") or {}
     for svc, (schema, wrap) in ENV_SERVICES.items():
-        spec = (compose.get("services") or {}).get(svc)
+        spec = services.get(svc)
         if spec is None: continue   # 이 구성(예: 외부 추론 서버만)에 없는 서비스
         env = {k: ("" if v is None else str(v)) for k, v in (spec.get("environment") or {}).items()}
         docs.append({"label": svc, "schema": schema, "document": wrap(env)})
+    for svc, spec in sorted(services.items()):
+        # 잡(job-*)은 이미지의 서버 Env 가 아니라 잡 선언 argv 를 그대로 실행한다(진입점이 절대 경로 명령을 그대로 실행, platform 2026-11-06).
+        # 잡의 입력은 잡 선언(secret_files·config)이 정한다. 서버 Env 를 잡에 요구하지 않는다
+        if svc in ENV_SERVICES or svc.startswith("job-") or svc in _job_services():
+            continue
+        m = _IMAGE_RE.search(str((spec or {}).get("image", "")))
+        if not m or m.group(1) not in IMAGE_ENV:
+            continue
+        env = {k: ("" if v is None else str(v)) for k, v in ((spec or {}).get("environment") or {}).items()}
+        docs.append({"label": svc, "schema": IMAGE_ENV[m.group(1)], "document": env})
     for rel, schema in FILES.items():
         docs.append({"label": rel, "schema": schema, "document": (json.loads if rel.endswith(".json") else yaml.safe_load)((ROOT / rel).read_text(encoding="utf-8"))})
     docs += device_config_documents(secrets_dir if secrets_dir is not None else os.environ.get("SECRETS_DIR") or ROOT / "secrets")
