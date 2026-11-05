@@ -294,7 +294,7 @@ export INFERENCE_TOKEN_FILE="$W/inference-token"
 # 운영 모드 overlay(compose.external-inference.yaml)를 이 스크립트의 환경에 둔다: 이후 모든 dc/up.sh/rollback.sh 호출이 같은 제품 구성을 본다(INFERENCE_URL, COMPOSE_EXTRA 를 내보낸다)
 external_inference_setup "https://host.docker.internal:1"   # 자리표시: 추론 서버가 뜬 뒤 실제 주소로 바꾼다
 chk "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" bash "$DEPLOY_ROOT/scripts/up.sh" "$PROJECT"
-chk "시험 사용자를 Keycloak(realm openit)에 만든다 (운영 입구 kcadm, 사람 계정은 OIDC 로그인)" bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$PROJECT"
+chk_dep "compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)" "시험 사용자를 Keycloak(realm openit)에 만든다 (운영 입구 kcadm, 사람 계정은 OIDC 로그인)" bash "$DEPLOY_ROOT/scripts/idp-test-users.sh" "$PROJECT"
 NEED=("compose up --wait (digest 이미지, 읽기 전용 루트, cap_drop ALL)")   # 이하 항목은 스택이 떠야 의미가 있다: 실패하면 SKIP
 abort_if_failed
 PGW=$(port_of "${PROJECT}-gateway-1" 8080); PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # PGW: 평문(/healthz, 나머지는 308), PGWS: HTTPS. 제품의 호스트 포트는 gateway 와 step-ca(추론 서버의 인증서 발급용)뿐이다
