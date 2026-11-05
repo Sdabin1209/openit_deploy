@@ -96,12 +96,20 @@ class T(unittest.TestCase):
         self.assertTrue(all(isinstance(k, str) and isinstance(x, str) and x for d in (G.TIMERS, G.CONFIG_SOURCES) for k, x in d.items()))
 
     def test_mutation_old_pattern_is_caught(self):
+        # 변이: 일회성 선행 서비스 목록을 빼면 ops-feedback-migrate 가 거부된다(목록이 그 서비스를 받는 유일한 근거다)
         import copy
-        sch = copy.deepcopy(json.loads((ROOT / "schemas/JobOverlayRequest.schema.json").read_text(encoding="utf-8")))
-        sch["properties"]["jobs"]["items"]["properties"]["compose_service"]["pattern"] = "^job-[a-z][a-z0-9-]*$"
         from jsonschema import Draft202012Validator
+        sch = copy.deepcopy(json.loads((ROOT / "schemas/JobOverlayRequest.schema.json").read_text(encoding="utf-8")))
+        cs = sch["properties"]["jobs"]["items"]["properties"]["compose_service"]
+        cs["anyOf"] = [b for b in cs["anyOf"] if "enum" not in b]
         req = {"jobs": [{"compose_service": "ops-feedback-migrate", "declared": {"name": "x", "argv": ["x"]}}]}
         self.assertTrue(list(Draft202012Validator(sch).iter_errors(req)))
+
+    def test_non_job_service_is_rejected(self):
+        # 이름 규칙을 넓히지 않았다: job-* 도 목록도 아닌 서비스(상시 서버)는 덧씌우기를 받지 못한다
+        v = validator_of_internal()
+        req = {"jobs": [{"compose_service": "survey-service", "declared": {"name": "x", "argv": ["x"]}}]}
+        self.assertTrue(list(v.iter_errors(req)))
 
     def test_overlay_is_per_project(self):   # 다른 프로젝트(분리 배치 시험의 작은 compose)가 남의 잡 덧씌우기에 걸려 거부당하지 않게 프로젝트마다 따로 둔다(묶음에서만 나던 실패의 원인)
         import subprocess
