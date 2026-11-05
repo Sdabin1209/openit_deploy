@@ -22,12 +22,8 @@ ACTION_RULES_VERSION = load_rules()["rules_version"]   # 매니페스트·잡 �
 # deps 는 STATE[...] 읽기·쓰기를 ast 로 분석한 값과 같아야 한다(test_e2e_steps_decl.py).
 STEP_REGISTRY = {}
 def metric_registry():
-    """계약의 지표 레지스트리(metrics.json)의 지표 목록. 설치된 계약 패키지에 metrics() 가 있으면 그것을, 없으면 이 워크스페이스의 boundary-contracts 파일을 읽는다(읽기 전용). 없거나 모양이 다르면 실패한다."""
-    if hasattr(bc, "metrics"): ms = list(bc.metrics().values()); src = "boundary_contracts.metrics()"   # 왜: 계약의 metrics() 는 {지표 이름: 읽기 전용 항목} 이다(metrics_registry.py)
-    else:
-        f = pathlib.Path(__file__).resolve().parents[2] / "boundary-contracts" / "boundary_contracts" / "metrics.json"; src = str(f)
-        if not f.is_file(): raise SystemExit(f"지표 레지스트리 {f} 가 없다")
-        ms = json.loads(f.read_text(encoding="utf-8")).get("metrics")
+    """계약의 지표 레지스트리 목록(설치된 계약 패키지의 metrics())."""
+    ms = list(bc.metrics().values()); src = "boundary_contracts.metrics()"   # 계약 패키지(판은 lib.sh 기준표)가 지표 레지스트리를 준다. 옆 폴더의 파일을 읽지 않는다
     need = {"name", "group", "higher_is_better", "status", "applies_to"}
     if not isinstance(ms, list) or not ms or any(not isinstance(m, collections.abc.Mapping) or not need <= set(m) for m in ms):
         raise SystemExit(f"{src}: metrics[] 의 각 항목에 {sorted(need)} 가 있어야 한다")
