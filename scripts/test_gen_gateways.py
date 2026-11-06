@@ -24,6 +24,18 @@ class T(unittest.TestCase):
                 self.assertEqual(G.main(["--out", d, "--compose-json", str(comp)], labels_of=lambda i: {"io.openit.exposure": raw}), 0)
             self.assertEqual(json.loads((Path(d) / "survey-service" / "exposure.json").read_text()), EXPO)
 
+    def test_stale_declaration_of_a_removed_service_is_dropped(self):
+        # 공개 입구는 exposures/ 전부를 읽는다: 지금 compose 에 없는 서비스의 옛 선언이 남으면 안 된다(2026-11-06 E2E, ops-feedback-ingest)
+        raw = json.dumps(EXPO)
+        with tempfile.TemporaryDirectory() as d:
+            import io, contextlib
+            exp = Path(d) / "exposures"; exp.mkdir()
+            (exp / "ops-feedback-ingest.json").write_text("{}")
+            comp = Path(d) / "c.json"; comp.write_text(json.dumps(COMPOSE))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(G.main(["--out", d, "--compose-json", str(comp)], labels_of=lambda i: {"io.openit.exposure": raw}), 0)
+            self.assertEqual(sorted(p.name for p in exp.iterdir()), ["survey-service.json"])
+
     def test_missing_or_invalid_label_is_refused(self):
         with self.assertRaises(SystemExit) as e:
             G.build(COMPOSE, lambda i: {}, validator)

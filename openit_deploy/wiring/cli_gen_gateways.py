@@ -41,5 +41,11 @@ def main(argv, labels_of=image_labels) -> int:
         for d, name in ((pathlib.Path(a.out) / svc, "exposure.json"), (pathlib.Path(a.out) / "exposures", svc + ".json")):   # 앞: 영역 게이트웨이용, 뒤: 공개 입구가 읽는 모든 영역의 선언 폴더
             d.mkdir(parents=True, exist_ok=True)
             tmp = d / f".{name}.tmp"; tmp.write_text(body + "\n", encoding="utf-8"); tmp.chmod(0o644); tmp.replace(d / name)   # 같은 폴더에서 rename: 읽는 쪽이 쓰는 도중 파일을 보지 않는다
+    # 공개 입구는 exposures/ 의 파일 전부를 선언 집합으로 읽는다. 지금 compose 에 없는 서비스의 옛 파일이 남으면 그 선언이 살아난다
+    # (11-04 에 없어진 ops-feedback-ingest 가 남아 /v1/cases 충돌로 입구가 기동하지 못했다, 2026-11-06 E2E). 폴더를 이번 생성분과 정확히 같게 둔다
+    exp = pathlib.Path(a.out) / "exposures"
+    for f in exp.glob("*.json") if exp.is_dir() else ():
+        if f.stem not in res:
+            f.unlink()
     print(a.out)
     return 0
