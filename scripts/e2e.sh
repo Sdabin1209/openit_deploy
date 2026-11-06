@@ -308,7 +308,7 @@ issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 �
   "$DOCKER" run --rm -v "${PROJECT}_pki-root:/r:ro" "$UTIL_REF" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || return 1
   # 역할 기반 입력(계약 StepCaEnv, 3.4.17): 인증서 이름은 host.docker.internal 하나다(SAN localhost 는 없다: 호스트에서는 --resolve 로 이 이름을 부른다)
   step_issue_token "$STEP_IMG" host.docker.internal "https://host.docker.internal:$STEP_CA_PORT" "$W/pki" "$SECRETS_DIR/tokens/step-ca-password" "$W/tls.ott" --add-host host.docker.internal:host-gateway || return 1
-  chmod 644 "$W/tls.ott" "$W/pki/root_ca.crt"
+  chmod 644 "$W/pki/root_ca.crt"
   # 시험 프로세스(호스트)의 신뢰 묶음: 게이트웨이 CA(제품 입구)와 step-ca 루트(추론 서버 사이드카). 두 곳을 부르므로 둘 다 믿는다(검증을 끄지 않는다)
   cat "$W/gateway-ca.crt" "$W/pki/root_ca.crt" > "$W/trust.crt"; chmod 644 "$W/trust.crt"
 }
