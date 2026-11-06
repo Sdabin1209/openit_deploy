@@ -113,5 +113,26 @@ class DeclaredJobConfig(unittest.TestCase):
             G.job_config_documents(services)
 
 
+class CommonEnvironment(unittest.TestCase):
+    def test_common_env_is_checked_before_service_start(self):
+        compose = rendered()
+        compose["services"]["survey-service"]["environment"]["OPENIT_EGRESS_PROXY"] = "http://outside.invalid:3128"
+        rc, out, err = run(compose)
+        self.assertEqual(rc, 1, "CommonEnv 위반이 기동 전 관문을 통과했다")
+        self.assertIn("CommonEnv", err)
+        self.assertNotIn("outside.invalid", err)
+
+    def test_job_common_inputs_are_also_checked(self):
+        for key, value in [("OPENIT_BACKUP_URL", "http://outside.invalid/backup"),
+                           ("OPENIT_BACKUP_CREDENTIALS_FILE", "relative-secret")]:
+            with self.subTest(key=key):
+                compose = rendered()
+                compose["services"]["job-survey-backup"]["environment"][key] = value
+                rc, out, err = run(compose)
+                self.assertEqual(rc, 1)
+                self.assertIn("CommonEnv", err)
+                self.assertNotIn(value, out + err)
+
+
 if __name__ == "__main__":
     unittest.main()

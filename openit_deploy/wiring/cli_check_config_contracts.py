@@ -111,6 +111,12 @@ def job_config_documents(services: dict) -> list:
 def build_documents(compose: dict, secrets_dir=None) -> list:
     docs = []
     services = compose.get("services") or {}
+    # CommonEnv applies to every service and job in addition to its owner's Env.
+    # Validate the same rendered environment that Compose will pass to Docker.
+    for service, spec in sorted(services.items()):
+        environment = {k: ("" if value is None else str(value))
+                       for k, value in ((spec or {}).get("environment") or {}).items()}
+        docs.append({"label": service + ".common", "schema": "CommonEnv", "document": environment})
     for svc, (schema, wrap) in ENV_SERVICES.items():
         spec = services.get(svc)
         if spec is None: continue   # 이 구성(예: 외부 추론 서버만)에 없는 서비스
