@@ -19,19 +19,19 @@ default_skip_e2e_paths: ["docs/**", "tests/**", "test/**", "examples/**", "*.md"
 
 areas:
   survey-service:
-    image: [survey-service]
+    image: [survey-service, survey-db]
     tests: {kind: pytest}
     e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   release-gate:
-    image: [release-gate]
+    image: [release-gate, release-gate-db]
     tests: {kind: pytest}
     e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   ops-feedback:
-    image: [ops-feedback]
+    image: [ops-feedback, ops-feedback-db]
     tests: {kind: pytest}
     e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   question-authoring:
-    image: [question-authoring]
+    image: [question-authoring, question-authoring-db]
     tests: {kind: pytest}
     e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   model-runtime:
@@ -54,11 +54,11 @@ areas:
     tests: {kind: npm, also: [["node", "scripts/gen-schemas.mjs", "--check"]]}
     e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   synthetic-data:
-    image: [dataset-store]   # I2 서버 이미지(D100). 잡(import·run)은 이미지가 아니라 호스트 실행이다
+    image: [dataset-store]   # I2 서버와 run/import 잡이 같은 이미지로 실행된다
     tests: {kind: pytest}
     e2e: auto   # 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   platform:
-    image: [area-gateway]
+    image: [area-gateway, backup-store, public-ingress, step-ca, monitoring, identity, identity-proxy, identity-db]
     tests: {kind: pytest}
     e2e: auto   # 영역 게이트웨이는 모든 서비스의 입구·출구다: 단계 ↔ 영역은 scripts/e2e_steps.py 의 @step(repos, also)에서 계산한다
   deploy:

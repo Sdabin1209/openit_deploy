@@ -32,6 +32,12 @@ class T(unittest.TestCase):
         order = v.step_order()
         self.assertIn("5p", order); self.assertEqual(order[:4], ["1", "2", "3", "4"])
 
+    def test_image_mapping_rejects_missing_owned_images(self):
+        self._bad(lambda c: c["areas"]["platform"].update(image=["area-gateway"]), "이미지 집합")
+
+    def test_image_mapping_rejects_another_areas_image(self):
+        self._bad(lambda c: c["areas"]["release-gate"]["image"].append("dataset-store"), "이미지 집합")
+
     def test_every_mapping_has_why(self):
         for a, s in self.cfg["areas"].items():
             e = s["e2e"]

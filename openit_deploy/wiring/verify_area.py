@@ -76,6 +76,12 @@ def load_config(path=CONFIG, order=None, decls=None):
         for img in spec.get("image") or []:
             if img not in IMAGE_SRC:
                 errs.append(f"{a}: 모르는 이미지 {img}")
+    # lib.sh의 소유 관계와 정확히 같아야 DB·기반 이미지 누락으로 변경 검증이 빠지지 않는다.
+    for area, spec in areas.items():
+        expected = {image for image, owner in IMAGE_SRC.items() if owner == area}
+        actual = set(spec.get("image") or [])
+        if actual != expected:
+            errs.append(f"{area}: 이미지 집합 불일치: 누락={sorted(expected - actual)}, 다른 영역={sorted(actual - expected)}")
     for n, d in decls.items():
         for ar, why in d.also:
             if ar not in AREAS: errs.append(f"단계 {n}: also 의 모르는 영역 {ar}")

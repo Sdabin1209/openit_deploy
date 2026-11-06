@@ -21,7 +21,7 @@
 | # | 조건 | 어디 | 스키마 밖인 이유 |
 | --- | --- | --- | --- |
 | 1 | verify-areas.yaml 의 영역 이름 집합 == areas.json 의 python·node·compose 영역 | `wiring/verify_area.py load_config` | 다른 파일(헤드 소유 정본)의 내용과의 대조. 스키마에 영역 이름을 박으면 영역을 더할 때 두 곳을 고친다(정본은 areas.json 하나) |
-| 2 | verify-areas.yaml 의 image 이름 ∈ lib.sh 의 SERVICES | 같은 곳 | 정본이 셸(lib.sh) 한 곳. 같은 이유 |
+| 2 | 각 영역의 verify-areas.yaml image 집합 == lib.sh SERVICES 중 service_repo가 해당 영역인 이미지 집합 | 같은 곳 | 정본이 셸(lib.sh) 한 곳. 같은 이유 |
 | 3 | @step 선언 also 의 영역 ∈ areas.json 영역 | 같은 곳 | 1과 같다 |
 | 4 | 어댑터 config 의 base_model_name_or_path == 프로파일의 base_model | `components/adapter_check.py` | 두 값의 같음 비교(JSON Schema 에 `$data` 가 없다). 거부 결과(ok false + rejection)로 표현한다 |
 | 5 | 어댑터 순위 r ≤ 프로파일 max_lora_rank | `components/adapter_check.py` | 두 값의 크기 비교. 4와 같다 |
