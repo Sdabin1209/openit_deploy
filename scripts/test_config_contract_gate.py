@@ -116,7 +116,7 @@ class DeclaredJobConfig(unittest.TestCase):
 class CommonEnvironment(unittest.TestCase):
     def test_common_env_is_checked_before_service_start(self):
         compose = rendered()
-        compose["services"]["survey-service"]["environment"]["OPENIT_EGRESS_PROXY"] = "http://outside.invalid:3128"
+        compose["services"]["survey-service"]["environment"]["OPENIT_EGRESS_PROXY"] = "http://outside.invalid:3128"  # plaintext-rejection-test: CommonEnv must reject this proxy.
         rc, out, err = run(compose)
         self.assertEqual(rc, 1, "CommonEnv 위반이 기동 전 관문을 통과했다")
         self.assertIn("CommonEnv", err)
