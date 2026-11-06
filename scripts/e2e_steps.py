@@ -474,11 +474,10 @@ def run_job(job_name, cfg_path, *, network, extra_ro=()):
     job = sd_jobs.find_job(labels, job_name, bc.validator)
     cfg = json.loads(pathlib.Path(cfg_path).read_text())
     if job.get("config", {}).get("schema"): validate(job["config"]["schema"], cfg)   # 영역이 선언한 설정 스키마(계약)로 deploy 가 만든 설정을 먼저 검사한다
-    cmd = sd_jobs.docker_cmd(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro, network=network)
-    cmd = sd_jobs.with_pki_root(cmd, a.project)   # 상대(dataset-store 등)의 사이드카 https 를 step-ca 루트로 검증한다(ADR 0060)
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = sd_jobs.execute_job(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro,
+                            network=network, pki_root_volume=f"{a.project}_pki-root")
     if r.returncode != 0:   # 단계 4 처럼 종료 코드를 기대하는 호출(허용치 초과 4 등)도 남긴다: 기대한 실패인지는 읽는 사람이 판단한다
-        diag_write(f"{CUR_STEP[0]}-{job_name}.log", f"## {job_name} 종료 코드 {r.returncode} (단계 {CUR_STEP[0]}, 네트워크 {network})\n## 명령(비밀 값 없음: 파일 경로만)\n{' '.join(cmd)}\n## stderr 끝 200줄\n{tail_lines(r.stderr)}\n## stdout 끝 50줄\n{tail_lines(r.stdout, 50)}\n\n")
+        diag_write(f"{CUR_STEP[0]}-{job_name}.log", f"## {job_name} 종료 코드 {r.returncode} (단계 {CUR_STEP[0]}, 네트워크 {network})\n## 명령(비밀 값 없음: 파일 경로만)\n{' '.join(r.args)}\n## stderr 끝 200줄\n{tail_lines(r.stderr)}\n## stdout 끝 50줄\n{tail_lines(r.stdout, 50)}\n\n")
     # 종료 코드 2 는 설정 오류다(계약 SyntheticJobError): 우리가 만든 설정이 거부된 것이므로 어떤 단계도 기대하지 않는다. 계약으로 읽어 사유를 보고한다
     assert r.returncode != 2, f"{job_name}: {sd_jobs.describe_failure(r.returncode, r.stderr, bc.validator)}"
     return r

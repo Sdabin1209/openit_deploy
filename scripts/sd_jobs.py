@@ -3,5 +3,5 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from openit_deploy.wiring.sd_jobs import find_job, docker_cmd, describe_failure, with_pki_root  # noqa: E402,F401
+from openit_deploy.wiring.sd_jobs import find_job, docker_cmd, describe_failure, execute_job  # noqa: E402,F401
 from openit_deploy.components.job_command import SECRET_FILES  # noqa: E402,F401

@@ -213,6 +213,9 @@ class Job(TypedDict):
     config: Config
 
 
+SupplementaryGroup = int
+
+
 class JobCommandRequest(TypedDict):
     docker: str
     image: str
@@ -224,6 +227,9 @@ class JobCommandRequest(TypedDict):
     gid: int
     extra_ro: NotRequired[List[str]]
     network: str
+    pki_root_volume: NotRequired[str]
+    container_name: NotRequired[str]
+    supplementary_groups: NotRequired[List[SupplementaryGroup]]
 
 
 class JobCommandResult(TypedDict):

@@ -6,6 +6,7 @@ import json, os, pathlib, shutil, subprocess, sys, tempfile, unittest
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import sd_jobs
+from unittest.mock import patch
 from boundary_contracts import validator, PIPELINE_SCHEMA_VERSION
 from boundary_contracts.action_rules import load_rules
 
@@ -18,6 +19,9 @@ LABELS = {"io.openit.jobs": json.dumps(DECL)}
 
 
 def find_image():
+    selected = os.environ.get("SD_JOB_TEST_IMAGE")
+    if selected:
+        return subprocess.check_output(["docker", "image", "inspect", selected, "--format", "{{.Id}}"], text=True).strip()
     # 이미지 ID 로 부른다: 다이제스트로만 받은 이미지는 태그가 <none> 이라 "저장소:<none>" 이름으로는 inspect 가 invalid reference format 으로 실패한다
     r = subprocess.run(["docker", "images", "--no-trunc", "--format", "{{.ID}} {{.Repository}}"], capture_output=True, text=True)
     for line in r.stdout.splitlines() if r.returncode == 0 else []:
@@ -45,10 +49,16 @@ class T(unittest.TestCase):
         self.assertIn("--network none", " ".join(sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="none")))
 
     def test_job_gets_pki_root(self):   # ADR 0060: 잡 컨테이너가 사이드카 https 를 검증하도록 루트 인증서(읽기 전용)와 SSL_CERT_FILE 을 받는다
-        c = sd_jobs.with_pki_root(sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="n"), "proj")
+        c = sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="n", pki_root_volume="proj_pki-root")
         s = " ".join(c)
         self.assertIn("-v proj_pki-root:/etc/openit/pki:ro", s); self.assertIn("-e SSL_CERT_FILE=/etc/openit/pki/root_ca.crt", s)
         self.assertLess(c.index("run"), c.index("-e"), "run 뒤, 이미지 앞에 끼워야 한다"); self.assertEqual(c[-len(c) + c.index("i") :][0], "i")
+
+    def test_pki_volume_rejects_mount_syntax(self):
+        for value in ("", "../root", "root:/injected", "root,readonly"):
+            with self.subTest(value=value), self.assertRaises(AssertionError):
+                sd_jobs.docker_cmd("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1,
+                                   network="n", pki_root_volume=value)
 
     def test_command(self):
         job = DECL["jobs"][0]
@@ -58,9 +68,33 @@ class T(unittest.TestCase):
         self.assertIn("/sec/tokens/dataset-store-write-synthetic-data:/run/secrets/dataset_store_write_token_file:ro", s)
         self.assertIn("-e DATASET_STORE_WRITE_TOKEN_FILE=/run/secrets/dataset_store_write_token_file", s)
         self.assertIn("-v /in:/in:ro", s)
+        self.assertNotIn("--user", c)
+        self.assertIn("--group-add 1000", s)
         self.assertEqual(c[c.index("img:1"):], ["img:1"] + job["argv"])
         job2 = dict(job, secret_files=["UNKNOWN_FILE"])
         with self.assertRaises(AssertionError): sd_jobs.docker_cmd("docker", "i", job2, "/c", "/w", "/s", 1, 1, network="none")
+
+    def test_execution_honors_declared_timeout_and_cleans_owned_container(self):
+        for declared, expected in ((None, 3600), (7, 7)):
+            job = dict(DECL["jobs"][0])
+            if declared is not None:
+                job["timeout_seconds"] = declared
+            result = subprocess.CompletedProcess([], 0, "ok", "")
+            with self.subTest(declared=declared), patch("subprocess.run", return_value=result) as run:
+                self.assertIs(sd_jobs.execute_job("docker", "i", job, "/c", "/w", "/s", 1, 1, network="none"), result)
+                start, cleanup = run.call_args_list
+                self.assertEqual(start.kwargs["timeout"], expected)
+                argv = start.args[0]
+                name = argv[argv.index("--name") + 1]
+                self.assertEqual(cleanup.args[0], ["docker", "rm", "-f", name])
+
+    def test_execution_timeout_and_failure_clean_owned_container(self):
+        for failure in (subprocess.TimeoutExpired("docker", 7), OSError("docker failed")):
+            with self.subTest(failure=type(failure).__name__), patch("subprocess.run", side_effect=[failure, subprocess.CompletedProcess([], 0)]) as run:
+                with self.assertRaises(type(failure)):
+                    sd_jobs.execute_job("docker", "i", dict(DECL["jobs"][0], timeout_seconds=7), "/c", "/w", "/s", 1, 1, network="none")
+                argv = run.call_args_list[0].args[0]
+                self.assertEqual(run.call_args_list[1].args[0], ["docker", "rm", "-f", argv[argv.index("--name") + 1]])
 
     def test_describe_failure(self):
         d = lambda rc, err: sd_jobs.describe_failure(rc, err, validator)

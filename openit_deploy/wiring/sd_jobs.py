@@ -20,13 +20,34 @@ def find_job(labels: dict, name: str, validator) -> dict:
     return r["job"]
 
 
-def docker_cmd(docker, image, job, cfg_path, work, secrets_dir, uid, gid, extra_ro=(), *, network) -> list:
+def docker_cmd(docker, image, job, cfg_path, work, secrets_dir, uid, gid, extra_ro=(), *, network, pki_root_volume=None, container_name=None) -> list:
     from openit_deploy.wiring.schema_check import SchemaError
     spec = {"secret_files": job.get("secret_files", []), "argv": job["argv"], "config": {"container_path": job["config"]["container_path"]}}
+    pki = {} if pki_root_volume is None else {"pki_root_volume": pki_root_volume}
+    import os
+    from pathlib import Path
+
+    work_path = Path(work)
+    if work_path.exists():
+        stat = work_path.stat()
+        if stat.st_uid != uid or stat.st_gid != gid:
+            raise AssertionError("잡 작업 폴더 소유자가 선언한 호스트 사용자·그룹과 다르다")
+        # 이미지 사용자는 바꾸지 않는다. 새 출력은 작업 그룹을 상속해 호스트도 읽을 수 있다.
+        os.chmod(work_path, stat.st_mode | 0o2770)
+    groups = set()
+    for secret in job.get("secret_files", []):
+        filename = job_command.SECRET_FILES.get(secret)
+        if filename is not None:
+            path = Path(secrets_dir) / "tokens" / filename
+            if path.exists():
+                groups.add(path.stat().st_gid)
+    pki["supplementary_groups"] = sorted(groups)
+    if container_name is not None:
+        pki["container_name"] = container_name
     try:
         return call(job_command, "JobCommandRequest", "JobCommandResult",
                     {"docker": docker, "image": image, "job": spec, "config_path": str(cfg_path), "work": str(work), "secrets_dir": str(secrets_dir),
-                     "uid": uid, "gid": gid, "extra_ro": [str(d) for d in extra_ro], "network": network})["argv"]
+                     "uid": uid, "gid": gid, "extra_ro": [str(d) for d in extra_ro], "network": network, **pki})["argv"]
     except SchemaError as e:
         raise AssertionError(f"잡 명령을 만들 수 없다(잡 선언이 deploy 의 비밀 연결표와 맞지 않는다): {e}")
 
@@ -44,8 +65,18 @@ def describe_failure(returncode: int, stderr: str, validator) -> str:
                 {"returncode": returncode, "stderr_tail": tail, "tail_is_json": is_json, "tail_errors": errs[:1]})["text"]
 
 
-def with_pki_root(argv: list, project: str) -> list:
-    """잡 컨테이너가 서비스 사이드카의 https 를 검증하게 step-ca 루트 인증서(공개, 읽기 전용 볼륨 <프로젝트>_pki-root)와 SSL_CERT_FILE 을 더한다(ADR 0060).
-    argv 는 job_command 가 만든 `docker run ...` 이다. 스키마(JobCommandRequest)를 바꾸지 않고 run 바로 뒤에 끼워 넣는다."""
-    i = argv.index("run")
-    return argv[:i + 1] + ["-v", f"{project}_pki-root:/etc/openit/pki:ro", "-e", "SSL_CERT_FILE=/etc/openit/pki/root_ca.crt"] + argv[i + 1:]
+
+def execute_job(docker, image, job, cfg_path, work, secrets_dir, uid, gid, extra_ro=(), *, network, pki_root_volume=None):
+    """RUNTIME R9.2/R9.3: 선언 상한을 적용하고 이 호출이 만든 컨테이너만 정리한다."""
+    import subprocess
+    import uuid
+
+    name = f"openit-synthetic-job-{uuid.uuid4().hex}"
+    cmd = docker_cmd(docker, image, job, cfg_path, work, secrets_dir, uid, gid, extra_ro,
+                     network=network, pki_root_volume=pki_root_volume, container_name=name)
+    # JobsDeclaration.timeout_seconds: 생략 시 R9.3의 3600초. 별도 값으로 재정의하지 않는다.
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=job.get("timeout_seconds", 3600))
+    finally:
+        # CLI 종료만으로 컨테이너는 멈추지 않는다. 성공·실패·시간 초과 모두 같은 소유 컨테이너를 정리한다.
+        subprocess.run([docker, "rm", "-f", name], capture_output=True, text=True, timeout=30)  # 로컬 Docker 제어 요청의 대기 상한(시작값, 측정하지 않음); 잡 실행 상한과 별개다.
