@@ -96,6 +96,20 @@ class T(unittest.TestCase):
                 argv = run.call_args_list[0].args[0]
                 self.assertEqual(run.call_args_list[1].args[0], ["docker", "rm", "-f", argv[argv.index("--name") + 1]])
 
+    def test_cleanup_failure_is_reported(self):
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        bad = subprocess.CompletedProcess([], 1, "", "docker unavailable")
+        for remaining in (bad, subprocess.CompletedProcess([], 0, "remaining-id", "")):
+            with self.subTest(remaining=remaining.returncode), patch("subprocess.run", side_effect=[ok, bad, remaining]):
+                with self.assertRaisesRegex(RuntimeError, "정리"):
+                    sd_jobs.execute_job("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="none")
+
+    def test_already_removed_container_is_normal(self):
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        missing = subprocess.CompletedProcess([], 1, "", "missing")
+        with patch("subprocess.run", side_effect=[ok, missing, ok]):
+            self.assertIs(sd_jobs.execute_job("docker", "i", DECL["jobs"][0], "/c", "/w", "/s", 1, 1, network="none"), ok)
+
     def test_describe_failure(self):
         d = lambda rc, err: sd_jobs.describe_failure(rc, err, validator)
         self.assertEqual(d(2, 'noise\n{"error": "CONFIG", "message": "seed 가 정수가 아니다"}\n'), "잡 종료 코드 2 (설정 오류 CONFIG): seed 가 정수가 아니다")
