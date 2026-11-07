@@ -1,4 +1,5 @@
 """wiring/진입: check_secret_names.py [--ws DIR]. compose*.yaml 과 각 영역의 파이썬 소스를 읽어(읽기 전용) 컴포넌트 secret_name_check 에 넘기고 결과를 출력한다. 종료 코드: FAIL 이 있으면 1."""
+from openit_deploy.wiring.workspace import workspace_of
 import argparse
 import pathlib
 import subprocess
@@ -28,7 +29,7 @@ def _py_files(repo: pathlib.Path):
 
 
 def main(argv) -> int:
-    ap = argparse.ArgumentParser(); ap.add_argument("--ws", default=str(ROOT.parent))
+    ap = argparse.ArgumentParser(); ap.add_argument("--ws", default=str(workspace_of(ROOT)))
     ws = pathlib.Path(ap.parse_args(argv).ws)
     names = areas_file.names(ws / "head" / "shared" / "areas.json", kinds={"python", "library"})
     deploy = ws / "deploy"

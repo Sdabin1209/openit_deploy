@@ -466,16 +466,18 @@ def diag_write(name, text):
 def tail_lines(text, n=200):
     return "\n".join((text or "").splitlines()[-n:])
 
-def run_job(job_name, cfg_path, *, network, extra_ro=()):
+def run_job(job_name, cfg_path, *, network, extra_ro=(), environment=None):
     """network 는 호출자가 고른다(기본값 없음): 컨테이너 안에서 도는 잡은 compose 네트워크 + 서비스 이름 주소로 이웃에 닿는다."""
     """dataset-store 이미지의 라벨 io.openit.jobs 에서 잡 job_name 을 찾아 docker run 으로 돌린다(명령 조립: sd_jobs.docker_cmd)."""
     img = IMAGES["dataset-store"]
     labels = json.loads(sh([a.docker, "image", "inspect", img, "--format", "{{json .Config.Labels}}"]).stdout)
     job = sd_jobs.find_job(labels, job_name, bc.validator)
+    inputs = json.loads(labels["io.openit.inputs"])
+    bc.validator("ContainerInputs").validate(inputs)
     cfg = json.loads(pathlib.Path(cfg_path).read_text())
     if job.get("config", {}).get("schema"): validate(job["config"]["schema"], cfg)   # 영역이 선언한 설정 스키마(계약)로 deploy 가 만든 설정을 먼저 검사한다
     r = sd_jobs.execute_job(a.docker, img, job, cfg_path, WORK, a.secrets, os.getuid(), os.getgid(), extra_ro,
-                            network=network, pki_root_volume=f"{a.project}_pki-root")
+                            network=network, pki_root_volume=f"{a.project}_pki-root", declaration=inputs, environment=environment)
     if r.returncode != 0:   # 단계 4 처럼 종료 코드를 기대하는 호출(허용치 초과 4 등)도 남긴다: 기대한 실패인지는 읽는 사람이 판단한다
         diag_write(f"{CUR_STEP[0]}-{job_name}.log", f"## {job_name} 종료 코드 {r.returncode} (단계 {CUR_STEP[0]}, 네트워크 {network})\n## 명령(비밀 값 없음: 파일 경로만)\n{' '.join(r.args)}\n## stderr 끝 200줄\n{tail_lines(r.stderr)}\n## stdout 끝 50줄\n{tail_lines(r.stdout, 50)}\n\n")
     # 종료 코드 2 는 설정 오류다(계약 SyntheticJobError): 우리가 만든 설정이 거부된 것이므로 어떤 단계도 기대하지 않는다. 계약으로 읽어 사유를 보고한다
@@ -484,7 +486,8 @@ def run_job(job_name, cfg_path, *, network, extra_ro=()):
 
 def run_sd(name, seeds, failure=False):
     p = sd_config(name, seeds, failure)
-    r = run_job("synthetic-run", p, network=SD_RUN_NETWORK())
+    # 영역 pod(dataset-store-net) 안에서 돌아 자기 게이트웨이의 loopback 출구로 이웃을 부른다(R1.8, 운영의 백업 잡과 같은 방식). 망을 직접 잇지 않는다(2026-11-07 교차검증)
+    r = run_job("synthetic-run", p, network=SD_RUN_NETWORK(), environment={"OPENIT_EGRESS_PROXY": SD_EGRESS_PROXY})
     assert r.returncode == 0, f"synthetic-data {sd_jobs.describe_failure(r.returncode, r.stderr, bc.validator)}"
     return json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -504,7 +507,12 @@ def imp_config(name, max_invalid_rows, store_root):
     p = WORK / f"sd-import-{name}.json"; p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1)); return p
 
 # synthetic-run 잡이 부르는 이웃(문항 읽기 question-authoring, 실패 사례 ops-feedback)은 compose 의 authoring 네트워크에 함께 붙어 있다(compose.yaml 이 정본, test_e2e_job_urls 가 대조).
-SD_RUN_NETWORK = lambda: f"{a.project}_authoring"
+def SD_RUN_NETWORK():
+    """dataset-store 앱 컨테이너가 붙은 영역 pod 의 네트워크 공간(container:<pause>). 바깥에서 docker inspect 로 읽는다(영역 안에 들어가지 않는다)."""
+    mode = sh([a.docker, "inspect", f"{a.project}-dataset-store-1", "--format", "{{.HostConfig.NetworkMode}}"]).stdout.strip()
+    assert mode.startswith("container:"), f"dataset-store 가 영역 pod 공간에 붙어 있지 않다: {mode}"
+    return mode
+SD_EGRESS_PROXY = "http://127.0.0.1:3128"   # 계약 CommonEnv.OPENIT_EGRESS_PROXY: 영역 게이트웨이의 loopback CONNECT 출구(compose x-common-env 와 같은 값)
 SD_QA_JOB_URL = "https://question-authoring"    # 서비스 이름·컨테이너 포트
 SD_OPS_JOB_URL = "https://ops-feedback"
 DS_JOB_NETWORK = lambda: f"{a.project}_datasets"   # dataset-store(I2) 전용 internal 네트워크(compose.yaml networks.datasets). 잡은 서비스 이름 dataset-store 로 닿는다

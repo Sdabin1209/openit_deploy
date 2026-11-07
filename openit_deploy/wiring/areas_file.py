@@ -1,4 +1,5 @@
 """wiring: 영역 목록 파일(areas.json)의 위치와 읽기. 정본은 <워크스페이스>/head/shared/areas.json 하나다(읽기 전용)."""
+from openit_deploy.wiring.workspace import workspace_of
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def default_file() -> Path:
     if os.environ.get("AREAS_FILE"):
         return Path(os.environ["AREAS_FILE"])
-    return ROOT.parent / "head" / "shared" / "areas.json"
+    return workspace_of(ROOT) / "head" / "shared" / "areas.json"
 
 
 def read(path=None) -> dict:

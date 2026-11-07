@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from boundary_contracts import format_checker as _bc_format_checker  # 형식(format) 검증기가 없으면 조용히 넘기지 않고 실패한다(계약 3.5.0)
 
 if TYPE_CHECKING:   # 입출력 타입은 schemas/ 에서 생성한다(types/deploy_types.py, 손으로 고치지 않는다)
     from openit_deploy.types.deploy_types import InternalFileCheckRequest, InternalFileCheckResult
@@ -39,7 +40,7 @@ def validate(schema_name, doc, schema_dir=SCHEMA_DIR):
     from jsonschema import Draft202012Validator
     schema = json.loads((pathlib.Path(schema_dir) / f"{schema_name}.schema.json").read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
-    return sorted(Draft202012Validator(schema).iter_errors(doc), key=lambda e: list(map(str, e.path)))
+    return sorted(Draft202012Validator(schema, format_checker=_bc_format_checker(schema)).iter_errors(doc), key=lambda e: list(map(str, e.path)))
 
 
 def _failure(e, line=None):   # 값(digest 등)은 싣지 않는다: 검증기 이름과 위치만

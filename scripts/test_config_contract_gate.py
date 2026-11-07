@@ -114,16 +114,18 @@ class DeclaredJobConfig(unittest.TestCase):
 
 
 class CommonEnvironment(unittest.TestCase):
+    invalid = json.loads((ROOT / "test/config-contract-invalid-environments.json").read_text())
+
     def test_common_env_is_checked_before_service_start(self):
         compose = rendered()
-        compose["services"]["survey-service"]["environment"]["OPENIT_EGRESS_PROXY"] = "http://outside.invalid:3128"  # plaintext-rejection-test: CommonEnv must reject this proxy.
+        compose["services"]["survey-service"]["environment"]["OPENIT_EGRESS_PROXY"] = self.invalid["OPENIT_EGRESS_PROXY"]
         rc, out, err = run(compose)
         self.assertEqual(rc, 1, "CommonEnv 위반이 기동 전 관문을 통과했다")
         self.assertIn("CommonEnv", err)
         self.assertNotIn("outside.invalid", err)
 
     def test_job_common_inputs_are_also_checked(self):
-        for key, value in [("OPENIT_BACKUP_URL", "http://outside.invalid/backup"),
+        for key, value in [("OPENIT_BACKUP_URL", self.invalid["OPENIT_BACKUP_URL"]),
                            ("OPENIT_BACKUP_CREDENTIALS_FILE", "relative-secret")]:
             with self.subTest(key=key):
                 compose = rendered()

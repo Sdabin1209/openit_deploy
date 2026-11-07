@@ -109,6 +109,32 @@ def enum_git_dirs() -> list[str]:
     return sorted(d.name for d in WS.iterdir() if d.is_dir() and not d.name.startswith(".") and (d / ".git").exists()) if WS.is_dir() else []
 
 
+def registered_worktree_aliases() -> dict[str, str]:
+    """Git이 같은 저장소로 등록한 작업 트리만 식별한다. 이름·접두사로 제외하지 않는다."""
+    def common(directory):
+        result = subprocess.run(["git", "-C", str(directory), "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+        if result.returncode:
+            return None
+        location = Path(result.stdout.strip())
+        return (directory / location).resolve() if not location.is_absolute() else location.resolve()
+    owners = {}
+    for name in AREA_KIND:
+        directory = WS / name
+        if (directory / ".git").exists():
+            identity = common(directory)
+            if identity is not None:
+                owners.setdefault(identity, []).append(name)
+    aliases = {}
+    for name in enum_git_dirs():
+        directory = WS / name
+        if name not in AREA_KIND and (directory / ".git").is_file():
+            identity = common(directory)
+            matches = owners.get(identity, [])
+            if len(matches) == 1:
+                aliases[name] = matches[0]
+    return aliases
+
+
 def known_areas() -> list[str]:
     return [a for a in enum_git_dirs() if a in AREA_KIND and not excluded(f"area:{a}")]
 
@@ -172,8 +198,11 @@ def rule_enumerate() -> R:
     for n, key, why in EXCLUDE:
         if not why:
             r.fail(f"exclude:{key}", f"deploy/scripts/check-all.exclude:{n}: 제외 항목 '{key}' 에 이유가 없다")
+    aliases = registered_worktree_aliases()
     for a in enum_git_dirs():
-        if a in AREA_KIND:
+        if a in aliases:
+            r.na.append((f"작업 트리 {a}", f"Git 등록 저장소 {aliases[a]}의 별도 작업 트리(활성 영역 정본은 {aliases[a]})"))
+        elif a in AREA_KIND:
             w = excluded(f"area:{a}")
             (r.na.append((f"영역 {a}", f"제외({w})")) if w else r.ok.append(f"영역 {a}"))
         else:

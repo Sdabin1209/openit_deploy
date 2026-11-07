@@ -44,18 +44,25 @@
     - name: 계획 읽기
       ansible.builtin.set_fact:
         plan: "{{ render.stdout | from_json }}"
-    - name: 이 서버 몫의 환경이 계약을 따르는지(지휘 기계, 실패면 여기서 멈춘다)
+    - name: 이 서버의 실제 합성 설정 만들기(지휘 기계, 원자적 저장)
       ansible.builtin.shell: |
         set -e
-        export SECRETS_DIR="{{ p_secrets }}" COMPOSE_EXTRA="{{ p_out }}/compose.placement.yaml"
+        umask 077
+        export SECRETS_DIR="{{ p_secrets }}" COMPOSE_BASE="{{ p_compose }}" COMPOSE_EXTRA="{{ p_out }}/compose.placement.yaml"
         {{ ("export STEP_CA_PORT=" ~ (plan.step_ca_port | string)) if plan.step_ca_port else ":" }}
         source "{{ p_root }}/scripts/lib.sh"
-        dc "{{ p_project }}" config --format json > "{{ p_out }}/config.json"
-        "$DEPLOY_PY" -W ignore "{{ p_root }}/scripts/check_config_contracts.py" --compose-json "{{ p_out }}/config.json"
+        rendered=$(mktemp "{{ p_out }}/.config.json.XXXXXX")
+        trap 'rm -f "$rendered"' EXIT
+        dc "{{ p_project }}" config --format json > "$rendered"
+        mv "$rendered" "{{ p_out }}/config.json"
       args: {executable: /bin/bash}
       delegate_to: localhost
       changed_when: false
-      # 계약(SurveyServiceEnv 등)은 제품 compose.yaml 의 서비스에 대한 것이다. 다른 compose(시험 대역)를 배치하면 그 compose 에는 해당 계약이 없어 건너뛴다(스위치가 아니라 입력에서 정해진다)
+    - name: 이 서버 몫의 환경이 계약을 따르는지(지휘 기계, 실패면 여기서 멈춘다)
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "{{ p_root }}/scripts/check_config_contracts.py", "--compose-json", "{{ p_out }}/config.json"]
+      delegate_to: localhost
+      changed_when: false
       when: (p_compose | realpath) == ((p_root + '/compose.yaml') | realpath)
     - name: 비밀 파일 그룹 gid(SECRETS_GID 규칙, ADR 0054)
       ansible.builtin.command: id -g
@@ -84,7 +91,7 @@
       loop:
         - {src: "{{ p_compose }}", dest: compose.yaml}
         - {src: "{{ p_root }}/scripts/lib.sh", dest: scripts/lib.sh}
-        - {src: "{{ p_root }}/ansible/files/put-tokens.py", dest: scripts/put-tokens.py}
+        - {src: "{{ p_root }}/openit_deploy/wiring/put_tokens.py", dest: scripts/put-tokens.py}
         - {src: "{{ placement_lock | default(p_root + '/locks/images.lock') }}", dest: locks/images.lock}
     - name: 레지스트리 주소(state/registry.env, 있으면)
       ansible.builtin.copy:
@@ -125,8 +132,8 @@
         mode: "0640"
         group: "{{ gid }}"
       loop: "{{ plan.secret_files }}"
-      loop_control: {label: "{{ item }}"}   # 이름만 출력한다. 내용은 출력하지 않는다
-      no_log: false
+      loop_control: {label: "{{ item }}"}
+      no_log: true   # 비밀 파일 복사: --diff 모드는 파일 내용을 출력하므로 결과를 숨긴다(D84, 2026-11-07 교차검증)
     - name: gateway CA 볼륨의 소유자(비루트 uid 10001, 처음 한 번)
       ansible.builtin.shell: |
         set -e
@@ -146,6 +153,8 @@
   hosts: all:!localhost
   gather_facts: false
   vars:
+    p_root: "{{ playbook_dir }}/.."
+    p_out: "{{ playbook_dir }}/../build/placement/{{ inventory_hostname }}"
     p_dir: "{{ placement_remote_dir | default('/opt/openit-deploy') }}"
     p_project: "{{ placement_project | default('deploy') }}"
     p_scheme: "{{ placement_scheme | default('https') }}"

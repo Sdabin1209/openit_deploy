@@ -117,6 +117,56 @@ ConsistencyCheckResult = TypedDict(
 )
 
 
+class File(TypedDict):
+    target: str
+    source: Literal['secret', 'config', 'bind', 'volume']
+    directory: NotRequired[Optional[bool]]
+
+
+class WritableItem(TypedDict):
+    target: str
+    kind: Literal['tmpfs', 'volume', 'bind']
+    uid: NotRequired[int]
+    gid: NotRequired[int]
+    mode: NotRequired[str]
+
+
+class Service(TypedDict):
+    service: str
+    image: str
+    set: str
+    read_only: bool
+    cap_drop: List[str]
+    cap_add: List[str]
+    sysctls: Dict[str, int]
+    user_override: bool
+    entrypoint_override: bool
+    secrets_group: bool
+    env: Dict[str, str]
+    files: List[File]
+    writable: List[WritableItem]
+    command_override: bool
+    argv: List[str]
+    expected_argv: List[str]
+
+
+class ContainerInputsCheckRequest(TypedDict):
+    services: List[Service]
+    declarations: Dict[str, Dict[str, Any]]
+
+
+class Violation1(TypedDict):
+    service: str
+    rule: str
+    detail: str
+
+
+class ContainerInputsCheckResult(TypedDict):
+    status: Literal['OK', 'VIOLATIONS']
+    checked: int
+    violations: List[Violation1]
+
+
 class DbSecretsRequest(TypedDict):
     db_host: str
     root_ca_path: NotRequired[str]
@@ -216,6 +266,21 @@ class Job(TypedDict):
 SupplementaryGroup = int
 
 
+class Mount(TypedDict):
+    source: str
+    target: str
+    read_only: bool
+
+
+class Tmpf(TypedDict):
+    path: str
+    uid: int
+    gid: int
+
+
+Capability = str
+
+
 class JobCommandRequest(TypedDict):
     docker: str
     image: str
@@ -230,6 +295,12 @@ class JobCommandRequest(TypedDict):
     pki_root_volume: NotRequired[str]
     container_name: NotRequired[str]
     supplementary_groups: NotRequired[List[SupplementaryGroup]]
+    mounts: NotRequired[List[Mount]]
+    tmpfs: NotRequired[List[Tmpf]]
+    read_only_root: NotRequired[bool]
+    capabilities: NotRequired[List[Capability]]
+    environment: NotRequired[Dict[str, str]]
+    sysctls: NotRequired[Dict[str, int]]
 
 
 class JobCommandResult(TypedDict):
@@ -302,14 +373,14 @@ class JobSelectResult(TypedDict):
     available: NotRequired[List[str]]
 
 
-class File(TypedDict):
+class File1(TypedDict):
     path: str
     text: str
 
 
 class Area1(TypedDict):
     name: str
-    files: List[File]
+    files: List[File1]
 
 
 class LinkPinCheckRequest(TypedDict):
@@ -337,13 +408,13 @@ class LinkPinCheckResult(TypedDict):
     areas: List[Area2]
 
 
-Service = str
+Service1 = str
 
 
 class Servers(TypedDict):
     address: str
     region: str
-    services: List[Service]
+    services: List[Service1]
     bind: NotRequired[Optional[str]]
 
 
@@ -451,7 +522,7 @@ class RetentionCheckResult(TypedDict):
 
 class Area3(TypedDict):
     name: str
-    files: List[File]
+    files: List[File1]
 
 
 class ComposeDoc(TypedDict):
@@ -552,6 +623,27 @@ class StepDecls1(TypedDict):
 
 
 StepDecls = Optional[Dict[str, StepDecls1]]
+
+
+class Tokens1(TypedDict):
+    value: str
+    uid: int
+    gid: int
+
+
+class TokenDeliveryRequest(TypedDict):
+    root: str
+    tokens: Dict[str, Tokens1]
+
+
+class TokenDeliveryResult(TypedDict):
+    tokens_written: int
+    root_written: NotRequired[bool]
+
+
+class TokenExportData(TypedDict):
+    root: str
+    tokens: Dict[str, str]
 
 
 VerifyAreasArgv = List[str]

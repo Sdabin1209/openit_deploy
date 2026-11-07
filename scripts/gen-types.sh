@@ -8,20 +8,37 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/.." && p
 GEN="${TYPES_GEN:-$ROOT/build/venv-types/bin/datamodel-codegen}"
 [ -x "$GEN" ] || GEN="$(cd "$(git -C "$ROOT" rev-parse --git-common-dir)/.." && pwd)/build/venv-types/bin/datamodel-codegen"
 [ -x "$GEN" ] || { echo "datamodel-codegen 이 없다: python3 -m venv build/venv-types && build/venv-types/bin/pip install -r requirements-types.txt" >&2; exit 2; }
-PY="$(dirname "$GEN")/python"
 OUT="${1:-$ROOT/openit_deploy/types/deploy_types.py}"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-"$PY" - "$ROOT/schemas" "$T/deploy_types.schema.json" <<'PY'
+"$ROOT/.venv/bin/python" - "$ROOT/schemas" "$T/deploy_types.schema.json" <<'PY'
 import json, pathlib, sys
+from boundary_contracts.schemas_api import schema_registry
+registry = schema_registry()
+def public_fragment(reference):
+    resolved = registry.resolver().lookup(reference)
+    def expand(node, resolver):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                target = resolver.lookup(node["$ref"])
+                return {**expand(target.contents, target.resolver), **{k: expand(v, resolver) for k, v in node.items() if k != "$ref"}}
+            return {k: expand(v, resolver) for k, v in node.items() if k not in ("$id", "$schema")}
+        if isinstance(node, list):
+            return [expand(value, resolver) for value in node]
+        return node
+    return expand(resolved.contents, resolved.resolver)
 src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 defs = {}
 def fix(node, name):
     if isinstance(node, dict):
+        if isinstance(node.get("$ref"), str) and "://" in node["$ref"]:
+            # Resolve public contract fragments from the installed tagged package, offline.
+            return fix({**public_fragment(node["$ref"]), **{k: v for k, v in node.items() if k != "$ref"}}, name)
         out = {}
         for k, v in node.items():
             if k in ("$schema", "$id"): continue
             if k == "$ref" and isinstance(v, str):
-                v = f"#/$defs/{v[:-len('.schema.json')]}" if v.endswith(".schema.json") else v.replace("#/$defs/", f"#/$defs/{name}_", 1)   # 스키마 안의 $defs 는 최상위로 올리고 이름 앞에 스키마 이름을 붙인다
+                if "://" not in v:
+                    v = f"#/$defs/{v[:-len('.schema.json')]}" if v.endswith(".schema.json") else v.replace("#/$defs/", f"#/$defs/{name}_", 1)   # 스키마 안의 $defs 는 최상위로 올리고 이름 앞에 스키마 이름을 붙인다
             out[k] = fix(v, name)
         return out
     if isinstance(node, list):
@@ -35,6 +52,9 @@ for f in sorted(src.glob("*.schema.json")):
     defs[name] = doc
 dst.write_text(json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema", "title": "DeployTypes", "type": "object", "$defs": defs}, ensure_ascii=False), encoding="utf-8")
 PY
-mkdir -p "$(dirname "$OUT")"; rm -f "$OUT"
-"$GEN" --input "$T/deploy_types.schema.json" --input-file-type jsonschema --output "$OUT" --output-model-type typing.TypedDict --target-python-version 3.10 --disable-timestamp --use-title-as-name
+mkdir -p "$(dirname "$OUT")"
+"$GEN" --input "$T/deploy_types.schema.json" --input-file-type jsonschema --output "$T/deploy_types.py" --output-model-type typing.TypedDict --target-python-version 3.10 --disable-timestamp --use-title-as-name
 
+
+# Publish only a successfully generated module; keep the previous output on failure.
+mv "$T/deploy_types.py" "$OUT"

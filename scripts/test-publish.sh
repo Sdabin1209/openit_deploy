@@ -23,6 +23,7 @@ mk_image() { # mk_image <태그> <revision> [no-revision] [추가 LABEL 한 줄]
   local tag=$1 rev=$2 d="$W/ctx-$2-$RANDOM"; mkdir -p "$d"
   { echo "FROM $UTIL"; echo "RUN echo $rev > /rev.txt"
     echo "LABEL io.openit.service=\"test\" io.openit.contracts.boundary=\"$DEPLOY_BC_TAG\" io.openit.contracts.survey-schema=\"1\""
+    python3 "$DEPLOY_ROOT/scripts/image_label_test_data.py" --docker-label test
     [ "${3:-}" = no-revision ] || echo "LABEL io.openit.revision=\"$rev\""
     [ -z "${4:-}" ] || echo "LABEL $4"; } > "$d/Dockerfile"
   "$DOCKER" build -q -t "$tag" "$d" >/dev/null

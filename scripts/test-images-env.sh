@@ -2,6 +2,7 @@
 # build/images.env 의 GPU(선택 이미지) 기록 처리 자체 시험(Docker 불필요: 가짜 docker·curl 을 쓴다). 사용: bash scripts/test-images-env.sh
 # 재현한 결함: 존재하지 않거나 옛 model-runtime 커밋인 model-serving-gpu 기록이 남아 있으면 기본 publish 가 "No such image" 로 실패했다(E2E 준비 단계 중단).
 set -uo pipefail
+export LABEL_FIXTURE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/image_label_test_data.py"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(dirname "$HERE")"; WS="$(dirname "$ROOT")"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 N=0; F=0
@@ -20,8 +21,8 @@ echo "$*" >> "$FAKE_LOG"
 case "$1" in
   image) [ "$2" = inspect ] && { case " $FAKE_HAVE " in *" $3 "*)
       # `--format '{{json .Config.Labels}}'` 요청에는 계약 ImageLabels 를 따르는 라벨을 낸다(게시 전 검증, ADR 0035). FAKE_BAD_LABELS=1 이면 계약을 어기는 값(model-runtime=none)을 낸다
-      case "$*" in *Config.Labels*) if [ "${FAKE_BAD_LABELS:-0}" = 1 ]; then echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v3.0.0","io.openit.contracts.survey-schema":"3","io.openit.model-runtime":"none"}'
-        else echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v3.0.0","io.openit.contracts.survey-schema":"3","io.openit.model-runtime":"n/a"}'; fi;; esac
+      case "$*" in *Config.Labels*) if [ "${FAKE_BAD_LABELS:-0}" = 1 ]; then echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v3.0.0","io.openit.contracts.survey-schema":"3","io.openit.model-runtime":"none"}' | python3 "$LABEL_FIXTURE_HELPER"
+        else echo '{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v3.0.0","io.openit.contracts.survey-schema":"3","io.openit.model-runtime":"n/a"}' | python3 "$LABEL_FIXTURE_HELPER"; fi;; esac
       exit 0;; esac; echo "Error: No such image: $3" >&2; exit 1; };;
   tag) case " $FAKE_HAVE " in *" $2 "*) exit 0;; esac; echo "Error response from daemon: No such image: $2" >&2; exit 1;;
   push) [ "${FAKE_PUSH_FAIL:-0}" = 1 ] && { echo "denied: requested access to the resource is denied" >&2; exit 1; }
@@ -72,7 +73,7 @@ PFBEFORE=$(sha256sum "$T/lock" | cut -c1-64)
 N=$((N+1)); if [ $PFRC != 0 ] && grep -q "denied: requested access" "$T/pf.out" && grep -q "push 실패(종료 코드" "$T/pf.out"; then echo "  PASS push 실패: 종료 코드 $PFRC, docker 출력과 'push 실패' 사유가 남는다"; else echo "  FAIL push 실패: 종료 코드 $PFRC, 출력: $(tail -3 "$T/pf.out" | tr '\n' ' ' | cut -c1-200)"; F=$((F+1)); fi
 ok "push 실패는 잠금을 바꾸지 않는다" test "$(sha256sum "$T/lock" | cut -c1-64)" = "$PFBEFORE"
 echo "== 연결(정적 확인)"
-no "set -e 로 도는 게시 스크립트에 \`x=$(…); y=$?\` 패턴이 없다(대입문에서 셸이 죽어 실패 사유가 사라진다)" grep -nE '^\s*[A-Za-z_]+=\$\(.*\)\s*;\s*[A-Za-z_]+=\$\?' "$HERE/publish-images.sh" "$HERE/publish-image.sh"
+no 'set -e 로 도는 게시 스크립트에 `x=$(…); y=$?` 패턴이 없다(대입문에서 셸이 죽어 실패 사유가 사라진다)' grep -nE '^\s*[A-Za-z_]+=\$\(.*\)\s*;\s*[A-Za-z_]+=\$\?' "$HERE/publish-images.sh" "$HERE/publish-image.sh"
 ok "build-images.sh 는 GPU 기록을 gpu_record_valid 로 걸러 유지한다" grep -q 'GPU_KEEP=$(gpu_record_valid' "$HERE/build-images.sh"
 ok "e2e.sh 정리는 model-serving-gpu 이미지를 지우지 않는다" grep -q "grep -v '^deploy-build/model-serving-gpu:'" "$HERE/e2e.sh"
 ok "e2e.sh have_images 는 GPU 기록을 보지 않는다" grep -q "grep -vc '^model-serving-gpu '" "$HERE/e2e.sh"

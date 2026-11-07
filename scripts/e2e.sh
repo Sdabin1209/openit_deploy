@@ -287,6 +287,9 @@ inf_up() { # inf_up <주 서버 프로젝트(inference-in 망의 주인)> <OUT-F
   local e=(INFERENCE_IMAGE="$INF_IMAGE" INFERENCE_TOKENS_FILE="$SECRETS_DIR/tokens/model-runtime-tokens" INFERENCE_RELEASE_TOKEN_FILE="$SECRETS_DIR/tokens/gate-read-model-serving" INFERENCE_RELEASE_NETWORK="${1}_inference-in" INFERENCE_PORT="$INFERENCE_FIXED_PORT"
     INFERENCE_CA_FILE="$2" INFERENCE_PKI_ROOT_FILE="$W/pki/root_ca.crt" INFERENCE_STEP_CA_URL="https://host.docker.internal:$STEP_CA_PORT" INFERENCE_TLS_NAME=host.docker.internal
     INFERENCE_GATEWAY_IMAGE="$SC_IMG" INFERENCE_EXPOSURE_FILE="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/model-serving/exposure.json" INFERENCE_STEP_IMAGE="$STEP_IMG" INFERENCE_PAUSE_IMAGE="$PAUSE_IMG" INFERENCE_TLS_TOKEN_FILE="$W/tls.ott")
+  # 주입 대조(계약 ContainerInputs 3.5.0): 추론 서버 스택도 기동 전에 이미지 주입 선언과 같은지 본다(up.sh 와 같은 검사)
+  env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/compose.inference.samehost.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" config --format json \
+    | "$DEPLOY_PY" -W ignore "$DEPLOY_ROOT/scripts/check_container_inputs.py" --compose-json - || { echo "추론 서버 compose 주입이 이미지 주입 선언과 다르다" >&2; return 1; }
   env "${e[@]}" "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/compose.inference.samehost.yaml" -f "$DEPLOY_ROOT/test/compose.fake-model.yaml" up -d --wait --wait-timeout $E2E_UP_WAIT_S 2>&1 | tail -3
   [ "${PIPESTATUS[0]}" = 0 ]
 }

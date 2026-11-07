@@ -14,6 +14,8 @@ S = C.S
 # 계약이 정한 호출 중 compose 서비스 사이에서 일어나지 않는 것(오프 컴포즈 호출자: model-lab, synthetic-data 는 compose 서비스가 아니다). 현재 없음.
 EXTRA = {   # compose 의 환경·설정에서는 보이지 않는 계약 호출(이미지 안에서 정해지거나 라벨 선언으로 마운트되는 설정)
     frozenset(("identity-proxy", "identity")),   # 인증 확인 프록시가 토큰을 identity 에 교환한다: 주소는 이미지가 IDENTITY_PUBLIC_URL·내장 경로에서 만든다(계약 3.4.12 IdentityProxyEnv)
+    frozenset(("dataset-store", "question-authoring")),   # 합성 잡(synthetic-run, 영역 pod 안)의 문항 읽기(I1): dataset-store 노출 선언 egress 에 있고 주소는 잡 설정(deploy 가 만든다)이다. 망 synthetic-sources(2026-11-07)
+    frozenset(("dataset-store", "ops-feedback")),   # 합성 잡의 실패 사례 읽기(I7): 위와 같다
     frozenset(("ops-feedback", "release-gate")),   # ops 잡(영역 pod 안)의 release-gate 호출(I4): 주소는 config/ops-feedback-job.yaml 이고 그 파일은 잡 선언 config 로 덧씌우기가 마운트한다(gen-jobs)
 }
 DB_OF = {"survey": "survey-db", "qa": "question-authoring-db", "ops_log": "ops-feedback-db", "ops_failure": "ops-feedback-db", "gate": "release-gate-db", "identity": "identity-db"}   # DB 계정 -> 영역 DB 서비스
@@ -45,7 +47,7 @@ def violations(svcs):
 
 
 # compose 밖에서 도는 호출자(잡을 이 망에 붙여 돌린다, e2e_steps.py SD_RUN_NETWORK·DS_JOB_NETWORK): 망 이름 -> 그 망에 있어야 하는 대상들(계약 I1·I7·I2)
-OFF_COMPOSE_RUNNERS = {"authoring": ["question-authoring", "ops-feedback"], "datasets": ["dataset-store"]}
+OFF_COMPOSE_RUNNERS = {"datasets": ["dataset-store"]}   # 합성 잡(synthetic-run)은 dataset-store 영역 pod 안에서 돌아 게이트웨이 출구를 쓴다(망에 직접 붙지 않는다, 2026-11-07)
 
 
 def missing_paths(svcs):

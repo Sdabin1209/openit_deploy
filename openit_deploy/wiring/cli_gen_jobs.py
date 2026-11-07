@@ -110,7 +110,16 @@ def build(compose: dict, labels_of, validator_of) -> dict:
 
 def main(argv, labels_of=image_labels) -> int:
     ap = argparse.ArgumentParser(); ap.add_argument("--out", required=True); ap.add_argument("--compose-json", default="-")
+    ap.add_argument("--labels-dir", help="Offline label documents keyed by published image name")
     a = ap.parse_args(argv)
+    if a.labels_dir:
+        import re
+        def labels_of(image):
+            match = re.search(r"/openit/([a-z0-9-]+)[@:]", image)
+            if match is None:
+                return {}
+            path = pathlib.Path(a.labels_dir) / (match.group(1) + ".json")
+            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     raw = sys.stdin.read() if a.compose_json == "-" else pathlib.Path(a.compose_json).read_text(encoding="utf-8")
     from boundary_contracts import validator
     compose = json.loads(raw)

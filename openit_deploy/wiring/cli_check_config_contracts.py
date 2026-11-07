@@ -12,6 +12,7 @@ import yaml
 
 from openit_deploy.components import config_contract_check
 from openit_deploy.wiring.call import call
+from boundary_contracts import format_checker as _bc_format_checker  # 형식(format) 검증기가 없으면 조용히 넘기지 않고 실패한다(계약 3.5.0)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ENV_SERVICES = {   # compose 서비스 -> (계약 스키마, 환경 문서로 바꾸는 규칙). 3.2.0(U73): 모든 서비스 컨테이너의 환경을 그 서비스의 선언 스키마로 검증한다
@@ -43,7 +44,7 @@ def make_validators(names):
         local = ROOT / "schemas" / f"{n}.schema.json"
         if local.exists():   # deploy 내부 스키마(schemas/*.schema.json): 영역 사이 계약이 아닌 deploy 소유 컨테이너(gateway)의 선언. 계약 이름과 겹치지 않게 둔다
             s = json.loads(local.read_text(encoding="utf-8"))
-            vv = Draft202012Validator(s)
+            vv = Draft202012Validator(s, format_checker=_bc_format_checker(s))
             out[n] = (lambda v: lambda doc: [("/".join(map(str, e.absolute_path)), f"{e.validator} 위반") for e in sorted(v.iter_errors(doc), key=lambda e: list(map(str, e.absolute_path)))])(vv)
             continue
         base, _, sub = n.partition("#")

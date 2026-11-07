@@ -1,0 +1,49 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ContainerInputsCheckResult.schema.json",
+ "title": "ContainerInputsCheckResult",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "status",
+  "checked",
+  "violations"
+ ],
+ "properties": {
+  "status": {
+   "enum": [
+    "OK",
+    "VIOLATIONS"
+   ]
+  },
+  "checked": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "대조한 항목 수(서비스 x 규칙)"
+  },
+  "violations": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "service",
+     "rule",
+     "detail"
+    ],
+    "properties": {
+     "service": {
+      "type": "string"
+     },
+     "rule": {
+      "type": "string",
+      "pattern": "^I[0-9]+$"
+     },
+     "detail": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ }
+}

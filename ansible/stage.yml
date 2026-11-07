@@ -31,7 +31,16 @@
     ca_project: "{{ hostvars[plan.step_ca_host].placement_project | default('deploy') }}"
   delegate_to: "{{ plan.step_ca_host | default(inventory_hostname, true) }}"
   register: tokens
-  no_log: "{{ placement_no_log | default(true) | bool }}"   # 시험이 실패 원인을 보려고 끌 수 있다(토큰 값이 로그에 나오므로 운영에서는 켜 둔다)
+  no_log: true   # 토큰 값이 결과(stdout)에 있다: 끌 수 있게 두지 않는다(D84, 2026-11-07 교차검증). 실패 원인은 종료 코드와 이름으로 본다
+  changed_when: false
+  when: plan.stage_tokens[stage_i] | length > 0 and (missing.stdout_lines | length) > 0
+- name: "단계 {{ stage_i }}: 토큰 전달을 스키마와 실제 인증서 이미지의 사용자로 검증"
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", "{{ p_root }}/scripts/prepare_token_delivery.py", "--compose-json", "{{ p_out }}/config.json"]
+    stdin: "{{ tokens.stdout | trim }}"
+  delegate_to: localhost
+  register: token_delivery
+  no_log: true
   changed_when: false
   when: plan.stage_tokens[stage_i] | length > 0 and (missing.stdout_lines | length) > 0
 - name: "단계 {{ stage_i }}: 이 서버의 토큰 볼륨에 쓰기 (640)"
@@ -45,7 +54,7 @@
     docker run -i --rm --network none --user 0 -v "{{ p_project }}_pki-tokens:/t" -v "{{ p_project }}_pki-root:/r" -v "{{ p_dir }}/scripts/put-tokens.py:/p.py:ro" "$UTIL" python /p.py
   args:
     executable: /bin/bash
-    stdin: "{{ tokens.stdout }}"
+    stdin: "{{ token_delivery.stdout | trim }}"
   no_log: true
   changed_when: true
   when: plan.stage_tokens[stage_i] | length > 0 and (missing.stdout_lines | length) > 0

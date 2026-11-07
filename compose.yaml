@@ -101,6 +101,8 @@ networks:
     internal: true
   backup-models:   # 백업 저장소 <-> model-registry 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
+  synthetic-sources:   # dataset-store 영역 pod -> question-authoring·ops-feedback 영역 게이트웨이(합성 잡의 문항 읽기·실패 사례 읽기). dataset-store 의 노출 선언 egress 와 같은 범위만 잇는다(R1.8: 출구는 자기 게이트웨이 loopback 3128 CONNECT, 2026-11-07 교차검증)
+    internal: true
   backup-datasets:   # 백업 저장소 <-> dataset-store 영역 pod 만(영역끼리 닿지 않는다)
     internal: true
   backup-gateway:   # 백업 저장소 <-> 공개 입구 백업 잡 만
@@ -973,6 +975,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      synthetic-sources: {aliases: [question-authoring]}   # dataset-store 의 합성 잡이 이 영역을 출구로 부른다
       mon-question-authoring: {aliases: [question-authoring]}
       backup-qa: {aliases: [question-authoring]}
       authoring: {aliases: [question-authoring]}
@@ -1111,6 +1114,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      synthetic-sources: {aliases: [ops-feedback]}   # dataset-store 의 합성 잡이 이 영역을 출구로 부른다
       mon-ops-feedback: {aliases: [ops-feedback]}
       backup-ops: {aliases: [ops-feedback]}
       serving-ops: {aliases: [ops-feedback]}
@@ -1272,6 +1276,7 @@ services:
     sysctls: {net.ipv4.ip_unprivileged_port_start: 0}   # 사이드카(같은 네임스페이스)가 추가 capability 없이 80/443 을 열게 한다(ADR 0060)
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     networks:
+      synthetic-sources: {}   # 합성 잡의 출구(게이트웨이 CONNECT)가 question-authoring·ops-feedback 에 닿는 망(별칭 없음: 이 망에서는 받지 않는다)
       mon-dataset-store: {aliases: [dataset-store]}
       datasets: {aliases: [dataset-store]}
       backup-datasets: {aliases: [dataset-store]}
@@ -1718,7 +1723,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-db@${IDENTITY_DB_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 접속 문자열 파일(IDENTITY_DB_URL_FILE)·루트(IDENTITY_ROOT_CA)는 계약 기본 경로(/run/secrets/identity-db-url, /etc/openit/pki/root_ca.crt)를 쓴다
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
+    environment: {<<: *commonenv, IDENTITY_DB_URL_FILE: /run/secrets/identity-db-url, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
     secrets: [identity-db-url, backup-identity-credentials, backup-identity-repo-password]
     networks: [db-identity, backup-identity]
     security_opt: ["no-new-privileges:true"]
@@ -1736,7 +1741,7 @@ services:
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/identity-db@${IDENTITY_DB_DIGEST:?locks/images.lock}
     volumes: [pki-root:/etc/openit/pki:ro]   # 접속 문자열 파일(IDENTITY_DB_URL_FILE)·루트(IDENTITY_ROOT_CA)는 계약 기본 경로(/run/secrets/identity-db-url, /etc/openit/pki/root_ca.crt)를 쓴다
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
-    environment: {<<: *commonenv, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
+    environment: {<<: *commonenv, IDENTITY_DB_URL_FILE: /run/secrets/identity-db-url, IDENTITY_ROOT_CA: /etc/openit/pki/root_ca.crt, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/identity/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-identity-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-identity-repo-password}
     secrets: [identity-db-url, backup-identity-credentials, backup-identity-repo-password]
     networks: [db-identity, backup-identity]
     security_opt: ["no-new-privileges:true"]

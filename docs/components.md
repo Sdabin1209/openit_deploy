@@ -34,6 +34,7 @@
 | area_list | `openit_deploy/components/area_list.py` | AreaListRequest | AreaListResult | 영역 목록에서 조건(kind, 버전 열차, 제외)에 맞는 영역 이름을 고른다 |
 | config_contract_check | `openit_deploy/components/config_contract_check.py` | ConfigContractCheckRequest | ConfigContractCheckResult | 컨테이너에 주입·배치하는 설정·환경이 기동 전에 계약 스키마를 따르는지 판정한다 |
 | consistency_check | `openit_deploy/components/consistency_check.py` | ConsistencyCheckRequest | ConsistencyCheckResult | 영역을 가로지르는 정적 일관성 규칙(버전표, 예시 키 순서, 삭제된 이름 등)을 점검한다 |
+| container_inputs_check | `openit_deploy/components/container_inputs_check.py` | ContainerInputsCheckRequest | ContainerInputsCheckResult | 이미지 주입 선언과 실제 배포 입력을 대조한다 |
 | image_label_check | `openit_deploy/components/image_label_check.py` | ImageLabelCheckRequest | ImageLabelCheckResult | 이미지 라벨이 계약 ImageLabels(와 jobs·exposure 안쪽 JSON)를 따르는지 판정한다 |
 | internal_file_check | `openit_deploy/components/internal_file_check.py` | InternalFileCheckRequest | InternalFileCheckResult | images.env·images.lock·verify-areas.yaml 을 deploy 내부 스키마로 검증한다 |
 | db_secrets | `openit_deploy/components/db_secrets.py` | DbSecretsRequest | DbSecretsResult | 영역 DB 이미지가 선언한 계정(io.openit.database)에서 계정 암호 파일과 접속 URI 파일 내용을 만든다(계약 3.4.12) |

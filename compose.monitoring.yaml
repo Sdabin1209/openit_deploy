@@ -8,6 +8,7 @@ x-monhard: &monhard
   security_opt: ["no-new-privileges:true"]
   cap_drop: ["ALL"]
   read_only: true
+  tmpfs: ["/tmp"]   # 이미지 진입점이 모든 역할에서 채운 설정을 /tmp/openit-monitoring 에 쓴다(주입 선언 ContainerInputs.writable /tmp). 읽기 전용 루트라 없으면 시작하지 못한다(2026-11-06 정적 대조)
   logging: *monlog
 services:
   prometheus:

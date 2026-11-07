@@ -1,6 +1,7 @@
 """wiring/진입: check_link_pins.py [--ws DIR] — 각 영역 main 브랜치의 잠금 파일에서 openit-link 태그를 읽어 DEPLOY_LINK_TAG 와 대조한다(U59). 종료 코드: 0 모두 같다, 1 어긋남, 3 핀을 하나도 찾지 못함(검증하지 못함: 통과가 아니다).
 읽기 전용: 빌드 기록(build/images.env, 환경 LINK_PINS_IMAGES_ENV)이 있으면 영역마다 **빌드한 커밋**(기록의 revision)의 잠금 파일을 `git show <revision>:<파일>` 로 읽는다: 빌드한 것과 점검하는 것이 같아야 점검이다(D8b; 예전에는 main 을 읽어 영역 브랜치로 빌드한 이미지와 다른 핀을 봤다).
 기록이 없는 영역(또는 기록에 없는 이미지의 영역)은 예전처럼 main(없으면 HEAD)을 읽고 "빌드 기록 없음"이라고 표시한다. 작업 트리의 미커밋 변경은 보지 않는다."""
+from openit_deploy.wiring.workspace import workspace_of
 import argparse
 import os
 import pathlib
@@ -49,7 +50,7 @@ def deploy_link_tag() -> str:
 
 
 def main(argv) -> int:
-    ap = argparse.ArgumentParser(); ap.add_argument("--ws", default=str(ROOT.parent)); ap.add_argument("--tag", default="")
+    ap = argparse.ArgumentParser(); ap.add_argument("--ws", default=str(workspace_of(ROOT))); ap.add_argument("--tag", default="")
     a = ap.parse_args(argv)
     ws = pathlib.Path(a.ws)
     names = areas_file.names(ws / "head" / "shared" / "areas.json", kinds={"python", "library"})

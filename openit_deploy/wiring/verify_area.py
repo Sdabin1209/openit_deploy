@@ -2,6 +2,7 @@
 계획을 세우는 일은 컴포넌트 verify_plan 이 하고, 여기는 정본 목록(areas.json, lib.sh), 대응표(yaml), 단계 선언(e2e_steps.py), setup-env 보고, git·Docker 를 읽어 넘기고 계획을 실행한다(ADR 0045).
 전체 합격이 아니다: 완료 선언은 옵션 없는 전체 E2E 가 기준이다.
 """
+from openit_deploy.wiring.workspace import workspace_of
 import argparse, os, subprocess, sys, time
 from pathlib import Path
 
@@ -194,7 +195,7 @@ def changed_files(ws, area, since):
 def main(argv=None):
     if "--stale-images" in (argv if argv is not None else sys.argv[1:]):
         # e2e.sh --reuse-build 가 쓴다: 소스 커밋·의존 태그가 이미지 라벨과 다른(낡은) 이미지 이름을 공백으로 구분해 낸다. 판정이 안 되면 0이 아닌 코드(호출자가 전부 다시 빌드한다)
-        ws = Path(os.environ.get("VERIFY_WORKSPACE") or DEPLOY_ROOT.parent)
+        ws = Path(os.environ.get("VERIFY_WORKSPACE") or workspace_of(DEPLOY_ROOT))
         print(" ".join(stale_images(list(IMAGE_SRC), ws)))
         return 0
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -207,7 +208,7 @@ def main(argv=None):
     ap.add_argument("--allow-dirty", action="store_true", help="커밋 안 된 변경이 있어도 E2E 를 돌린다(이미지는 HEAD 로 빌드되어 그 변경을 보지 못한다)")
     a = ap.parse_args(argv)
     cfg = load_config()
-    ws = Path(os.environ.get("VERIFY_WORKSPACE") or DEPLOY_ROOT.parent)
+    ws = Path(os.environ.get("VERIFY_WORKSPACE") or workspace_of(DEPLOY_ROOT))
     # deploy 를 git worktree 에서 돌릴 때처럼 상위 폴더가 워크스페이스가 아니면, 정적 점검도 같은 워크스페이스를 보게 한다
     os.environ.setdefault("CHECK_ALL_WORKSPACE", str(ws)); os.environ.setdefault("CHECK_VERSIONS_WORKSPACE", str(ws))
     if a.list:

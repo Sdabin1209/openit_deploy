@@ -3,6 +3,7 @@
 # 확인: 서비스마다 BuildImageRequest 를 쓰고 영역 리포 루트에서 scripts/build-image.sh <요청> 만 부른다 / 요청 값(revision, versions, dependency_sources, variant, source_dir) /
 #       서비스 -> 리포 대응 / 결과(BuildImageResult) 검증 실패·진입점 실패·진입점 없음·image_id 불일치는 빌드 실패.
 set -uo pipefail
+export LABEL_FIXTURE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/image_label_test_data.py"
 HERE="$(cd "$(dirname "$0")" && pwd)"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; N=0; F=0
 ok() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $name"; else echo "  FAIL $name :: $(echo "$out" | tail -2 | tr '\n' ' ' | cut -c1-200)"; F=$((F+1)); fi; }
 no() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  FAIL $name :: 성공하면 안 된다"; F=$((F+1)); else echo "  PASS $name"; fi; }
@@ -40,14 +41,14 @@ bad=${FAKE_BAD:-}; mode=${FAKE_MODE:-}
 if [ "$bad" = "$REPO" ]; then case "$mode" in
   fail) echo "빌드 실패(가짜)" >&2; exit 1;;
   nolabels) echo '{"image":"'$(python3 -c "import json;print(json.load(open('$REQ'))['image_tag'])")'","image_id":"sha256:'$(printf 'a%.0s' $(seq 64))'","labels":{}}'; exit 0;;
-  otherimage) echo '{"image":"x/other:1","image_id":"sha256:'$(printf 'a%.0s' $(seq 64))'","labels":{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.0.0","io.openit.contracts.survey-schema":"n/a"}}'; exit 0;;
+  otherimage) echo '{"image":"x/other:1","image_id":"sha256:'$(printf 'a%.0s' $(seq 64))'","labels":{"io.openit.service":"x","io.openit.revision":"abc1234","io.openit.contracts.boundary":"v2.0.0","io.openit.contracts.survey-schema":"n/a"}}' | python3 "$LABEL_FIXTURE_HELPER"; exit 0;;
   badid) ID=sha256:$(printf 'b%.0s' $(seq 64));;
   wrongsvc) SVC_LABEL=$REPO;;   # 영역 이름을 서비스 라벨로 내는 경우(model-runtime 이 model-serving 이미지에 model-runtime 을 단 것)
 esac; fi
 ID=${ID:-sha256:$(printf 'a%.0s' $(seq 64))}
 IMG=$(python3 -c "import json;print(json.load(open('$REQ'))['image_tag'])"); SVC=$(python3 -c "import sys;print(sys.argv[1].split('/')[-1].split(':')[0])" "$IMG"); REV=$(python3 -c "import json;print(json.load(open('$REQ'))['revision'])")
 echo "진행 기록(표준 오류)" >&2
-echo '{"image":"'$IMG'","image_id":"'$ID'","labels":{"io.openit.service":"'${SVC_LABEL:-$SVC}'","io.openit.revision":"'$REV'","io.openit.contracts.boundary":"'$(python3 -c "import json;print(json.load(open('$REQ'))['versions']['boundary'])")'","io.openit.contracts.survey-schema":"n/a"}}'
+echo '{"image":"'$IMG'","image_id":"'$ID'","labels":{"io.openit.service":"'${SVC_LABEL:-$SVC}'","io.openit.revision":"'$REV'","io.openit.contracts.boundary":"'$(python3 -c "import json;print(json.load(open('$REQ'))['versions']['boundary'])")'","io.openit.contracts.survey-schema":"n/a"}}' | python3 "$LABEL_FIXTURE_HELPER"
 EN
 AREAS_JSON="${AREAS_FILE:-$HERE/../../head/shared/areas.json}"   # 영역 목록의 정본(areas.py 로 읽는다)
 for r in $("$DEPLOY_PY" "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node,library); do mkrepo "$r"; done

@@ -50,14 +50,33 @@ class T(unittest.TestCase):
         comp = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]
         consts = dict(re.findall(r'^(SD_QA_JOB_URL|SD_OPS_JOB_URL|DS_JOB_URL) = "(https://[a-z-]+)"', SRC, re.M))
         self.assertEqual(sorted(consts), ["DS_JOB_URL", "SD_OPS_JOB_URL", "SD_QA_JOB_URL"])
-        nets = {k: re.search(r'^%s = lambda: f"\{a\.project\}_([a-z-]+)"' % k, SRC, re.M).group(1) for k in ("SD_RUN_NETWORK", "DS_JOB_NETWORK")}
+        nets = {"DS_JOB_NETWORK": re.search(r'^DS_JOB_NETWORK = lambda: f"\{a\.project\}_([a-z-]+)"', SRC, re.M).group(1)}
+        # 합성 잡(SD_*)은 dataset-store 영역 pod 공간 안에서 돌아 자기 게이트웨이 출구로 이웃을 부른다(R1.8): 이웃은 dataset-store pod 와 망을 공유해야 한다
+        self.assertIn('f"{a.project}-dataset-store-1"', SRC, "SD_RUN_NETWORK 이 dataset-store 영역 pod 공간을 쓰지 않는다")
         for const, url in consts.items():
             host, = re.fullmatch(r"https://([a-z-]+)", url).groups()
             self.assertIn(host, comp, f"{const}: compose 에 서비스 {host} 가 없다")
             hc = " ".join(comp[host].get("healthcheck", {}).get("test", []))
             self.assertTrue(f"{host}-gw" in comp or f"{host}-tls" in comp, f"{const}: {host} 의 영역 게이트웨이({host}-gw)나 TLS 사이드카({host}-tls)가 없다(ADR 0060)")
-            net = nets["DS_JOB_NETWORK"] if const == "DS_JOB_URL" else nets["SD_RUN_NETWORK"]
-            self.assertIn(net, nets_of(comp, host), f"{const}: 잡 네트워크 {net} 에 {host} 가 붙어 있지 않다")
+            if const == "DS_JOB_URL":
+                net = nets["DS_JOB_NETWORK"]
+                self.assertIn(net, nets_of(comp, host), f"{const}: 잡 네트워크 {net} 에 {host} 가 붙어 있지 않다")
+            else:
+                self.assertTrue(set(nets_of(comp, "dataset-store")) & set(nets_of(comp, host)), f"{const}: dataset-store 영역 pod 와 {host} 가 공유하는 망이 없다(게이트웨이 출구가 닿지 않는다)")
+
+    def test_synthetic_run_goes_through_its_own_gateway_egress(self):
+        """R1.8(2026-11-07): run_sd 는 synthetic-run 을 영역 pod 공간(SD_RUN_NETWORK)에서 OPENIT_EGRESS_PROXY=SD_EGRESS_PROXY 로 돌린다. 프록시 값은 계약 CommonEnv 를 지킨다."""
+        fn = next(n for n in ast.walk(TREE) if isinstance(n, ast.FunctionDef) and n.name == "run_sd")
+        calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "run_job"]
+        self.assertEqual(len(calls), 1)
+        kw = {k.arg: ast.unparse(k.value) for k in calls[0].keywords}
+        self.assertEqual(kw.get("network"), "SD_RUN_NETWORK()")
+        self.assertEqual(kw.get("environment"), "{'OPENIT_EGRESS_PROXY': SD_EGRESS_PROXY}")
+        proxy = re.search(r'^SD_EGRESS_PROXY = "([^"]+)"', SRC, re.M).group(1)
+        from boundary_contracts import validator
+        self.assertTrue(validator("CommonEnv").is_valid({"OPENIT_EGRESS_PROXY": proxy}))
+        rj = next(n for n in ast.walk(TREE) if isinstance(n, ast.FunctionDef) and n.name == "run_job")
+        self.assertIn("environment=environment", ast.unparse(rj))   # 받은 환경을 실행기까지 넘긴다
 
     def test_no_host_network_or_default_network_anywhere(self):
         files = subprocess.run(["git", "ls-files", "scripts"], cwd=ROOT, capture_output=True, text=True).stdout.split()

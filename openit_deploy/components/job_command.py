@@ -17,17 +17,38 @@ SECRET_FILES = {"QUESTION_READER_TOKEN_FILE": "qa-read-synthetic-data", "FAILURE
 
 def run(request: "JobCommandRequest") -> "JobCommandResult":
     job = request["job"]
-    cmd = [request["docker"], "run", "--rm", "--network", request["network"], "--group-add", str(request["gid"]),
-           "-v", f"{request['work']}:{request['work']}", "-v", f"{request['config_path']}:{job['config']['container_path']}:ro"]
+    cmd = [request["docker"], "run", "--rm", "--network", request["network"], "--group-add", str(request["gid"])]
+    def mount(source, target, read_only, kind="bind"):
+        import csv
+        import io
+        options = io.StringIO()
+        fields = [f"type={kind}", f"src={source}", f"dst={target}"]
+        if read_only:
+            fields.append("readonly")
+        csv.writer(options, lineterminator="\n").writerow(fields)
+        return ["--mount", options.getvalue().removesuffix("\n")]
+    cmd += mount(request["config_path"], job["config"]["container_path"], True)
+    if request.get("read_only_root"):
+        cmd += ["--read-only", "--cap-drop", "ALL"]
+    for name, value in sorted(request.get("sysctls", {}).items()):
+        cmd += ["--sysctl", f"{name}={value}"]
+    for capability in request.get("capabilities", []):
+        cmd += ["--cap-add", capability]
+    for binding in request.get("mounts", []):
+        cmd += mount(binding["source"], binding["target"], binding["read_only"])
+    for scratch in request.get("tmpfs", []):
+        cmd += ["--tmpfs", f"{scratch['path']}:uid={scratch['uid']},gid={scratch['gid']},mode=1770"]
     for group in request.get("supplementary_groups", []):
         if group != request["gid"]:
             cmd += ["--group-add", str(group)]
     if "container_name" in request:
         cmd += ["--name", request["container_name"]]
     if "pki_root_volume" in request:
-        cmd += ["-v", f"{request['pki_root_volume']}:/etc/openit/pki:ro", "-e", "SSL_CERT_FILE=/etc/openit/pki/root_ca.crt"]
+        cmd += mount(request["pki_root_volume"], "/etc/openit/pki", True, "volume") + ["-e", "SSL_CERT_FILE=/etc/openit/pki/root_ca.crt"]
     for d in request.get("extra_ro") or ():
-        cmd += ["-v", f"{d}:{d}:ro"]
+        cmd += mount(d, d, True)
+    for name, value in sorted(request.get("environment", {}).items()):
+        cmd += ["-e", f"{name}={value}"]
     for nf in job.get("secret_files", []):
-        cmd += ["-v", f"{request['secrets_dir'].rstrip('/')}/tokens/{SECRET_FILES[nf]}:/run/secrets/{nf.lower()}:ro", "-e", f"{nf}=/run/secrets/{nf.lower()}"]
+        cmd += mount(f"{request['secrets_dir'].rstrip('/')}/tokens/{SECRET_FILES[nf]}", f"/run/secrets/{nf.lower()}", True) + ["-e", f"{nf}=/run/secrets/{nf.lower()}"]
     return {"argv": cmd + [request["image"]] + job["argv"]}

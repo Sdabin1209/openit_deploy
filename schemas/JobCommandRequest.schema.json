@@ -71,7 +71,8 @@
   },
   "work": {
    "type": "string",
-   "minLength": 1
+   "minLength": 1,
+   "description": "전용 호스트 작업 루트. 설정에서 선택한 쓰기 디렉터리는 이 루트의 자식이어야 한다. 루트 전체를 컨테이너에 마운트하지 않는다."
   },
   "secrets_dir": {
    "type": "string",
@@ -118,6 +119,80 @@
     "maximum": 2147483647
    },
    "description": "주입하는 비밀 파일을 읽을 보조 그룹. 이미지 USER를 대체하지 않는다."
+  },
+  "mounts": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "source",
+     "target",
+     "read_only"
+    ],
+    "properties": {
+     "source": {
+      "type": "string",
+      "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+     },
+     "target": {
+      "type": "string",
+      "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+     },
+     "read_only": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  "tmpfs": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "path",
+     "uid",
+     "gid"
+    ],
+    "properties": {
+     "path": {
+      "type": "string",
+      "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+     },
+     "uid": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "gid": {
+      "type": "integer",
+      "minimum": 0
+     }
+    }
+   }
+  },
+  "read_only_root": {
+   "type": "boolean"
+  },
+  "capabilities": {
+   "type": "array",
+   "uniqueItems": true,
+   "items": {
+    "type": "string",
+    "pattern": "^[A-Z][A-Z0-9_]*$"
+   }
+  },
+  "environment": {
+   "type": "object",
+   "propertyNames": {
+    "pattern": "^[A-Z][A-Z0-9_]*$"
+   },
+   "additionalProperties": {
+    "type": "string"
+   }
+  },
+  "sysctls": {
+   "$ref": "https://openit.example/schemas/ContainerInputs.schema.json#/$defs/InputSet/properties/sysctls"
   }
  }
 }

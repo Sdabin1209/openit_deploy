@@ -1,0 +1,32 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "root",
+  "tokens"
+ ],
+ "title": "TokenExportData",
+ "$id": "TokenExportData.schema.json",
+ "properties": {
+  "root": {
+   "type": "string",
+   "minLength": 1,
+   "description": "Public CA PEM exported by the issuing CA.",
+   "contentMediaType": "application/pem-certificate-chain"
+  },
+  "tokens": {
+   "type": "object",
+   "minProperties": 1,
+   "propertyNames": {
+    "$ref": "https://openit.example/schemas/StepCaEnv.schema.json#/$defs/DnsName"
+   },
+   "additionalProperties": {
+    "type": "string",
+    "minLength": 1,
+    "pattern": "^[^\\r\\n]+(?![\\s\\S])",
+    "writeOnly": true
+   }
+  }
+ }
+}

@@ -9,6 +9,7 @@ cat > "$T/head/shared/areas.json" <<'J'
 {"areas": [{"name":"head","kind":"docs","version_train":false},{"name":"a-ok","kind":"python","version_train":false},{"name":"b-fail","kind":"python","version_train":false},
  {"name":"c-none","kind":"node","version_train":false},{"name":"d-ok","kind":"library","version_train":false},{"name":"deploy","kind":"compose","version_train":false}]}
 J
+export AREAS_FILE="$T/head/shared/areas.json"
 for a in a-ok b-fail c-none d-ok; do mkdir -p "$T/$a/scripts"; done
 # 영역 setup-env.sh 는 표준 출력 마지막 줄에 SetupEnvReport 를 낸다(계약 v2.6.0). 시험에서는 deploy .venv 의 계약 패키지로 검증한다.
 # 계약 패키지가 있는 파이썬: 이 트리의 .venv, 없으면(worktree) 주 작업 트리의 .venv

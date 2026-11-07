@@ -10,6 +10,7 @@ render 가 폴더에 쓰는 것: compose.placement.yaml(그 서버의 compose ov
 import argparse, json, os, re, sys
 import yaml
 from jsonschema import Draft202012Validator
+from boundary_contracts import format_checker as _bc_format_checker  # 형식(format) 검증기가 없으면 조용히 넘기지 않고 실패한다(계약 3.5.0)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))   # 리포 루트(openit_deploy/wiring/ 의 두 단계 위)
@@ -170,7 +171,7 @@ def placeable(compose):
 def check(p, compose):
     errs = []
     schema = json.load(open(os.path.join(ROOT, "schemas", "Placement.schema.json"), encoding="utf-8"))
-    for e in sorted(Draft202012Validator(schema).iter_errors({k: v for k, v in p.items() if not k.startswith("_")}), key=lambda e: list(e.path)):
+    for e in sorted(Draft202012Validator(schema, format_checker=_bc_format_checker(schema)).iter_errors({k: v for k, v in p.items() if not k.startswith("_")}), key=lambda e: list(e.path)):
         errs.append("형식: %s: %s" % ("/".join(map(str, e.path)) or "(최상위)", e.message))
     if errs:
         return errs

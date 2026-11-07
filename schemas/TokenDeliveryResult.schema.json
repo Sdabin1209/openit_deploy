@@ -1,0 +1,20 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "TokenDeliveryResult.schema.json",
+ "title": "TokenDeliveryResult",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "tokens_written",
+  "root_written"
+ ],
+ "properties": {
+  "tokens_written": {
+   "type": "integer",
+   "minimum": 1
+  },
+  "root_written": {
+   "const": true
+  }
+ }
+}

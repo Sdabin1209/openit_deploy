@@ -4,6 +4,7 @@
 (BuildImageRequest 등 4개) 정본이 둘이 됐다. 사본을 지웠고, 이 시험은 사본이 다시 생기지 않음을 확인한다.
 사용: <deploy .venv>/bin/python scripts/test_contract_schema_copy.py   (계약 패키지가 설치된 파이썬. 패키지에 스키마가 없으면 실패: 통과로 세지 않는다)"""
 import json, pathlib, subprocess, sys, unittest
+from image_label_test_data import inputs_label
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -29,7 +30,7 @@ class T(unittest.TestCase):
             self.assertFalse((ROOT / "schemas" / f"{n}.schema.json").exists(), f"deploy schemas/ 에 계약 스키마 {n} 사본이 있다")
 
     def test_checker_uses_package(self):
-        labels = {"io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.6.0", "io.openit.contracts.survey-schema": "3"}
+        labels = {"io.openit.inputs": inputs_label("s"), "io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.6.0", "io.openit.contracts.survey-schema": "3"}
         p = subprocess.run([sys.executable, "-W", "ignore", str(HERE / "check_image_labels.py")], input=json.dumps(labels), capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("스키마 출처: 계약 패키지", p.stdout)

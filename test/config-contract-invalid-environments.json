@@ -1,0 +1,1 @@
+{"OPENIT_EGRESS_PROXY": "http://outside.invalid:3128", "OPENIT_BACKUP_URL": "http://outside.invalid/backup", "_comment": "plaintext-rejection-test: these values must be rejected before service startup"}

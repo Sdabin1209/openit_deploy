@@ -8,21 +8,12 @@ import sys
 from openit_deploy.components import consistency_check
 from openit_deploy.wiring import areas_file, mirrors, setup_env
 from openit_deploy.wiring.call import call
+from openit_deploy.wiring.workspace import workspace_of
 
 DEPLOY = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = DEPLOY / "scripts"
 
 
-def workspace_of(deploy: pathlib.Path) -> pathlib.Path:
-    """워크스페이스 = deploy 리포의 부모 폴더. 작업 트리(git worktree, deploy/build/wt-*)에서 돌면 부모는 deploy/build 이므로, 본 리포(git 공통 폴더의 부모)의 부모를 쓴다.
-    왜: 작업 트리의 부모를 워크스페이스로 보면 그 안의 다른 작업 트리(.git 이 든 폴더)가 전부 '모르는 대상'이 된다."""
-    if (deploy / ".git").is_file():   # 작업 트리는 .git 이 파일이다
-        try:
-            common = subprocess.run(["git", "-C", str(deploy), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, check=True).stdout.strip()
-            return pathlib.Path(common).parent.parent
-        except (OSError, subprocess.CalledProcessError):
-            pass
-    return deploy.parent
 
 
 # deploy 가 자기 일을 하려고 셸에 내보내는 변수: 영역 시험의 환경에 새면 영역이 자기 환경 선언(예: ModelServingEnv)을 어긴다고 거부한다. 영역 시험을 돌리기 전에 지운다(D7c)

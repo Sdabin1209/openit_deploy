@@ -1,4 +1,5 @@
 """wiring/진입: setup_env_report.py record|check|show|field <영역> ... (사용법은 scripts/setup_env_report.py 머리말)."""
+from openit_deploy.wiring.workspace import workspace_of
 import json
 import pathlib
 import sys
@@ -24,7 +25,7 @@ def main(argv) -> int:
         if v is None: return 1
         print(v); return 0
     if cmd == "check":
-        ws = pathlib.Path(argv[argv.index("--ws") + 1]) if "--ws" in argv else SE.ROOT.parent
+        ws = pathlib.Path(argv[argv.index("--ws") + 1]) if "--ws" in argv else workspace_of(SE.ROOT)
         _, why = SE.env_status(area, ws)
         if why: print(why); return 1
         return 0

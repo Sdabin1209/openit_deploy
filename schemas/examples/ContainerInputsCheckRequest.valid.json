@@ -1,0 +1,114 @@
+{
+  "services": [
+    {
+      "service": "survey-service",
+      "image": "survey-service",
+      "set": "role:default",
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "cap_add": [],
+      "sysctls": {},
+      "user_override": false,
+      "entrypoint_override": false,
+      "command_override": false,
+      "secrets_group": true,
+      "env": {
+        "SURVEY_DATABASE_URL_FILE": "/run/secrets/db-survey-dsn",
+        "SSL_CERT_FILE": "/etc/openit/pki/root_ca.crt"
+      },
+      "files": [
+        {
+          "target": "/run/secrets/db-survey-dsn",
+          "source": "secret"
+        },
+        {
+          "target": "/etc/openit/pki",
+          "source": "volume",
+          "directory": true
+        }
+      ],
+      "writable": [
+        {
+          "target": "/data",
+          "kind": "volume"
+        },
+        {
+          "target": "/tmp",
+          "kind": "tmpfs"
+        }
+      ],
+      "argv": null,
+      "expected_argv": null
+    }
+  ],
+  "declarations": {
+    "survey-service": {
+      "schema_version": 1,
+      "image": "survey-service",
+      "read_only_root": true,
+      "exec_absolute_argv": true,
+      "role_env": null,
+      "jobs": {},
+      "roles": {
+        "default": {
+          "env_schema": "SurveyServiceEnv",
+          "process": {
+            "uid": 10001,
+            "gid": 999
+          },
+          "capabilities": [],
+          "sysctls": {},
+          "files": [
+            {
+              "path_env": "SURVEY_DATABASE_URL_FILE",
+              "path": "/run/secrets/db-survey-dsn",
+              "directory": false,
+              "kind": "secret",
+              "schema": null,
+              "required": true,
+              "opened_by": "start-process"
+            },
+            {
+              "path_env": "SSL_CERT_FILE",
+              "path": "/etc/openit/pki/root_ca.crt",
+              "directory": false,
+              "kind": "ca-bundle",
+              "schema": null,
+              "required": true,
+              "opened_by": "start-process"
+            },
+            {
+              "path_env": "SURVEY_RISK_RULES_FILE",
+              "path": "/config/risk-rules.json",
+              "directory": false,
+              "kind": "config",
+              "schema": "SurveyRiskRulesFile",
+              "required": false,
+              "opened_by": "start-process"
+            }
+          ],
+          "writable": [
+            {
+              "path": "/data",
+              "persist": true,
+              "written_by": {
+                "uid": 10001,
+                "gid": 999
+              }
+            },
+            {
+              "path": "/tmp",
+              "persist": false,
+              "written_by": {
+                "uid": 10001,
+                "gid": 999
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

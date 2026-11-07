@@ -87,6 +87,18 @@ class Structure(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr[-400:])
             self.assertEqual(out.read_text(encoding="utf-8"), (PKG / "types/deploy_types.py").read_text(encoding="utf-8"), "types/ 가 schemas/ 와 다르다: bash scripts/gen-types.sh")
 
+    def test_failed_type_generation_preserves_previous_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = pathlib.Path(directory)
+            output = directory / 'existing_types.py'
+            output.write_text('previous valid output\n')
+            generator = directory / 'failing-codegen'
+            generator.write_text('#!/bin/sh\nexit 23\n')
+            generator.chmod(0o755)
+            result = subprocess.run(['bash', str(ROOT / 'scripts/gen-types.sh'), str(output)], capture_output=True, text=True, env={**__import__('os').environ, 'TYPES_GEN': str(generator)})
+            self.assertEqual(result.returncode, 23)
+            self.assertEqual(output.read_text(), 'previous valid output\n')
+
     def test_6_every_code_file_has_a_place(self):
         files = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--cached", "--others", "--exclude-standard", "*.py"], capture_output=True, text=True).stdout.split()
         bad = []

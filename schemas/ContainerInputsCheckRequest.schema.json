@@ -1,0 +1,193 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "ContainerInputsCheckRequest.schema.json",
+ "title": "ContainerInputsCheckRequest",
+ "description": "컴포넌트 container_inputs_check 입력: compose 가 서비스마다 실제로 주입하는 것(wiring 이 docker compose config 에서 뽑는다)과 이미지마다의 주입 선언(라벨 io.openit.inputs, 계약 ContainerInputs 3.5.0).",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "services",
+  "declarations"
+ ],
+ "properties": {
+  "services": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "service",
+     "image",
+     "set",
+     "read_only",
+     "cap_drop",
+     "cap_add",
+     "sysctls",
+     "user_override",
+     "entrypoint_override",
+     "secrets_group",
+     "env",
+     "files",
+     "writable",
+     "command_override",
+     "argv",
+     "expected_argv"
+    ],
+    "properties": {
+     "service": {
+      "type": "string"
+     },
+     "image": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+     },
+     "set": {
+      "type": "string",
+      "pattern": "^(role|job):[a-z][a-z0-9-]*$",
+      "description": "선언에서 고를 묶음: role:<역할 변수 값 또는 default> / job:<잡 이름>"
+     },
+     "read_only": {
+      "type": "boolean"
+     },
+     "cap_drop": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "cap_add": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "sysctls": {
+      "type": "object",
+      "additionalProperties": {
+       "type": "integer"
+      }
+     },
+     "user_override": {
+      "type": "boolean"
+     },
+     "entrypoint_override": {
+      "type": "boolean"
+     },
+     "secrets_group": {
+      "type": "boolean",
+      "description": "group_add 에 SECRETS_GID(비밀 파일의 그룹)가 있다"
+     },
+     "env": {
+      "type": "object",
+      "additionalProperties": {
+       "type": "string"
+      }
+     },
+     "files": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "target",
+        "source"
+       ],
+       "properties": {
+        "target": {
+         "type": "string"
+        },
+        "source": {
+         "enum": [
+          "secret",
+          "config",
+          "bind",
+          "volume"
+         ]
+        },
+        "directory": {
+         "type": [
+          "boolean",
+          "null"
+         ],
+         "description": "Observed mount source type. null means it cannot be determined before execution."
+        }
+       }
+      },
+      "description": "읽기로 주입한 것(secrets·configs·읽기 전용 마운트)의 컨테이너 안 경로"
+     },
+     "writable": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "target",
+        "kind"
+       ],
+       "properties": {
+        "target": {
+         "type": "string"
+        },
+        "kind": {
+         "enum": [
+          "tmpfs",
+          "volume",
+          "bind"
+         ]
+        },
+        "uid": {
+         "type": "integer"
+        },
+        "gid": {
+         "type": "integer"
+        },
+        "mode": {
+         "type": "string",
+         "pattern": "^[0-7]{3,4}$",
+         "description": "Explicit tmpfs mode in octal. If absent, the image destination mode is unknown; do not assume 1777. uid/gid default to root."
+        }
+       }
+      }
+     },
+     "command_override": {
+      "type": "boolean",
+      "description": "Whether Compose replaces the image default command. Only declared jobs may replace it (CONVENTIONS 13)."
+     },
+     "argv": {
+      "type": [
+       "array",
+       "null"
+      ],
+      "items": {
+       "type": "string"
+      }
+     },
+     "expected_argv": {
+      "type": [
+       "array",
+       "null"
+      ],
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  "declarations": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "object",
+    "required": [
+     "image",
+     "role_env",
+     "roles",
+     "jobs"
+    ],
+    "additionalProperties": true,
+    "description": "이미지 라벨 io.openit.inputs(계약 ContainerInputs 3.5.0) 한 이미지 분. 계약 검증은 내는 쪽(wiring)이 계약 validator 로 끝냈다(R7)"
+   },
+   "description": "이미지 이름 -> 주입 선언(계약 ContainerInputs)"
+  }
+ }
+}

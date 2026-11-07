@@ -233,7 +233,9 @@ INFERENCE_RELEASE_ADDR=<주 서버 release-gate 게이트웨이 IP> \
 INFERENCE_TOKENS_FILE=/안전한/경로/model-runtime-tokens INFERENCE_RELEASE_TOKEN_FILE=/안전한/경로/gate-read-model-serving \
 INFERENCE_CA_FILE=/안전한/경로/openit-root.crt \
 INFERENCE_BIND=<이 서버의 사설 인터페이스 주소> \
-docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
+# 기동 전에 주입 대조(계약 ContainerInputs): 같은 환경 변수로 compose 설정을 이미지 주입 선언과 맞춰 본다. 어긋나면 기동하지 않는다
+docker compose -p deploy-inference -f compose.inference.yaml config --format json | .venv/bin/python scripts/check_container_inputs.py --compose-json - \
+  && docker compose -p deploy-inference -f compose.inference.yaml up -d --wait
 ```
 
 - 데몬 없이 병합만 보려면 필수 다섯 변수를 주고 `docker compose -f compose.inference.yaml config`.

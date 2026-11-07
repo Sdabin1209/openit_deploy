@@ -20,6 +20,11 @@ if [ -n "$EXT" ]; then
 fi
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 bash "$DEPLOY_ROOT/scripts/check-compose.sh" >/dev/null
+# Generate the jobs/configuration before validating it. The exact same generated
+# input must reach `up`; regenerating after the gate would invalidate its result.
+if [ -z "${DEPLOY_NO_STACK_FILES:-}" ]; then
+  gen_stack_files "$P" || die "이미지 선언에서 배치 입력을 만들지 못했다"
+fi
 # gateway 의 CA 볼륨은 비루트(uid 10001)가 쓸 수 있어야 한다. 이미지의 /data 는 root 소유라 처음 한 번 소유자를 바꾼다(root 로 잠깐 도는 일회성 컨테이너, 네트워크 없음).
 V="${P}_gateway-data"
 if ! "$DOCKER" volume inspect "$V" >/dev/null 2>&1; then
@@ -32,7 +37,12 @@ CFGJ=$(mktemp); CFGE=$(mktemp); trap 'rm -f "$CFGJ" "$CFGE"' EXIT
 # compose 설정을 못 읽으면(필수 변수 누락 등) 그 사유가 계약 점검의 JSON 오류에 묻히지 않게 먼저 보인다
 dc "$P" config --format json > "$CFGJ" 2> "$CFGE" || { echo "docker compose config 실패:" >&2; tail -5 "$CFGE" >&2; die "compose 설정을 해석하지 못했다"; }
 "$DEPLOY_PY" -W ignore "$DEPLOY_ROOT/scripts/check_config_contracts.py" --compose-json "$CFGJ" || die "설정·환경이 계약을 어긴다: 기동하지 않는다(위 FAIL 의 서비스·위치를 고친다)"
+# 주입 대조(계약 ContainerInputs 3.5.0): compose 가 우리 이미지에 주입하는 것(파일·쓰기 경로·권한·사용자)이 이미지 라벨 io.openit.inputs 의 선언과 정확히 같은지 본다.
+# 잡 프로필까지 본다(잡 컨테이너도 같은 선언의 jobs 묶음을 따른다). 어기면 기동하지 않는다: 실행해 봐야 드러나던 권한·경로 결함을 기동 전에 막는다(2026-11-06)
+CFGI=$(mktemp); trap 'rm -f "$CFGJ" "$CFGE" "$CFGI"' EXIT
+dc "$P" --profile jobs config --format json > "$CFGI" 2> "$CFGE" || { echo "docker compose config(잡 프로필) 실패:" >&2; tail -5 "$CFGE" >&2; die "compose 설정을 해석하지 못했다"; }
+"$DEPLOY_PY" -W ignore "$DEPLOY_ROOT/scripts/check_container_inputs.py" --compose-json "$CFGI" || die "compose 주입이 이미지 주입 선언(ContainerInputs)과 다르다: 기동하지 않는다(위 FAIL 의 규칙·서비스를 고친다)"
 # 영역 DB 의 계정 암호·접속 URI 파일: DB 이미지 라벨 io.openit.database(DatabaseDeclaration)대로 만든다(계약 3.4.12). 이미 있으면 그대로(멱등). 없는 파일을 마운트하면 Docker 가 빈 디렉터리를 만든다
 bash "$DEPLOY_ROOT/scripts/gen-db-secrets-all.sh" >/dev/null || die "영역 DB 비밀을 만들지 못했다(DB 이미지 라벨 io.openit.database 를 확인한다)"
 # --wait 에 상한이 없으면 기동이 끝없이 걸릴 수 있다. UP_WAIT_TIMEOUT 초(기본 340)는 로그 기준 최악 170초 x 2 다(e2e.sh E2E_UP_WAIT_S 와 같은 근거)(D125: 측정 최악 + 여유가 되려면 이 호스트에서 재야 한다. e2e.sh 의 E2E_UP_WAIT_S 가 같은 값을 넘긴다).
-dc "$P" up -d --wait --wait-timeout "${UP_WAIT_TIMEOUT:-340}" "$@"
+GEN_STACK_ACTIVE=1 dc "$P" up -d --wait --wait-timeout "${UP_WAIT_TIMEOUT:-340}" "$@"

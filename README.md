@@ -165,3 +165,4 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0034 영역 안 컴포넌트 사이 파일 형식(images.env, images.lock, jobs.yaml, verify-areas.yaml)을 JSON Schema로 둔다](docs/adr/0034-deploy-internal-schemas.md)
 
 잡 설정 연결·기동 전 검증은 [ADR 0067](docs/adr/0067-job-config-follows-owner-declaration.md)을 따른다.
+- [0068 기동 전에 compose 주입을 이미지 주입 선언(ContainerInputs)과 대조한다](docs/adr/0068-container-inputs-check-before-start.md)
