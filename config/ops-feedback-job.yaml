@@ -38,6 +38,7 @@ retention:                  # D88/U4 최소 보존 잠정 기본값(병원 규�
   cases_days: 180           # 비식별 실패 사례와 고아 trace
   metrics_days: 365         # 지표 스냅샷·롤백 요청·영수증
 # rollback: 롤백 기준은 사용자 결정 전이라 키를 두지 않는다(계약 OpsFeedbackJobConfig: 있으면 롤백 평가를 하고 값은 object 여야 한다. null 은 계약 위반). 결정되면 window_hours, min_turns, max_failure_rate, counted_review_statuses, requested_by_role, auto_submit 을 채운다
-release_reader:
-  factory: "boundary_contracts.clients:HttpReleaseReader"
-  args: {base_url: "https://release-gate", token: {env: OPS_GATE_READ_TOKEN}}
+release_reader:             # 계약 4.0.0 HttpClientSettings(D135): 역할이 계약 클라이언트(HttpReleaseReader)를 정하고 설정은 주소·토큰 이름만
+  kind: http
+  base_url: "https://release-gate"
+  token_secret: OPS_GATE_READ_TOKEN

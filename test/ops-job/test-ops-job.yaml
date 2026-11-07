@@ -34,6 +34,7 @@ retention:                  # D88/U4 최소 보존 잠정 기본값(병원 규�
   raw_days: 30              # 처리 끝난 원본 Trace
   cases_days: 180           # 비식별 실패 사례와 고아 trace
   metrics_days: 365         # 지표 스냅샷·롤백 요청·영수증
-release_reader:
-  factory: "boundary_contracts.clients:HttpReleaseReader"
-  args: {base_url: "https://release-gate", token: {env: OPS_GATE_READ_TOKEN}}
+release_reader:             # 계약 4.0.0 HttpClientSettings(D135): 역할이 계약 클라이언트(HttpReleaseReader)를 정하고 설정은 주소·토큰 이름만
+  kind: http
+  base_url: "https://release-gate"
+  token_secret: OPS_GATE_READ_TOKEN
