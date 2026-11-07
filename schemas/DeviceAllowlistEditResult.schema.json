@@ -1,0 +1,19 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "DeviceAllowlistEditResult.schema.json",
+ "title": "DeviceAllowlistEditResult",
+ "type": "object",
+ "required": ["status"],
+ "additionalProperties": false,
+ "properties": {
+  "status": {"enum": ["WRITE", "NOOP", "PRINT", "YES", "NO", "REJECTED"], "description": "WRITE 새 목록을 쓴다, NOOP 할 일 없음(init 인데 이미 있다), PRINT 줄을 출력한다, YES·NO has 의 답, REJECTED 파일을 바꾸지 않는다"},
+  "doc": {"type": "object", "description": "쓸 새 목록(계약 DeviceAllowlist). 컴포넌트가 내기 전에 계약 패키지의 검증기로 검증했다(R7, 계약 스키마는 복사하지 않는다)"},
+  "lines": {"type": "array", "items": {"type": "string"}, "description": "출력할 줄(기기 ID 또는 일련번호. 비밀이 아니다)"},
+  "message": {"type": "string", "minLength": 1, "description": "거부 이유 한 줄"}
+ },
+ "allOf": [
+  {"if": {"properties": {"status": {"const": "WRITE"}}, "required": ["status"]}, "then": {"required": ["doc"]}},
+  {"if": {"properties": {"status": {"const": "PRINT"}}, "required": ["status"]}, "then": {"required": ["lines"]}},
+  {"if": {"properties": {"status": {"const": "REJECTED"}}, "required": ["status"]}, "then": {"required": ["message"]}}
+ ]
+}

@@ -1,5 +1,9 @@
 # 변경 이력
 
+## wo-450 device_allowlist 를 D117 구조로
+- 구조 시험(test_entry_points_are_thin)이 `scripts/device_allowlist.py`(문장 9개)를 막았다. 판정은 컴포넌트 `device_allowlist`(입력 DeviceAllowlistEditRequest, 출력 DeviceAllowlistEditResult), 잠금·원자적 교체는 `wiring/cli_device_allowlist.py`, 진입점은 얇게. CLI·종료 코드·메시지는 그대로.
+- `self-checks.list`: test_e2e_job_urls.py 를 deploy .venv 파이썬으로 돌린다.
+
 ## wo-450 계약 v4.0.2 이행: 기기 인증은 mTLS 허용 목록 하나 (ADR 0069, 0040 대체)
 - 기준표: boundary-contracts v4.0.2, model-runtime v0.12.1, link v0.5.1(문진 스키마 4.1.2 그대로).
 - 기기 토큰 장치를 없앴다: `INGRESS_DEVICE_TOKENS_DIR`·`SURVEY_KIOSK_DEVICE_TOKENS(_FILE)`·gen-secrets 의 기기 토큰·토큰 기반 `kiosk-add-device.sh`. 입구에는 `INGRESS_DEVICE_CA_FILE`(공개 CA 인증서)·`INGRESS_DEVICE_ALLOWLIST_FILE`(전용 폴더 `state/device-allowlist` 를 읽기 전용 폴더 마운트)를 준다.

@@ -179,6 +179,21 @@ class DbSecretsResult(TypedDict):
     url_files: Dict[str, Dict[str, str]]
 
 
+class DeviceAllowlistEditRequest(TypedDict):
+    command: Literal['add', 'remove-serial', 'remove', 'has', 'init', 'list', 'serials']
+    device_id: NotRequired[str]
+    serial: NotRequired[str]
+    exists: bool
+    current: Dict[str, Any]
+
+
+class DeviceAllowlistEditResult(TypedDict):
+    status: Literal['WRITE', 'NOOP', 'PRINT', 'YES', 'NO', 'REJECTED']
+    doc: NotRequired[Dict[str, Any]]
+    lines: NotRequired[List[str]]
+    message: NotRequired[str]
+
+
 class GatewayEnv(TypedDict):
     GATEWAY_HOSTS: NotRequired[str]
     GATEWAY_HOST_NAMES: NotRequired[str]

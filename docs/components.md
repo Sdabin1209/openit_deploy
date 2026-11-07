@@ -18,6 +18,7 @@
 | 영역 목록 읽기 | `area_list` | 예 |
 | 바뀐 영역의 확인 범위 계획 | `verify_plan` | 예 |
 | 영역 DB 가 선언한 계정의 비밀 파일 만들기 | `db_secrets` | 예 |
+| 기기 인증서 허용 목록 고치기(등록·회전·폐기) | `device_allowlist` | 예 |
 | 영역이 선언한 잡의 명령 조립·실패 설명 | `job_select`, `job_command`, `job_overlay`, `job_failure_text` | 예 |
 | 추론 서버 측정(호출·집계) | `link_serving_probe`, `link_serving_info`, `serving_probe` | 예 |
 | 복구 검증(이웃 HTTP 로 다시 읽기) | `link_restore_verify` | 예 |
@@ -38,6 +39,7 @@
 | image_label_check | `openit_deploy/components/image_label_check.py` | ImageLabelCheckRequest | ImageLabelCheckResult | 이미지 라벨이 계약 ImageLabels(와 jobs·exposure 안쪽 JSON)를 따르는지 판정한다 |
 | internal_file_check | `openit_deploy/components/internal_file_check.py` | InternalFileCheckRequest | InternalFileCheckResult | images.env·images.lock·verify-areas.yaml 을 deploy 내부 스키마로 검증한다 |
 | db_secrets | `openit_deploy/components/db_secrets.py` | DbSecretsRequest | DbSecretsResult | 영역 DB 이미지가 선언한 계정(io.openit.database)에서 계정 암호 파일과 접속 URI 파일 내용을 만든다(계약 3.4.12) |
+| device_allowlist | `openit_deploy/components/device_allowlist.py` | DeviceAllowlistEditRequest | DeviceAllowlistEditResult | 기기 인증서 허용 목록(계약 DeviceAllowlist) 한 번의 고침(등록·회전·폐기·조회)을 판정한다: 일련번호 정규화(RFC 5280), 같은 기기 합치기, 쓰기 전 계약 검증. 잠금·원자적 교체는 wiring(ADR 0069) |
 | job_overlay | `openit_deploy/components/job_overlay.py` | JobOverlayRequest | JobOverlayResult | 이미지가 선언한 잡(io.openit.jobs)에서 compose 잡 서비스의 command 와 시간 한도를 만든다(S10) |
 | gateway_exposure | `openit_deploy/components/gateway_exposure.py` | GatewayExposureRequest | GatewayExposureResult | 영역 이미지의 Exposure 선언 라벨을 영역 게이트웨이에 마운트할 파일 내용으로 꺼낸다 |
 | job_command | `openit_deploy/components/job_command.py` | JobCommandRequest | JobCommandResult | 선택한 잡을 docker run 명령(argv)으로 조립한다 |
