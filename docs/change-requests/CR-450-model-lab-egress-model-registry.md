@@ -1,7 +1,7 @@
 # 변경 요청: 학습 서버의 패키지 게시 길이 model-lab 출구 선언에서 막힌다 (deploy -> 헤드, model-lab)
 
 - 요청자: deploy (wo-450), 대상: model-lab 의 Exposure 선언(model-registry 이미지 라벨 `io.openit.exposure`)과, 필요하면 boundary-contracts `CONVENTIONS.md` 13절·`Exposure.egress` 설명
-- 상태: 제안(결정 아님)
+- 상태: **결정·반영(2026-11-08, 헤드)** — 1안: model-lab 이 `Exposure.egress` 에 `model-registry` 를 더한다(I3 의 쓰는 쪽, 계약 허용 범위). model-lab 커밋 6648a4d. 계약 변경 없음. 남은 일: 학습 서버 쪽 게이트웨이 compose 와 주 서버 model-registry 게시는 ADR 0071 의 보류 항목(GPU 학습 경로와 함께)
 - 관련: deploy ADR 0071, `scripts/test-registry-publish-reach.sh`
 
 ## 무엇이 부족한가
