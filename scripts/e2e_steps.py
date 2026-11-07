@@ -654,7 +654,7 @@ def _c1_registry_publish_code_with_read_token(pk):
 def step3():
     title(3, "설정 하나로 학습·평가·패키징·게시가 돈다 (model-lab, I3) -- 시험 대역")
     if os.environ.get("E2E_GPU") == "1":
-        raise AssertionError("경계 결함: E2E_GPU=1 경로(GPU 호스트의 model-lab 이 model-registry 에 게시)에는 운영 입구가 없다. model-registry 는 release 내부망에만 있고 호스트 포트도 게이트웨이 경로도 없다. 운영에서는 학습 서버의 model-lab 이 게시해야 하는데 닿을 길이 없다(기본 경로는 영향 없음, 이 경로는 원래 CR-D12 로 BLOCKED)")
+        raise AssertionError("경계 결함: E2E_GPU=1 경로(GPU 호스트의 model-lab 이 model-registry 에 게시)는 아직 열리지 않는다. 계약 길은 R1.5(OUT-FILE `<주소> model-registry` + 학습 서버에 둔 model-lab 영역 게이트웨이 출구 R1.8 + model-registry 가 쓰기 토큰 직접 대조)이고 공개 입구에는 기계 게시 경로가 없다(R3.23). 받는 쪽은 scripts/test-registry-publish-reach.sh 가 확인하지만, model-lab 의 Exposure.egress 에 model-registry 가 없어 출구가 403 으로 막는다(ADR 0071, docs/change-requests/CR-450-model-lab-egress-model-registry.md; 기본 경로는 영향 없음)")
     pk = make_packages(); refs = publish_packages(pk)
     assert _c1_registry_publish_code_with_read_token(pk) == "PERMISSION_DENIED", "읽기 토큰으로 게시됨"
     STATE["lora"] = refs; STATE["system_prompt"] = {r: pk[r][0]["system_prompt"]["sha256"] for r in pk}; save()
@@ -1588,7 +1588,7 @@ def step5r():
     RES = lambda: TOK("survey-result-reader"); RSK = lambda: TOK("survey-risk-source")   # 내부 호출용 토큰(게이트웨이에 열지 않는다)
     # 위험 신호 감지기와 병원의 결과 조회는 운영에서 제품 네트워크 안의 호출자다(게이트웨이에 열지 않는다, D85): survey-service 컨테이너 안에서 그 API 를 부른다
     svc_call = lambda m, pth, tk, bd=None: (lambda r: (r[0], _c2_dec(r[1])))(_c2_in("survey-service", m, pth, tk, bd))
-    # (A) 기기 토큰으로 세션 시작(subject_ref), 발화 한 턴
+    # (A) 키오스크 기기(mTLS 기기 인증서)로 세션 시작(subject_ref 는 세션 시작 요청의 칸), 발화 한 턴
     c, st = _c2_kiosk("/v1/sessions", {"kind": "SESSION_START", "question_set_id": QS, "subject_ref": subj}); sid = _sid(c, st); validate_survey("FrontendInput", st)
     c, tr = _c2_turn(sid, "rk-1", utter); assert c == 200, (c, tr)
     # (D) 위험 신호: risk-source 토큰으로 서비스에 직접. 맞는 토큰이라도 다른 역할이면 403, 게이트웨이에는 열려 있지 않다

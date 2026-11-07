@@ -34,7 +34,7 @@ ADR 0049 는 다른 호스트의 추론 서버가 **공개 입구(gateway)의 �
 ## 결과
 
 - 얻는 것: 원격 추론 서버의 운영 경로와 E2E 의 경로가 계약 R1.5 하나로 같다. 공개 입구에 기계 경로가 없다는 것을 E2E 가 단언한다. 쓰이지 않는 기계 토큰 두 개와 마운트되지 않는 비밀 정의 셋이 없어졌다.
-- 감수하는 것: (1) E2E 는 같은 호스트 배치만 실행한다(다른 서버 경로는 분리 배치 시험 몫). (2) 기존 설치의 `secrets/tokens/gateway-inference-token`·`gateway-registry-publish-token` 파일은 지우지 않는다(gen-secrets 는 남은 파일을 건드리지 않는다). 운영자가 지운다(runbook 9-1b). (3) **학습 서버의 패키지 게시(model-lab -> model-registry, I3)** 는 같은 R1.5 길(OUT-FILE `<주소> model-registry` + `placement_ports: {model-registry: 443}` + 쓰기 토큰 `model-registry-write-model-lab` 을 model-registry 가 직접 대조)이 필요하다. 이 결정에서는 E2E_GPU 경로를 고치지 않았다(단계 3 의 `E2E_GPU=1` 은 여전히 "운영 입구 없음"으로 멈춘다). (4) 번들 크기·전송 시간은 측정하지 않았다. 서버 쪽 읽기 상한은 model-runtime 의 `MODEL_RUNTIME_RELEASE_READ_TIMEOUT_S` 다.
+- 감수하는 것: (1) E2E 는 같은 호스트 배치만 실행한다(다른 서버 경로는 분리 배치 시험 몫). (2) 기존 설치의 `secrets/tokens/gateway-inference-token`·`gateway-registry-publish-token` 파일은 지우지 않는다(gen-secrets 는 남은 파일을 건드리지 않는다). 운영자가 지운다(runbook 9-1b). (3) **학습 서버의 패키지 게시(model-lab -> model-registry, I3)** 는 같은 R1.5 길(OUT-FILE `<주소> model-registry` + `placement_ports: {model-registry: 443}` + 쓰기 토큰 `model-registry-write-model-lab` 을 model-registry 가 직접 대조)이 필요하다. 이 결정에서는 E2E_GPU 경로를 고치지 않았다. 이어진 결정은 [ADR 0071](0071-training-server-publish-to-model-registry-r15.md)(받는 쪽은 확인, 출구는 model-lab 선언에 model-registry 가 없어 막힘, CR-450). (4) 번들 크기·전송 시간은 측정하지 않았다. 서버 쪽 읽기 상한은 model-runtime 의 `MODEL_RUNTIME_RELEASE_READ_TIMEOUT_S` 다.
 
 ## 되돌리는 조건
 

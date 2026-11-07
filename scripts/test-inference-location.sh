@@ -182,6 +182,10 @@ chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id} 는 404(공개 입�
 chk "(ㄱ) 사람 계정(승인자)의 GET /v1/releases/{id}/bundle 은 404" is "gw_code /v1/releases/does-not-exist/bundle -H 'Cookie: $HCOOKIE'" 404
 chk "(ㄴ) 공개 입구는 기계 토큰을 받지 않는다: 읽기 토큰을 붙여도 GET /v1/active-pointer 는 사람 인증 블록에 막혀 401 이다(3.4.7: 기계 호출자는 받는 영역으로 직접 간다)" is "gw_code /v1/active-pointer -H 'Authorization: Bearer $RGTOK'" 401
 chk "(ㄴ) 토큰 없이 GET /v1/releases/{id}/bundle 도 404 (경로 자체가 없다)" is "gw_code /v1/releases/does-not-exist/bundle" 404
+# (ㄷ) 학습 서버의 게시(I3 POST /v1/packages, 쓰기 역할 model-lab)도 공개 입구에는 경로가 없다(R3.23, ADR 0071). 토큰은 머리글 파일로 넘긴다(명령 줄·프로세스 목록에 값을 두지 않는다)
+( umask 077; printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n' < "$SECRETS_DIR/tokens/model-registry-write-model-lab")" > "$W/mrw.hdr" )
+chk "(ㄷ) 공개 입구는 model-registry 쓰기 토큰의 POST /v1/packages 를 받지 않는다(401 또는 404: 기계 게시 경로 없음, R3.23)" bash -c 'c=$1; [ "$c" = 401 ] || [ "$c" = 404 ]' _ "$(gw_code /v1/packages -X POST -H 'Content-Type: application/x-tar' -H @"$W/mrw.hdr" --data-binary '')"
+rm -f "$W/mrw.hdr"
 
 echo "== 4. 추론 서버 자신의 클라이언트가 release-gate 영역 게이트웨이(HTTPS, 읽기 토큰)로 release-gate 까지 간다"
 # 왜 없는 릴리스인가: 서버는 적재 신호(PUT /v1/releases/{id})를 받으면 계약 클라이언트로 GET /v1/releases/{id}(/bundle)를 한다. 릴리스를 만들려면 문항 세트·모델 패키지·승인·활성화가 필요한데

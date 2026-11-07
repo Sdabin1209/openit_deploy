@@ -168,3 +168,4 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0068 기동 전에 compose 주입을 이미지 주입 선언(ContainerInputs)과 대조한다](docs/adr/0068-container-inputs-check-before-start.md)
 - [0069 기기 인증은 mTLS 하나, 기기 허용 목록(DeviceAllowlist)을 deploy 가 만든다](docs/adr/0069-device-auth-mtls-allowlist.md)
 - [0070 compose 밖 추론 서버는 OUT-FILE 과 서비스 토큰으로 release-gate 영역 게이트웨이에 바로 간다(R1.5)](docs/adr/0070-remote-inference-reads-release-gate-area-gateway-r15.md)
+- [0071 학습 서버의 패키지 게시는 R1.5 로 model-registry 영역 게이트웨이에 간다(받는 쪽만, 출구는 model-lab 선언 대기)](docs/adr/0071-training-server-publish-to-model-registry-r15.md)

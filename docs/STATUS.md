@@ -234,7 +234,8 @@ model-runtime 리포는 수정하지 않았다. 아래는 지금 `compose.llm.ya
 
 - 한 일: e2e.sh 의 `gateway-inference-token` 검사·복사 삭제, OUT-FILE(export-out-files.sh) 내보내기·대조 뒤 그 루트로 추론 서버 기동, 단계 5L 단언을 R1.5·R3.23 으로(영역 게이트웨이 200/401, 공개 입구 401/404, 호스트 게시 없음), gen-secrets 의 기계 토큰 두 개와 compose 의 마운트 안 되는 비밀 셋 삭제, ADR 0070(0049 대체), RUN 7-1·runbook 9-1b·E2E.md 갱신, CR-D440 닫음.
 - 확인하지 못한 것: 전체 E2E(이 작업에서 돌리지 않음). 단계 5L 의 실제 실행.
-- 남은 것: 학습 서버 패키지 게시(model-lab -> model-registry, E2E_GPU=1)도 R1.5 길(`<주소> model-registry` + placement_ports + model-registry 가 쓰기 토큰 직접 대조)이 필요하다. 아직 없다.
+- 이어서(ADR 0071): 학습 서버 패키지 게시. 받는 쪽(OUT-FILE `<주소> model-registry` -> model-registry 영역 게이트웨이 -> 서버의 토큰 대조)은 `scripts/test-registry-publish-reach.sh` 로 확인. model-lab 의 Exposure.egress 에 model-registry 가 없어 학습 서버 출구가 403 -> CR-450(헤드·model-lab). 공개 입구의 게시 경로 없음은 test-inference-location.sh (ㄷ).
+- 막힌 것: CR-450 결정 전에는 학습 서버 게이트웨이 compose, model-registry 443 배치 게시(Placement 가 compose 밖 호출자를 표현해야 함), 같은 호스트 external 망을 만들지 않는다.
 
 ## 원격 추론 서버의 운영 경로 (wo-440, ADR 0049, 0070 으로 대체됨)
 

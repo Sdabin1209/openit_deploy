@@ -216,7 +216,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 
 `scripts/gen-secrets.sh`가 `secrets/`에 만든다(없는 것만). 이미지·리포지토리에 넣지 않는다. 서비스는 compose `secrets:`로 자기 파일만 `/run/secrets`에 받는다(D84, [RUN.md](RUN.md) "비밀 파일").
 
-**권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 기기 토큰 원본)은 600, 컨테이너가 읽는 파일은 640 + 그룹 `SECRETS_GID`(기본 `id -g`)이고 서비스는 `group_add` 로 읽는다([adr/0054-secret-files-640-group-add.md](adr/0054-secret-files-640-group-add.md); 다른 호스트로 옮기면 그 호스트의 `SECRETS_GID` 로 `gen-secrets.sh` 를 다시 돌린다). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
+**권한.** 폴더 700. 호스트 전용 파일(계정 암호·해시, 개발용 기기 CA 개인 키·기기 인증서 키)은 600, 컨테이너가 읽는 파일은 640 + 그룹 `SECRETS_GID`(기본 `id -g`)이고 서비스는 `group_add` 로 읽는다([adr/0054-secret-files-640-group-add.md](adr/0054-secret-files-640-group-add.md); 다른 호스트로 옮기면 그 호스트의 `SECRETS_GID` 로 `gen-secrets.sh` 를 다시 돌린다). `gen-secrets.sh`는 실행할 때마다 모드를 바로잡고 `scripts/check-secret-perms.sh`(doctor --up)가 어긋남을 FAIL로 알린다.
 
 **사람 계정은 Keycloak에 있다(U82, [ADR 0057](adr/0057-human-auth-keycloak-oauth2-proxy.md); ADR 0039의 정적 계정 파일은 대체됐다).** 계정 추가·삭제·역할 변경·비밀번호 재설정은 Keycloak 관리 화면(`<밖에서 보이는 주소>/auth/admin/openit/console/`)에서 `admin` 그룹 계정이 한다. 이 프로젝트는 계정을 발급하지 않는다. 비밀 파일로 만드는 것은 Keycloak·oauth2-proxy의 비밀(`keycloak-bootstrap-admin-password`, `openit-initial-admin-password`, `oauth2-proxy-client-secret`, `oauth2-proxy-cookie-secret`, `db-keycloak-password`)뿐이다.
 
@@ -224,7 +224,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 1. 사람 계정(추가·삭제·역할·암호): Keycloak 관리 화면에서 한다(재시작 불필요). OIDC 클라이언트 비밀을 돌리려면 `oauth2-proxy-client-secret` 파일을 지우고 `gen-secrets.sh` 후 Keycloak 관리 화면의 클라이언트 `openit-gateway` 자격 증명에서 같은 값으로 바꾸고 `oauth2-proxy`를 다시 만든다(realm은 이미 있으면 다시 가져오지 않는다).
 2. 서비스 토큰·DB 암호 한 개: 해당 파일을 지우고 `gen-secrets.sh`를 다시 실행(목록 값 파일도 새 값으로 다시 쓴다). DB 암호는 `bash scripts/pg-roles.sh sync`로 서버의 계정 암호를 맞춘다. 그다음 소유 서비스와 그 클라이언트를 다시 만든다(`up.sh deploy`).
 3. 기기 인증서: `bash scripts/kiosk-add-device.sh rotate <ID>`(새 일련번호를 목록에 더한다) 후 새 인증서를 기기에 넣고 `revoke-serial <ID> <옛 일련번호>`(9-3절). 기기 토큰은 없다(D136).
-4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, Keycloak에서 모든 계정 비밀번호 재설정 요구(로그인 세션 모두 로그아웃), 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
+4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, Keycloak에서 모든 계정 비밀번호 재설정 요구(로그인 세션 모두 로그아웃), 기기 인증서 회전(9-3절: 새 일련번호 등록 뒤 옛 일련번호 폐기; 개발용 기기 CA 키가 노출됐으면 CA 를 바꾸고 모든 기기 인증서를 다시 발급). 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
 5. 토큰에는 만료가 없다. 회전은 수동이며 주기는 정하지 않았다(근거 없음, 사용자 결정 대기: 이 저장소의 OPEN_GAPS).
 
 한계: 시험 계정의 해시를 만들 때 암호는 `docker run -i`의 표준 입력으로 전달되어 프로세스 목록(인자)에는 보이지 않는다(`scripts/test-hash-password-argv.sh`로 확인). docker 그룹 사용자는 어차피 모든 비밀에 닿는다(docker 그룹은 root와 같다).
@@ -239,7 +239,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 | `pg_dump`/`pg_restore` 실패, 접속 거부 | postgres 컨테이너가 떠 있나(`docker compose -p deploy ps postgres`), 복구 대상 DB에 다른 접속이 있나 | 서비스를 멈추고 다시. 복구는 4-3절. (SQLite는 개발·시험용이며 운영 저장소가 아니다: adr/0021-postgres-single-container-sqlite-dev-only.md) |
 | 빌드가 `error getting credentials … docker-credential-desktop.exe: exec format error` 로 실패 | interop이 꺼진 WSL에서 `~/.docker/config.json`의 `credsStore`가 윈도 도우미를 가리킨다 | 환경 설정 문제: `credsStore` 항목을 직접 지우거나 interop을 켠다(SETUP.md B절). doctor가 미리 FAIL로 알려 준다 |
 
-## 9. gateway TLS, 로그인 시도, 기기 토큰 (D88/U5·U8, ADR 0005)
+## 9. gateway TLS, 로그인 시도, 기기 인증서(mTLS) (D88/U5·U8, ADR 0005·0069)
 
 ### 9-1. HTTPS와 내부 CA 루트 인증서 배포 (사람이 할 일)
 
@@ -262,6 +262,11 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 - 옛 파일 정리: 이 변경 전 설치의 `secrets/tokens/gateway-inference-token`, `gateway-registry-publish-token` 은 더 쓰이지 않는다. 지운다(gen-secrets.sh 는 더 만들지 않고 남은 파일도 건드리지 않는다).
 - 확인: 서버 호스트에서 `curl --cacert root_ca.crt --resolve release-gate:443:<주소> https://release-gate/healthz` 가 200. 토큰 확인은 상태 코드만: `curl -s -o /dev/null -w '%{http_code}\n' --cacert root_ca.crt --resolve release-gate:443:<주소> -H "Authorization: Bearer $(cat <토큰 파일>)" https://release-gate/v1/active-pointer`(200 통과, 401 토큰 다름. 명령 줄에 값이 보이므로 공용 터미널에서 하지 않는다).
 - 증상(추정, 일부러 만들어 확인하지 않았다): 서버 `/readyz` 가 release 도달 실패 -> 루트가 이 PKI 것이 아니거나 hosts 표 주소·443 게시·방화벽 문제. 출구 403(`EGRESS_DENIED`) -> 추론 서버 영역 게이트웨이의 Exposure 파일이 오래됐다. 401 -> 토큰이 다르다.
+
+### 9-1c. 학습 서버의 패키지 게시 (ADR 0071)
+
+- 아직 운영 길이 없다: model-lab 의 Exposure.egress 에 model-registry 가 없어 학습 서버의 model-lab 영역 게이트웨이 출구가 403 으로 거절한다(CR-450). 공개 입구로 게시하지 않는다(경로 없음, R3.23).
+- 풀린 뒤의 절차(ADR 0071 결정 1~2): OUT-FILE 에 `<주소> model-registry` 줄을 넣어 내보내고(`export-out-files.sh --host`), 쓰기 토큰 `secrets/tokens/model-registry-write-model-lab` 을 보안 복사로 학습 서버의 비밀 폴더(700)에 640 으로 둔다(값 출력 금지). 확인: `bash scripts/test-registry-publish-reach.sh` 가 0.
 
 ### 9-2. 로그인 시도 속도 제한: 하지 않았다 (한계와 대안)
 

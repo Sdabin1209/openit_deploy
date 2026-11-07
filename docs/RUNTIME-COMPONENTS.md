@@ -198,7 +198,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 입력 | 운영 입구(게이트웨이·계정·기기 토큰)와 컨테이너 안 실행(`docker exec`). 제품에 시험용 문이 없다(`scripts/test_compose_no_test_doors.py`). |
+| 입력 | 운영 입구(게이트웨이·계정·기기 인증서 mTLS)와 컨테이너 안 실행(`docker exec`). 제품에 시험용 문이 없다(`scripts/test_compose_no_test_doors.py`). |
 | 출력 | PASS/FAIL/SKIP/BLOCKED 와 사유. 선행 단계 실패는 FAIL 이 아니라 SKIP. |
 | 실패 동작 | 간헐 실패는 재시도로 덮지 않고 원인을 찾는다. 시험끼리 공용 자원(venv·이미지 태그)을 공유하지 않는다(`scripts/test_no_pip_outside_setup.py`). |
 | 전제 | P8: Docker Desktop 의 엔진은 호스트 루프백 게시 포트에 닿지 못한다(시험은 `pick_bind`). P9: 컨테이너가 다시 만들어지면 IP 가 바뀐다(이름으로만 부른다). P12: 공용 `.venv` 에 설치하는 단계가 동시에 돌면 서로 깨뜨린다. 시험: `scripts/test-publish.sh`, `scripts/test_no_pip_outside_setup.py`. |

@@ -64,7 +64,7 @@ bash scripts/demo.sh reset                       # down 후 up
 
 **방식.** 토큰·salt는 환경 변수가 아니라 파일이다. `scripts/gen-secrets.sh`가 `secrets/tokens/<이름>`에 값 하나짜리 파일을 만든다(개별 토큰, 서버가 받는 목록 값 `역할=토큰,...`, salt, 콘솔 암호). `compose.yaml`의 최상위 `secrets:`가 서비스마다 필요한 것만 `/run/secrets/<이름>`에 읽기 전용으로 마운트하고, 서비스에는 `NAME_FILE=/run/secrets/<이름>` 환경 변수(경로, 비밀 아님)만 준다. 서비스 코드는 `boundary_contracts.read_secret(NAME)`으로 읽는다. 예전처럼 `env_file`로 토큰을 넣으면 `docker inspect`, `docker exec <c> env`로 평문이 읽힌다(근본 원인).
 
-**권한.** 비밀 폴더 700. 파일은 두 종류다: 호스트에서만 쓰는 것(계정 암호·해시, 기기 토큰 원본, 컨테이너에 마운트하지 않는 클라이언트 토큰)은 **600**, 컨테이너가 읽는 것은 **640 + 그룹 `SECRETS_GID`**(기본 `id -g`, 서비스가 `group_add` 로 읽는다, [adr/0054](adr/0054-secret-files-640-group-add.md)). 추론 서버 호스트로 옮기는 세 파일(`model-runtime-tokens`, `gate-read-model-serving`, `external-inference`)만 644. 어느 쪽인지는 `lib.sh`의 `secret_mode`가 `compose.yaml`의 secrets를 읽어 정하고 `scripts/check-secret-perms.sh`(doctor --up이 부른다)가 어긋남을 잡는다. 근거와 한계: [adr/0022-secret-file-permissions.md](adr/0022-secret-file-permissions.md). 컨테이너가 읽는 파일을 600으로 못 만드는 이유: 컨테이너가 uid 10001로 실행되는데 compose의 파일 secrets는 호스트의 소유자·모드를 그대로 마운트하고(`uid/gid/mode` 옵션은 swarm 전용) 호스트 소유자가 달라서, 600이면 서비스가 읽지 못한다. 폴더가 700이라 호스트의 다른 사용자는 파일에 닿지 못한다.
+**권한.** 비밀 폴더 700. 파일은 두 종류다: 호스트에서만 쓰는 것(계정 암호·해시, 개발용 기기 CA 개인 키·기기 인증서 키, 컨테이너에 마운트하지 않는 클라이언트 토큰)은 **600**, 컨테이너가 읽는 것은 **640 + 그룹 `SECRETS_GID`**(기본 `id -g`, 서비스가 `group_add` 로 읽는다, [adr/0054](adr/0054-secret-files-640-group-add.md)). 추론 서버 호스트로 옮기는 세 파일(`model-runtime-tokens`, `gate-read-model-serving`, `external-inference`)만 644. 어느 쪽인지는 `lib.sh`의 `secret_mode`가 `compose.yaml`의 secrets를 읽어 정하고 `scripts/check-secret-perms.sh`(doctor --up이 부른다)가 어긋남을 잡는다. 근거와 한계: [adr/0022-secret-file-permissions.md](adr/0022-secret-file-permissions.md). 컨테이너가 읽는 파일을 600으로 못 만드는 이유: 컨테이너가 uid 10001로 실행되는데 compose의 파일 secrets는 호스트의 소유자·모드를 그대로 마운트하고(`uid/gid/mode` 옵션은 swarm 전용) 호스트 소유자가 달라서, 600이면 서비스가 읽지 못한다. 폴더가 700이라 호스트의 다른 사용자는 파일에 닿지 못한다.
 
 **게이트웨이(Caddy).** 환경 변수 대신 Caddy의 표준 파일 치환 `{file./run/secrets/<이름>}`을 Caddyfile에서 쓴다(`header_up Authorization "Bearer {file./run/secrets/survey-api-kiosk}"`). 이유: Caddy는 `NAME_FILE` 규칙을 모르고, `{$ENV}`는 환경 변수를 요구하며, 파일 치환은 Caddy가 공식으로 지원하는 방법이라 래퍼 스크립트나 이미지 수정이 필요 없다. 값은 컨테이너 환경에 없고, 끝의 줄바꿈은 Caddy가 지운다(`caddy` 컨테이너에서 확인).
 
@@ -111,19 +111,19 @@ bash <deploy>/scripts/dev-postgres.sh down survey                               
 
 **확인하지 못한 것.** TLS(서버 안 암호화)는 켜지 않았다(내부 네트워크 한정, 서버가 나뉘면 필요). 저장 시 디스크 암호화와 보존 기간 정책(PITR, WAL 보관)은 정하지 않았다(O16). 서비스가 실제로 붙는 경로는 영역 쪽 작업 뒤에 E2E로 본다.
 
-## 4-1-2. 게이트웨이 인증: 사람은 OIDC(Keycloak), 키오스크는 기기 토큰 (D85, U82)
+## 4-1-2. 게이트웨이 인증: 사람은 OIDC(Keycloak), 키오스크는 기기 인증서(mTLS) (D85, U82, D136)
 
-**결정(사용자 지시 D85, U82, head ADR 0014, [deploy ADR 0057](adr/0057-human-auth-keycloak-oauth2-proxy.md)).** 사람(직원·운영자·승인자·검토자·저자·의사·admin)은 표준 IdP Keycloak(realm `openit`)의 OIDC로 인증한다. 키오스크는 기기 토큰(또는 기기 인증서)으로 인증한다. 정적 계정 파일(`staff-accounts.conf`, `apply-accounts.sh`, basic_auth)은 없어졌다.
+**결정(사용자 지시 D85, U82, head ADR 0014, [deploy ADR 0057](adr/0057-human-auth-keycloak-oauth2-proxy.md)).** 사람(직원·운영자·승인자·검토자·저자·의사·admin)은 표준 IdP Keycloak(realm `openit`)의 OIDC로 인증한다. 키오스크는 기기 인증서(mTLS)와 기기 허용 목록으로만 인증한다(계약 PUBLIC_API F절, 4.0.0 D136 에서 기기 토큰을 없앴다; runbook 9-3, ADR 0069). 정적 계정 파일(`staff-accounts.conf`, `apply-accounts.sh`, basic_auth)은 없어졌다.
 
 **구성.** `keycloak`(IdP, `KC_HTTP_RELATIVE_PATH=/auth`)과 `oauth2-proxy`(OIDC 클라이언트 `openit-gateway`, 쿠키 세션)가 내부망 `auth`에 있고 호스트 포트가 없다. 게이트웨이는 사람 경로마다 `forward_auth`로 oauth2-proxy의 `/oauth2/auth`에 묻는다(`config/gateway-auth.caddy`의 `(authenticate)`). 밖으로 열린 길은 `/oauth2/*`(로그인 시작·콜백·로그아웃·`/oauth2/userinfo`)와 `/auth/*`(Keycloak 화면)뿐이고 `/oauth2/auth`와 Keycloak의 master realm은 닫혀 있다.
 
-**주소.** 사람 화면은 밖에서 보이는 주소 `GATEWAY_PUBLIC_URL`로 연다: 첫 `GATEWAY_HOSTS` 이름 + 밖에 보이는 HTTPS 포트(`GATEWAY_PUBLIC_TLS_PORT`, 기본 8443, 443이면 생략). Keycloak의 발급자(iss)와 oauth2-proxy의 콜백이 이 한 곳에서 나오고 로그인 쿠키도 이 이름에만 생긴다. 다른 `GATEWAY_HOSTS` 이름(예: 추론 서버가 부르는 `host.docker.internal`)은 기계 토큰·기기용이다. Keycloak 클라이언트의 허용 리다이렉트는 `GATEWAY_HOSTS` 각 항목(와 밖에 보이는 포트)의 `https://<호스트>/oauth2/callback`이고 `scripts/gen-keycloak-realm.sh`가 realm 가져오기 파일을 만든다(`up.sh`가 기동 때마다). Keycloak은 이미 있는 realm을 다시 가져오지 않으므로 운영 중에 호스트를 바꾸면 관리 화면에서 클라이언트의 URI를 직접 고친다.
+**주소.** 사람 화면은 밖에서 보이는 주소 `GATEWAY_PUBLIC_URL`로 연다: 첫 `GATEWAY_HOSTS` 이름 + 밖에 보이는 HTTPS 포트(`GATEWAY_PUBLIC_TLS_PORT`, 기본 8443, 443이면 생략). Keycloak의 발급자(iss)와 oauth2-proxy의 콜백이 이 한 곳에서 나오고 로그인 쿠키도 이 이름에만 생긴다. 다른 `GATEWAY_HOSTS` 이름은 기기(mTLS)·시험 호출용이다. 기계 호출자(추론 서버·학습 서버)는 공개 입구를 지나지 않는다(R3.23, ADR 0070·0071). Keycloak 클라이언트의 허용 리다이렉트는 `GATEWAY_HOSTS` 각 항목(와 밖에 보이는 포트)의 `https://<호스트>/oauth2/callback`이고 `scripts/gen-keycloak-realm.sh`가 realm 가져오기 파일을 만든다(`up.sh`가 기동 때마다). Keycloak은 이미 있는 realm을 다시 가져오지 않으므로 운영 중에 호스트를 바꾸면 관리 화면에서 클라이언트의 URI를 직접 고친다.
 
 **계정·역할·가입 승인.** 역할은 Keycloak 그룹이고 이름이 계약의 고정 목록과 같다: `staff`, `operator`, `release-approver`, `reviewer`, `author`, `clinical-reviewer`, `clinician`, `admin`. 한 사용자가 그룹 여러 개를 가질 수 있다. 가입 신청은 Keycloak 자가 등록이고, 새 계정은 그룹이 없어 로그인은 되지만 모든 사람 경로가 403 `ACCOUNT_PENDING_APPROVAL`이다. `admin` 그룹 계정이 Keycloak 관리 화면(`/auth/admin/openit/console/`)에서 그룹을 주면 승인이다(admin 그룹은 사용자·그룹 관리와 로그인 기록 보기 역할만 가진다). 설치 때 `gen-secrets.sh`가 초기 admin(`openit-admin`)의 임시 비밀번호를 `secrets/tokens/openit-initial-admin-password`에 만들고, 첫 로그인에서 바꾸게 한다. 로그인 기록은 365일 보존(realm 이벤트 저장).
 
 **신원 전달(계약 CONVENTIONS 6절 3.4.0).** 인증 뒤 게이트웨이는 `X-Openit-User`(Keycloak 사용자 이름)와 `X-Openit-Roles`(그룹 쉼표 목록)를 붙이고 클라이언트가 보낸 같은 이름의 헤더는 지운다(인증 결과 헤더 `X-Auth-Request-*`도 지운 뒤 oauth2-proxy의 답으로만 채운다). 서비스는 본문 값이 아니라 이 헤더를 행위자·역할로 쓴다.
 
-- **401과 403(계약 CONVENTIONS.md 6절, RFC 9110 15.5.2·11.6.1, RFC 6750 3절).** 사람 경로에서 인증이 없으면 `/v1/*`는 401 + `WWW-Authenticate: Bearer realm="openit"`, 화면 경로(`/staff/`, `/admin/`)는 `/oauth2/start`로 302(로그인)이다. 기기 토큰 경로는 401 + `Bearer`. 인증은 됐는데 역할이 모자라면 403, 그룹이 하나도 없으면 403 `ACCOUNT_PENDING_APPROVAL`이다. `scripts/test-gateway-auth.sh`(가짜 oauth2-proxy)가 경로별로, `scripts/test-idp-smoke.sh`(진짜 Keycloak·oauth2-proxy)가 로그인 흐름을 확인한다.
+- **401과 403(계약 CONVENTIONS.md 6절, RFC 9110 15.5.2·11.6.1, RFC 6750 3절).** 사람 경로에서 인증이 없으면 `/v1/*`는 401 + `WWW-Authenticate: Bearer realm="openit"`, 화면 경로(`/staff/`, `/admin/`)는 `/oauth2/start`로 302(로그인)이다. 키오스크 경로는 기기 인증서가 없거나 허용 목록에 없으면 403 `PERMISSION_DENIED`, 신뢰 CA 가 아닌 인증서는 TLS 핸드셰이크 거부(HTTP 응답 없음), 허용 목록을 못 읽으면 503(계약 PUBLIC_API F절). 인증은 됐는데 역할이 모자라면 403, 그룹이 하나도 없으면 403 `ACCOUNT_PENDING_APPROVAL`이다. `scripts/test-gateway-auth.sh`(가짜 oauth2-proxy)가 경로별로, `scripts/test-idp-smoke.sh`(진짜 Keycloak·oauth2-proxy)가 로그인 흐름을 확인한다.
 - 역할별 경로는 그대로다: `staff`(직원 콘솔 `/staff/`, `/v1/staff/*`, 개입), `operator`(`GET /v1/active-pointer`, `GET /v1/releases`, `POST /v1/activate`, `POST /v1/rollback`), `release-approver`(출고 승인 경로), `reviewer`(실패 사례 검토), `author`/`clinical-reviewer`(저작), `clinician`(결과 읽기·확인 표시, 푸시 설정·구독). operator 경로 네 개는 operator 뒤에서만 열린다(읽기 둘은 게이트의 operator 읽기 토큰 `gate-read-operator`, 변경 둘은 쓰기 토큰 `gate-write-operator`). 응답은 `Cache-Control: no-store`. `/v1/releases/*`(번들, I9)와 그 밖의 `/v1/*`는 404.
 - **세션 길이.** oauth2-proxy 쿠키는 8시간 유효하고 5분마다 Keycloak에 다시 물어 그룹(역할) 변경·계정 정지를 반영한다(시작값, 측정·결정 전). Keycloak SSO 유휴 시간(기본 30분)을 넘기면 다시 로그인한다.
 - **로그아웃.** admin-console은 `/oauth2/sign_out?rd=<URL 인코딩한 /auth/realms/openit/protocol/openid-connect/logout?client_id=openit-gateway&post_logout_redirect_uri=<origin>/>`로 보낸다. `rd`가 `/`로 시작하는 상대 경로라 oauth2-proxy가 막지 않는다(`test-idp-smoke.sh`가 확인). 로그아웃 뒤 URI는 클라이언트의 허용 목록(`https://<호스트>/`)에 있다.
@@ -257,6 +257,11 @@ bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모�
 **양방향 도달성.** 호출자 -> 서버(위 doctor가 확인)와 서버 -> release-gate 영역 게이트웨이(위 확인 순서 ①)가 모두 열려야 한다. 서버는 공개 입구가 아니라 release-gate 영역 게이트웨이를 본다(R1.5, ADR 0070).
 
 **위치 독립 시험.** `bash scripts/test-inference-location.sh` : 제품(`compose.yaml` + `compose.external-inference.yaml`, 운영 모드, `compose.test.yaml` 미사용)을 띄우고, 추론 서버(fake)를 `compose.inference.yaml` 하나로 별도 컴포즈 프로젝트(`deploy-e2e-loc-inf`)에 띄워 위 경로를 확인한다(내용은 스크립트 머리글). 호스트 포트는 Docker가 배정하고, 컨테이너가 닿는 가장 좁은 바인드(127.0.0.1 -> docker 브리지 게이트웨이 -> 0.0.0.0)를 쓴다. 자원은 `deploy-e2e-loc*` 접두사이며 끝나면 지운다(`--keep`, `--clean`). 이미지가 로컬에 없으면 빌드한다(`build-images.sh`). 이 시험은 릴리스를 만들지 않는다(E2E 단계 1~4가 덮는다). 이전 시험(release-gate를 호스트에 직접 게시하고 `compose.test.yaml` 위에서 E2E 단계 1~5를 돌림)은 운영에 없는 둘째 문이라 없앴다.
+
+## 7-1b. 학습 서버의 패키지 게시 (ADR 0071, 아직 운영 길 없음)
+
+학습 서버의 model-lab 파이프라인이 model-registry 에 게시하는 길은 계약 R1.5 하나다(공개 입구에는 기계 게시 경로가 없다, R3.23): OUT-FILE(`scripts/export-out-files.sh --host "<주소> model-registry"`) + 쓰기 토큰 `secrets/tokens/model-registry-write-model-lab`(model-registry 가 직접 대조) + 학습 서버에 둔 model-lab 영역 게이트웨이의 출구(R1.8).
+**지금은 열리지 않는다:** model-lab 의 Exposure 선언 `egress` 에 `model-registry` 가 없어 출구가 403 으로 거절한다(`docs/change-requests/CR-450-model-lab-egress-model-registry.md`). 받는 쪽 확인은 `bash scripts/test-registry-publish-reach.sh`(Docker; 지금은 출구 단계에서 종료 77 = 검증 안 함).
 
 ## 7-2. GPU로 실제 LLM 쓰기 준비 (D72/D73)
 
