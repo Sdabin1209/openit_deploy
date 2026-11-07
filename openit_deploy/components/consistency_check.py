@@ -414,7 +414,9 @@ def rule_key_order() -> R:
 
 
 # ---------- 규칙 3: 완화 정책 ----------
-RELAX_ALLOWED = {"allOf->anyOf", "oneOf->enum", "oneOf->anyOf"}
+# pattern-end-guard(model-runtime 0.12.0, 계약 4.0.0): 끝 고정 $(?![\s\S]) 는 검증기(파이썬 re 의 $ 가 끝 개행 앞에서도 맞는 것)를 막는 장치다.
+# 디코딩은 문자열 전체를 만들므로 $ 와 같은 뜻이라 집합을 넓히지 않는다(model-runtime constraint_relax.py 주석, xgrammar 는 앞보기를 지원하지 않음)
+RELAX_ALLOWED = {"allOf->anyOf", "oneOf->enum", "oneOf->anyOf", "pattern-end-guard"}
 RELAX_SNIPPET = (
     "import json\nimport model_runtime as mr\nfrom boundary_contracts import load_schema\nfrom model_runtime.schema_guard import relax\n"
     "_, removed = relax(load_schema('ActionExtraction'), mr.DEFAULT_SUPPORTED_FEATURES)\nprint(json.dumps(sorted(removed)))\n")
