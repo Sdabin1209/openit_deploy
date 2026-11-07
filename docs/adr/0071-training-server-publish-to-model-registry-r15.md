@@ -34,6 +34,12 @@
 - 얻는 것: 받는 쪽(OUT-FILE -> model-registry 영역 게이트웨이 -> 서버의 토큰 대조)이 실제 이미지로 확인된다. 막힌 지점이 측정과 함께 기록됐고, 풀리면 같은 시험이 그대로 검증한다.
 - 감수하는 것: 학습 서버의 게시는 아직 운영 길이 없다. `test-registry-publish-reach.sh` 는 종료 77 이라 자체 점검 묶음(`self-checks.list`)에 넣지 않았다(넣으면 묶음 전체가 77 이 되어 E2E 준비가 멈춘다). CR-450 이 풀리면 목록에 넣는다. `E2E_GPU=1` 단계 3 은 이 사유로 멈춘다.
 
+## 이후 (2026-11-08)
+
+- CR-450 은 제안 1 로 반영됐다(model-lab 6648a4d: Exposure.egress 에 model-registry). `test-registry-publish-reach.sh` 가 출구를 거친 게시 길까지 단언해 rc=0 이 됐고 `self-checks.list` 에 넣었다.
+- 새 자기 연결(model-registry -> model-registry)에서 `test-egress-edges.sh` 가 503 으로 실패했다. 원인은 시험 배선이다: 부르는 쪽 pod 에도 받는 쪽과 같은 별칭(model-registry)을 줘서 Docker DNS 가 이름을 두 pod 에 나눠 풀었고(확인: 같은 별칭 두 pod 에서 getaddrinfo 가 두 주소), 출구가 상류 없는 자기 pod 의 게이트웨이로 갔다. 이 자기 연결이 쓰이는 곳은 R1.5(학습 서버의 같은 영역 게이트웨이 -> 주 서버의 받는 영역 게이트웨이)이고 그 길에서 이름은 받는 쪽 한 곳으로만 풀린다(RUNTIME IN-NAME, R1.5 hosts 표). 그래서 부르는 쪽 pod 에는 별칭을 주지 않게 고쳤다(단언은 그대로 `GET 200 ok`). 주 compose 는 바뀌지 않는다: compose 안의 model-registry 는 자기 영역 서버를 출구로 부르지 않는다(영역 안 호출, CONVENTIONS 13절).
+- 보류였던 (a) 학습 서버 쪽 게이트웨이 compose, (b) model-registry 443 배치 게시(Placement 가 compose 밖 호출자를 표현), (c) 같은 호스트 external 망은 아직 만들지 않았다. 새 ADR 로 정한다.
+
 ## 되돌리는 조건
 
 - CR-450 이 결정되면 새 ADR 이 이것을 대체해 (a)~(c) 를 정한다.

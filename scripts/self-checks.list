@@ -91,6 +91,7 @@ OUT-FILE(루트 PEM·hosts 표·SHA256SUMS, R1.5·R1.7) 내보내기와 대조 :
 영역 시험·빌드를 돌리는 deploy 도구가 영역 환경에 로컬 미러 git 설정을 준다 (S14, 빼면 실패하는 변이) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_mirrors_env.py"
 추론 서버 compose 의 나가는 쪽이 model-runtime 이미지 Exposure.egress 와 이름·포트로 맞는다 (R1.8·R6.2; 이미지 없으면 SKIP 77) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_inference_egress.py"
 추론 서버 -> release-gate 영역 게이트웨이 단독 시험(같은 호스트 외부 망 별칭, OUT-FILE 루트, 외부 망 빼는 변이; Docker 필요) :: bash "$DEPLOY_ROOT/scripts/test-inference-reach.sh"
+학습 서버 -> model-registry 게시 길 단독 시험(OUT-FILE hosts 표, 자기 영역 게이트웨이 출구 R1.8, 받는 서비스의 토큰 대조; Docker 필요, ADR 0071) :: bash "$DEPLOY_ROOT/scripts/test-registry-publish-reach.sh"
 추론 서버가 붙는 외부 망 이름(INFERENCE_RELEASE_NETWORK)이 compose 망 이름 규칙과 같다 (변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_inference_network_name.py"
 check-all 규칙 6 은 값 기준이다(참·거짓·정수 문자열은 비밀이 아니다, realm 템플릿 모양 통과, 임의 문자열은 걸리는 변이) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_check_all_inline_secrets.py"
 공개 입구는 platform 이미지 + 영역 선언 폴더만 받고 손으로 쓴 프록시 설정·PIPELINE_SCHEMA_VERSION 이 없다 (변이 포함) :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_ingress_inputs.py"

@@ -79,9 +79,12 @@ line = r.split(b"\r\n", 1)[0].decode()
 print("GET", line.split(" ")[1] if " " in line else line, "ok" if b'"status":"ok"' in r else "BODY")
 PY
 chmod 644 "$T/client.py"
-pod() { # pod <이름> <별칭> <exposure 파일> <상류 대역 0|1>: pause + (대역 상류) + 영역 게이트웨이. 이름은 정리 목록에 넣는다
+pod() { # pod <이름> <별칭|빈 값> <exposure 파일> <상류 대역 0|1>: pause + (대역 상류) + 영역 게이트웨이. 이름은 정리 목록에 넣는다
   local p=$1
-  "$DOCKER" run -d --name "$p" --network "$NET" --network-alias "$2" --sysctl net.ipv4.ip_unprivileged_port_start=0 --read-only --cap-drop ALL "$PAUSE" >/dev/null || return 1; echo "$p" >> "$T/names"
+  # 별칭은 받는 쪽 pod 에만 준다: 서비스 이름 하나는 한 곳(받는 영역 게이트웨이)으로만 풀린다(RUNTIME IN-NAME, compose 밖 호출자는 R1.5 hosts 표).
+  # 부르는 쪽에도 같은 별칭을 주면 자기 자신을 부르는 연결(model-lab 학습 서버 -> 주 서버 model-registry, ADR 0071)에서 Docker DNS 가 이름을 두 pod 에 나눠 풀어
+  # 출구가 상류 없는 자기 pod 의 게이트웨이로 가 503 이 났다(2026-11-08 rfinal). 이 시험의 부르는 쪽은 누구에게도 불리지 않으므로 별칭이 필요 없다
+  "$DOCKER" run -d --name "$p" --network "$NET" ${2:+--network-alias "$2"} --sysctl net.ipv4.ip_unprivileged_port_start=0 --read-only --cap-drop ALL "$PAUSE" >/dev/null || return 1; echo "$p" >> "$T/names"
   if [ "$4" = 1 ]; then "$DOCKER" run -d --name "$p-app" --network "container:$p" -v "$T/app:/app:ro" "$UTIL" python /app/app.py >/dev/null || return 1; echo "$p-app" >> "$T/names"; fi
   "$DOCKER" run -d --name "$p-gw" --network "container:$p" --read-only --tmpfs /tmp --cap-drop ALL -v "$T/certs:/certs:ro" -v "$3:/etc/openit/exposure.json:ro" \
     -e AREA_GATEWAY_UPSTREAM=127.0.0.1:8080 -e AREA_GATEWAY_INGRESS_PORT=443 -e AREA_GATEWAY_EGRESS_PORT=3128 "$GW_IMG" >/dev/null || return 1; echo "$p-gw" >> "$T/names"
@@ -101,7 +104,7 @@ PY
     MUT_DONE=1
   fi
   cp "$T/exp/$B.json" "$T/callee.json"; chmod 644 "$T/caller.json" "$T/callee.json"
-  if ! pod "eg$ID-$I-b" "$B" "$T/callee.json" 1 || ! pod "eg$ID-$I-a" "$A" "$T/caller.json" 0; then echo "FAIL: 연결 $A -> $B: pod 를 띄우지 못했다" >&2; FAILS=$((FAILS+1)); continue; fi
+  if ! pod "eg$ID-$I-b" "$B" "$T/callee.json" 1 || ! pod "eg$ID-$I-a" "" "$T/caller.json" 0; then echo "FAIL: 연결 $A -> $B: pod 를 띄우지 못했다" >&2; FAILS=$((FAILS+1)); continue; fi
   ready "eg$ID-$I-b" && ready "eg$ID-$I-a" || { echo "FAIL: 연결 $A -> $B: 영역 게이트웨이가 443 을 열지 않았다" >&2; "$DOCKER" logs "eg$ID-$I-a-gw" 2>&1 | tail -3 >&2; FAILS=$((FAILS+1)); continue; }
   run() { "$DOCKER" run --rm --network "container:eg$ID-$I-a" -e OPENIT_EGRESS_PROXY=http://127.0.0.1:3128 -v "$T/pki/root_ca.crt:/root_ca.crt:ro" -v "$T/client.py:/client.py:ro" "$UTIL" python /client.py "$1" 2>&1 | tail -1; }
   POS=$(run "$B")
