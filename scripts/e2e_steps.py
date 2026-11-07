@@ -1449,9 +1449,9 @@ def step5d():
         cb, rb = gk(B, m, pth, bd); assert cb in (404, 403), (f"기기 B 가 기기 A 의 세션에 {lab} 접근이 허용됐다", cb, str(rb)[:100])
     sv = staff_sv(sid); assert utt_count(sv, "아니요 없어요") == 0 and sv["status"] == "IN_PROGRESS", "기기 B 의 시도가 세션을 바꿨다"
     c, r2 = gk(A, "POST", f"/v1/sessions/{sid}/turns", {"session_id": sid, "kind": "UTTERANCE", "utterance": "아니요 없어요", "turn_id": "dA-2"}); assert c == 200, ("기기 A 는 계속 정상이어야 한다", c, r2)
-    # 공유 서비스 토큰(survey-api-kiosk) 경로는 없다: /readyz 에 shared_kiosk_token 이 켜져 있지 않다
+    # 계약 4.0.4 PUBLIC_API F절: 게이트웨이→survey 키오스크 경로 서비스 토큰(survey-api-kiosk)은 필수다. 정상 배포의 /readyz 는 shared_kiosk_token=true
     rz = _c2_ready()[1]; kt = rz.get("kiosk_tokens") or {}
-    assert kt.get("shared_kiosk_token") is False, ("/readyz 의 공유 키오스크 토큰 상태", kt)
+    assert kt.get("shared_kiosk_token") is True, ("/readyz 의 키오스크 경로 게이트웨이 토큰 상태", kt)
     env = {"SECRETS_DIR": a.secrets, "DEPLOY_PROJECT": a.project}
     kad = lambda *args: sh(["bash", str(ROOT / "scripts/kiosk-add-device.sh"), *args], env=env)
     # (1) 신뢰 CA 가 발급했지만 허용 목록에 없는 인증서: 403 PERMISSION_DENIED(BoundaryError). 운영자가 하지 않은 등록은 없다

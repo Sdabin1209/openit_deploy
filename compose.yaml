@@ -279,6 +279,8 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-tokens
   survey-api-staff:
     file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-staff
+  survey-api-kiosk:     # 게이트웨이→survey 키오스크 경로 서비스 토큰(계약 4.0.4 PUBLIC_API F절: 필수, 기기 인증은 mTLS 와 별개)
+    file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-kiosk
   gate-write-release-approver:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-write-release-approver
   gate-read-release-approver:
@@ -297,6 +299,8 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/ops-review-reviewer
   gate-read-survey-service:
     file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-survey-service
+  gate-read-question-authoring:   # 저작 화면의 판정 조회(QuestionAuthoringEnv.QA_GATE_TOKEN_FILE, I4 읽기). gen-secrets.sh 의 GATE_R 목록이 만든다
+    file: ${SECRETS_DIR:-./secrets}/tokens/gate-read-question-authoring
   ops-ingest-survey-service:
     file: ${SECRETS_DIR:-./secrets}/tokens/ops-ingest-survey-service
   inference-survey-service:
@@ -815,7 +819,7 @@ services:
     configs:
       - {source: gateway-device-ca, target: /etc/openit/device-ca.pem}
       - {source: gateway-tls-cert, target: /etc/openit/ingress-tls/tls.crt}   # mode=files 일 때만 의미 있다(아니면 빈 파일)
-    secrets: [{source: gateway-tls-key, target: /etc/openit/ingress-tls/tls.key}, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
+    secrets: [{source: gateway-tls-key, target: /etc/openit/ingress-tls/tls.key}, gateway-registry-publish-token, model-registry-write-model-lab, survey-result-reader, qa-gateway-token, survey-api-staff, survey-api-kiosk, gate-write-release-approver, gate-read-release-approver, gate-read-operator, gate-write-operator, ops-read-reviewer, ops-review-reviewer, gate-read-model-serving, gateway-inference-token]
     # Caddyfile 이 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 아님, docs/RUN.md 비밀 절)
     depends_on:   # 게이트웨이가 상류로 부르는 서비스는 모두 준비된 뒤에 뜬다: 앱과 그 TLS 사이드카가 둘 다 healthy (준비 전 요청은 503 이 된다, 정적 점검이 지킨다)
       kiosk-frontend: {condition: service_healthy}
@@ -942,15 +946,16 @@ services:
     environment: &survey_env   # 비밀은 파일 경로만(D84)
       <<: *commonenv
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
+      SURVEY_API_TOKEN_FILE: /run/secrets/survey-api-kiosk      # 키오스크 경로 게이트웨이 토큰(계약 4.0.4 F절, survey deploy-inputs.json 선언과 같은 경로)
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
       SURVEY_TRACE_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
       SURVEY_INFERENCE_TOKEN_FILE: /run/secrets/inference-survey-service
-      SURVEY_RESULT_READER_TOKEN_FILE: /run/secrets/survey-result-reader   # 결과 조회 API(result-reader 역할, 병원/의사 시스템용: 게이트웨이에 열지 않는다)
+      SURVEY_RESULT_READER_TOKEN_FILE: /run/secrets/survey-result-reader   # 결과 조회 API(result-reader 역할). 공개 입구의 clinician 경로 게이트웨이 토큰이기도 하다(survey deploy-exposure.json)
       SURVEY_RISK_SOURCE_TOKEN_FILE: /run/secrets/survey-risk-source       # 위험 신호 입력 API(risk-source 역할, 감지기용: 게이트웨이에 열지 않는다)
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
       SURVEY_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-    secrets: &survey_secrets [survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
+    secrets: &survey_secrets [survey-api-staff, survey-api-kiosk, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data, pki-root:/etc/openit/pki:ro]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
     network_mode: "service:survey-service-net"   # 망·별칭·sysctls 는 survey-service-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다
@@ -994,10 +999,11 @@ services:
       QA_GATEWAY_TOKENS_FILE: /run/secrets/qa-gateway-tokens   # gateway 경유 저자 경로의 서비스 토큰(X-Openit-User 를 신뢰하는 유일한 토큰)
       QA_READ_TOKENS_FILE: /run/secrets/qa-read-tokens
       QA_FAILURES_TOKEN_FILE: /run/secrets/ops-read-question-authoring
+      QA_GATE_TOKEN_FILE: /run/secrets/gate-read-question-authoring   # 판정 조회(I4). 비우면 저작 화면의 판정 목록이 DISABLED(QuestionAuthoringEnv)
       QA_DATABASE_URL_FILE: /run/secrets/db-qa-dsn   # 문항 저장소는 PostgreSQL(D85)
       QA_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-    secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, db-qa-dsn]
+    secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, gate-read-question-authoring, db-qa-dsn]
     tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
     network_mode: "service:question-authoring-net"   # 망·별칭·sysctls 는 question-authoring-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
