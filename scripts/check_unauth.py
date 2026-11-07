@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """인증 없는 요청에 공개 입구가 주는 응답을 점검한다(같은 망의 클라이언트 컨테이너에서 실행). 기대 응답은 계약에서 만든다(손 표 없음, 공개 입구 이미지의 점검 명령에 기대지 않는다):
   영역 Exposure 선언(`--exposures` 폴더, 파일마다 Exposure 스키마 하나)의 routes[].auth.kind 와 RUNTIME R3.13·R3.23, CONVENTIONS 9절(401·403·404), PUBLIC_API F절.
-  - device-token: 인증 없음 -> 401, `WWW-Authenticate: Bearer`(R3.13, RFC 6750 3).
+  - device: 클라이언트 인증서 없음 -> 403, 본문 BoundaryError(code=PERMISSION_DENIED)(계약 4.0.0 PUBLIC_API F절, D136: 인증서는 HTTP 인증 challenge 로 다시 낼 수 없는 자격이라 401·WWW-Authenticate 가 아니다).
   - account / authenticated, 경로가 /v1/ 아래: 401, `WWW-Authenticate: Bearer realm="openit"`, 본문 BoundaryError(code=PERMISSION_DENIED)(R3.23).
   - account / authenticated, /v1/ 밖(화면) GET: `Accept: text/html` 이면 302 + Location(로그인 화면), 아니면 401 + `Bearer realm="openit"`(R3.23).
   - 선언 없는 /v1/ 경로: 404, 본문 code=NOT_FOUND(닫힌 면, CONVENTIONS 9절의 NOT_FOUND -> 404).
@@ -20,8 +20,8 @@ def rows(exposures):
             for p in r["paths"]:
                 path = p.replace("*", "x")
                 api = path.startswith("/v1/")
-                if kind == "device-token":
-                    out.append((f"{d['service']} {method} {p} (device-token)", method, path, {}, {"status": 401, "www": "Bearer"}))
+                if kind == "device":
+                    out.append((f"{d['service']} {method} {p} (device)", method, path, {}, {"status": 403, "code": "PERMISSION_DENIED"}))
                 elif kind in ("account", "authenticated"):
                     if api:
                         out.append((f"{d['service']} {method} {p} ({kind}, API)", method, path, {}, {"status": 401, "www": 'Bearer realm="openit"', "code": "PERMISSION_DENIED"}))

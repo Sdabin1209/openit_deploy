@@ -155,8 +155,9 @@ class Shapes(unittest.TestCase):
 
     def test_device_config_placement_field(self):
         v = bc.validator("DeviceConfig")
-        self.assertFalse(list(v.iter_errors({"device_token": "t" * 20, "allow_remote_stt": False, "question_set_id": C["QS"]})))
-        self.assertTrue(list(v.iter_errors({"device_token": "t" * 20, "question_set_id": "bad id"})))
+        self.assertFalse(list(v.iter_errors({"allow_remote_stt": False, "question_set_id": C["QS"]})))
+        self.assertTrue(list(v.iter_errors({"question_set_id": "bad id"})))
+        self.assertTrue(list(v.iter_errors({"device_token": "t" * 20})), "4.0.0: 기기 토큰 칸은 없다(D136)")
 
 
 if __name__ == "__main__":

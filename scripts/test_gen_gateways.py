@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 from boundary_contracts import validator  # noqa: E402
 from openit_deploy.wiring import cli_gen_gateways as G  # noqa: E402
 
-EXPO = {"service": "survey-service", "routes": [{"paths": ["/v1/sessions"], "methods": ["POST"], "auth": {"kind": "device-token"}}], "egress": ["release-gate"]}
+EXPO = {"service": "survey-service", "routes": [{"paths": ["/v1/sessions"], "methods": ["POST"], "auth": {"kind": "device"}}], "egress": ["release-gate"]}
 COMPOSE = {"services": {"survey-service": {"image": "img/s"}, "survey-service-gw": {"image": "img/gw"}, "gateway": {"image": "img/x"}}}
 
 

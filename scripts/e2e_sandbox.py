@@ -180,10 +180,23 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _opener() -> urllib.request.OpenerDirector:
+class DeviceId(str):
+    """키오스크 기기의 신원. gw_request 의 token 자리에 이 값이 오면 Authorization 머리글 대신 TLS 클라이언트 인증서로 인증한다(계약 PUBLIC_API F절, D136: 기기 인증은 mTLS 하나).
+    인증서·키는 기본이 <비밀 폴더>/device-certs/<ID>.crt·.key(gen-secrets.sh --test-fixtures, kiosk-add-device.sh add). cert·key 로 다른 파일(예: 다른 CA 가 발급한 인증서)을 줄 수 있다."""
+    def __new__(cls, device_id: str, cert: Optional[str] = None, key: Optional[str] = None):
+        o = super().__new__(cls, device_id)
+        o.cert, o.key = cert, key
+        return o
+
+
+def _opener(device: Optional[DeviceId] = None) -> urllib.request.OpenerDirector:
     ca = _need("gw_ca")
-    # 왜 CA 명시: 시스템 신뢰 저장소가 아니라 게이트웨이 내부 CA 만 신뢰한다(자체 서명 인증서가 우연히 통과하는 것을 막는다)
+    # 왜 CA 명시: 시스템 신뢰 저장소가 아니라 게이트웨이 내부 CA 만 신뢰한다(자체 서명 인증서가 우연히 통과하는 것을 막는다). 서버 검증(check_hostname·CERT_REQUIRED)은 기본 문맥 그대로 켜 둔다
     ctx = ssl.create_default_context(cafile=str(ca))
+    if device is not None:
+        # 표준 API: SSLContext.load_cert_chain 으로 기기 인증서를 낸다(SDK 의 비공개 필드를 만지지 않고 검증을 끄지 않는다)
+        d = _need("secrets") / "device-certs"
+        ctx.load_cert_chain(certfile=str(device.cert or d / f"{device}.crt"), keyfile=str(device.key or d / f"{device}.key"))
     return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect, urllib.request.HTTPSHandler(context=ctx))
 
 
@@ -200,9 +213,9 @@ def gw_request(method: str, path: str, *, account: Optional[str] = None, token: 
         raise ValueError("account 와 token 은 함께 쓸 수 없다(Authorization 하나)")
     if account:
         h["Cookie"] = session_cookie(account)   # 사람 계정은 OIDC 로그인 세션 쿠키(U82). 기기·기계 토큰은 Authorization: Bearer
-    elif token:
+    elif token and not isinstance(token, DeviceId):
         h["Authorization"] = "Bearer " + token
-    op = _opener()
+    op = _opener(token if isinstance(token, DeviceId) else None)
     last: Optional[BaseException] = None
     for attempt in (0, 1):
         req = urllib.request.Request(gw_url(refresh=attempt == 1, human=bool(account)) + path, data=body, method=method, headers=h)

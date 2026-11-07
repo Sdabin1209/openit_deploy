@@ -51,7 +51,7 @@ STEP_CA_BOUND = ("pki-root", "pki-tokens")   # step-ca 서버에서만 돈다: p
 PUBLISH_NET = "placement-publish"      # 내부 전용 네트워크에만 붙은 서비스가 호스트 포트를 열 수 있게 더하는 일반 네트워크
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 DSN_RE = re.compile(r"^(db-.*-dsn|identity-db-url)$")   # DB 접속 URI 비밀(compose 의 비밀 이름)
-URL_RE = re.compile(r"^(https?)://([a-z0-9][a-z0-9-]*)(?::(\d+))?(.*)$")   # 포트 생략 = https 의 443(서비스 TLS 사이드카가 받는 포트, ADR 0060)
+URL_RE = re.compile(r"^(https?)://([a-z0-9][a-z0-9-]*)(?::(\d+|\$\{[A-Za-z_]+(?::-\d+)?\}))?(.*)$")   # 포트는 숫자나 compose 변수(${STEP_CA_PORT:-9000})일 수 있다(변수를 못 읽으면 ":19000:${...}" 같은 잘못된 URL 이 된다). 포트 생략 = https 의 443(서비스 TLS 사이드카가 받는 포트, ADR 0060)
 
 
 def fail(msgs):

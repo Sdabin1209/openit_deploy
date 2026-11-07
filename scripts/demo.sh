@@ -67,7 +67,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   export DEMO_MIMIC_FLOW_FILE="$MIMIC_FLOW"
   # 키오스크 기기 설정(데모 전용): 기기 산출물과 /config.json 을 내는 gateway 설정 사본의 경로. 파일은 up 이 만든다(demo_kiosk_prepare)
   export DEMO_KIOSK_DEVICE=e2e   # 데모 기기 ID. 기기 토큰은 제품 경로 그대로(kiosk-add-device.sh, 게이트웨이 기기 토큰 목록). 데모만의 게이트웨이 설정은 없다(U75)
-  export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
+  export SECRETS_DIR="$W/secrets" DEVICE_ALLOWLIST_DIR="$W/device-allowlist" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
   # 사람 인증(U82, ADR 0057): Keycloak 발급자·oauth2-proxy 콜백이 밖에서 보이는 주소(첫 GATEWAY_HOSTS 이름 localhost + 밖에 보이는 포트)로 정해지므로 HTTPS 호스트 포트를 미리 정하고 기록해 둔다(이후 명령이 같은 값을 쓴다)
   if [ -s "$W/gw-tls-port" ]; then GATEWAY_TLS_PORT=$(cat "$W/gw-tls-port")
   else UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); GATEWAY_TLS_PORT=""   # 왜 상시 잠금인가: DEPLOY_LOCK($W/images.lock)은 이 시점에 아직 없어 이미지 이름이 비고, 포트 고르기가 조용히 실패해 사람 화면 주소가 8443 으로 굳었다(4차 데모: 단계 1 연결 거부)
@@ -94,14 +94,14 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     EXT=$(sed -n 1p "$W/external-inference"); export INFERENCE_TOKEN_FILE; INFERENCE_TOKEN_FILE=$(sed -n 2p "$W/external-inference"); external_inference_setup "$EXT"
   fi
 }
-demo_kiosk_prepare() { # 제품 경로 그대로: 기기 토큰을 만들고 게이트웨이 목록에 넣는다(scripts/kiosk-add-device.sh). 토큰 값은 출력하지 않는다
-  SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" ${DEMO_QS:+--question-set "$DEMO_QS"} >/dev/null 2>&1 || die "기기 토큰 생성 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
-  [ -s "$SECRETS_DIR/devices/$DEMO_KIOSK_DEVICE" ] || die "기기 토큰 파일이 없다: $SECRETS_DIR/devices/$DEMO_KIOSK_DEVICE"
+demo_kiosk_prepare() { # 제품 경로 그대로: 기기 인증서를 발급해 허용 목록에 넣는다(scripts/kiosk-add-device.sh, 계약 PUBLIC_API F절 D136). 키·인증서 내용은 출력하지 않는다
+  SECRETS_DIR="$SECRETS_DIR" bash "$DEPLOY_ROOT/scripts/kiosk-add-device.sh" add "$DEMO_KIOSK_DEVICE" ${DEMO_QS:+--question-set "$DEMO_QS"} >/dev/null 2>&1 || die "기기 등록 실패 (scripts/kiosk-add-device.sh add $DEMO_KIOSK_DEVICE)"
+  [ -s "$SECRETS_DIR/device-certs/$DEMO_KIOSK_DEVICE.crt" ] || die "기기 인증서가 없다: $SECRETS_DIR/device-certs/$DEMO_KIOSK_DEVICE.crt"
 }
-demo_kiosk_url() { # 키오스크 시작 주소(계약 KioskStartFragment: #device=<기기 토큰>)를 600 파일에만 쓴다. 터미널·로그에는 토큰을 내지 않는다(U75: 데모 전용 /config.json 분기 제거)
+demo_kiosk_url() { # 키오스크 시작 주소(계약 KioskStartFragment: 기기 자격은 조각에 없다). 브라우저에 기기 인증서(secrets/device-certs/<기기>.crt·.key)를 설치해 접속한다(TLS 클라이언트 인증)
   local gw=$1 host=$2 f="$W/kiosk-url.txt"
   # 문진표 ID(--question-set)를 주면 조각에 question_set_id 를 붙인다(계약 KioskStartFragment, 조각이 기기 설정보다 먼저). 안 주면 활성 문진표가 둘이므로 키오스크 첫 화면에서 고른다
-  ( umask 077; printf 'https://%s:%s/#device=%s%s\n' "$host" "$gw" "$(tr -d '\n' < "$SECRETS_DIR/devices/$DEMO_KIOSK_DEVICE")" "${DEMO_QS:+&question_set_id=$DEMO_QS}" > "$f" ); echo "$f"
+  ( umask 077; printf 'https://%s:%s/%s\n' "$host" "$gw" "${DEMO_QS:+#question_set_id=$DEMO_QS}" > "$f" ); echo "$f"
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
@@ -131,7 +131,7 @@ guide() {
  !! 이 데이터는 시험용 대체(가짜 모델, 시험용 승인자)입니다. 실제 모델·실제 승인이 아닙니다. !!
 
  주소: $GATEWAY_PUBLIC_URL   (사람 화면은 이 이름으로 연다: 로그인 쿠키와 Keycloak 의 허용 리다이렉트가 이 이름에만 묶인다. 원격 서버면: ssh -L $gw:127.0.0.1:$gw <서버>  로 터널을 열고 이 주소를 브라우저에)
-   키오스크 화면      주소는 $(demo_kiosk_url "$gw" "$host") 에 있다(기기 토큰이 URL 조각 #device= 에 들어 있어 터미널에 출력하지 않는다. cat 해서 브라우저에 붙여 넣는다)
+   키오스크 화면      주소는 $(demo_kiosk_url "$gw" "$host") 에 있다(기기 자격은 주소에 없다: 브라우저에 기기 인증서 $SECRETS_DIR/device-certs/$DEMO_KIOSK_DEVICE.crt·.key 를 설치해 접속한다. cat 해서 브라우저에 붙여 넣는다)
    직원 콘솔          $GATEWAY_PUBLIC_URL/staff/      계정 staff-e2e (역할 staff)
    승인·실패 사례 검토·문진 결과 $GATEWAY_PUBLIC_URL/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 의사 계정 clinician-e2e(문진 결과 탭) / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
    계정 관리(가입 승인)  $GATEWAY_PUBLIC_URL/auth/admin/openit/console/      초기 admin openit-admin (임시 비밀번호는 $W/secrets/tokens/identity-initial-admin-password, 첫 로그인에서 바꾼다) 또는 시험 사용자 admin-e2e
@@ -145,7 +145,7 @@ guide() {
    clinician-e2e    $W/secrets/tokens/idp-test-clinician-e2e-password
    admin-e2e        $W/secrets/tokens/idp-test-admin-e2e-password
    예: cat $W/secrets/tokens/idp-test-staff-e2e-password
- 키오스크 기기 인증(D85 F절·D88/U8): 제품 기본 경로(게이트웨이 기기 토큰 목록 + 시작 URL 조각 #device=)를 그대로 쓴다. 데모 전용 게이트웨이 설정은 없다(U75). mTLS 를 켠 운영에서는 기기 인증서로 대신한다(config/device-tls.mtls.caddy.example).
+ 키오스크 기기 인증(계약 PUBLIC_API F절, D136): 제품 기본 경로(기기 인증서 mTLS + 허용 목록, scripts/kiosk-add-device.sh)를 그대로 쓴다. 데모 전용 게이트웨이 설정은 없다(U75). 인증서는 개발용 CA 가 발급한다(운영은 조직 PKI).
  모델 서빙: LoRA-A/LoRA-B 자리만 모방 백엔드(MODEL_RUNTIME_BACKEND=mimic, 시험 전용). 흐름 파일: $DEMO_MIMIC_FLOW_FILE (--mimic-flow-file 로 바꾼다). 나머지는 진짜 코드다.
 
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )

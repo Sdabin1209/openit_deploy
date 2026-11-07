@@ -72,18 +72,18 @@ class Gate(unittest.TestCase):
         self.assertEqual(G.make_validators({"RuntimeFlowFile"})["RuntimeFlowFile"](docs[0]["document"]), [])
 
     def test_device_configs_are_checked_as_DeviceConfig(self):
-        """기기 설정(secrets/kiosk-config/*.json)은 계약 DeviceConfig 로 검증된다: 문진표 배치 칸(3.3.0)을 포함한다. 위반 보고에 토큰 값은 없다(ADR 0052)."""
+        """기기 설정(secrets/kiosk-config/*.json)은 계약 DeviceConfig 로 검증된다: 문진표 배치 칸(3.3.0)을 포함한다. 위반 보고에 값(subject_ref 는 개인정보 참조일 수 있다)은 없다(ADR 0052)."""
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             k = pathlib.Path(d) / "kiosk-config"; k.mkdir()
-            (k / "ok.json").write_text(json.dumps({"device_token": "tok-ok-1", "allow_remote_stt": False, "question_set_id": "health-screening"}))
-            (k / "bad.json").write_text(json.dumps({"device_token": "SECRET-TOKEN-VALUE", "question_set_id": "bad id"}))
+            (k / "ok.json").write_text(json.dumps({"allow_remote_stt": False, "question_set_id": "health-screening"}))
+            (k / "bad.json").write_text(json.dumps({"subject_ref": "SECRET VALUE", "question_set_id": "bad id"}))
             docs = [x for x in G.build_documents({"services": {}}, secrets_dir=d) if x["schema"] == "DeviceConfig"]
             self.assertEqual([x["label"] for x in docs], ["kiosk-config/bad.json", "kiosk-config/ok.json"])
             vs = G.make_validators({"DeviceConfig"})["DeviceConfig"]
             self.assertEqual(vs(docs[1]["document"]), [])
-            bad = vs(docs[0]["document"]); self.assertTrue(bad and bad[0][0] == "question_set_id", bad)
-            self.assertNotIn("SECRET-TOKEN-VALUE", json.dumps(bad))
+            bad = vs(docs[0]["document"]); self.assertTrue(bad and {b[0] for b in bad} == {"question_set_id", "subject_ref"}, bad)
+            self.assertNotIn("SECRET VALUE", json.dumps(bad))
 
 
 

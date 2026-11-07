@@ -1,5 +1,11 @@
 # 변경 이력
 
+## wo-450 계약 v4.0.2 이행: 기기 인증은 mTLS 허용 목록 하나 (ADR 0069, 0040 대체)
+- 기준표: boundary-contracts v4.0.2, model-runtime v0.12.1, link v0.5.1(문진 스키마 4.1.2 그대로).
+- 기기 토큰 장치를 없앴다: `INGRESS_DEVICE_TOKENS_DIR`·`SURVEY_KIOSK_DEVICE_TOKENS(_FILE)`·gen-secrets 의 기기 토큰·토큰 기반 `kiosk-add-device.sh`. 입구에는 `INGRESS_DEVICE_CA_FILE`(공개 CA 인증서)·`INGRESS_DEVICE_ALLOWLIST_FILE`(전용 폴더 `state/device-allowlist` 를 읽기 전용 폴더 마운트)를 준다.
+- `scripts/device_allowlist.py`(배타 잠금 + 계약 검증 + 같은 폴더 rename), `kiosk-add-device.sh add|register|rotate|revoke-serial|remove|place|from-list|list`, `gen-secrets.sh --test-fixtures` 가 개발용 CA·기기 인증서를 openssl 로 발급.
+- E2E: 키오스크 호출은 기기 인증서(표준 ssl.SSLContext), 세션 시작에 session_id 없음(응답의 값을 씀), 인증서 없음·목록 밖은 403 PERMISSION_DENIED, 다른 CA 는 TLS 거절, 일련번호 제거·복구 확인, 합성 잡 설정은 HttpClientSettings. 단계 5d 를 바꿨다(전체 E2E 는 이 변경에서 돌리지 않았다).
+
 ## wo-450 시스템 python3 대체 제거
 - 원인: `.venv` 가 없는 worktree 에서 lib.sh `validate_image_labels` 와 `test-build-test-label.sh` 가 시스템 python3 로 조용히 넘어가 계약 패키지가 없어 실패했다. lib.sh 의 `deploy_py` 가 "deploy .venv 가 없다: bash scripts/prepare-areas.sh" 로 멈춘다. 같은 대체(check-exposure, test-publish, prepare-areas, doctor, test-images-env)도 없앴고 정적 시험 `test_no_python_fallback.py` 가 막는다.
 

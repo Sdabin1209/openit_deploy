@@ -134,7 +134,9 @@ class EnumConstants(unittest.TestCase):
     def test_general_enum_membership(self):
         pool = {}
         for sch in list(self.contract.values()) + list(self.survey.values()):
-            for k, v in sch.items(): pool.setdefault(k, set()).update(v)
+            for k, v in sch.items():
+                v = v - {"[MASKED]"}   # 계약 4.0.0 비식별 뷰(OpsFeedback*Trace)는 값을 자리표시자 "[MASKED]" 하나로 닫는다. 도메인 열거가 아니므로 같은 이름 키의 열거 풀에 넣지 않는다(풀에 있으면 정상 값 비교가 모두 "열거 밖"이 된다)
+                if v: pool.setdefault(k, set()).update(v)
         bad, unchecked = [], set()
         for line, target, key, consts in self.cmp:
             text = ast.unparse(target)

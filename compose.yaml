@@ -172,8 +172,8 @@ volumes:          # 파일 저장소는 볼륨 하나씩, 쓰기는 소유 서�
   identity-db-pgtls:   # identity-db 서버 인증서·키(step-ca 발급)
 
 configs:
-  gateway-device-ca:   # 키오스크 기기 인증서(mTLS, PUBLIC_API F절)를 검증할 기기 CA(PEM, 공개 인증서). 운영(설치처)이 준다(계약 3.4.13 PublicIngressEnv.INGRESS_DEVICE_CA_FILE, 필수). 시험 폴더(--test-fixtures)에는 gen-secrets.sh 가 시험 CA 를 만든다
-    file: ${DEVICE_CA_FILE:?기기 CA 파일(PEM) 경로가 필요하다. 운영이 준다}
+  gateway-device-ca:   # 키오스크 기기 인증서(mTLS, PUBLIC_API F절)를 검증할 기기 CA 의 공개 인증서(PEM). 개인 키는 어디에도 마운트하지 않는다. 운영(설치처)이 DEVICE_CA_FILE 로 주고, 없으면 비밀 폴더의 device-ca.pem(gen-secrets.sh --test-fixtures 의 개발용 CA)이다(계약 PublicIngressEnv.INGRESS_DEVICE_CA_FILE, 필수)
+    file: ${DEVICE_CA_FILE:-${SECRETS_DIR:-./secrets}/device-ca.pem}
   gateway-tls-cert:   # 공개 인증서(비밀 아님). files 모드(GATEWAY_TLS_MODE=files)에서만 쓰인다(계약 PublicIngressEnv.INGRESS_TLS_DIR 의 tls.crt)
     file: ${GATEWAY_TLS_CERT_FILE:-./config/unused.pem}
 
@@ -277,8 +277,6 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-token
   qa-gateway-tokens:
     file: ${SECRETS_DIR:-./secrets}/tokens/qa-gateway-tokens
-  survey-kiosk-device-tokens:
-    file: ${SECRETS_DIR:-./secrets}/tokens/survey-kiosk-device-tokens
   survey-api-staff:
     file: ${SECRETS_DIR:-./secrets}/tokens/survey-api-staff
   gate-write-release-approver:
@@ -840,7 +838,8 @@ services:
       identity-proxy: {condition: service_started}
     environment:   # 비밀 아님. 사이트 이름 목록과 밖에서 보이는 HTTPS 포트(평문 포트의 리다이렉트 대상). 운영에서 병원 내부 도메인으로 바꾼다(docs/runbook.md TLS 절)
       GATEWAY_HOSTS: ${GATEWAY_HOSTS:-localhost:8443}
-      INGRESS_DEVICE_CA_FILE: /etc/openit/device-ca.pem   # 기본 기기 인증(mTLS)의 기기 CA 경로(계약 3.4.13). 파일은 위 configs gateway-device-ca
+      INGRESS_DEVICE_CA_FILE: /etc/openit/device-ca.pem   # 기기 인증(mTLS)의 기기 CA 공개 인증서 경로(계약 PublicIngressEnv). 파일은 위 configs gateway-device-ca
+      INGRESS_DEVICE_ALLOWLIST_FILE: /etc/openit/devices/allowlist.json   # 기기 인증서 허용 목록(계약 DeviceAllowlist, D136). 파일이 아니라 부모 폴더를 마운트한다(아래): 목록은 임시 파일을 rename 해 통째로 교체되므로 파일 바인드 마운트는 옛 inode 를 보게 된다
       GATEWAY_PUBLIC_TLS_PORT: ${GATEWAY_PUBLIC_TLS_PORT:-8443}
       GATEWAY_PROBE_SITE: ${GATEWAY_PROBE_SITE:-gateway:8443}   # 감시(blackbox)가 게이트웨이를 https 로 부르는 사이트 이름. internal 모드에서는 내부 CA 가 이 이름 인증서도 발급한다. files/acme 모드에서는 그 인증서가 이 이름을 포함하거나 감시 대상을 GATEWAY_HOSTS 의 이름으로 바꾼다
       GATEWAY_TLS_MODE: ${GATEWAY_TLS_MODE:-internal}   # 공개 입구 인증서 출처: internal(기본)|files|acme (ADR 0060)
@@ -850,7 +849,7 @@ services:
       - gateway-root:/etc/openit/root-out   # 계약 PublicIngressEnv.INGRESS_ROOT_EXPORT_DIR(3.4.16) 출력 마운트: internal 모드의 사설 CA 루트(공개 인증서)를 root_ca.crt 로 써 둔다. deploy 는 이 파일만 읽는다(export-gateway-ca.sh)
       - gateway-data:/data   # Caddy 내부 CA 와 발급 인증서를 재시작해도 유지한다(루트 인증서가 바뀌면 모든 키오스크·직원 PC가 다시 신뢰해야 한다). 소유자 정리는 scripts/up.sh
       - pki-root:/etc/openit/pki:ro   # 루트 인증서(공개). ADR 0060
-      - {type: bind, source: "${SECRETS_DIR:-./secrets}/devices", target: /run/secrets/devices, read_only: true, bind: {create_host_path: false}}   # 기기 토큰 폴더(계약 PublicIngressEnv.INGRESS_DEVICE_TOKENS_DIR 기본값): 기기마다 파일 하나, 지우면 폐기
+      - {type: bind, source: "${DEVICE_ALLOWLIST_DIR:-./state/device-allowlist}", target: /etc/openit/devices, read_only: true, bind: {create_host_path: false}}   # 기기 허용 목록 전용 공개 폴더(allowlist.json 하나만, 비밀 없음, 계약 ContainerInputs: 디렉터리). scripts/kiosk-add-device.sh 가 같은 폴더에서 rename 으로 바꾼다. 비밀 폴더나 CA 개인 키는 마운트하지 않는다
       - {type: bind, source: "${GATEWAYS_DIR:-./state/gateways}/exposures", target: /etc/openit/exposures, read_only: true, bind: {create_host_path: false}}   # 영역마다 낸 Exposure 선언(이미지 라벨 io.openit.exposure)
     tmpfs: ["/tmp", "/config:uid=10001,gid=10001"]
     ports:
@@ -942,7 +941,6 @@ services:
       - ${CONFIG_DIR:-./config}/survey.env                      # I4/I6 HTTP 클라이언트의 URL(서비스 이름)과 토큰 환경 변수 이름. 비밀 아님
     environment: &survey_env   # 비밀은 파일 경로만(D84)
       <<: *commonenv
-      SURVEY_KIOSK_DEVICE_TOKENS_FILE: /run/secrets/survey-kiosk-device-tokens   # 2.x 호환(선택, 3.0.0에서 없어진다): 기기 토큰(Bearer)을 쓰는 기기만. 2.3.0 의 기기 인증은 게이트웨이가 붙이는 X-Openit-Device 이고 survey 는 헤더가 있으면 헤더를 쓴다(ADR 0040). 토큰 기기가 없으면 빈 파일이다
       SURVEY_STAFF_API_TOKEN_FILE: /run/secrets/survey-api-staff
       SURVEY_RELEASE_READER_TOKEN_FILE: /run/secrets/gate-read-survey-service
       SURVEY_TRACE_INGEST_TOKEN_FILE: /run/secrets/ops-ingest-survey-service
@@ -952,7 +950,7 @@ services:
       SURVEY_DATABASE_URL_FILE: /run/secrets/db-survey-dsn                 # 세션·outbox·알림은 PostgreSQL(D85). SQLite 경로(SURVEY_SESSION_DB 등)는 개발·시험 기본일 뿐 운영 구성에 주지 않는다
       SURVEY_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
-    secrets: &survey_secrets [survey-kiosk-device-tokens, survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
+    secrets: &survey_secrets [survey-api-staff, gate-read-survey-service, ops-ingest-survey-service, inference-survey-service, survey-result-reader, survey-risk-source, db-survey-dsn]
     volumes: [survey-data:/data, pki-root:/etc/openit/pki:ro]   # 릴리스 작업 폴더(releases/)만. 게이트 묶음에서 다시 적재되는 사본이라 백업 대상 아님
     network_mode: "service:survey-service-net"   # 망·별칭·sysctls 는 survey-service-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     # 건강 확인은 영역 이미지의 HEALTHCHECK 가 정한다(영역이 앎, 계약 CONVENTIONS 13절 3.4.17); deploy 는 healthcheck 를 덮어쓰지 않는다

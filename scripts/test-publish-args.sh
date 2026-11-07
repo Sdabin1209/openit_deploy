@@ -3,7 +3,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 FAILS=0; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-for c in dirname grep cat sed tr head awk; do ln -sf "$(command -v $c)" "$T/$c"; done   # docker 가 없는 PATH
+for c in dirname grep cat sed tr head awk id mkdir; do ln -sf "$(command -v $c)" "$T/$c"; done   # docker 가 없는 PATH
 chk() { local want=$1 name=$2; shift 2; env -i PATH="$T" "$(command -v bash)" scripts/publish-image.sh "$@" >"$T/out" 2>&1; local rc=$?
   if [ $rc = "$want" ]; then echo "  [PASS] $name (종료 코드 $rc)"; else echo "  [FAIL] $name: 종료 코드 $rc (기대 $want)"; FAILS=$((FAILS+1)); fi; }
 chk 2 "인자 없음 -> 사용법" ;                       grep -q "영역 CI가 이미지 하나를" "$T/out" && echo "  [PASS] 사용법 첫 줄 안내(단수/복수 구분)" || { echo "  [FAIL] 사용법 첫 줄 안내"; FAILS=$((FAILS+1)); }

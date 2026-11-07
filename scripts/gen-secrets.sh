@@ -91,20 +91,22 @@ putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
 
 # 게이트웨이(Caddy): 개별 계정 인증(D85 E절)과 키오스크 기기 토큰(F절). 서비스 토큰은 위의 개별 토큰 파일을 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 없음).
 #   사람 계정(U82, ADR 0057): 비밀 파일이 아니라 Keycloak(realm openit)에 있다. 여기서 만드는 것은 Keycloak·oauth2-proxy 의 비밀(위 gen_idp)뿐이다.
-#   기기: devices/<id>(내용 = 토큰 한 줄, 계약 3.4.10 INGRESS_DEVICE_TOKENS_DIR). 기본은 기기 0대(--test-fixtures 에서만 시험 기기 e2e 등). 더하려면 scripts/kiosk-add-device.sh add <id>
+#   기기 인증(mTLS, 계약 PUBLIC_API F절, D136): 기기 토큰은 없다. 기기 CA 의 공개 인증서(device-ca.pem)는 INGRESS_DEVICE_CA_FILE 로, 기기별 허용 목록(DeviceAllowlist, 일련번호)은 INGRESS_DEVICE_ALLOWLIST_FILE 로 입구에 간다.
+#   기본은 기기 0대. --test-fixtures 에서만 개발용 CA(device-ca.key 600: 비밀 폴더에만 두고 마운트하지 않는다)와 시험 기기 인증서(device-certs/<id>.crt·.key)를 만들고 허용 목록에 넣는다. 더하려면 scripts/kiosk-add-device.sh add <id>
 source "$(dirname "$0")/gateway-lib.sh"
 if [ $TEST_FIX = 1 ]; then ( umask 077; : > "$D/.test-fixtures" ); fi
 [ -e "$D/.test-fixtures" ] && TEST_FIX=1   # 표시가 있는 폴더는 시험 폴더로 계속 취급한다
-mkdir -p "$D/devices"; chmod 750 "$D/devices"
-dev() { [ -s "$D/devices/$1" ] || ( umask 077; rnd > "$D/devices/$1" ); }   # 기기 토큰: devices/<device_id> 한 줄(계약 INGRESS_DEVICE_TOKENS_DIR)
-[ $TEST_FIX = 0 ] || dev e2e
 # 시험 사용자(test/gateway-oidc/accounts.test.conf)의 로그인 암호: 호스트 전용(600). E2E·데모가 Keycloak 에 사용자를 만들 때(scripts/idp-test-users.sh)와 로그인할 때 읽는다. 운영 realm 에는 들어가지 않는다
 [ $TEST_FIX = 0 ] || while read -r _acc _; do case "$_acc" in ""|\#*) continue;; esac; tok "idp-test-$_acc-password" >/dev/null; done < "$DEPLOY_ROOT/test/gateway-oidc/accounts.test.conf"
-# E2E 단계 5d(기기 사이 세션 격리, 폐기): 시험 기기 a·b 와 폐기 시험용 c. 운영에서는 kiosk-add-device.sh 로 실제 기기만 만든다(이 시험 기기는 운영 비밀 폴더에서 remove 한다)
-[ $TEST_FIX = 0 ] || for _d in e2e-a e2e-b e2e-c; do dev "$_d"; done
-gw_write_devices "$D"
-# 기기 CA(공개 인증서, 계약 3.4.13 INGRESS_DEVICE_CA_FILE): 운영은 설치처가 준 파일을 $D/device-ca.pem 에 둔다. 시험 폴더에는 시험 CA 를 만든다(기기 인증서는 E2E 가 이 CA 로 발급한다)
-if [ $TEST_FIX = 1 ] && [ ! -s "$D/device-ca.pem" ]; then openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$D/device-ca.key" -out "$D/device-ca.pem" -subj "/CN=openit-test-device-ca" -days 30 >/dev/null 2>&1 && chmod 600 "$D/device-ca.key" && chmod 644 "$D/device-ca.pem"; fi
+# 기기 허용 목록 파일은 항상 있다(0대도 유효, 계약 DeviceAllowlist): 입구는 파일이 없으면 시작하지 않는다
+gw_allowlist init
+if [ $TEST_FIX = 1 ]; then
+  gw_device_ca_init "$D" || die "개발용 기기 CA 를 만들지 못했다(openssl)"
+  # 시험 기기: e2e(데모), e2e-a·e2e-b(기기 사이 세션 격리), e2e-c(폐기 시험). 운영에서는 kiosk-add-device.sh 로 실제 기기만 등록한다(이 시험 기기는 운영 목록에서 remove 한다)
+  for _d in e2e e2e-a e2e-b e2e-c; do
+    if ! gw_allowlist has "$_d" || [ ! -s "$D/device-certs/$_d.crt" ]; then _s=$(gw_issue_device_cert "$D" "$_d") && gw_allowlist add "$_d" "$_s" || die "시험 기기 인증서 발급·등록 실패: $_d"; fi
+  done
+fi
 old=$(cd "$D" && ls *.env 2>/dev/null | tr '\n' ' ') || true
 [ -z "$old" ] || echo "알림: 예전 방식의 비밀 env 파일이 남아 있다($old). 더는 쓰지 않는다(환경 변수로 평문이 노출됐다). 지워도 된다: (cd $D && rm -f $old)" >&2
 echo "비밀 값 위치: $D (리포지토리에 커밋하지 않는다)"

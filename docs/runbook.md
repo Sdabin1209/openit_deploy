@@ -223,7 +223,7 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 **회전 절차.**
 1. 사람 계정(추가·삭제·역할·암호): Keycloak 관리 화면에서 한다(재시작 불필요). OIDC 클라이언트 비밀을 돌리려면 `oauth2-proxy-client-secret` 파일을 지우고 `gen-secrets.sh` 후 Keycloak 관리 화면의 클라이언트 `openit-gateway` 자격 증명에서 같은 값으로 바꾸고 `oauth2-proxy`를 다시 만든다(realm은 이미 있으면 다시 가져오지 않는다).
 2. 서비스 토큰·DB 암호 한 개: 해당 파일을 지우고 `gen-secrets.sh`를 다시 실행(목록 값 파일도 새 값으로 다시 쓴다). DB 암호는 `bash scripts/pg-roles.sh sync`로 서버의 계정 암호를 맞춘다. 그다음 소유 서비스와 그 클라이언트를 다시 만든다(`up.sh deploy`).
-3. 기기 토큰: `bash scripts/kiosk-add-device.sh remove <ID> --apply` 후 `add <ID> --apply`, 새 토큰을 기기에 한 번 전한다.
+3. 기기 인증서: `bash scripts/kiosk-add-device.sh rotate <ID>`(새 일련번호를 목록에 더한다) 후 새 인증서를 기기에 넣고 `revoke-serial <ID> <옛 일련번호>`(9-3절). 기기 토큰은 없다(D136).
 4. 노출이 의심되면 전체 회전: `secrets/tokens/`를 안전한 곳에 옮겨 두고(분석용) 새로 `gen-secrets.sh`, `pg-roles.sh sync`, `up.sh deploy --force-recreate`, Keycloak에서 모든 계정 비밀번호 재설정 요구(로그인 세션 모두 로그아웃), 기기 토큰 재전달. 노출 시각 이후의 접근 로그(Caddy json 로그)를 확인한다.
 5. 토큰에는 만료가 없다. 회전은 수동이며 주기는 정하지 않았다(근거 없음, 사용자 결정 대기: 이 저장소의 OPEN_GAPS).
 
@@ -271,13 +271,18 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 3. 실패 로그 감시: Caddy 접근 로그(JSON, stdout)에 `status: 401`과 원격 IP가 남는다. 같은 IP에서 짧은 시간에 401이 반복되면 차단하는 도구(fail2ban 등)를 호스트에 두고 Docker 로그(`docker logs deploy-gateway-1`)를 읽게 한다. 이 리포는 설치하지 않는다.
 4. 한계: 위 둘은 이 리포의 시험으로 확인하지 못했다.
 
-### 9-3. 키오스크 기기별 토큰 (U8): 발급, 배포, 회전, 폐기
+### 9-3. 키오스크 기기 등록: 허용 목록(mTLS, 계약 PUBLIC_API F절, ADR 0069)
 
-- 목록 파일 `config/kiosk-devices.conf`(예시 `config/kiosk-devices.conf.example`, 한 줄에 기기 ID 하나)로 한꺼번에 만든다: `bash scripts/kiosk-add-device.sh from-list`. 한 대: `... add <기기 ID>`. 기기마다 토큰 파일 `secrets/tokens/kiosk-device-<ID>`와 **기기 산출물** `secrets/kiosk-config/<ID>.json`(`{"device_token":..., "allow_remote_stt":false}`, 모드 600)이 생기고 gateway 기기 목록(`gateway-devices.caddy`)이 갱신된다. 반영은 gateway 재시작(`--apply`).
-- 산출물은 그 기기에만 전한다(사람 일). 기기의 정적 서버가 `CONFIG_FILE`로 이 파일을 마운트해 `/config.json`으로 낸다(kiosk-frontend 런북). **중앙 kiosk-frontend 컨테이너에는 어떤 기기의 파일도 마운트하지 않는다**(한 컨테이너가 모든 키오스크에 같은 토큰을 내면 기기별 토큰이 무의미하고, 인증 없는 경로로 토큰이 샌다). gateway도 `/config.json`을 404로 막는다.
-- 회전: `bash scripts/kiosk-add-device.sh rotate <기기 ID> --apply`. 옛 토큰은 즉시 무효다. 새 산출물을 기기에 전한 뒤 기기를 다시 시작한다. 의심스러운 기기는 바로 회전하거나 폐기한다.
-- 폐기: `bash scripts/kiosk-add-device.sh remove <기기 ID> --apply`(토큰 파일과 산출물을 지우고 목록에서 뺀다).
-- survey-service가 기기별 토큰을 받는 설정(`SURVEY_KIOSK_DEVICE_TOKENS`)과 세션 소유 확인은 survey-service 영역 몫이다. gateway는 기기 토큰을 확인한 뒤 Authorization을 바꾸지 않고 그대로 넘기며 survey-service가 같은 기기 토큰 표로 세션 소유 기기를 확인한다(9-5절).
+- 기기 인증은 TLS 클라이언트 인증서 하나다. 공개 입구는 기기 CA(`INGRESS_DEVICE_CA_FILE`, 공개 인증서만)로 인증서를 검증하고, 요청마다 인증서의 CN(기기 ID)과 일련번호를 **허용 목록**(계약 `DeviceAllowlist`, `INGRESS_DEVICE_ALLOWLIST_FILE`)과 대조한다. 등록·회전·폐기는 이 목록을 바꾸는 것이고 재시작이 필요 없다. 인증서 파일을 지우는 것만으로는 폐기되지 않는다.
+- 목록은 전용 폴더 `DEVICE_ALLOWLIST_DIR`(기본 `state/device-allowlist`)의 `allowlist.json` 하나다(폴더 755, 파일 644: 입구 컨테이너 uid 10001/gid 0 이 읽는다, 비밀 없음). compose 는 이 폴더를 읽기 전용으로 마운트한다(파일은 rename 으로 통째로 교체되므로 폴더를 마운트한다). 비밀 폴더와 CA 개인 키는 입구에 마운트하지 않는다.
+- 운영(조직 PKI/MDM 이 인증서를 발급): 발급된 인증서의 일련번호를 등록한다. `openssl x509 -in 기기.crt -noout -serial` 의 값을 `bash scripts/kiosk-add-device.sh register <기기 ID> <일련번호>`(대문자·앞자리 0 은 정규화한다). 회전: 새 인증서의 일련번호를 `register` 로 더하고, 기기에 새 인증서를 넣은 뒤 `revoke-serial <기기 ID> <옛 일련번호>`. 폐기: `revoke-serial`(마지막 일련번호면 기기가 빠진다) 또는 `remove <기기 ID>`. 기기 인증서의 주체 CN 은 기기 ID 와 같아야 한다(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`).
+- 개발·시험(개발용 CA, **운영 사용 금지**): `bash scripts/gen-secrets.sh --test-fixtures` 가 CA(`secrets/device-ca.key` 600, `device-ca.pem`)와 시험 기기 e2e·e2e-a·e2e-b·e2e-c 의 인증서(`secrets/device-certs/<ID>.crt`·`.key`)를 만들어 목록에 넣는다. 기기 하나 더: `bash scripts/kiosk-add-device.sh add <기기 ID> [--question-set <문진표 ID>]`(openssl 로 발급하고 일련번호를 더한다), 한꺼번에: `from-list`(목록 파일 `config/kiosk-devices.conf`, 한 줄에 기기 ID 하나와 선택 문진표 ID), 회전 `rotate`, 확인 `list`.
+- 목록 갱신은 한 번에 하나씩 차례로 된다(읽기부터 쓰기까지 배타 잠금, 폴더 밖 `<폴더>.lock`). 동시에 등록해도 서로의 일련번호를 잃지 않는다. 쓰기 전에 계약 `DeviceAllowlist` 로 검증하고 어기면 파일을 바꾸지 않는다.
+- 기기 산출물 `secrets/kiosk-config/<ID>.json`(`{"allow_remote_stt":false, "question_set_id":...}`, 모드 600)은 그 기기의 정적 서버가 `CONFIG_FILE` 로 마운트해 `/config.json` 으로 낸다(kiosk-frontend 런북). 기기 토큰 칸은 없다. 중앙 kiosk-frontend 컨테이너에는 어떤 기기의 파일도 마운트하지 않는다. 키오스크 앱은 자격을 보내지 않는다(브라우저가 TLS 에서 인증서를 낸다).
+- 응답: 인증서 없음·목록에 없는 인증서는 `403 PERMISSION_DENIED`, 다른 CA 의 인증서는 TLS 핸드셰이크에서 거절된다(HTTP 응답 없음), 입구가 목록을 읽지 못하면 기기 경로는 `503 UNAVAILABLE`(정상 목록을 다시 읽으면 회복). 세션 ID 는 서버가 발급한다(시작 본문에 session_id 가 없다).
+- **호스트 이름으로 접속한다**: 입구는 Host 와 TLS SNI 가 같기를 요구한다(421). 키오스크·직원 PC 는 IP 가 아니라 `GATEWAY_HOSTS` 의 이름으로 접속한다.
+- **허용 목록은 `secrets/` 백업에 들지 않는다**(`state/` 아래). 잃으면 위 `register` 로 다시 등록한다(조직 PKI 의 발급 기록 또는 개발용은 `secrets/device-certs/*.crt` 의 일련번호).
+- 알려진 한계(기기 CA 가 바뀌는 경우): 기기 CA 를 바꾸면 `INGRESS_DEVICE_CA_FILE`(`DEVICE_CA_FILE`)의 인증서를 바꾸고 입구를 다시 만든다(`up.sh deploy`).
 
 ### 9-4. 저자 경로(question-authoring)를 gateway로 여는 구성 (D88/U9)
 
@@ -287,25 +292,21 @@ Caddy 기본 이미지에는 속도 제한 모듈이 없다(`caddy list-modules`
 - 본문 상한은 사이트 기본 8MiB(자료 업로드). 응답 헤더 대기는 release-gate 180초(`proxy_limits`, ADR 0051).
 - E2E 단계 `5a`가 gateway 경유로 위 흐름(401, 403, 등록·확인, 자기 승인 403, 위조 헤더 무시, 승인 뒤 `reviewed_only`, I1 404, 본문 상한)을 확인한다.
 
-### 9-5. 기기 토큰은 gateway가 survey-service에 그대로 넘긴다 (D88/U8)
+### 9-5. 기기 ID 는 입구가 survey-service 에 넘긴다 (계약 PUBLIC_API F절)
 
-- gateway는 키오스크가 보낸 `Authorization: Bearer <기기 토큰>`을 기기 목록(`gateway-devices.caddy`)과 대조한 뒤, **헤더를 바꾸지 않고** survey-service에 넘긴다(직원·운영자·승인·검토·저자 경로는 예전처럼 서비스 토큰으로 바꿔 붙인다). survey-service는 같은 기기 토큰 표(`SURVEY_KIOSK_DEVICE_TOKENS_FILE` = `secrets/tokens/survey-kiosk-device-tokens`, 줄마다 `기기ID=토큰`)로 검증하고, 세션을 만든 기기만 그 세션에 접근하게 한다(다른 기기는 404). 별도 신뢰 헤더를 만들지 않아 gateway를 새 신뢰 경계로 만들지 않는다.
-- 공유 서비스 키오스크 토큰(`SURVEY_API_TOKEN`)은 compose에서 뺐다. `/readyz`의 `kiosk_tokens.shared_kiosk_token`은 false이고 `device_tokens`는 기기 수다(E2E 5d가 확인).
-- 기기 표는 `kiosk-add-device.sh add/remove/rotate/from-list/sync`가 gateway 목록과 함께 다시 쓴다. `--apply`는 gateway와 survey-service를 함께 다시 시작한다(survey가 표를 시작 때 읽는다). 폐기는 gateway에서 즉시(재시작 직후) 막히고 survey 표는 survey 재시작 뒤에 바뀐다.
-- 기기 목록이 2대 이상일 때 예전 생성기가 Caddy `header` 매처(값을 하나만 받는다)에 값을 여러 개 넘겨 목록이 동작하지 않았다. `expression {http.request.header.Authorization} in [...]`로 고쳤다(이 PC에서 4대로 확인, 자체 시험이 5대로 `caddy validate`).
+- 입구는 클라이언트가 보낸 `X-Openit-Device` 를 지우고, 허용 목록을 통과한 요청에만 인증서 CN 을 `X-Openit-Device` 로 붙여 survey-service 에 넘긴다. survey-service 는 이 값을 믿고(서비스는 게이트웨이 뒤 내부망에만 있다) 세션을 만든 기기만 그 세션에 접근하게 한다(다른 기기는 404). 서비스에는 기기 자격 표가 없다(`SURVEY_KIOSK_DEVICE_TOKENS` 는 없어졌다).
+- 공유 서비스 키오스크 토큰은 없다. `/readyz` 의 `kiosk_tokens.shared_kiosk_token` 은 false 다(E2E 5d 가 확인).
+- 폐기는 목록에서 일련번호를 빼는 즉시 다음 요청부터 막힌다(재시작 없음, 계약 F절). E2E 5d 가 일련번호를 빼면 403, 되돌리면 회복하는 것을 한 번 본다.
 
 ### 9-6. gateway CA 루트의 백업과 복원 (점검 M3)
 
 - `gateway-data`(Caddy 내부 CA 루트 인증서와 **비밀키**, `/data/caddy/pki`)는 `scripts/backup.sh`가 다른 파일 저장소와 같은 restic 저장소(암호화)에 백업한다(기본 대상에 포함).
 - **루트가 바뀌면(볼륨을 잃었거나 새 서버면) 모든 키오스크와 직원 PC가 새 루트를 다시 신뢰해야 한다. 백업에서 복원하면 루트가 유지되어 기기는 아무것도 하지 않아도 된다.** 복원: 서비스(gateway)를 멈추고 `bash scripts/restore.sh gateway-data latest --yes`(소유자·모드는 백업 때 값 그대로 돌아온다) 후 gateway를 시작한다. 복원 시험은 자체 시험(`test-backup.sh`)이 한다.
 
-### 9-2. 키오스크 기기 인증서(mTLS, 계약 2.3.0, ADR 0040)
+### 9-2. 키오스크 기기 인증서(mTLS): 신뢰 CA
 
-- 켜기: 조직 PKI의 신뢰 CA 인증서(PEM, 비밀 아님)를 `config/device-ca.pem`(또는 `DEVICE_CA_FILE`)에 두고, `config/device-tls.mtls.caddy.example`의 내용을 `config/device-tls.caddy`(또는 `DEVICE_TLS_CONF`)에 쓴 뒤 gateway를 다시 만든다(`up.sh deploy`). 기본은 꺼져 있고(기기 토큰 2.x 호환만) 켜도 토큰 경로는 남는다.
-- 기기 인증서의 주체 CN이 기기 ID다(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`). 발급·갱신·폐기는 조직 PKI/MDM 몫이고 이 프로젝트는 하지 않는다. 키오스크 앱은 자격을 보내지 않는다(브라우저가 TLS에서 인증서를 낸다).
-- 시험·데모: `bash scripts/device-pki.sh init|issue <기기 ID>|gateway-config`가 일회용 CA와 기기 인증서를 만든다(**운영 사용 금지**, 키는 `state/device-pki/` 권한 600). 확인: `bash scripts/test-device-mtls.sh`(Docker 필요) 또는 `--static`.
-- **호스트 이름으로 접속한다**: 클라이언트 인증을 켠 사이트에서 Caddy는 Host와 TLS SNI가 같기를 요구한다(다르면 421). 키오스크·직원 PC는 IP가 아니라 `GATEWAY_HOSTS`의 이름으로 접속한다(DNS 또는 hosts 설정 필요). IP 접속은 SNI가 없어 421이다(시험으로 확인).
-- 직원 PC에 클라이언트 인증서가 설치돼 있으면 브라우저가 선택 창을 띄울 수 있다(`verify_if_given`). 기기 인증서는 키오스크에만 둔다.
+- 신뢰 CA 의 공개 인증서(PEM, 비밀 아님)를 `DEVICE_CA_FILE` 로 주면 compose 가 `INGRESS_DEVICE_CA_FILE` 로 입구에 읽기 전용으로 준다(없으면 `secrets/device-ca.pem`, 개발용 CA). CA 개인 키는 입구에 주지 않는다. 기기 인증서의 발급·갱신은 조직 PKI/MDM 몫이고 이 프로젝트는 개발용 CA 만 만든다. 등록은 9-3절.
+- 직원 PC 에 클라이언트 인증서가 설치돼 있으면 브라우저가 선택 창을 띄울 수 있다. 기기 인증서는 키오스크에만 둔다.
 
 ## 10. 병원 서버에 올리기 전 요건 (사용자가 확인하는 것)
 

@@ -7,7 +7,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import check_unauth as C  # noqa: E402
 
 EXPO = {"service": "t", "routes": [
-    {"paths": ["/v1/sessions/*/turns"], "methods": ["POST"], "auth": {"kind": "device-token"}},
+    {"paths": ["/v1/sessions/*/turns"], "methods": ["POST"], "auth": {"kind": "device"}},
     {"paths": ["/v1/staff/alerts"], "methods": ["GET"], "auth": {"kind": "account", "roles": ["staff"]}},
     {"paths": ["/staff/*"], "methods": ["GET"], "auth": {"kind": "authenticated"}},
     {"paths": ["/healthz"], "auth": {"kind": "none"}}, {"paths": ["/v1/internal"], "auth": {"kind": "denied"}}]}
@@ -23,7 +23,7 @@ def serve(mutation=None):
         def handle_any(s):
             p = s.path; html = "text/html" in s.headers.get("Accept", "")
             if p.startswith("/v1/sessions/") and s.command == "POST":
-                return s._send(200 if mutation == "open-device" else 401, "Bearer", code="PERMISSION_DENIED")
+                return s._send(200 if mutation == "open-device" else 403 if mutation != "device-401" else 401, code="PERMISSION_DENIED")
             if p == "/v1/staff/alerts":
                 return s._send(401, "Bearer" if mutation == "no-realm" else 'Bearer realm="openit"', code="PERMISSION_DENIED")
             if p.startswith("/staff/"):
@@ -46,6 +46,7 @@ class T(unittest.TestCase):
         self.assertFalse(any("healthz" in x or "internal" in x for x in descs))
     def test_contract_following_server_passes(self): self.assertEqual(self.run_against(), 0)
     def test_mutation_open_device_route_fails(self): self.assertEqual(self.run_against("open-device"), 1)
+    def test_mutation_device_route_answers_401_fails(self): self.assertEqual(self.run_against("device-401"), 1)   # F절: 기기 경로의 인증서 없음은 401 이 아니라 403
     def test_mutation_missing_realm_fails(self): self.assertEqual(self.run_against("no-realm"), 1)
     def test_mutation_no_redirect_for_html_fails(self): self.assertEqual(self.run_against("no-redirect"), 1)
     def test_empty_declarations_fail(self): self.assertEqual(self.run_against(expo={"service": "t", "routes": []}), 1)

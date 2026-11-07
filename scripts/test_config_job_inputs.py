@@ -48,8 +48,8 @@ class ConfigInputs(unittest.TestCase):
         with self.assertRaises(ValueError):
             check('JobCommandRequest', request)
 
-    def test_optional_file_store_path_absent_for_memory(self):
-        self.config["output"]["store"]={"kind":"memory"}
+    def test_optional_file_store_path_absent_for_http_store(self):   # 계약 4.0.0: memory 저장소는 설정에서 없어졌다. http 저장소는 마운트할 경로가 없다
+        self.config["output"]["store"]={"kind":"http","base_url":"https://dataset-store","token_secret":"DATASET_STORE_WRITE_TOKEN"}
         self.assertEqual(len(self.materialize()["mounts"]),2)
 
     def test_invalid_input_rejected_before_output_directories_created(self):

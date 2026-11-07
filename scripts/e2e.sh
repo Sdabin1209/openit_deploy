@@ -78,7 +78,7 @@ export DEPLOY_LOCK="$W/images.lock" DEPLOY_REGISTRY_ENV="$W/registry.env" DEPLOY
 export REGISTRY_PROJECT=$RPROJ REGISTRY_HOST_BIND=0.0.0.0 REGISTRY_HOST_PORT=
 UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")
 mkdir -p "$W/backup-tls"; gateway_test_pki "$W/backup-tls" backup-target || { echo "시험 PKI 실패"; exit 1; }   # 백업 저장소 서버는 TLS 만(ADR 0060)
-export SECRETS_DIR="$W/secrets" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_TLS_DIR="$W/backup-tls" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT=
+export SECRETS_DIR="$W/secrets" DEVICE_ALLOWLIST_DIR="$W/device-allowlist" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.backup-target.yaml" BACKUP_TARGET_TLS_DIR="$W/backup-tls" BACKUP_TARGET_HTPASSWD="$W/backup-target.htpasswd" GATEWAY_PORT= GATEWAY_TLS_PORT=
 export OPS_JOB_CONFIG="$DEPLOY_ROOT/test/ops-job/test-ops-job.yaml"
 RESULT=(); FAILS=0
 # 구간별 소요 시간: sect "제목" 이 이전 구간을 닫고(소요 시간 출력) 새 구간 제목을 낸다. 끝의 요약에 표로 모은다

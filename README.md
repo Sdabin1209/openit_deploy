@@ -144,7 +144,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0043 게이트웨이 노출은 영역 이미지의 노출 선언과 대조한다](docs/adr/0043-gateway-exposure-check-against-image-labels.md)
 - [0044 백업 보관 기간은 운영 데이터 보존 기간 중 가장 짧은 값 이하로 한다](docs/adr/0044-backup-retention-not-longer-than-data-retention.md)
 - [0041 build-images는 영역의 내부 버전 파일을 읽지 않는다](docs/adr/0041-build-images-no-area-internal-version-files.md)
-- [0040 키오스크 기기 인증은 게이트웨이 클라이언트 인증서 검증(주체 CN = 기기 ID)](docs/adr/0040-gateway-client-cert-device-auth.md)
+- [0040 키오스크 기기 인증은 게이트웨이 클라이언트 인증서 검증(주체 CN = 기기 ID)](docs/adr/0040-gateway-client-cert-device-auth.md) (0069 로 대체됨)
 - [0039 직원 계정은 조직이 주는 bcrypt 계정 파일을 쓴다(프로젝트는 발급하지 않음)](docs/adr/0039-org-supplied-staff-accounts.md)
 - [0038 백업은 restic 저장소 하나, 암호는 파일(0020 대체)](docs/adr/0038-restic-backup.md)
 - [0037 상태 감시는 Prometheus + blackbox/json/node exporter + Alertmanager](docs/adr/0037-prometheus-monitoring.md)
@@ -166,3 +166,4 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 
 잡 설정 연결·기동 전 검증은 [ADR 0067](docs/adr/0067-job-config-follows-owner-declaration.md)을 따른다.
 - [0068 기동 전에 compose 주입을 이미지 주입 선언(ContainerInputs)과 대조한다](docs/adr/0068-container-inputs-check-before-start.md)
+- [0069 기기 인증은 mTLS 하나, 기기 허용 목록(DeviceAllowlist)을 deploy 가 만든다](docs/adr/0069-device-auth-mtls-allowlist.md)

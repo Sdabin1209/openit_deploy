@@ -8,7 +8,7 @@ t() { local name=$1 want=$2; shift 2; N=$((N+1)); out=$("$@" 2>&1); local rc=$?;
 ck() { N=$((N+1)); local name=$1; shift; if "$@" >/dev/null 2>&1; then echo "  PASS $name"; else echo "  FAIL $name"; F=$((F+1)); fi; }
 S="$T/secrets"; bash "$HERE/gen-secrets.sh" --db-only "$S" >/dev/null 2>&1
 python3 -c 'import secrets;print(secrets.token_hex(24))' > "$S/tokens/deid-salt"; chmod 644 "$S/tokens/deid-salt"
-mkdir -p "$S/kiosk-config"; echo '{"device_token":"x"}' > "$S/kiosk-config/e2e.json"
+mkdir -p "$S/kiosk-config"; echo '{"allow_remote_stt":false}' > "$S/kiosk-config/e2e.json"
 SALT_SHA=$(sha256sum "$S/tokens/deid-salt" | cut -d' ' -f1); PW_SHA=$(sha256sum "$S/tokens/pg-superuser-survey" | cut -d' ' -f1)
 SALT=$(cat "$S/tokens/deid-salt")
 ( umask 077; echo "sectest-password-$$-not-a-secret" > "$T/backup.pass" )
