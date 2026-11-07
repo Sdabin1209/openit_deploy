@@ -1,7 +1,7 @@
 # 변경 요청: Exposure 에 기계 토큰 인증 종류가 없다 (deploy -> 헤드)
 
 - 요청자: deploy (wo-440), 대상: boundary-contracts `Exposure` 스키마, release-gate 이미지 라벨 `io.openit.exposure`
-- 상태: 제안(결정 아님)
+- 상태: **닫힘(필요 없어짐)** — 계약 4.0.0 R3.23 이 `machine-token` 종류와 기계 호출자의 공개 입구 경로를 없앴다. compose 밖 기계 호출자는 R1.5 로 받는 영역 게이트웨이에 바로 간다(deploy ADR 0070). 아래는 당시 기록이다.
 
 ## 무엇이 부족한가
 원격 추론 서버(model-runtime)는 기동 때 release-gate 의 `GET /v1/active-pointer`, `/v1/releases/{id}`, `/v1/releases/{id}/bundle` 을 읽는다. 게이트웨이는 이제 이 세 경로를 **추론 서버 기계 토큰**(Bearer)으로만 연다(`config/Caddyfile` `@inferencemachine`, `docs/adr/0049-remote-inference-reads-release-gate-via-gateway.md`).

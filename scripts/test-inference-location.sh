@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 추론 서버 위치 독립 시험(D72, ADR 0049). 추론 서버를 "다른 호스트"처럼 별도 컴포즈 프로젝트로 띄워, 운영 경로(게이트웨이의 HTTPS 기계 토큰 경로)로만 release-gate 를 읽는지 본다.
+# 추론 서버 위치 독립 시험(D72, ADR 0070). 추론 서버를 "다른 호스트"처럼 별도 컴포즈 프로젝트로 띄워, 계약 R1.5 의 길(release-gate 영역 게이트웨이로 바로, OUT-FILE 루트, 서비스 토큰)로만 release-gate 를 읽는지 본다. 공개 입구에는 기계 경로가 없다(R3.23).
 # 사용: scripts/test-inference-location.sh [--keep] [--rebuild]      (-h/--help)
 #   --keep     끝나도 자원을 남긴다(디버깅). 정리: scripts/test-inference-location.sh --clean
 #   --clean    이 시험이 만든 자원(deploy-e2e-loc* 프로젝트, state/loc-test)만 지운다

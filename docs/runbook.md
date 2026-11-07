@@ -252,15 +252,16 @@ bash scripts/e2e.sh [--keep] [--keep-images] [--reuse-build]
 - 서비스 사이(gateway→서비스→postgres)는 평문이다. 같은 서버의 Docker 내부 네트워크(서비스·DB 네트워크 internal)로 한정되며, 이 한계와 재검토 조건은 ADR 0005에 있다.
 - 이 PC에서 확인한 것: E2E가 시험용 CA만 신뢰하는 클라이언트로 gateway에 https로 접속하고, 평문 308, HSTS·`X-Content-Type-Options`·`X-Frame-Options`, `/config.json` 404를 확인한다. 확인하지 못한 것: 실제 키오스크 브라우저의 신뢰 절차, 공인 인증서 전환.
 
-### 9-1b. 원격 추론 서버: CA 배포와 토큰 발급 (ADR 0049)
+### 9-1b. 원격 추론 서버: OUT-FILE 배포와 토큰 (ADR 0070, 계약 R1.5)
 
-다른 호스트의 추론 서버가 게이트웨이를 거쳐 release-gate를 읽게 하는 절차다. 설정·변수는 `docs/RUN.md` 7-1.
+다른 호스트의 추론 서버가 release-gate 영역 게이트웨이로 release-gate 를 읽게 하는 절차다. 설정·변수는 `docs/RUN.md` 7-1. 공개 입구에는 기계 호출자 경로가 없다(계약 4.0.0 R3.23).
 
-- CA 루트: `bash scripts/export-gateway-ca.sh --project deploy ./openit-root.crt`(없으면 재시도 뒤 오류로 끝난다. 프로젝트 이름이 다르면 `--project`). 공개 인증서라 일반 보안 복사로 서버 호스트에 옮겨도 된다. 서버는 이 파일만 신뢰한다(`INFERENCE_CA_FILE`; 시스템 신뢰 저장소를 고치지 않는다). 인증서가 바뀌는 경우(`gateway-data` 볼륨을 지움, 공인 인증서로 전환)에는 새 파일을 다시 배포한다.
-- 토큰 발급: `scripts/gen-secrets.sh`가 `secrets/tokens/gateway-inference-token`을 만든다(이미 있으면 그대로). 새로 생긴 설치에서 기존 게이트웨이가 떠 있다면 **게이트웨이를 다시 시작**한다(`docker restart deploy-gateway-1`: Caddy는 설정을 읽을 때 한 번 치환한다). 파일 내용은 출력하지 않고 보안 복사로 서버 호스트의 비밀 폴더(700) 안에 644로 둔다(컨테이너 uid 10001이 읽는다).
-- 토큰 교체(유출 의심 포함): ① deploy 호스트에서 `secrets/tokens/gateway-inference-token`을 지우고 `gen-secrets.sh` ② 게이트웨이 재시작 ③ 새 파일을 서버 호스트에 복사 ④ 서버 컨테이너를 다시 만든다(`docker compose -p deploy-inference -f compose.inference.yaml up -d --force-recreate`). 교체와 ④ 사이에는 서버가 새 릴리스를 읽지 못한다(이미 적재된 릴리스의 추론은 계속된다).
-- 확인: 서버 호스트에서 `curl --cacert openit-root.crt https://<도메인>:<포트>/healthz` 가 `ok`. 토큰 확인은 값을 출력하지 않는 방식으로: 상태 코드만 본다 `curl -s -o /dev/null -w '%{http_code}\n' --cacert openit-root.crt -H "Authorization: Bearer $(cat <토큰 파일>)" https://<도메인>:<포트>/v1/active-pointer`(200이면 통과, 401이면 토큰이 다르다. 명령 줄에 값이 보이므로 공용 터미널에서 하지 않는다).
-- 증상(아래 원인은 추정이며 실패를 일부러 만들어 확인하지는 않았다): 서버 `/readyz`가 "release 서버에 닿지 못한다(…)" -> CA 파일이 이 게이트웨이 것이 아니거나 호스트 이름이 `GATEWAY_HOSTS`에 없다. 적재 실패 -> 토큰이 다르다(교체 뒤 파일을 못 옮겼다). 404 `not found`(평문) -> 게이트웨이가 이 변경 전 설정이다(재시작).
+- OUT-FILE: `bash scripts/export-out-files.sh --out <폴더> --root <step-ca 루트> --host "<주소> release-gate"`. 공개 정보라 일반 보안 복사로 옮겨도 된다. 서버 호스트에서 `sha256sum -c SHA256SUMS` 가 통과한 파일만 쓴다(`INFERENCE_CA_FILE`=root_ca.crt, `INFERENCE_RELEASE_ADDR`=hosts 표 주소). 루트가 바뀌면(R1.7 병행 기간 포함) 새로 내보내 다시 배포한다.
+- 토큰: `secrets/tokens/gate-read-model-serving` 을 보안 복사로 서버 호스트의 비밀 폴더(700) 안에 640 + 그룹 SECRETS_GID 로 둔다. 파일 내용은 출력하지 않는다.
+- 토큰 교체(유출 의심 포함): ① deploy 호스트에서 `secrets/tokens/gate-read-model-serving` 을 지우고 `gen-secrets.sh`(목록 `gate-read-tokens` 도 다시 쓴다) ② release-gate 를 다시 만든다(`scripts/up.sh deploy`) ③ 새 파일을 서버 호스트에 복사 ④ 서버 컨테이너를 다시 만든다(`docker compose -p deploy-inference -f compose.inference.yaml -f compose.inference.remote.yaml up -d --force-recreate`). ②와 ④ 사이에는 서버가 새 릴리스를 읽지 못한다(이미 적재된 릴리스의 추론은 계속된다).
+- 옛 파일 정리: 이 변경 전 설치의 `secrets/tokens/gateway-inference-token`, `gateway-registry-publish-token` 은 더 쓰이지 않는다. 지운다(gen-secrets.sh 는 더 만들지 않고 남은 파일도 건드리지 않는다).
+- 확인: 서버 호스트에서 `curl --cacert root_ca.crt --resolve release-gate:443:<주소> https://release-gate/healthz` 가 200. 토큰 확인은 상태 코드만: `curl -s -o /dev/null -w '%{http_code}\n' --cacert root_ca.crt --resolve release-gate:443:<주소> -H "Authorization: Bearer $(cat <토큰 파일>)" https://release-gate/v1/active-pointer`(200 통과, 401 토큰 다름. 명령 줄에 값이 보이므로 공용 터미널에서 하지 않는다).
+- 증상(추정, 일부러 만들어 확인하지 않았다): 서버 `/readyz` 가 release 도달 실패 -> 루트가 이 PKI 것이 아니거나 hosts 표 주소·443 게시·방화벽 문제. 출구 403(`EGRESS_DENIED`) -> 추론 서버 영역 게이트웨이의 Exposure 파일이 오래됐다. 401 -> 토큰이 다르다.
 
 ### 9-2. 로그인 시도 속도 제한: 하지 않았다 (한계와 대안)
 

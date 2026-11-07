@@ -232,16 +232,9 @@ source "$DEPLOY_LOCK"; source "$DEPLOY_REGISTRY_ENV"   # export 하지 않는다
 must bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null
 
 # ---- 샌드박스 기동(docs/adr/0050, 순서 고정). 제품은 compose.yaml 그대로이고 시험용 문이 없다. 추론 서버는 제품 밖(다른 호스트 역할)이다.
-#  (1) 추론 서버: compose.inference.yaml 을 별도 프로젝트 <P>-inf 로(가짜 백엔드는 이 쪽 env 만). (2) 제품: up.sh --external-inference <추론 서버>.
-#  (3) 제품 입구(게이트웨이)의 TLS 포트와 CA 를 읽어 추론 서버가 그 입구로 release-gate 를 읽게 다시 만든다. (4) 호스트 포트가 바뀐 추론 서버 주소를 제품(survey-service)에 다시 알린다.
-# 왜 이 순서: 제품이 추론 서버 주소를 알아야 뜨고(2), 추론 서버는 제품 입구의 포트와 CA 가 생긴 뒤에야 설정을 끝낼 수 있다(3). 호스트 포트는 Docker 배정이라 다시 만들면 바뀐다(4).
-#  더 단순한 길을 검토했다: 추론 서버 포트를 미리 고르면 (4)가 없어지지만 빈 포트 선택은 경쟁이 있고 호스트 포트는 Docker 가 배정한다는 규칙(CLAUDE.md)과 어긋나 쓰지 않는다.
-sect "단계 9 앞부분: Compose에서 이미지로 서비스가 뜬다 (샌드박스 기동: 추론 서버 -> 제품 -> 추론 서버가 제품 입구로 release-gate 를 읽는다)"
-GWTOKF="$SECRETS_DIR/tokens/gateway-inference-token"
-if [ ! -s "$GWTOKF" ]; then
-  res "추론 기계 토큰 tokens/gateway-inference-token" FAIL "없음: gen-secrets.sh 가 만들지 않았다. 다른 호스트의 추론 서버가 게이트웨이로 release-gate 를 읽는 운영 경로(D72)가 제품에 아직 없다 -- 에이전트 A 의 gen-secrets.sh/Caddyfile/compose.inference.yaml 변경을 합친 뒤 다시 돌린다"
-  abort_if_failed
-fi
+#  순서와 이유는 아래 "새 순서" 주석(U99, ADR 0060)이 정본이다. 추론 서버가 release-gate 를 읽는 길은 ADR 0070(계약 RUNTIME R1.5·R3.23): 공개 입구가 아니라
+#  release-gate 영역 게이트웨이로 바로 간다(같은 호스트 배치 = compose.inference.samehost.yaml 의 external 망 inference-in, 자기 영역 게이트웨이 출구 R1.8). 공개 입구에는 기계 호출자 경로가 없다.
+sect "단계 9 앞부분: Compose에서 이미지로 서비스가 뜬다 (샌드박스 기동: 제품 -> 추론 서버가 release-gate 영역 게이트웨이로 release-gate 를 읽는다)"
 pick_bind() { # 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는지 한 번 본다(Docker Desktop 은 닿고 리눅스 엔진은 보통 못 닿는다). 닿으면 127.0.0.1, 아니면 0.0.0.0
   local p srv ok=1; mkdir -p "$W/probe"; p=$(free_port)
   python3 -m http.server "$p" --bind 127.0.0.1 --directory "$W/probe" >/dev/null 2>&1 & srv=$!
@@ -276,11 +269,11 @@ export GATEWAY_PUBLIC_URL="$(gateway_public_url)"
 if [ "$BIND" = 127.0.0.1 ]; then echo "  컨테이너가 호스트의 127.0.0.1 게시 포트에 닿는다: 게이트웨이·추론 서버는 127.0.0.1 에 게시한다"
 else echo "  이 Docker 에서는 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿지 못한다: 시험 동안 게이트웨이·추론 서버를 0.0.0.0 에 게시한다(방화벽은 이 PC 밖에서 막는다. docs/RUN.md 7-1)"; fi
 INF_IMAGE="$DEPLOY_REGISTRY/openit/model-serving@$MODEL_SERVING_DIGEST"
-cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; cp "$GWTOKF" "$W/gateway-inference-token"; chmod 644 "$W/inference-token" "$W/gateway-inference-token"   # 컨테이너(uid 10001)가 읽는다. 폴더 $W 는 700
+cp "$SECRETS_DIR/tokens/inference-survey-service" "$W/inference-token"; chmod 644 "$W/inference-token"   # 컨테이너(uid 10001)가 읽는다. 폴더 $W 는 700
 : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
 # 새 순서(U99, ADR 0060): 추론 서버는 인증서를 step-ca 에서 받으므로 제품(step-ca 게시)이 먼저 뜬다.
 #  (1) 제품: up.sh --external-inference <자리표시 주소>  (2) 제품 입구의 CA·포트, step-ca 루트를 꺼내고 이 서버 이름의 일회용 토큰(5분)을 발급
-#  (3) 추론 서버를 별도 프로젝트로(RELEASE_URL=제품 입구)  (4) 실제 추론 서버 주소를 제품(survey-service)에 알린다.
+#  (3) OUT-FILE(R1.5: 루트·hosts 표·SHA256SUMS)을 내보내고 대조한 뒤 추론 서버를 별도 프로젝트로(release-gate 영역 게이트웨이로 바로, ADR 0070)  (4) 실제 추론 서버 주소를 제품(survey-service)에 알린다.
 mkdir -p "$W/pki"; : > "$W/placeholder-ca.crt"; chmod 644 "$W/placeholder-ca.crt"
 STEP_IMG="$DEPLOY_REGISTRY/openit/step-ca@$STEP_CA_DIGEST"; SC_IMG="$DEPLOY_REGISTRY/openit/area-gateway@$AREA_GATEWAY_DIGEST"; PAUSE_IMG=$PAUSE_IMAGE   # 추론 서버(다른 호스트 역할)도 platform 이미지(step-ca cert, area-gateway)를 쓴다
 inf_up() { # inf_up <주 서버 프로젝트(inference-in 망의 주인)> <OUT-FILE 루트 인증서 파일>: 추론 서버(compose.inference.yaml + 가짜 백엔드 overlay)를 별도 프로젝트로 올린다/다시 만든다
@@ -317,7 +310,19 @@ issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 �
 }
 chk "추론 서버용 일회용 TLS 토큰 발급 (step-ca 게시 포트로, 지휘 쪽 자격)" issue_tls_token
 abort_if_failed
-chk "추론 서버 기동 (별도 프로젝트 $INF: compose.inference.yaml, release-gate 영역 게이트웨이로 바로 읽는다(R1.5, inference-in 외부 망 별칭), https)" inf_up "$PROJECT" "$W/pki/root_ca.crt"
+# OUT-FILE(R1.5): compose 밖 호출자에게 주는 루트 인증서·hosts 표·SHA256SUMS 를 운영과 같은 도구(export-out-files.sh)로 내보내고, 받는 쪽처럼 SHA-256 을 대조한 뒤 그 루트만 추론 서버에 준다.
+# hosts 표의 주소는 release-gate 영역 pod(release-gate-net)가 inference-in 망에서 가진 주소다(공개 정보). 같은 호스트 배치는 이름을 Docker DNS(망 별칭)로 풀어 이 표를 쓰지 않는다: 다른 서버 배치의 입력(compose.inference.remote.yaml)이다.
+# 왜 같은 호스트 배치로 시험하나(ADR 0070): 다른 서버 배치는 release-gate 영역 게이트웨이의 443 을 호스트에 게시한다(placement_ports). 시험 PC 에서 443 을 고정 게시하면 고정 포트 금지 규칙과 동시 실행에 어긋나고,
+# Docker 가 배정한 포트는 계약 URL https://release-gate(443)와 출구 허용 목록(release-gate:443)에 맞지 않는다. 다른 서버 경로(hosts 표 + 443 게시)의 실제 기동은 test-split-pki-playbook.sh 가 본다.
+export_out_file() {
+  local ip; ip=$("$DOCKER" inspect "${PROJECT}-release-gate-net-1" --format "{{with index .NetworkSettings.Networks \"${PROJECT}_inference-in\"}}{{.IPAddress}}{{end}}") || return 1
+  [ -n "$ip" ] || { echo "release-gate-net 이 ${PROJECT}_inference-in 망에 없다" >&2; return 1; }
+  mkdir -p "$W/out-file" && bash "$DEPLOY_ROOT/scripts/export-out-files.sh" --out "$W/out-file" --root "$W/pki/root_ca.crt" --host "$ip release-gate" >/dev/null || return 1
+  ( cd "$W/out-file" && sha256sum -c --quiet SHA256SUMS )   # 받는 쪽 대조(R1.5): 어긋나면 그 파일을 쓰지 않는다
+}
+chk "OUT-FILE 내보내기와 대조 (R1.5: 루트 인증서·hosts 표 <주소> release-gate·SHA256SUMS)" export_out_file
+abort_if_failed
+chk "추론 서버 기동 (별도 프로젝트 $INF: compose.inference.yaml, release-gate 영역 게이트웨이로 바로 읽는다(R1.5 OUT-FILE 루트, inference-in 외부 망 별칭, 자기 영역 게이트웨이 출구 R1.8), https)" inf_up "$PROJECT" "$W/out-file/root_ca.crt"
 abort_if_failed
 IPORT=$(port_of "$INF-model-serving-net-1" 443)
 external_inference_setup "https://host.docker.internal:$IPORT"
@@ -468,7 +473,7 @@ if [ "$UPONLY" = 1 ]; then
   sect ""; finish; [ "$FAILS" = 0 ]; exit $?
 fi
 STEP_OPTS=(); [ "$FAILFAST" = 1 ] && STEP_OPTS+=(--fail-fast); [ "$CHANGED" = 1 ] && STEP_OPTS+=(--changed-only)
-"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-${SETUP_ENV_WORK:-$DEPLOY_ROOT/state/areas}/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/trust.crt" --ms-container "$INF-model-serving-1" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
+"$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-${SETUP_ENV_WORK:-$DEPLOY_ROOT/state/areas}/question-authoring/forms}" --project "$PROJECT" --secrets "$SECRETS_DIR" --ports "$PORTS" --images "$IMAGES" --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --gw-ca "$W/trust.crt" --ms-container "$INF-model-serving-1" --out-file "$W/out-file" --run-id e2e-test ${ONLY:+--only "$ONLY"} "${STEP_OPTS[@]}" | tee "$W/steps.log"
 STEPS_RC=${PIPESTATUS[0]}
 # 단계별 상태(steps.json)를 항목 상태표에 올린다: '단계 N' 이름으로 뒤 항목이 선행으로 쓴다. 단계 안의 SKIP 은 SKIP 개수에 더한다
 if [ -f "$W/work/steps.json" ]; then

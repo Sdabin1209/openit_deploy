@@ -37,7 +37,7 @@
                                                                    |
  gen-secrets.sh -> secrets/tokens/* -> (NAME_FILE) ->  up.sh -> compose.yaml -> gateway(edge) -> 서비스(serving/authoring/release/logs)
                                                                    |
- e2e.sh / demo.sh: 같은 제품 구성(시험용 문 없음, 설정값 overlay만)을 임시 프로젝트로 띄우고 호스트에서 게이트웨이·exec 로 들어가 1~9단계를 확인 (ADR 0049)
+ e2e.sh / demo.sh: 같은 제품 구성(시험용 문 없음, 설정값 overlay만)을 임시 프로젝트로 띄우고 호스트에서 게이트웨이·exec 로 들어가 1~9단계를 확인 (ADR 0050, 추론 서버 길은 ADR 0070)
 ```
 
 ## 3. 실행 방법
@@ -133,7 +133,7 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 - [0062 사설 PKI 수명·교체와 공개 입구 timeouts](docs/adr/0062-pki-lifetimes-and-ingress-timeouts.md)
 - [0063 영역마다 자기 데이터베이스 컨테이너](docs/adr/0063-area-database-containers.md)
 - [0064 잡 정의는 이미지 라벨에서 만든다](docs/adr/0064-job-definitions-from-image-labels.md)
-- [0049 원격 추론 서버는 게이트웨이의 기계 토큰 경로로 release-gate 를 읽는다](docs/adr/0049-remote-inference-reads-release-gate-via-gateway.md)
+- [0049 원격 추론 서버는 게이트웨이의 기계 토큰 경로로 release-gate 를 읽는다](docs/adr/0049-remote-inference-reads-release-gate-via-gateway.md) (0070 으로 대체됨)
 - [0050 E2E는 샌드박스로 돈다: 제품에는 시험용 문이 없다](docs/adr/0050-e2e-sandbox.md)
 - [0047(값은 0051이 대체) 시간 상한 사슬 값: 키오스크 12s > gateway 10.5s > survey 턴 9s > 추출 3s + 응답 5s](docs/adr/0047-time-chain-values.md)
 - [0004 E2E는 가짜 모델로 하고 전체 모드와 --only/--fast를 둔다](docs/adr/0004-e2e-fake-model.md)
@@ -167,3 +167,4 @@ H3(학습 파이프라인 실행)와 G06은 model-lab 몫이다(docs/GPU_HOLE.md
 잡 설정 연결·기동 전 검증은 [ADR 0067](docs/adr/0067-job-config-follows-owner-declaration.md)을 따른다.
 - [0068 기동 전에 compose 주입을 이미지 주입 선언(ContainerInputs)과 대조한다](docs/adr/0068-container-inputs-check-before-start.md)
 - [0069 기기 인증은 mTLS 하나, 기기 허용 목록(DeviceAllowlist)을 deploy 가 만든다](docs/adr/0069-device-auth-mtls-allowlist.md)
+- [0070 compose 밖 추론 서버는 OUT-FILE 과 서비스 토큰으로 release-gate 영역 게이트웨이에 바로 간다(R1.5)](docs/adr/0070-remote-inference-reads-release-gate-area-gateway-r15.md)

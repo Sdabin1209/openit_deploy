@@ -199,16 +199,15 @@ HTTPS(내부 CA)·OIDC 로그인이지만 시험용 대체 데이터다. `DEMO_B
 
 ## 7-1. 추론 서버를 다른 곳에 두는 법 (D72)
 
-추론 서버(model-serving)는 컨테이너이고 어디에 두든(같은 컴포즈, 다른 GPU 서버) 기능 차이가 없어야 한다. 호출하는 survey-service는 주소(`SURVEY_INFERENCE_URL`)와 토큰만 알고, 서버는 release-gate를 **게이트웨이의 HTTPS 주소**로 읽는다(ADR 0049). 상시 구성의 release-gate는 호스트에 게시되지 않는다. 다른 호스트의 서버는 게이트웨이의 **추론 서버 기계 토큰 경로**(`GET /v1/active-pointer`, `/v1/releases/{id}`, `/v1/releases/{id}/bundle`, Bearer 토큰이 맞을 때만)로 읽고, 게이트웨이가 release-gate의 읽기 토큰으로 바꿔 붙인다. 사람 계정으로는 이 경로가 계속 닫혀 있다(404).
+추론 서버(model-serving)는 컨테이너이고 어디에 두든(같은 컴포즈, 다른 GPU 서버) 기능 차이가 없어야 한다. 호출하는 survey-service는 주소(`SURVEY_INFERENCE_URL`)와 토큰만 안다. compose 밖의 서버는 계약 RUNTIME R1.5 대로 release-gate를 **release-gate 영역 게이트웨이(`https://release-gate`, 443)에 바로** 읽는다(ADR 0070, 0049 대체): 자기 영역 게이트웨이(model-serving-gw)의 출구(R1.8)로 나가고, OUT-FILE 의 루트 인증서만 믿고, release-gate 읽기 토큰(`gate-read-model-serving`)을 release-gate 가 직접 대조한다. **공개 입구(gateway)에는 기계 호출자 경로가 없다**(계약 4.0.0 R3.23): 서비스 토큰을 공개 입구에 내면 401/404 다. 상시 구성의 release-gate 는 같은 서버에서는 호스트 포트가 없고, 다른 서버 배치에서만 배치 인벤토리의 `placement_ports: {release-gate: 443}` 로 영역 게이트웨이의 443 이 게시된다.
 
-**확인한 것(이 PC, 2026-11-01, Docker 28.5.1·compose 2.40.3, `bash scripts/test-inference-location.sh` 통과 17/17).** 별도 컴포즈 프로젝트의 추론 서버(fake 백엔드)가 게이트웨이의 HTTPS(내부 CA를 `SSL_CERT_FILE`로 신뢰, 검증 끄지 않음)와 추론 토큰으로 release-gate에 닿는다: `/readyz`가 release 도달 OK, 기계 토큰 경로의 세 요청이 release-gate의 응답(200 또는 JSON 404)을 받고, 서버가 적재 신호를 받은 뒤 자기 클라이언트로 없는 릴리스를 읽으면 release-gate의 NOT_FOUND를 받는다. 음성: 승인자 계정의 `/v1/releases/*` 404, 토큰 없음·틀린 토큰 401, 추론 토큰은 활성화·릴리스 목록에 쓸 수 없다(401). **확인하지 못한 것:** 활성 릴리스의 번들을 실제로 받아 적재(LOADED)하는 것(시험이 릴리스를 만들지 않는다), 실제 GPU 이미지(vllm), 다른 물리 호스트(같은 Docker 호스트의 별도 프로젝트로 시험했다), `INFERENCE_NETWORK_MODE=host`(compose 병합만 확인), 번들 크기·전송 시간.
+**확인한 것.** 이 경로의 실행 확인은 `scripts/test-inference-location.sh`(같은 호스트 배치, 별도 프로젝트)와 E2E 단계 5L(결과는 `docs/E2E_RESULTS.md`), 다른 서버 배치의 443 게시·hosts 표는 `scripts/test-split-pki-playbook.sh` 가 본다. **확인하지 못한 것:** 활성 릴리스의 번들을 다른 물리 호스트에서 받아 적재하는 것, 실제 GPU 이미지(vllm), `INFERENCE_NETWORK_MODE=host`(compose 병합만 확인), 번들 크기·전송 시간.
 
 **(a) 사전 준비 (deploy 호스트, 한 번)**
 
-1. 토큰: `scripts/gen-secrets.sh`가 `secrets/tokens/gateway-inference-token`을 만든다(없을 때만; 기존 설치는 `gen-secrets.sh`를 다시 돌린 뒤 **게이트웨이를 다시 시작**해야 반영된다: Caddy는 설정을 읽을 때 한 번 치환한다). 이 파일 하나를 안전한 경로(예: 보안 복사)로 추론 서버 호스트에 옮긴다. 값을 화면·메신저·저장소에 올리지 않는다.
-2. CA: `bash scripts/export-gateway-ca.sh [--project deploy] ./openit-root.crt`로 게이트웨이의 내부 CA 루트(공개 인증서, 비밀 아님)를 꺼내 같은 호스트로 옮긴다. 공인 인증서(ACME)로 바꿨다면 공인 CA 번들 파일을 준다.
-3. 게이트웨이 인증서의 이름: 서버가 부를 주소의 호스트 이름이 `GATEWAY_HOSTS`에 있어야 한다(예: `kiosk.hospital.local:8443`). 없으면 TLS 검증이 실패한다.
-4. 서버 호스트에서 게이트웨이 HTTPS 포트에 닿는지(방화벽)를 확인한다.
+1. 토큰: `secrets/tokens/gate-read-model-serving`(gen-secrets.sh 가 만든다, release-gate 의 `gate-read-tokens` 목록에 model-serving 으로 들어 있다)을 안전한 경로(보안 복사)로 추론 서버 호스트에 옮긴다. 값을 화면·메신저·저장소에 올리지 않는다. 예전의 `gateway-inference-token` 은 쓰지 않는다(남아 있으면 지운다).
+2. OUT-FILE(R1.5): `bash scripts/export-out-files.sh --out <폴더> --root <step-ca 루트 root_ca.crt> --host "<release-gate 게시 주소> release-gate"` 로 루트·hosts 표·`SHA256SUMS` 를 만들어 서버 호스트로 옮긴다(공개 정보). 서버 호스트에서 `sha256sum -c SHA256SUMS` 로 대조한 뒤 쓴다.
+3. 주 서버가 release-gate 영역 게이트웨이의 443 을 게시한다(배치 인벤토리 `placement_ports: {release-gate: 443}`). 서버 호스트에서 그 주소의 443 에 닿는지(방화벽)를 확인한다.
 
 **(b) 추론 서버를 둘 호스트에서** (`compose.inference.yaml` 파일 하나와 이미지, 파일 세 개만 있으면 된다. deploy의 잠금 파일·네트워크·서비스 이름에 의존하지 않는다. 문진 스키마는 이미지에 내장되어 있다)
 
@@ -231,7 +230,7 @@ HTTPS(내부 CA)·OIDC 로그인이지만 시험용 대체 데이터다. `DEMO_B
 INFERENCE_IMAGE=<레지스트리>/openit/model-serving@sha256:... \
 INFERENCE_RELEASE_ADDR=<주 서버 release-gate 게이트웨이 IP> \
 INFERENCE_TOKENS_FILE=/안전한/경로/model-runtime-tokens INFERENCE_RELEASE_TOKEN_FILE=/안전한/경로/gate-read-model-serving \
-INFERENCE_CA_FILE=/안전한/경로/openit-root.crt \
+INFERENCE_CA_FILE=/안전한/경로/out-file/root_ca.crt \
 INFERENCE_BIND=<이 서버의 사설 인터페이스 주소> \
 # 기동 전에 주입 대조(계약 ContainerInputs): 같은 환경 변수로 compose 설정을 이미지 주입 선언과 맞춰 본다. 어긋나면 기동하지 않는다
 docker compose -p deploy-inference -f compose.inference.yaml config --format json | .venv/bin/python scripts/check_container_inputs.py --compose-json - \
@@ -239,7 +238,7 @@ docker compose -p deploy-inference -f compose.inference.yaml config --format jso
 ```
 
 - 데몬 없이 병합만 보려면 필수 다섯 변수를 주고 `docker compose -f compose.inference.yaml config`.
-- 서버 호스트에서 확인 순서: ① `curl --cacert openit-root.crt https://<도메인>:<포트>/healthz` 가 `ok` ② `curl http://<INFERENCE_BIND>:<포트>/readyz` 가 `ready`(release 도달 실패 사유가 없다) ③ 활성 릴리스가 있다면 survey-service 쪽 적재 신호 뒤 `GET /v1/releases/{id}`(서버)가 `LOADED`.
+- 서버 호스트에서 확인 순서: ① `curl --cacert <OUT-FILE>/root_ca.crt --resolve release-gate:443:<hosts 표 주소> https://release-gate/healthz` 가 200 ② `curl http://<INFERENCE_BIND>:<포트>/readyz` 가 `ready`(release 도달 실패 사유가 없다) ③ 활성 릴리스가 있다면 survey-service 쪽 적재 신호 뒤 `GET /v1/releases/{id}`(서버)가 `LOADED`.
 - GPU 예약과 HF 캐시 볼륨은 파일 안에 주석 처리된 예시가 있다(GPU 이미지의 캐시 폴더 쓰기 권한은 확인 안 함).
 - 배포용 model-serving 이미지는 `build-images.sh`가 문진 스키마(survey-service의 `survey-schema-v1.0.0` 태그 시점 `schema/`)를 `--build-context schema=`로 내장해 만든다. **이미지를 다시 만들고 게시해 `locks/images.lock`의 model-serving digest를 갱신해야 한다**(이 변경 전 digest의 이미지는 스키마가 없다).
 - 토큰 값을 파일·인자로 저장소에 넣지 않는다.
@@ -255,7 +254,7 @@ bash scripts/demo.sh up --external-inference http://<서버>:8080     # 데모�
 
 토큰 값은 인자로 받지 않고 출력하지 않는다(`INFERENCE_TOKEN`이면 `secrets/tokens/external-inference`로 파일을 만든다. 컨테이너가 읽도록 모드 640 + 그룹 SECRETS_GID, 폴더 700).
 
-**양방향 도달성.** 호출자 -> 서버(위 doctor가 확인)와 서버 -> 게이트웨이(위 확인 순서 ①)가 모두 열려야 한다. 상시 구성에서 release-gate는 호스트 포트를 열지 않으며, 열지 않는다: 서버는 게이트웨이 하나만 본다.
+**양방향 도달성.** 호출자 -> 서버(위 doctor가 확인)와 서버 -> release-gate 영역 게이트웨이(위 확인 순서 ①)가 모두 열려야 한다. 서버는 공개 입구가 아니라 release-gate 영역 게이트웨이를 본다(R1.5, ADR 0070).
 
 **위치 독립 시험.** `bash scripts/test-inference-location.sh` : 제품(`compose.yaml` + `compose.external-inference.yaml`, 운영 모드, `compose.test.yaml` 미사용)을 띄우고, 추론 서버(fake)를 `compose.inference.yaml` 하나로 별도 컴포즈 프로젝트(`deploy-e2e-loc-inf`)에 띄워 위 경로를 확인한다(내용은 스크립트 머리글). 호스트 포트는 Docker가 배정하고, 컨테이너가 닿는 가장 좁은 바인드(127.0.0.1 -> docker 브리지 게이트웨이 -> 0.0.0.0)를 쓴다. 자원은 `deploy-e2e-loc*` 접두사이며 끝나면 지운다(`--keep`, `--clean`). 이미지가 로컬에 없으면 빌드한다(`build-images.sh`). 이 시험은 릴리스를 만들지 않는다(E2E 단계 1~4가 덮는다). 이전 시험(release-gate를 호스트에 직접 게시하고 `compose.test.yaml` 위에서 E2E 단계 1~5를 돌림)은 운영에 없는 둘째 문이라 없앴다.
 

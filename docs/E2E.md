@@ -38,13 +38,15 @@ E2E 는 제품에 시험용 문을 내지 않는다. 제품은 `compose.yaml`(+ 
 
 | 접근 | 무엇 | 함수 |
 | --- | --- | --- |
-| (a) 게이트웨이 호스트 포트 | HTTPS, 게이트웨이 CA 만 신뢰. 사람 계정(OIDC 로그인 세션 쿠키), 기기 토큰, 추론 기계 토큰 | `gw_url`, `gw_request`, `gw_client` |
+| (a) 게이트웨이 호스트 포트 | HTTPS, 게이트웨이 CA 만 신뢰. 사람 계정(OIDC 로그인 세션 쿠키), 기기 인증(mTLS). 기계 호출자 경로는 없다(R3.23) | `gw_url`, `gw_request`, `gw_client` |
 | (b) 제품 네트워크 안 | `docker compose -p <P> exec / logs / run --rm <job-*>` | `exec_in`, `exec_py`, `readyz`, `psql`, `logs`, `run_job` |
 | (c) 다른 호스트 역할 | `compose.inference.yaml` 을 별도 프로젝트 `<P>-inf` 로 띄운 추론 서버(가짜 백엔드는 그 쪽 env 만) | `inference_url` |
 
 **끝 조건**: 단계 코드의 내부 포트 직접 호출 0건, 제품 compose 시험용 문 0건. 점검: `scripts/test_compose_no_test_doors.py`(`check-all.sh` 에 연결: gateway 와 `compose.inference.yaml` 의 model-serving 외 `ports:` 금지, 제품·운영 overlay 의 `MODEL_RUNTIME_ALLOW_FAKE` 금지, `compose.test.yaml` 존재 금지)와 `e2e.sh` 의 실행 중 점검(호스트 포트를 게시한 제품 컨테이너는 gateway 뿐). `e2e.sh` 가 단계에 넘기는 `--ports` JSON 은 `gw`(게이트웨이 TLS 포트)와 `ms`(추론 서버 호스트 포트)만이다. 옛 키를 쓰는 코드는 KeyError 로 드러난다.
 
-**기동 순서**(`scripts/e2e.sh`, 이유는 스크립트 주석): (1) 추론 서버 = `compose.inference.yaml` 별도 프로젝트 `<P>-inf`(가짜 백엔드 overlay `test/compose.fake-model.yaml`, 컨테이너가 호스트의 127.0.0.1 게시 포트에 닿지 못하는 Docker 면 0.0.0.0 으로 게시) -> (2) 제품 `up.sh`(외부 추론 모드, `GATEWAY_TLS_PORT=` 로 Docker 배정) -> (3) 게이트웨이 TLS 포트와 내부 CA 를 읽고, 추론 서버를 `RELEASE_URL=https://host.docker.internal:<게이트웨이 TLS 포트>`·CA·추론 기계 토큰(`secrets/tokens/gateway-inference-token`)으로 다시 설정 -> (4) 다시 만든 추론 서버의 새 호스트 포트를 제품(survey-service)에 다시 알림. 추론 기계 토큰 파일이 없으면 e2e.sh 는 그 사실을 명확한 오류로 내고 멈춘다. `--up-only` 는 여기까지(도달·격리 점검 포함)만 하고 단계를 돌리지 않는다(전체 합격 아님).
+**기동 순서**(`scripts/e2e.sh`, 이유는 스크립트 주석): (1) 제품 `up.sh`(외부 추론 모드, 자리표시 주소) -> (2) step-ca 루트를 꺼내고 추론 서버 이름의 일회용 TLS 토큰 발급 -> (3) OUT-FILE(R1.5: 루트·hosts 표 `<release-gate-net 의 inference-in 주소> release-gate`·SHA256SUMS)을 `export-out-files.sh` 로 내보내고 `sha256sum -c` 로 대조 -> (4) 추론 서버 = `compose.inference.yaml` + `compose.inference.samehost.yaml`(주 서버의 internal 망 `inference-in` 에 external 로, 별칭 `release-gate` = release-gate 영역 게이트웨이) + 가짜 백엔드 overlay 를 별도 프로젝트 `<P>-inf` 로, 신뢰 루트는 OUT-FILE 의 것, 토큰은 `gate-read-model-serving` -> (5) 추론 서버의 호스트 주소를 제품(survey-service)에 다시 알림. 같은 호스트 배치로 시험하는 이유(443 고정 게시를 피함)는 ADR 0070. `--up-only` 는 여기까지(도달·격리 점검 포함)만 하고 단계를 돌리지 않는다(전체 합격 아님).
+
+**단계 5L**(ADR 0070): OUT-FILE SHA-256 대조, 추론 서버 `/readyz` ready, 추론 서버 pod 의 출구(R1.8)로 release-gate 영역 게이트웨이에 서비스 토큰 active-pointer 200·bundle 200, 무토큰·틀린 토큰 401, 같은 토큰을 공개 입구에 내면 401/404(기계 경로 없음, R3.23), release-gate 호스트 게시 없음.
 
 ## 단계 5c: 정정(CORRECT) 흐름 (deploy 소유, 시나리오 5의 일부)
 

@@ -70,6 +70,7 @@ ap.add_argument("--gw-ca", default="", help="gateway(HTTPS)의 내부 CA 루트 
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
 ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: https://gpu-host). 비우면 이 프로젝트의 model-serving 컨테이너")
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
+ap.add_argument("--out-file", default="", help="compose 밖 호출자(다른 호스트 역할의 추론 서버)에게 준 OUT-FILE 폴더(RUNTIME R1.5: root_ca.crt, hosts, SHA256SUMS). e2e.sh 가 export-out-files.sh 로 만든다. 단계 5L 이 읽는다")
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(내용이 토큰 하나). 비우면 이 구성이 만든 토큰")
 ap.add_argument("--llm-package", default="", help="실제 LLM 데모: make_neutral_package.py 가 만든 폴더(LORA_A, LORA_B). 단계 3이 시험용 fake 어댑터 대신 이 중립 LoRA 패키지(vllm 서빙 설정)를 게시한다")
 ap.add_argument("--fail-fast", action="store_true", help="첫 FAIL 에서 중단한다(뒤 단계는 돌리지 않는다). 전체 합격이 아니다")
@@ -2536,30 +2537,69 @@ def step5b():
     assert rc2 == 0 and res2 and res2.get("status") == "ok", f"DB 기동 뒤 백업 잡 재실행이 성공하지 않았다({rc2}): {res2}"
     rec("5b", "REAL", f"영역 DB 중지 중 백업 잡 종료 코드 {rc}, status={(res or {}).get('status')} (실패로 보고); DB 기동 뒤 재실행 status=ok.")
 
+_RG_PROBE = """import json, os, ssl, urllib.request, urllib.error
+# 추론 서버 pod 의 네트워크 공간에서, 추론 서버와 같은 길로: 자기 영역 게이트웨이 출구(CONNECT, R1.8) -> https://release-gate(release-gate 영역 게이트웨이). OUT-FILE 루트만 믿는다(검증을 끄지 않는다)
+ctx = ssl.create_default_context(cadata=ROOT_PEM)
+op = urllib.request.build_opener(urllib.request.ProxyHandler({'https': EGRESS}), urllib.request.HTTPSHandler(context=ctx))
+good = open('/run/secrets/gate-read-model-serving').read().strip()   # 값은 출력하지 않는다
+res = {}
+for key, path, tok in CASES:
+    h = {'Authorization': 'Bearer ' + (good if tok == 'good' else 'wrong-token')} if tok else {}
+    try:
+        with op.open(urllib.request.Request('https://release-gate' + path, headers=h), timeout=30) as r: code, body, ct = r.status, r.read(), r.headers.get('Content-Type', '')
+    except urllib.error.HTTPError as e: code, body, ct = e.code, e.read(), e.headers.get('Content-Type', '')
+    res[key] = [code, ct, len(body), body[:300].decode(errors='replace') if code != 200 else '']
+print(json.dumps(res))
+"""
+
 @step('5L', repos=('model-runtime', 'release-gate', 'boundary-contracts') + _GW, deps=('4',),
-      why="D72: 다른 호스트 역할의 추론 서버(별도 compose 프로젝트)는 운영 입구(게이트웨이 기계 토큰 경로 D122)로만 release-gate 를 읽는다. "
-          "음성: 사람 계정은 404, 무토큰은 401. release-gate 는 호스트에 게시되지 않는다(D123)")
+      why="D72·ADR 0070: 다른 호스트 역할의 추론 서버(별도 compose 프로젝트)는 계약 R1.5 대로 OUT-FILE 루트와 서비스 토큰(gate-read-model-serving)으로 "
+          "release-gate 영역 게이트웨이에 바로 간다(자기 영역 게이트웨이 출구 R1.8). 공개 입구에는 기계 호출자 경로가 없다(R3.23, 4.0.0). release-gate 는 호스트에 게시되지 않는다(D123)")
 def step5L():
-    title("5L", "추론 서버 위치 독립(D72): 게이트웨이 기계 토큰 경로와 음성 확인")
+    title("5L", "추론 서버 위치 독립(D72): release-gate 영역 게이트웨이로 바로(R1.5), 공개 입구에 기계 경로 없음(R3.23)")
     if "pointers" not in STATE: rec("5L", "BLOCKED", _P4); return
     ms = SB.inference_url(); assert ms, "다른 호스트 역할의 추론 서버가 없다(e2e.sh 가 compose.inference.yaml 을 별도 프로젝트로 띄운다)"
+    assert a.out_file, "OUT-FILE 폴더(--out-file)가 없다: e2e.sh 가 export-out-files.sh 로 만들어 넘긴다(R1.5)"
     rid = STATE["pointers"][-1]["release_id"]
-    # 1) 추론 서버가 ready(release 도달 포함). 서버는 게이트웨이 HTTPS+CA+기계 토큰으로만 release-gate 에 닿는다
+    # 0) OUT-FILE(R1.5): 받는 쪽처럼 SHA-256 을 대조하고, hosts 표에 `<주소> release-gate` 줄이 있다
+    of = pathlib.Path(a.out_file)
+    sums = dict(reversed(l.split(None, 1)) for l in (of / "SHA256SUMS").read_text().splitlines() if l.strip())
+    assert set(sums) == {"root_ca.crt", "hosts"}, f"OUT-FILE SHA256SUMS 의 파일 목록: {sorted(sums)}"
+    for n, h in sums.items(): assert hashlib.sha256((of / n).read_bytes()).hexdigest() == h.strip(), f"OUT-FILE {n} 의 SHA-256 이 SHA256SUMS 와 다르다"
+    hosts = [l.split() for l in (of / "hosts").read_text().splitlines() if l.strip()]
+    assert any(len(x) == 2 and x[1] == "release-gate" for x in hosts), f"OUT-FILE hosts 표에 '<주소> release-gate' 줄이 없다: {hosts}"
+    root_pem = (of / "root_ca.crt").read_text()
+    # 1) 추론 서버가 ready(release 도달 포함). 서버는 OUT-FILE 루트 + 서비스 토큰으로 release-gate 영역 게이트웨이에만 닿는다
     try:
         with urllib.request.urlopen(ms + "/readyz", timeout=10) as r: rs, rbody = r.status, r.read().decode(errors="replace")
     except urllib.error.HTTPError as e: rs, rbody = e.code, ""
     assert rs == 200, f"다른 호스트 역할의 추론 서버 /readyz 가 {rs}"
     assert json.loads(rbody or "null").get("status") == "ready", f"추론 서버 /readyz 본문이 ready 가 아니다(상태 코드만 보지 않는다): {rbody[:120]!r}"
-    # 2) 기계 토큰은 200, 사람 계정(승인자)은 404, 무토큰은 401 — 같은 경로에서
-    tok = (pathlib.Path(a.secrets) / "tokens" / "gateway-inference-token").read_text().strip()
-    st_m, _, _ = SB.gw_request("GET", "/v1/active-pointer", token=tok); assert st_m == 200, f"기계 토큰 /v1/active-pointer: {st_m}"
-    st_b, _, _ = SB.gw_request("GET", f"/v1/releases/{rid}/bundle", token=tok); assert st_b == 200, f"기계 토큰 번들: {st_b}"
-    st_h, _, _ = _c3_gw("GET", f"/v1/releases/{rid}/bundle", "approver"); assert st_h == 404, f"승인자 계정 번들은 404 여야 한다: {st_h}"
-    st_n, _, _ = SB.gw_request("GET", f"/v1/releases/{rid}/bundle"); assert st_n == 401, f"무토큰 번들은 401 이어야 한다: {st_n}"
-    # 3) release-gate 는 호스트에 게시되지 않는다(시험용 문 없음)
-    out = subprocess.run([a.docker, "port", f"{a.project}-release-gate-1"], capture_output=True, text=True).stdout.strip()
-    assert out == "", f"release-gate 가 호스트에 게시돼 있다: {out}"
-    rec("5L", "REAL", f"다른 호스트 역할 추론 서버 ready(release 도달), 게이트웨이 기계 토큰 경로: active-pointer 200·bundle 200, 승인자 계정 404, 무토큰 401, release-gate 호스트 게시 없음 (D72·D122·D123)")
+    # 2) 같은 길(추론 서버 pod 의 출구 -> release-gate 영역 게이트웨이)로 서비스 토큰: active-pointer 200·bundle 200. 토큰 없음·틀림은 받는 서비스가 401(R3.23)
+    env = json.loads(subprocess.run([a.docker, "inspect", a.ms_container or f"{a.project}-inf-model-serving-1", "--format", "{{json .Config.Env}}"],
+                                    capture_output=True, text=True, check=True).stdout or "[]") or []
+    egress = next((kv.split("=", 1)[1] for kv in env if kv.startswith("OPENIT_EGRESS_PROXY=")), "")   # 주소(비밀 아님)만 꺼낸다. 다른 값은 읽지 않는다
+    assert egress.startswith("http://127.0.0.1:"), f"추론 서버의 OPENIT_EGRESS_PROXY 가 loopback 출구가 아니다(R1.8): {egress!r}"
+    cases = [("ap", "/v1/active-pointer", "good"), ("bundle", f"/v1/releases/{rid}/bundle", "good"), ("none", "/v1/active-pointer", ""), ("wrong", "/v1/active-pointer", "wrong")]
+    out = SB.exec_py("model-serving", f"ROOT_PEM = {root_pem!r}\nEGRESS = {egress!r}\nCASES = {cases!r}\n" + _RG_PROBE, timeout=120)
+    got = json.loads(out.strip().splitlines()[-1])
+    assert got["ap"][0] == 200, f"서비스 토큰 /v1/active-pointer (release-gate 영역 게이트웨이): {got['ap']}"
+    assert got["bundle"][0] == 200 and got["bundle"][2] > 0, f"서비스 토큰 번들 (release-gate 영역 게이트웨이): {got['bundle']}"
+    assert got["none"][0] == 401, f"토큰 없는 요청은 release-gate 가 401 로 거절해야 한다(R3.23): {got['none']}"
+    assert got["wrong"][0] == 401, f"틀린 토큰은 release-gate 가 401 로 거절해야 한다(R3.23): {got['wrong']}"
+    # 3) 공개 입구에는 기계 호출자 경로가 없다(R3.23, 4.0.0): 같은 서비스 토큰을 공개 입구에 내면 200 이 아니다(OIDC 토큰이 아니라 401, 내보내지 않는 경로는 404)
+    tok = (pathlib.Path(a.secrets) / "tokens" / "gate-read-model-serving").read_text().strip()
+    st_pa, _, _ = SB.gw_request("GET", "/v1/active-pointer", token=tok)
+    st_pb, _, _ = SB.gw_request("GET", f"/v1/releases/{rid}/bundle", token=tok)
+    assert st_pa in (401, 404), f"공개 입구가 서비스 토큰으로 /v1/active-pointer 에 {st_pa} 를 냈다(기계 경로가 없어야 한다, R3.23)"
+    assert st_pb in (401, 404), f"공개 입구가 서비스 토큰으로 번들에 {st_pb} 를 냈다(기계 경로가 없어야 한다, R3.23)"
+    # 4) release-gate 는 호스트에 게시되지 않는다(시험용 문 없음): 게시 포트는 pod(release-gate-net)만 가질 수 있고, 앱·영역 게이트웨이는 그 공간에 붙는다
+    for svc in ("release-gate-net", "release-gate", "release-gate-gw"):
+        r = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1"], capture_output=True, text=True)
+        assert r.returncode == 0, f"{svc} 컨테이너를 찾지 못했다: {r.stderr.strip()[:200]}"
+        assert r.stdout.strip() == "", f"{svc} 가 호스트에 게시돼 있다: {r.stdout.strip()}"
+    rec("5L", "REAL", f"OUT-FILE(R1.5) SHA-256 대조·hosts 표 release-gate 줄; 다른 호스트 역할 추론 서버 ready(release 도달); 추론 서버 pod 의 출구(R1.8) -> release-gate 영역 게이트웨이: "
+        f"서비스 토큰 active-pointer 200·bundle 200({got['bundle'][2]}바이트), 무토큰 401·틀린 토큰 401; 공개 입구에 같은 토큰: active-pointer {st_pa}·bundle {st_pb}(기계 경로 없음, R3.23); release-gate 호스트 게시 없음 (D72·ADR 0070)")
 
 
 def _kiosk_device_config(dev):
