@@ -11,6 +11,8 @@ run() { "$DOCKER" compose -p "$P" -f "$DEPLOY_ROOT/compose.registry.yaml" --env-
 case "${1:-}" in
   up)
     # REGISTRY_HOST_PORT 가 빈 값이면 빈 포트를 골라 쓴다(고정 포트 충돌 방지). 충돌하면 다시 고른다.
+    # 왜 Docker 배정(127.0.0.1::5000)이 아닌가: 레지스트리 주소(host:port)는 이미지 잠금·참조에 기록되어 컨테이너가 다시 시작해도 같아야 한다.
+    # 빈 HostPort 로 배정한 포트는 재시작하면 바뀔 수 있다(Moby API). 그래서 고른 포트로 실제로 띄워 보는 것이 확인이고(바인드 거부면 다시 고른다), 경쟁 구간이 없다
     port=${REGISTRY_HOST_PORT-5000}
     for try in 1 2 3 4 5; do
       [ -n "${REGISTRY_HOST_PORT+x}" ] && [ -z "${REGISTRY_HOST_PORT}" ] && port=$(free_port)

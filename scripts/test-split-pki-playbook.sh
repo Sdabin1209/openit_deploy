@@ -28,9 +28,16 @@ PY
 ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
 T=$(mktemp -d)
 trap 'rc=$?; if [ $rc -ne 0 ]; then for s in data app; do docker ps -a --filter "label=com.docker.compose.project=deploy-$ID-$s" --format "{{.Names}} {{.Status}}" >&2; for n in $(docker ps -a -q --filter "label=com.docker.compose.project=deploy-$ID-$s"); do echo "--- $(docker inspect -f "{{.Name}}" $n)" >&2; docker logs --tail 8 $n 2>&1 | cut -c1-200 >&2; done; done; tail -25 "$T/run1.log" 2>/dev/null >&2; fi; [ "${SPLIT_KEEP:-0}" = 1 ] || { for s in data app; do docker compose -p "deploy-$ID-$s" down -v --remove-orphans >/dev/null 2>&1; done; rm -rf "$T" "$ROOT/build/placement/$ID"-* "$ROOT/build/placement.lock"; }; exit $rc' EXIT
-freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
+ROOT_LOCKS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/locks"
+freeport() {   # Docker 로 실제 게시해 본 포트만 쓴다(빈 포트라도 Windows 예약 범위면 Docker 가 못 연다, 2026-11-07 교차검증). 시험이 고른 포트가 설정 값으로 먼저 들어가야 해 Docker 배정은 쓸 수 없다
+  local p u _t; u=$(sed -n 's/^UTIL_IMAGE=//p' "$ROOT_LOCKS/images.lock")
+  for _t in 1 2 3 4 5 6 7 8; do p=$(python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])')
+    docker run --rm -p "$p:$p" "$u" true >/dev/null 2>&1 && { echo "$p"; return 0; }
+  done
+  echo "Docker 가 게시할 수 있는 빈 포트를 8번 안에 찾지 못했다" >&2; return 1
+}
 PGP=$(freeport); SCP=$(freeport); RGP=$(freeport)
-if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)443$"; then RGP=443; fi   # 다른 서버의 추론 서버는 https://release-gate(443)로 온다(RUNTIME R1.5): 게시 포트가 443 인 실제 경로를 본다. 호스트의 443 이 사용 중이면 임의 포트로 돌고 아래 443 단언은 SKIP 으로 센다   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
+if docker run --rm -p "443:443" "$(sed -n 's/^UTIL_IMAGE=//p' "$ROOT_LOCKS/images.lock")" true >/dev/null 2>&1; then RGP=443; fi   # 443 을 실제로 게시해 볼 수 있을 때만(ss 는 Docker Desktop 의 윈도 쪽 점유를 모른다)   # 다른 서버의 추론 서버는 https://release-gate(443)로 온다(RUNTIME R1.5): 게시 포트가 443 인 실제 경로를 본다. 호스트의 443 이 사용 중이면 임의 포트로 돌고 아래 443 단언은 SKIP 으로 센다   # step-ca 포트도 빈 포트: 안팎이 같은 값(STEP_CA_PORT)이라 플레이북이 서버마다 내보낸다
 HOSTADDR=$(getent hosts host.docker.internal | awk '{print $1}' | head -1); [ -n "$HOSTADDR" ] || HOSTADDR=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
 LOCK="$T/images.lock"; cp locks/images.lock "$LOCK"; export DEPLOY_LOCK="$LOCK"   # 왜: 잠금 파일을 시험이 스스로 정한다(밖에서 내보낸 DEPLOY_LOCK 이 있으면 그 파일을 읽어 플레이북이 실패했다, E2E 사전 점검에서 확인)
 UTIL=$(sed -n 's/^UTIL_IMAGE=//p' "$LOCK"); PGIMG=$(sed -n 's/^POSTGRES_IMAGE=//p' "$LOCK"); CAIMG=$(sed -n 's/^STEP_CA_IMAGE=//p' "$LOCK")

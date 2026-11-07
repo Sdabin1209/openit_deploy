@@ -123,3 +123,4 @@ compose 주입이 이미지 주입 선언(계약 ContainerInputs 3.5.0)과 같�
 잡 설정 디렉터리는 주입 선언의 JSON Pointer와 읽기·쓰기 조건을 따른다 :: "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_config_job_inputs.py"
 등록된 Git 작업 트리와 미등록 독립 저장소를 구별한다 :: "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_registered_worktrees.py"
 인증서 토큰 전달은 소비 이미지의 사용자 선언과 비밀 비출력·전송 프레이밍을 따른다 :: "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_token_delivery.py"
+영역 시험(check-all 규칙 8): 건너뛴 시험이 있으면 검증 안 함, 시간 초과는 프로세스 그룹 전체를 끝내 trap 정리 :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_area_test_skips.py"

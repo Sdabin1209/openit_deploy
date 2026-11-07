@@ -24,7 +24,14 @@ for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
 PY
 }
 ok() { echo "OK: $*"; }; bad() { echo "FAIL: $*" >&2; exit 1; }
-freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])'; }
+ROOT_LOCKS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/locks"
+freeport() {   # Docker 로 실제 게시해 본 포트만 쓴다(빈 포트라도 Windows 예약 범위면 Docker 가 못 연다, 2026-11-07 교차검증). 시험이 고른 포트가 설정 값으로 먼저 들어가야 해 Docker 배정은 쓸 수 없다
+  local p u _t; u=$(sed -n 's/^UTIL_IMAGE=//p' "$ROOT_LOCKS/images.lock")
+  for _t in 1 2 3 4 5 6 7 8; do p=$(python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])')
+    docker run --rm -p "$p:$p" "$u" true >/dev/null 2>&1 && { echo "$p"; return 0; }
+  done
+  echo "Docker 가 게시할 수 있는 빈 포트를 8번 안에 찾지 못했다" >&2; return 1
+}
 mkdir -p "$T/config/certs"; cp -r "$ROOT/test/split/config/." "$T/config/"
 if [ "$SCHEME" = https ]; then   # 시험 CA 와 서비스 이름(SAN)을 가진 인증서 하나. 호출자는 CA 로 이름을 검증한다
 "$PY" - "$T/config/certs" <<'PYEOF'

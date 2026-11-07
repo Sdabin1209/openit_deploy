@@ -837,7 +837,7 @@ def run_area_tests(repo: str, d: Path):
         return "un", why
     cmd = rep["environment"]["test_command"]
     try:
-        p = subprocess.run(cmd, cwd=ENV.work_root() / repo, capture_output=True, text=True, timeout=AREA_TEST_TIMEOUT_SECONDS)   # 영역 시험은 사본(state/areas/<영역>)에서 돈다: 실제 영역 리포를 건드리지 않는다
+        p = _run_group(cmd, ENV.work_root() / repo, timeout=AREA_TEST_TIMEOUT_SECONDS)   # 영역 시험은 사본(state/areas/<영역>)에서 돈다: 실제 영역 리포를 건드리지 않는다
     except subprocess.TimeoutExpired as e:
         raw = e.stdout or b""
         path = save_area_log(repo, (raw.decode(errors="replace") if isinstance(raw, bytes) else raw) + f"\n[check-all] {AREA_TEST_TIMEOUT_SECONDS}초 시간 초과로 중단\n")
@@ -854,7 +854,36 @@ def run_area_tests(repo: str, d: Path):
         fails = [l.strip()[:160] for l in out.splitlines() if FAIL_LINE.match(l)]
         shown = "; ".join(fails[:5]) + (f" 외 {len(fails) - 5}줄" if len(fails) > 5 else "")
         return "fail", f"시험 명령 종료 코드 {p.returncode} (통과 {total}개 확인)" + (f"; 실패 줄: {shown}" if fails else "; 출력에서 실패 줄을 찾지 못했다") + f"; 전체 출력 {path}"
-    return ("fail", "통과한 시험 개수를 확인하지 못했다(0개)") if total == 0 else ("ok", f"시험 {total}개 통과")
+    if total == 0:
+        return "fail", "통과한 시험 개수를 확인하지 못했다(0개)"
+    # 건너뛴 시험이 있으면 검증한 것이 아니다(2026-11-07 교차검증: PostgreSQL 시험 수백 개가 건너뛰어진 채 통과로 세어졌다).
+    # 영역이 선언한 시험 명령(SetupEnvReport.test_command)이 필수 의존(DB·Docker·도구)을 스스로 준비하고, 외부 실제 데이터가 필요한 선택 시험은 명령에서 명시적으로 뺀다
+    sk = re.search(r"(\d+) skipped", out) or re.search(r"\bskipped\s+(\d+)", out)   # pytest 'N skipped' / node:test 'ℹ skipped N'
+    if sk and int(sk.group(1)) > 0:
+        path = save_area_log(repo, out)
+        return "un", f"시험 {total}개 통과, 건너뜀 {sk.group(1)}개(건너뛴 시험은 검증하지 않은 것이다; 사유는 전체 출력 {path})"
+    return "ok", f"시험 {total}개 통과(건너뜀 0)"
+
+
+GROUP_TERM_GRACE_SECONDS = 10   # SIGTERM 뒤 정리 여유: 셸 trap 의 compose down(일회용 DB 하나)은 초 단위다. 측정하지 않았다(근거: 시작값, 넘으면 SIGKILL 로 끝낸다)
+
+
+def _run_group(cmd, cwd, *, timeout):
+    """시험 명령을 새 프로세스 그룹으로 돌린다. 시간이 넘으면 그룹 전체에 SIGTERM(셸의 EXIT trap 이 일회용 DB 를 내릴 수 있게), 10초 뒤 SIGKILL.
+    왜: subprocess.run 의 timeout 은 바로 아래 프로세스만 죽여 그 자식(pytest)과 일회용 컨테이너가 남았다(2026-11-07 교차검증)."""
+    import os, signal
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            out, err = proc.communicate(timeout=GROUP_TERM_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            out, err = proc.communicate()
+        raise subprocess.TimeoutExpired(cmd, timeout, output=(out or "") + (err or ""))
 
 
 # 러너별 실패 줄: pytest 요약(FAILED/ERROR <id>), node:test(not ok, ✖), unittest(FAIL:/ERROR:)

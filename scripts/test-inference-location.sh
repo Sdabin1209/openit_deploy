@@ -77,11 +77,11 @@ inf_compose() { ( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     "$DOCKER" compose -p "$INF" -f "$DEPLOY_ROOT/compose.inference.yaml" -f "$DEPLOY_ROOT/compose.inference.samehost.yaml" "$@" ); }
 
 PAUSE_IMG=$(sed -n 's/^PAUSE_IMAGE=//p' "$DEPLOY_LOCK"); STEP_IMG=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/step-ca@$STEP_CA_DIGEST" ); SC_IMG=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a; echo "$DEPLOY_REGISTRY/openit/area-gateway@$AREA_GATEWAY_DIGEST" )
-# 빈 포트(고정 포트 금지). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml). 호스트 쪽 제외 포트 범위(WSL/Windows)에 걸리면 Docker 가 게시를 거부하므로(측정함) 실제로 게시해 보고 고른다
+# 빈 포트(고정 포트 금지). 확인은 기본 망에서 실제로 게시해 본다: --network none 의 -p 는 게시를 하지 않아(Moby null 드라이버) 확인이 되지 않는다(2026-11-07 교차검증). 안팎 포트가 같아야 토큰 audience 가 맞는다(compose.step-ca-publish.yaml). 호스트 쪽 제외 포트 범위(WSL/Windows)에 걸리면 Docker 가 게시를 거부하므로(측정함) 실제로 게시해 보고 고른다
 SCP=""
 for _try in 1 2 3 4 5 6 7 8; do
   _p=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
-  if "$DOCKER" run --rm --network none -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then SCP=$_p; break; fi
+  if "$DOCKER" run --rm -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then SCP=$_p; break; fi
 done
 [ -n "$SCP" ] || bail "게시할 수 있는 빈 포트를 찾지 못했다"
 export STEP_CA_PORT=$SCP STEP_CA_DNS_NAMES=host.docker.internal COMPOSE_EXTRA="${COMPOSE_EXTRA:-} $DEPLOY_ROOT/compose.step-ca-publish.yaml"
@@ -89,7 +89,7 @@ mkdir -p "$W/pki"
 GWP=""
 for _try in 1 2 3 4 5 6 7 8; do
   _p=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
-  if "$DOCKER" run --rm --network none -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then GWP=$_p; break; fi
+  if "$DOCKER" run --rm -p "127.0.0.1:$_p:$_p" "$UTIL" true >/dev/null 2>&1; then GWP=$_p; break; fi
 done
 [ -n "$GWP" ] || bail "게이트웨이에 게시할 수 있는 빈 포트를 찾지 못했다"
 export GATEWAY_TLS_PORT=$GWP
