@@ -23,7 +23,7 @@ class T(unittest.TestCase):
 
     def test_detects(self):
         self.assertTrue(offenders('"$PIP" install -q --force-reinstall x.whl', "x"))
-        self.assertTrue(offenders('"$VENV/bin/pip" install -q y', "x") or True)
+        self.assertTrue(offenders('"$VENV/bin/pip" install -q y', "x"))   # venv 경로의 pip 직접 호출도 잡아야 한다(예전에는 or True 로 무력했다)
         self.assertFalse(offenders('"$PIP" install -q y   # own-venv: 임시 venv', "x"))
 
 
