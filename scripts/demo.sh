@@ -99,9 +99,10 @@ demo_kiosk_prepare() { # 제품 경로 그대로: 기기 인증서를 발급해 
   [ -s "$SECRETS_DIR/device-certs/$DEMO_KIOSK_DEVICE.crt" ] || die "기기 인증서가 없다: $SECRETS_DIR/device-certs/$DEMO_KIOSK_DEVICE.crt"
 }
 demo_kiosk_url() { # 키오스크 시작 주소(계약 KioskStartFragment: 기기 자격은 조각에 없다). 브라우저에 기기 인증서(secrets/device-certs/<기기>.crt·.key)를 설치해 접속한다(TLS 클라이언트 인증)
-  local gw=$1 host=$2 f="$W/kiosk-url.txt"
+  local f="$W/kiosk-url.txt"
+  # 왜 GATEWAY_PUBLIC_URL 인가: 게이트웨이는 SNI 의 DNS 이름으로 인증서를 고른다. IP(127.0.0.1)로 열면 SNI 가 없어 TLS 가 실패한다(RFC 6066 3절, lib.sh gateway_public_url). 사람 화면과 같은 이름을 쓴다
   # 문진표 ID(--question-set)를 주면 조각에 question_set_id 를 붙인다(계약 KioskStartFragment, 조각이 기기 설정보다 먼저). 안 주면 활성 문진표가 둘이므로 키오스크 첫 화면에서 고른다
-  ( umask 077; printf 'https://%s:%s/%s\n' "$host" "$gw" "${DEMO_QS:+#question_set_id=$DEMO_QS}" > "$f" ); echo "$f"
+  ( umask 077; printf '%s/%s\n' "$GATEWAY_PUBLIC_URL" "${DEMO_QS:+#question_set_id=$DEMO_QS}" > "$f" ); echo "$f"
 }
 ports_json() {
   local pp; pp() { port_of "$P-$1-1" 8080; }
@@ -144,14 +145,13 @@ alert_line() { # 직원 알림 안내는 하드코딩이 아니라 survey-servic
 }
 guide() {
   local gw; gw=$(port_of "$P-gateway-1" 8443)
-  local host=127.0.0.1; [ "${DEMO_BIND:-127.0.0.1}" != 127.0.0.1 ] && host="<서버 주소>"
   cat <<GUIDE
 
 ==================== 데모 접속 안내 ====================
  !! 이 데이터는 시험용 대체(가짜 모델, 시험용 승인자)입니다. 실제 모델·실제 승인이 아닙니다. !!
 
  주소: $GATEWAY_PUBLIC_URL   (사람 화면은 이 이름으로 연다: 로그인 쿠키와 Keycloak 의 허용 리다이렉트가 이 이름에만 묶인다. 원격 서버면: ssh -L $gw:127.0.0.1:$gw <서버>  로 터널을 열고 이 주소를 브라우저에)
-   키오스크 화면      주소는 $(demo_kiosk_url "$gw" "$host") 에 있다(기기 자격은 주소에 없다: 브라우저에 기기 인증서 $SECRETS_DIR/device-certs/$DEMO_KIOSK_DEVICE.crt·.key 를 설치해 접속한다. cat 해서 브라우저에 붙여 넣는다)
+   키오스크 화면      주소는 $(demo_kiosk_url) 에 있다(기기 자격은 주소에 없다: 브라우저에 기기 인증서 $SECRETS_DIR/device-certs/$DEMO_KIOSK_DEVICE.crt·.key 를 설치해 접속한다. cat 해서 브라우저에 붙여 넣는다)
    직원 콘솔          $GATEWAY_PUBLIC_URL/staff/      계정 staff-e2e (역할 staff)
    승인·실패 사례 검토·문진 결과 $GATEWAY_PUBLIC_URL/admin/      승인자 계정 trainer-e2e / 검토자 계정 reviewer-e2e / 의사 계정 clinician-e2e(문진 결과 탭) / 운영자 계정 operator-e2e (/v1/activate, /v1/rollback)
    계정 관리(가입 승인)  $GATEWAY_PUBLIC_URL/auth/admin/openit/console/      초기 admin openit-admin (임시 비밀번호는 $W/secrets/tokens/identity-initial-admin-password, 첫 로그인에서 바꾼다) 또는 시험 사용자 admin-e2e
