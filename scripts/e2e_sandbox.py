@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import http.client
 import json
 import json as _json   # gw_request 의 인자 이름 json 이 모듈을 가리므로 별칭을 둔다(시그니처가 고정이다)
 import os
@@ -268,7 +269,9 @@ def exec_py(service: str, code: str, *, timeout: float = 60) -> str:
     # 마운트 지점의 모드가 되어 uid 10001 은 group_add 가 있어도 들어가지 못한다(2026-11-08 E2E 단계 1·5a PermissionError). 파일 읽기 권한은 640 + SECRETS_GID 가 정한다
     tdir = pathlib.Path(_need("secrets")) / "tokens"
     vols = [x for f in sorted(tdir.iterdir()) if f.is_file() for x in ("-v", f"{f}:/run/secrets/{f.name}:ro")]
-    create = [d, "create", "-i", "--network", first, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", "10001:10001",
+    # 왜 /tmp tmpfs: 루트 파일 시스템은 읽기 전용(--read-only)이고 단계 코드가 tempfile.mkdtemp 를 쓴다(게시 패키지, 어댑터 내려받기). 쓰기 자리는 이 하나뿐이고
+    # 실행 금지·크기 상한·uid 10001 소유 0700 이다(제품의 tmpfs /data 와 같은 규칙, 7a493b3). 256m: 시험 어댑터·패키지(수 MB)의 여유, 측정한 최대치가 아니라 상한이다
+    create = [d, "create", "-i", "--network", first, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001,mode=0700", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", "10001:10001",
               "--group-add", str(_C.get("secrets_gid") or os.environ.get("SECRETS_GID") or os.getgid()), "-e", "SSL_CERT_FILE=/ca.crt",
               "-v", f"{ca}:/ca.crt:ro", *vols, *envs, image, "python", "-"]
     cid = _run(create, timeout=60).stdout.strip()
@@ -278,6 +281,20 @@ def exec_py(service: str, code: str, *, timeout: float = 60) -> str:
         return _run([d, "start", "-a", "-i", cid], input=code.replace(SELF, "https://" + service), timeout=timeout).stdout
     finally:
         _run([d, "rm", "-f", cid], check=False, timeout=30)
+
+
+def crash(container: str) -> None:
+    """container 의 주 프로세스를 SIGKILL 로 죽인다(프로세스 죽음 흉내, RUNTIME R3.1). `docker kill` 을 쓰지 않는 이유: Docker 는 docker kill(어떤 신호든)을 사람이 멈춘 것으로
+    기록해 restart 정책(unless-stopped)이 다시 올리지 않는다(2026-11-08 Docker 28.5.1 에서 측정: kill -s KILL/TERM/USR1 모두 exited, RestartCount 0). 컨테이너 안에서의 kill 도 안 된다:
+    앱이 PID 1 이라 같은 네임스페이스의 SIGKILL 은 커널이 무시한다(측정: running, RestartCount 0). 그래서 Docker 호스트의 PID 네임스페이스에서 도구 이미지가 그 PID 에 신호를 보낸다
+    (측정: RestartCount 1). 영역 컨테이너 안으로 들어가지 않고, 가진 권한은 KILL 하나다(cap-drop ALL, 망 없음)."""
+    d = _need("docker")
+    pid = _run([d, "inspect", "-f", "{{.State.Pid}}", container], timeout=30).stdout.strip()
+    if not pid.isdigit() or pid == "0":
+        raise RuntimeError(f"{container}: 실행 중인 프로세스가 없다(Pid={pid!r})")
+    # 왜 root(--user 0): 다른 uid 의 프로세스에 신호를 보내려면 CAP_KILL 이 유효해야 하고, Docker 는 root 아닌 사용자에게 --cap-add 를 유효 권한으로 주지 않는다
+    _run([d, "run", "--rm", "--pid", "host", "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "KILL", "--security-opt", "no-new-privileges:true",
+          "--user", "0:0", _need("tool_image"), "python", "-c", f"import os; os.kill({int(pid)}, 9)"], timeout=60)
 
 
 def run_job(job: str, args=(), *, env: Optional[dict] = None, timeout: float = 300) -> subprocess.CompletedProcess:
@@ -306,10 +323,54 @@ def logs(service: str, since: Optional[str] = None) -> str:
 
 
 # ---- (c) 다른 호스트 역할의 추론 서버 ----
+INFERENCE_TLS_NAME = "host.docker.internal"   # 추론 서버 인증서의 이름(e2e.sh·test-inference-location.sh 의 INFERENCE_TLS_NAME)
+
+
 def inference_url() -> Optional[str]:
     """별도 프로젝트로 띄운 추론 서버의 호스트 주소 https://host.docker.internal:<포트>. 없으면 None. 왜 docker port: 그 컨테이너가 자기 게시 포트를 Docker 에게서 배정받는다."""
     ip = _C.get("inference_project")
     if not ip:
         return None
     p = _docker_port(f"{ip}-model-serving-net-1", "model-serving", "443")
-    return f"https://localhost:{p}" if p else None   # 인증서 SAN 에 localhost 가 있다(e2e.sh 가 토큰·인증서에 함께 넣는다)   # 서비스 TLS 사이드카(ADR 0060)가 받는 https. 인증서 이름이 host.docker.internal 이라 그 이름으로 부른다. 검증 루트는 호출 프로세스의 SSL_CERT_FILE(e2e.sh 가 step-ca 루트를 준다)
+    # 왜 host.docker.internal: 서비스 TLS 사이드카(ADR 0060)의 인증서 SAN 은 그 이름 하나다(e2e.sh INFERENCE_TLS_NAME=host.docker.internal). localhost 로 부르면
+    # 호스트 이름 검증이 실패한다(RUNTIME R1.1~R1.3). 이름으로 부르고, 실제 연결은 inference_opener() 가 게시 주소로 한다(검증은 끄지 않는다)
+    return f"https://{INFERENCE_TLS_NAME}:{p}" if p else None
+
+
+def _inference_bind() -> str:
+    """추론 서버 게시 포트의 호스트 주소(docker port 의 첫 줄). 0.0.0.0·:: 이면 127.0.0.1. 왜: 게시 바인드는 e2e.sh pick_bind 가 고른다(127.0.0.1 > 브리지 게이트웨이 > 0.0.0.0)."""
+    name = f"{_need('inference_project')}-model-serving-net-1"
+    r = _run([_C["docker"], "port", name, "443/tcp"], check=False, timeout=30)
+    line = (r.stdout or "").strip().splitlines()[:1]
+    host = line[0].rsplit(":", 1)[0].strip("[]") if r.returncode == 0 and line else ""
+    return "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """TCP 는 게시 주소(_addr)로 열고 TLS 는 요청 URL 의 이름(SNI·호스트 이름 검증)으로 한다. curl --resolve 와 같은 일(test-inference-location.sh 의 MSRES).
+    왜: 운영자 호스트가 host.docker.internal 을 풀지 못하거나 다른 주소(Docker Desktop 의 VM 주소)로 풀 수 있다. 검증(check_hostname·CERT_REQUIRED)은 문맥 그대로다."""
+    _addr = "127.0.0.1"
+
+    def connect(self):
+        import socket
+        sock = socket.create_connection((self._addr, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+def inference_opener() -> urllib.request.OpenerDirector:
+    """inference_url() 주소를 부르는 opener. 신뢰 루트는 gw_ca 파일(e2e.sh 의 trust.crt = 게이트웨이 CA + step-ca 루트). 이름이 INFERENCE_TLS_NAME 이 아닌 주소(--ms-url)는 그대로 연결한다."""
+    ctx = ssl.create_default_context(cafile=str(_need("gw_ca")))
+    addr = _inference_bind()
+
+    class _H(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            if req.host.split(":", 1)[0] != INFERENCE_TLS_NAME:
+                return self.do_open(http.client.HTTPSConnection, req, context=ctx)
+            conn = type("_C", (_PinnedHTTPSConnection,), {"_addr": addr})
+            return self.do_open(conn, req, context=ctx)
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _H())
+
+
+def inference_open(req, timeout: float = 30):
+    """urllib.request.urlopen 대신: inference_url() 로 만든 요청을 연다(HTTPError 는 urlopen 과 같이 올린다)."""
+    return inference_opener().open(req, timeout=timeout)

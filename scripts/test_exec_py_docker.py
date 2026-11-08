@@ -49,6 +49,27 @@ class T(unittest.TestCase):
         out = S.exec_py("far", ("U=%r\n" % (PLAIN + "svc/healthz")) + "import urllib.request\ntry: urllib.request.urlopen(U,timeout=3); print('reach')\nexcept Exception: print('unreachable')\n")
         self.assertEqual(out.strip(), "unreachable")
 
+    def test_tmp_is_a_writable_tmpfs_on_a_read_only_root(self):
+        # 단계 코드(게시 패키지, 어댑터 내려받기)는 tempfile.mkdtemp 를 쓴다. 루트는 읽기 전용이고 /tmp 만 쓸 수 있어야 한다
+        out = S.exec_py("svc", "import tempfile,pathlib\nd=pathlib.Path(tempfile.mkdtemp()); (d/'f').write_text('x'); print(d.parent, (d/'f').read_text())\n"
+                        "try: open('/x','w'); print('root-writable')\nexcept OSError: print('root-ro')\n")
+        self.assertEqual(out.split(), ["/tmp", "x", "root-ro"])
+
+    def test_crash_is_restarted_by_the_restart_policy(self):
+        # docker kill 은 사람이 멈춘 것으로 기록돼 restart 정책이 돌지 않는다(측정). crash 는 호스트 PID 네임스페이스에서 SIGKILL 을 보내 프로세스 죽음으로 남긴다
+        name = f"{self.proj}-crash-1"
+        dk("run", "-d", "--name", name, "--restart", "unless-stopped", "--user", "10001:10001", "--cap-drop", "ALL", "--network", "none", UTIL, "sleep", "300")
+        try:
+            S.crash(name)
+            n = "0"
+            for _ in range(60):   # 상한 30초(0.5초 간격). restart 정책의 첫 재시작 지연은 100ms 다(Docker 문서)
+                n = dk("inspect", "-f", "{{.RestartCount}}", name).stdout.strip()
+                if n not in ("", "0"): break
+                time.sleep(0.5)
+            self.assertNotIn(n, ("", "0"), "crash 뒤 restart 정책이 컨테이너를 다시 올리지 않았다")
+        finally:
+            dk("rm", "-f", name)
+
     def test_client_is_removed(self):
         S.exec_py("svc", "print(1)")
         left = dk("ps", "-aq", "--filter", "ancestor=" + UTIL, "--filter", "status=exited").stdout.split()

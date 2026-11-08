@@ -474,11 +474,15 @@ class Lora(TypedDict):
     LORA_A: Dict[str, Any]
 
 
+class Q(TypedDict):
+    id: str
+
+
 class State(TypedDict):
     trace_env: Dict[str, Any]
     lora: Lora
     releases: Dict[str, Any]
-    qs: List[Dict[str, Any]]
+    qs: List[Q]
 
 
 class Urls(TypedDict):

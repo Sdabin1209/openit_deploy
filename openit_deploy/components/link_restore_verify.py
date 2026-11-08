@@ -1,6 +1,6 @@
 """컴포넌트 link_restore_verify (통신 컴포넌트, 보내는 쪽): 복구한 저장소를 실제 서비스의 HTTP 로 다시 읽어 검증한다(E2E 9단계). 입력 RestoreVerifyRequest, 출력 RestoreVerifyResult.
 샌드박스(docs/adr/0049): 이웃 서비스는 호스트 포트가 없다. 이웃 읽기는 그 서비스의 컨테이너 안에서 그 이미지의 계약 클라이언트(boundary_contracts.clients)로 한다.
-요청의 urls 는 **컨테이너 안에서 본** 주소(예: http://127.0.0.1:8080)이고, 코드를 컨테이너에서 실행하는 일은 주입된 runner(키, 코드) -> stdout 이 한다(runner 는 입출력 스키마 밖의 운반 수단이다).
+요청의 urls 는 **컨테이너 안에서 본** 주소(각 서비스의 영역 게이트웨이, 예: https://question-authoring)이고, 코드를 컨테이너에서 실행하는 일은 주입된 runner(키, 코드) -> stdout 이 한다(runner 는 입출력 스키마 밖의 운반 수단이다).
 검증 항목: 문항 2버전과 해시, Trace 재전송이 DUPLICATE, 모델 패키지 매니페스트·어댑터 해시, 활성 포인터.
 토큰은 코드(표준 입력)로만 컨테이너에 가고 결과·출력·프로세스 인자에 싣지 않는다(D84)."""
 from __future__ import annotations
@@ -66,7 +66,7 @@ def run(request: "RestoreVerifyRequest", runner: Callable[[str, str], str]) -> "
             checks.append({"name": name, "ok": False, "detail": f"{type(e).__name__}: {str(e)[:120]}"}); return
         checks.append({"name": name, "ok": True} if ok else {"name": name, "ok": False, "detail": "기대와 다르다"})
 
-    qa = ask("qa", "HttpQuestionReader", _QA.format(qs=f"qs-{request['run_id']}"))
+    qa = ask("qa", "HttpQuestionReader", _QA.format(qs=s["qs"][0]["id"]))   # 단계 1 이 만든 문항 세트의 ID(state.json qs[].id). 이름을 run_id 로 짐작하지 않는다
     check("문항 2버전", qa, lambda r: r["versions"] == ["1", "2"])
     check("문항 해시", qa, lambda r: r["hashes_ok"])
     check("Trace 재전송은 DUPLICATE", ask("ops", "HttpTraceIngest", _OPS.format(env=json.dumps(s["trace_env"]))), lambda r: r["status"] == "DUPLICATE")

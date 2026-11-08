@@ -57,8 +57,15 @@
      "items": {
       "type": "object",
       "required": [
+       "id",
        "version"
-      ]
+      ],
+      "properties": {
+       "id": {
+        "type": "string",
+        "minLength": 1
+       }
+      }
      }
     }
    },

@@ -41,7 +41,8 @@ class T(unittest.TestCase):
         self.assertEqual(verbs, ["inspect", "create", "network", "start", "rm"])
         insp = next(c for c in self.f.calls if c[0][1] == "inspect")[0]; self.assertEqual(insp[2], "P1-release-gate-1")   # 바깥에서 본다
         create = next(c for c in self.f.calls if c[0][1] == "create")[0]
-        self.assertIn("--read-only", create); self.assertIn("P1_a", create); self.assertNotIn("exec", [c[0][1] for c in self.f.calls])
+        self.assertIn("--read-only", create); self.assertIn("P1_a", create)
+        i = create.index("--tmpfs"); self.assertEqual(create[i + 1], "/tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001,mode=0700")   # 읽기 전용 루트에서 tempfile.mkdtemp 가 쓸 곳(uid 10001 소유); self.assertNotIn("exec", [c[0][1] for c in self.f.calls])
         self.assertIn("GATE_WRITE_TOKENS_FILE=/run/secrets/gate-write-tokens", create)   # *_FILE(파일 경로) 만 옮긴다
         self.assertFalse(any("should-not-pass" in x for x in create), "*_FILE 이 아닌 환경은 옮기지 않는다")
         self.assertIn("SSL_CERT_FILE=/ca.crt", create); self.assertIn("/ca/trust.crt:/ca.crt:ro", create)   # 인증서 검증을 끄지 않는다
@@ -90,9 +91,45 @@ class T(unittest.TestCase):
 
     def test_inference_url(self):
         self.f.stdout = "127.0.0.1:40001\n"
-        self.assertEqual(S.inference_url(), "https://localhost:40001")
+        self.assertEqual(S.inference_url(), "https://host.docker.internal:40001")   # 인증서 SAN 의 이름(localhost 아님)
         self.assertEqual(self.last(), ["docker", "port", "P1-inf-model-serving-net-1", "443/tcp"])
         self.f.rc = 1; self.assertIsNone(S.inference_url())
+
+    def test_crash_signals_the_pid_from_the_host_pid_namespace(self):
+        self._client(); self.f.by_verb = {"inspect": "4242\n"}
+        S.crash("P1-survey-service-1")
+        insp, run = self.f.calls[-2][0], self.f.calls[-1][0]
+        self.assertEqual(insp, ["docker", "inspect", "-f", "{{.State.Pid}}", "P1-survey-service-1"])
+        self.assertEqual(run[:2], ["docker", "run"]); self.assertNotIn("kill", run[:3])   # docker kill 은 사람이 멈춘 것으로 기록돼 restart 정책이 돌지 않는다
+        for a, b in (("--pid", "host"), ("--cap-add", "KILL"), ("--cap-drop", "ALL"), ("--network", "none")): self.assertEqual(run[run.index(a) + 1], b)
+        self.assertEqual(run[-1], "import os; os.kill(4242, 9)")
+        self.f.by_verb = {"inspect": "0\n"}
+        with self.assertRaises(RuntimeError): S.crash("P1-survey-service-1")
+
+    def test_inference_open_verifies_the_san_name_and_connects_to_the_published_address(self):
+        # 실제 TLS: SAN 이 host.docker.internal 하나인 인증서로 127.0.0.1 에 서버를 띄운다. 이름 검증을 끄지 않고, 다른 이름(localhost)은 실패해야 한다
+        import http.server, ssl, threading, urllib.request
+        d = pathlib.Path(self.tmp.name)
+        r = subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "1", "-subj", "/CN=host.docker.internal",
+                            "-addext", "subjectAltName=DNS:host.docker.internal", "-keyout", str(d / "k.pem"), "-out", str(d / "c.pem")], capture_output=True)
+        if r.returncode != 0: self.skipTest("openssl 로 시험 인증서를 만들지 못했다")
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200); self.end_headers(); self.wfile.write(self.headers.get("Host", "").encode())
+            def log_message(self, *a): pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(str(d / "c.pem"), str(d / "k.pem"))
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start(); self.addCleanup(srv.shutdown)
+        port = srv.server_address[1]
+        S.init(project="P1", secrets=self.tmp.name, gw_ca=str(d / "c.pem"), docker="docker", inference_project="P1-inf", root="/r", run=self.f)
+        self.f.stdout = f"0.0.0.0:{port}\n"
+        url = S.inference_url(); self.assertEqual(url, f"https://host.docker.internal:{port}")
+        with S.inference_open(urllib.request.Request(url + "/x"), timeout=10) as resp:
+            self.assertEqual(resp.status, 200); self.assertEqual(resp.read().decode(), f"host.docker.internal:{port}")
+        with self.assertRaises(Exception) as e:   # 같은 서버를 localhost 로 부르면 이름 검증이 실패한다(검증이 켜져 있다)
+            S.inference_open(urllib.request.Request(f"https://localhost:{port}/x"), timeout=10)
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", str(e.exception))
 
     def test_gw_client_account_header_and_user(self):
         # 사람 계정은 OIDC 로그인 세션 쿠키(U82): 로그인은 session_cookie 가 하므로 여기서는 대신한다. 기본 주소는 밖에서 보이는 주소(GATEWAY_PUBLIC_URL)다

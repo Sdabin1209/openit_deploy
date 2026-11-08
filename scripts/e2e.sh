@@ -544,7 +544,7 @@ NEED+=("볼륨 삭제(재난을 흉내: 영역 데이터 볼륨, 백업 저장�
 PGWS=$(port_of "${PROJECT}-gateway-1" 8443)   # 스택을 다시 만들었으니 게이트웨이 호스트 포트를 다시 읽는다
 PORTS="{\"gw\":$PGWS,\"ms\":$IPORT}"
 chk_dep "단계 1~8" "복구한 데이터를 실제 서비스의 HTTP로 다시 읽는다(문항 2버전·해시, 같은 Trace 재전송=DUPLICATE, 모델 패키지·어댑터 해시, 활성 포인터)" \
-  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT"
+  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_verify_restore.py" --secrets "$SECRETS_DIR" --ports "$PORTS" --work "$W/work" --run-id e2e-test --project "$PROJECT" --docker "$DOCKER" --root "$DEPLOY_ROOT" --gw-ca "$W/trust.crt"
 
 fi
 if has_s9 rollback; then
