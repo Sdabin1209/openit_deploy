@@ -11,7 +11,7 @@
 #   scripts/demo.sh status | reset [--stop-before-approval] | down [--purge-cache]   (모델 캐시 볼륨은 down 해도 남는다. --purge-cache 로 명시적으로 지운다)
 # 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 설정값 overlay(test/compose.sandbox.yaml, 위험 감지 시험 규칙 test/compose.risk-rules.yaml)만 더한다(5f 의 위험 감지 단계가 그 규칙 파일을 전제로 한다. 운영 compose 에는 없다: scripts/test_risk_rules_file.py). 모델만 E2E 의 fake 대신 mimic 이다. 시험용 문(내부 서비스 호스트 포트)은 없다: 데모의 단계 코드도 게이트웨이(HTTPS)로만 들어간다(docs/adr/0050).
 # 표준 `docker`만 쓴다. 컨테이너의 호스트 포트는 Docker가 배정한다(고정 포트 없음). 임시 레지스트리도 빈 포트를 고른다.
-# 환경 변수: DEMO_PROJECT(기본 deploy-demo, 반드시 deploy-demo 로 시작), DEMO_BIND(gateway 호스트 바인드, 기본 127.0.0.1; 다른 PC에서 보려면 0.0.0.0 -- HTTP·기본 인증이라 시험 때만),
+# 환경 변수: DEMO_PROJECT(기본 deploy-demo, 반드시 deploy-demo 로 시작), DEMO_BIND(gateway 호스트 바인드, 기본 127.0.0.1; 다른 PC에서 보려면 0.0.0.0 -- 다른 PC 도 IP 가 아니라 GATEWAY_HOSTS 이름으로 연다(SNI, ADR 0040). 시험 때만),
 #           DEMO_REGISTRY_BIND(레지스트리 바인드, 기본 127.0.0.1; 데몬이 닿지 못하면 사용자가 0.0.0.0 으로 바꾼다 -- 끝나면 down).
 set -uo pipefail
 DEPLOY_NO_DOCKER=1   # 사용법·인자 검사는 Docker 없이도 동작한다. 데몬 감지는 그 뒤에 한다
