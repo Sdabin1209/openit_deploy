@@ -1522,7 +1522,7 @@ services:
     cpus: 1.0
     pids_limit: 256
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
-    volumes: [pki-root:/etc/openit/pki:ro]
+    volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]   # 이미지 잡 선언 needs 에 gate-data(릴리스 묶음 releases/ + 덤프 임시 폴더 .backup-stage). 볼륨 대신 tmpfs 를 두면 root 755 라 비root(gate)가 못 쓰고(PermissionError) 묶음 파일도 백업에서 빠진다(2026-11-08 E2E 단계 9)
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
     environment: {<<: *commonenv, GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/gate/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gate-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gate-repo-password}
     secrets: [db-gate-dsn, backup-gate-credentials, backup-gate-repo-password]
@@ -1532,7 +1532,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp"]
 
   job-release-gate-restore:   # release-gate 영역의 복구 잡(RUNTIME R10.1): 사람이 필요할 때 run-job.sh 로 돌린다(주기 없음). 영역 pod 안에서 돌아 영역 게이트웨이 출구로 backup-store 에서 읽는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 복구 잡에서 온다
     profiles: ["jobs"]
@@ -1540,7 +1540,7 @@ services:
     cpus: 1.0
     pids_limit: 256
     image: ${DEPLOY_REGISTRY:?state/registry.env}/openit/release-gate@${RELEASE_GATE_DIGEST:?locks/images.lock}
-    volumes: [pki-root:/etc/openit/pki:ro]
+    volumes: [gate-data:/data, pki-root:/etc/openit/pki:ro]   # 이미지 잡 선언 needs 에 gate-data(릴리스 묶음 releases/ + 덤프 임시 폴더 .backup-stage). 볼륨 대신 tmpfs 를 두면 root 755 라 비root(gate)가 못 쓰고(PermissionError) 묶음 파일도 백업에서 빠진다(2026-11-08 E2E 단계 9)
     command: ["sh", "-c", "echo 잡 정의 덧씌우기 파일(compose.jobs.yaml, scripts/gen-jobs.py)이 없어 실행하지 않는다 >&2; exit 78"]
     environment: {<<: *commonenv, GATE_DATABASE_URL_FILE: /run/secrets/db-gate-dsn, SSL_CERT_FILE: /etc/openit/pki/root_ca.crt, OPENIT_BACKUP_URL: "https://backup-store/gate/", OPENIT_BACKUP_CREDENTIALS_FILE: /run/secrets/backup-gate-credentials, OPENIT_BACKUP_REPO_PASSWORD_FILE: /run/secrets/backup-gate-repo-password}
     secrets: [db-gate-dsn, backup-gate-credentials, backup-gate-repo-password]
@@ -1550,7 +1550,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp"]
 
   job-model-registry-backup:   # model-registry 영역(model-registry 이미지)의 백업 잡(RUNTIME R10.1, DATA_OWNERSHIP): 영역 pod 안에서 돌아 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 를 쓴다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 backup 잡에서 온다(S10)
     profiles: ["jobs"]

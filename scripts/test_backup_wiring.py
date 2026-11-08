@@ -63,6 +63,12 @@ def check(S):
         readers = [n for n, sv in S.items() if any((x if isinstance(x, str) else x.get("source")) == f"backup-{k}-credentials" for x in sv.get("secrets", []))]
         if sorted(readers) != sorted([AREAS[k][0], AREAS[k][0].replace("-backup", "-restore"), "backup-store"]):
             errs.append(f"{k} 자격을 읽는 서비스가 그 영역 백업·복구 잡과 저장소뿐이 아니다: {readers}")
+    # 잡이 영역 데이터 볼륨을 필요로 하면(이미지 잡 선언 needs, ContainerInputs writable persist) 서비스와 같은 볼륨을 같은 경로에 둔다.
+    # 2026-11-08 E2E 단계 9: job-release-gate-backup 이 gate-data 대신 tmpfs /data(root 755)를 받아 비root 잡이 PermissionError, 묶음 파일도 빠졌다
+    for job in ("job-release-gate-backup", "job-release-gate-restore"):
+        j = S.get(job) or {}
+        if "gate-data:/data" not in (j.get("volumes") or []) or "/data" in (j.get("tmpfs") or []):
+            errs.append(f"{job}: 릴리스 묶음 볼륨 gate-data 를 /data 에 두어야 한다(tmpfs /data 금지)")
     cmd = bs.get("command") or []
     if "--append-only" in cmd:
         errs.append("백업 저장소는 append-only 가 아니다(영역 백업 잡이 forget --prune 으로 보존을 지킨다)")
@@ -96,6 +102,11 @@ class T(unittest.TestCase):
     def test_mutation_shared_network_is_caught(self):
         m = copy.deepcopy(S0)
         m["survey-service-net"]["networks"]["backup-qa"] = {}
+        self.assertTrue(check(m))
+
+    def test_mutation_gate_backup_tmpfs_data_is_caught(self):
+        m = copy.deepcopy(S0)
+        m["job-release-gate-backup"]["volumes"] = ["pki-root:/etc/openit/pki:ro"]; m["job-release-gate-backup"]["tmpfs"] = ["/tmp", "/data"]
         self.assertTrue(check(m))
 
 
