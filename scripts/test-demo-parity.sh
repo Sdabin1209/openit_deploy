@@ -34,6 +34,7 @@ ms_a, ms_b = prod["services"]["model-serving"], demo["services"]["model-serving"
 assert ms_a["image"] == ms_b["image"]   # 같은 model-runtime 이미지. 백엔드만 mimic (모델 대역, 허용 차이 1)
 PY
 ok "데모는 E2E 와 같은 시험 위험 규칙 overlay 를 쓰고(5f 전제), 단계 코드에 추론 백엔드를 알린다(--model-backend)" bash -c 'grep -q "test/compose.risk-rules.yaml" "$0" && grep -q -- "--model-backend" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
+ok "demo.sh prepare 는 단계가 이미 돈 스택(work/state.json)을 환경을 만지기 전에 거부한다" bash -c 'awk "/^  prepare\)/{f=1} f&&/work\/state.json/{a=NR} f&&/^    env_demo/{b=NR; exit} END{exit !(a&&b&&a<b)}" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
 ok "demo.sh 는 기기 토큰 값을 출력하지 않는다(안내문은 파일 경로만)" bash -c '! grep -nE "cat .*devices/|echo .*devices/" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
 echo; [ "$FAILS" = 0 ] && echo "test-demo-parity: 전부 통과" || echo "test-demo-parity: 실패 $FAILS건"
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)

@@ -318,8 +318,10 @@ case "$CMD" in
     echo "== 모델 패키지 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화 -> model-serving 적재 (E2E 단계 코드 재사용)"
     run_steps "demo_swap" "${SWAPX[@]}" || die "어댑터 교체 실패 (원인 진단: scripts/demo.sh diag). 활성화 전 단계에서 멈췄다면 활성 릴리스는 그대로다"
     echo "== 교체 후 활성 릴리스"; run_steps "demo_active" || true ;;
-  prepare) # 떠 있는 데모 스택에 시험용 릴리스 준비만 다시 한다(up 의 같은 단계. 이미지 빌드·기동을 되풀이하지 않는다)
+  prepare) # 새 데모 스택에 시험용 릴리스 준비만 한다(up 의 같은 단계. 이미지 빌드·기동을 되풀이하지 않는다). 단계가 이미 돈 스택은 거부한다(reset 을 쓴다)
     [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    # 왜 거부하나: 단계 1 은 새 스택에 문항 세트·초안을 만든다(같은 문진표 ID 의 초안이 이미 있으면 FAIL: 2026-11-08 prepare 재실행). 단계 상태 파일(work/state.json)이 있으면 이미 단계가 돈 스택이다 -> 조용히 실패하는 대신 먼저 알린다
+    [ ! -s "$W/work/state.json" ] || die "이 데모 스택은 시험용 릴리스 준비(단계 1~)가 이미 돌았다(상태 $W/work/state.json). prepare 는 새 스택에서 한 번만 돈다(단계 1 이 문항 세트를 새로 만든다). 처음부터 다시: scripts/demo.sh reset"
     env_demo; rm -f "$W/tool-image.txt"   # 도구 이미지는 지금 HEAD 로 다시 고른다
     run_steps "1,2,3,demo4,6" || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"
     guide ;;
