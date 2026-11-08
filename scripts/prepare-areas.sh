@@ -22,13 +22,13 @@ while [ $# -gt 0 ]; do case "$1" in
   -*) echo "알 수 없는 인자: $1 (사용: prepare-areas.sh [--list] [--ws DIR] [--no-self] [영역...])" >&2; exit 2;;
   *) ONLY+=("$1"); shift;; esac; done
 # 새 머신: deploy 자신의 .venv(계약 패키지 포함)가 영역 목록 읽기(areas.py)보다 먼저 있어야 한다. 없으면 여기서 만든다(prepare-host.sh venv, 멱등). --no-self 는 시험용이라 만들지 않는다
-if [ $SELF = 1 ] && [ ! -x "$DEPLOY_ROOT/.venv/bin/python" ]; then
-  echo "== deploy (.venv 가 없어 먼저 만든다)"; bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || { echo "prepare-areas: deploy .venv 를 만들지 못했다" >&2; exit 1; }
+if [ $SELF = 1 ] && ! "$DEPLOY_ROOT/.venv/bin/python" -c "import boundary_contracts" 2>/dev/null; then   # .venv 가 없거나 계약 패키지만 없는 옛 상태도 스스로 복구한다
+  echo "== deploy (.venv 또는 계약 패키지가 없어 먼저 준비한다)"; bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || { echo "prepare-areas: deploy .venv 를 만들지 못했다" >&2; exit 1; }
   DEPLOY_PY="$DEPLOY_ROOT/.venv/bin/python"
 fi
 AF="${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}"
 if ! ALL=$("$DEPLOY_PY" "$DEPLOY_ROOT/scripts/areas.py" --file "$AF" --kind python,node,library); then
-  echo "prepare-areas: 영역 목록을 읽지 못했다($AF). 먼저 head 를 clone 하고 head/setup.sh 를 실행한다(docs/SETUP.md 1단계)" >&2; exit 1; fi
+  echo "prepare-areas: 영역 목록을 읽지 못했다($AF). head 가 없으면 먼저 head/setup.sh(docs/SETUP.md 1단계). 있다면 위 오류(deploy .venv·계약 패키지)를 본다" >&2; exit 1; fi
 if [ ${#ONLY[@]} -gt 0 ]; then
   TARGETS=(); WANT_SELF=0
   for n in "${ONLY[@]}"; do

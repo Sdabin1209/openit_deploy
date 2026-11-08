@@ -15,7 +15,7 @@ bash scripts/doctor.sh             # 3. 사전 점검 (FAIL이면 안내된 해�
 bash scripts/e2e.sh                # 4. 전체 시험 (D절)
 ```
 
-`prepare-areas.sh`는 `head/shared/areas.json`의 python/node/library 영역마다 `<영역>/scripts/setup-env.sh`를 차례로 실행하고 영역별 성공/실패/스크립트없음/소요시간 표를 낸다(하나 실패해도 나머지는 계속, 하나라도 실패하면 종료 코드 1, 멱등). `--list`는 대상만 보이고, 영역 이름을 주면 그 영역만 한다. deploy 자신의 `.venv`는 `prepare-host.sh venv`(requirements.txt 설치, e2e.sh도 부르는 같은 코드)를 그대로 불러 준비한다. deploy의 시험은 unittest라 pytest가 필요 없다.
+`prepare-areas.sh`는 deploy 의 `.venv`(계약 패키지 boundary-contracts 를 기준표 태그로 설치, link 와 같은 방식)가 없거나 계약 패키지가 없으면 먼저 `prepare-host.sh venv`로 준비한다. 설치 위치를 바꾸려면 `LINK_SOURCE`·`BC_SOURCE`(예: `git+file:///.../link`, `git+file:///.../boundary-contracts`)를 준다. `prepare-areas.sh`는 `head/shared/areas.json`의 python/node/library 영역마다 `<영역>/scripts/setup-env.sh`를 차례로 실행하고 영역별 성공/실패/스크립트없음/소요시간 표를 낸다(하나 실패해도 나머지는 계속, 하나라도 실패하면 종료 코드 1, 멱등). `--list`는 대상만 보이고, 영역 이름을 주면 그 영역만 한다. deploy 자신의 `.venv`는 `prepare-host.sh venv`(requirements.txt 설치, e2e.sh도 부르는 같은 코드)를 그대로 불러 준비한다. deploy의 시험은 unittest라 pytest가 필요 없다.
 
 ## 0. 필요한 것 한눈에
 
