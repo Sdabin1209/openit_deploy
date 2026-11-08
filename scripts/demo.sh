@@ -112,6 +112,7 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
   local only=$1; shift
   local msx=(); [ -z "$EXT" ] || msx=(--ms-url "$EXT" --ms-token-file "$INFERENCE_TOKEN_FILE")
   [ $LLM = 0 ] || msx+=(--llm-package "$W/llm-package")
+  [ -n "$EXT" ] || msx+=(--inference-project "$P")   # 데모는 model-serving 이 같은 프로젝트 안에 있다(e2e_sandbox 기본 <P>-inf 는 e2e.sh 의 별도 호스트 역할)
   local img; img=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     echo "{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\",\"dataset-store\":\"$DEPLOY_REGISTRY/openit/dataset-store@$DATASET_STORE_DIGEST\"}" )
   # 단계 코드는 제품에 e2e_sandbox 로만 닿고, 그 클라이언트는 deploy 도구 이미지다(e2e.sh 와 같은 준비, docs/adr/0048). 이 데모에서 한 번 빌드해 둔다

@@ -69,6 +69,7 @@ ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기�
 ap.add_argument("--gw-ca", default="", help="gateway(HTTPS)의 내부 CA 루트 인증서 파일(시험용 CA). 있으면 gw 주소는 https 이고 이 CA만 신뢰한다")
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
 ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: https://gpu-host). 비우면 이 프로젝트의 model-serving 컨테이너")
+ap.add_argument("--inference-project", default="", help="추론 서버의 compose 프로젝트 이름(e2e_sandbox). 기본 <프로젝트>-inf(e2e.sh 의 별도 호스트 역할). 데모는 같은 프로젝트에 model-serving 이 있어 <프로젝트>를 준다")
 ap.add_argument("--ms-container", default="", help="추론 서버 컨테이너 이름(멈춤·재시작 시험용). 기본 <프로젝트>-model-serving-1")
 ap.add_argument("--out-file", default="", help="compose 밖 호출자(다른 호스트 역할의 추론 서버)에게 준 OUT-FILE 폴더(RUNTIME R1.5: root_ca.crt, hosts, SHA256SUMS). e2e.sh 가 export-out-files.sh 로 만든다. 단계 5L 이 읽는다")
 ap.add_argument("--ms-token-file", default="", help="외부 추론 서버의 호출자 토큰 파일(내용이 토큰 하나). 비우면 이 구성이 만든 토큰")
@@ -78,7 +79,7 @@ ap.add_argument("--changed-only", action="store_true", help="입력 해시가 �
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
 import e2e_sandbox as SB   # 샌드박스 접근 계층(D123): 단계는 게이트웨이·docker exec/run·다른 호스트 역할 컨테이너로만 닿는다
-SB.init(project=a.project, secrets=a.secrets, gw_ca=a.gw_ca, docker=a.docker, root=a.root, secrets_gid=os.environ.get("SECRETS_GID", ""))   # exec_py 의 --group-add: 비밀 파일(640)의 그룹. lib.sh 가 내보낸다(e2e.sh 가 source)
+SB.init(project=a.project, secrets=a.secrets, gw_ca=a.gw_ca, docker=a.docker, root=a.root, inference_project=a.inference_project, secrets_gid=os.environ.get("SECRETS_GID", ""))   # exec_py 의 --group-add: 비밀 파일(640)의 그룹. lib.sh 가 내보낸다(e2e.sh 가 source)
 import ssl
 if a.gw_ca:   # 게이트웨이 호출(urlopen)이 HTTPS 이고 이 CA 만 신뢰한다. boundary_contracts 클라이언트는 gateway 를 거치지 않아 영향 없다
     urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=a.gw_ca))))
