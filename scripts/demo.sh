@@ -316,6 +316,11 @@ case "$CMD" in
     echo "== 모델 패키지 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화 -> model-serving 적재 (E2E 단계 코드 재사용)"
     run_steps "demo_swap" "${SWAPX[@]}" || die "어댑터 교체 실패 (원인 진단: scripts/demo.sh diag). 활성화 전 단계에서 멈췄다면 활성 릴리스는 그대로다"
     echo "== 교체 후 활성 릴리스"; run_steps "demo_active" || true ;;
+  prepare) # 떠 있는 데모 스택에 시험용 릴리스 준비만 다시 한다(up 의 같은 단계. 이미지 빌드·기동을 되풀이하지 않는다)
+    [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    env_demo; rm -f "$W/tool-image.txt"   # 도구 이미지는 지금 HEAD 로 다시 고른다
+    run_steps "1,2,3,demo4,6" || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"
+    guide ;;
   activate)
     [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
     env_demo; run_steps "demo_activate,6" || die "활성화 실패(/admin/ 에서 먼저 승인했는지 확인)"

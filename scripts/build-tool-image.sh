@@ -20,7 +20,12 @@ cp "$bcw" "$CTX/wheels/"
 cat > "$CTX/Dockerfile" <<DOCKER
 FROM ${UTIL}
 COPY wheels /wheels
-RUN pip install --no-cache-dir --no-deps /wheels/*.whl && pip install --no-cache-dir 'jsonschema>=4.10' && rm -rf /wheels  # own-venv: 이미지 안의 pip, deploy venv 가 아니다. link 의 계약 의존은 git URL 이라 --no-deps 로 같은 wheel(위)을 쓰고 계약의 PyPI 의존(jsonschema)만 따로 받는다
+# own-venv: 이미지 안의 pip, deploy venv 가 아니다. link 의 계약 의존은 git URL 이라 --no-deps 로 같은 wheel(위)을 쓴다.
+# 나머지 의존은 손으로 적지 않고 설치한 wheel 의 메타데이터(Requires-Dist)에서 읽어 받는다: 손으로 적은 'jsonschema' 는 계약의 [format-nongpl] 추가 의존을 빠뜨려 date-time·uri 검사기 없음으로 단계 1 이 멈췄다(데모 7회차)
+RUN pip install --no-cache-dir --no-deps /wheels/*.whl \\
+ && python -c "import importlib.metadata as m; print('\\n'.join(r for d in ('boundary-contracts','openit-link') for r in (m.requires(d) or []) if ' @ ' not in r and 'extra ==' not in r))" > /tmp/req.txt \\
+ && pip install --no-cache-dir -r /tmp/req.txt && rm -rf /wheels /tmp/req.txt \\
+ && python -c "from boundary_contracts.schemas_api import format_checker; format_checker()"   # 이미지 안에서 계약의 형식 검사기가 모두 있는지 빌드 때 확인한다
 USER 10001:10001
 LABEL io.openit.service=deploy-tool io.openit.owner=deploy io.openit.revision=${rev} io.openit.contracts.boundary=${DEPLOY_BC_TAG} io.openit.link=${DEPLOY_LINK_TAG}
 DOCKER
