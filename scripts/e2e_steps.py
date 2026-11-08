@@ -1145,7 +1145,9 @@ def step5o():
     idx, turns = 0, 0
     while ff["order"][idx] != "Q8_1":
         q = ff["order"][idx]; qt = types.get(q)   # 칸이 없는 문항(Q3, Q4_1 …)은 값 없이 NEXT 만 낸다
-        text = "3일이요" if qt == "integer" else "네 있어요"
+        key = ff["slots"][q][0]["key"] if qt else ""
+        # 왜: 부정형 칸(does_not_drink)에 "네 있어요"는 뜻이 갈린다 — mimic 0.12.5 는 칸 뜻대로 False 로 채운다(ADR 0036). 진행 계산이 True 를 가정하므로 뜻이 분명한 발화를 쓴다
+        text = "3일이요" if qt == "integer" else ("네 안 마셔요" if key.endswith(".does_not_drink") else "네 있어요")
         turns += 1; c, rp = _c2_turn(sid, f"rng-{turns}", text); assert c == 200, (q, c, rp); validate_survey("FrontendInput", rp)
         if qt: answers[ff["slots"][q][0]["key"]] = 3 if qt == "integer" else True
         idx += 1
