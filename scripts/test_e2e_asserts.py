@@ -63,6 +63,20 @@ class T(unittest.TestCase):
             self.assertIsNone(pat.search(src), f"{f} 가 이웃 영역 내부 모듈을 import 한다: {pat.search(src) and pat.search(src).group(0)}")
             self.assertNotIn("대조 불가(", src, f"{f}: 예외를 삼키고 대조 불가로 넘어가는 경로")
 
+    def test_first_answer_exception_is_independent(self):
+        slots = {"Q1.D01": [{"key": "Q1.D01.diagnosed"}]}   # 흐름 파일 slots: Q3 는 칸이 없다
+        v1 = [{"key": "Q1.D01.diagnosed"}]
+        self.assertEqual(ea.check_first_answer("Q1.D01", "Q1.D01", v1, "mimic", slots, "x", "다음"), "valued")
+        self.assertEqual(ea.check_first_answer("Q3", "Q3", [], "mimic", slots, "감사합니다. 다음 문항", "다음 문항"), "slotless")
+        # 변이: 칸이 있는 A 의 첫 값이 비면 실패(mimic 이어도)
+        with self.assertRaises(AssertionError): ea.check_first_answer("Q1.D01", "Q1.D01", [], "mimic", slots, "다음", "다음")
+        with self.assertRaises(AssertionError): ea.check_first_answer("Q1.D01", "Q1.D01", [{"key": "Q9.x"}], "mimic", slots, "다음", "다음")
+        # 칸 없는 첫 문항이어도 다음 문항 문장이 없으면, 값이 저장돼 있으면 실패
+        with self.assertRaises(AssertionError): ea.check_first_answer("Q3", "Q3", [], "mimic", slots, "엉뚱", "다음 문항")
+        with self.assertRaises(AssertionError): ea.check_first_answer("Q3", "Q3", [{"key": "Q3.x"}], "mimic", slots, "다음 문항", "다음 문항")
+        # fake 는 예외가 없다(원래 단언 그대로)
+        with self.assertRaises(AssertionError): ea.check_first_answer("Q3", "Q3", [], "fake", slots, "다음 문항", "다음 문항")
+
     def test_unchanged(self):
         b = {"survey-service": ("id1", "t1"), "gateway": ("id2", "t2")}
         self.assertTrue(ea.check_unchanged(b, dict(b), list(b)))

@@ -18,11 +18,16 @@ mut() { # mut <설명> <대상> <바꿀 모드> <출력에 있어야 할 말>
   { [ $r = 1 ] && grep -q "$4" <<<"$out"; } && ok "변이: $1 -> 실패" || no "변이: $1 가 잡히지 않았다(rc=$r): $(tail -2 <<<"$out")"; }
 mut "db-accounts 파일 644" "$S/db-accounts/survey-db/app" 644 "db-accounts/survey-db/app"
 mut "db-urls 파일 600(서비스가 못 읽는다)" "$S/db-urls/survey-db/app/SURVEY_DATABASE_URL" 600 "db-urls/survey-db/app/SURVEY_DATABASE_URL"
+mut "db-urls 폴더(루트) 700(그룹이 못 들어간다)" "$S/db-urls" 700 "db-urls/ 폴더"
+mut "db-accounts 폴더(루트) 770(그룹 쓰기)" "$S/db-accounts" 770 "db-accounts/ 폴더"
+mut "db-accounts/survey-db 폴더 700" "$S/db-accounts/survey-db" 700 "db-accounts/survey-db/ 폴더"
 mut "db-urls 폴더 755" "$S/db-urls/survey-db" 755 "db-urls/survey-db/ 폴더"
 mut "device-ca.key 644" "$S/device-ca.key" 644 "device-ca.key"
 mut "기기 키 640" "$S/device-certs/e2e.key" 640 "device-certs/e2e.key"
 mut "device-ca.pem 666" "$S/device-ca.pem" 666 "device-ca.pem"
 mut "idp 시험 암호 600" "$I/op" 600 "idp-users-secrets/op"
+out=$(SECRETS_GID=$((G+7777)) IDP_USERS_SECRETS="$I" bash "$HERE/check-secret-perms.sh" "$S" 2>&1); r=$?
+{ [ $r = 1 ] && grep -q "db-urls/ 폴더 그룹" <<<"$out" && grep -q "db-accounts/survey-db/ 폴더 그룹" <<<"$out"; } && ok "변이: SECRETS_GID 와 다른 그룹(DB 폴더, 루트 포함) -> 실패" || no "폴더 그룹 어긋남이 잡히지 않았다"
 out=$(SECRETS_GID=$((G+7777)) IDP_USERS_SECRETS="$I" bash "$HERE/check-secret-perms.sh" "$S" 2>&1); r=$?
 { [ $r = 1 ] && grep -q "db-accounts/survey-db/app 그룹" <<<"$out" && grep -q "idp-users-secrets/op 그룹" <<<"$out"; } && ok "변이: SECRETS_GID 와 다른 그룹(DB 비밀·idp 암호) -> 실패" || no "그룹 어긋남이 잡히지 않았다"
 exit $rc

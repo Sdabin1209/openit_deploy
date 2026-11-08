@@ -67,7 +67,7 @@ ap.add_argument("--work", required=True, help="이번 실행의 임시 작업 �
 ap.add_argument("--run-id", default="e2e-test")
 ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기까지만 만든다(사람이 /admin/ 에서 승인)")
 ap.add_argument("--gw-ca", default="", help="gateway(HTTPS)의 내부 CA 루트 인증서 파일(시험용 CA). 있으면 gw 주소는 https 이고 이 CA만 신뢰한다")
-ap.add_argument("--model-backend", default="fake", help="추론 서버의 백엔드 이름(서버 /v1/info 의 backend 와 같아야 한다: 다르면 5단계가 FAIL). E2E 는 fake. 데모(scripts/demo.sh)는 mimic(사람이 읽는 문장), --llm 데모는 vllm. fake 의 고정 출력·흐름 파일 설정(정정·값 규칙·되묻기)에 기대는 단계는 fake 가 아니면 BLOCKED 로 남는다(FAKE_ONLY)")
+ap.add_argument("--model-backend", default="fake", help="추론 서버의 백엔드 이름(서버 /v1/info 의 backend 와 같아야 한다: 다르면 5단계가 FAIL). E2E 는 fake. 데모(scripts/demo.sh)는 mimic, --llm 데모는 vllm. fake 가 아닌 백엔드는 응답 문장을 문진표(I1)의 다음 문항 문장으로 대조한다(fake 는 고정 문장)")
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
 ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: https://gpu-host). 비우면 이 프로젝트의 model-serving 컨테이너")
 ap.add_argument("--inference-project", default="", help="추론 서버의 compose 프로젝트 이름(e2e_sandbox). 기본 <프로젝트>-inf(e2e.sh 의 별도 호스트 역할). 데모는 같은 프로젝트에 model-serving 이 있어 <프로젝트>를 준다")
@@ -111,11 +111,6 @@ STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
 def rec(step, status, detail):
     RESULTS.append((step, status, detail)); print(f"  [{status}] {detail}", flush=True)
-def fake_only(step, what):
-    """fake 백엔드의 고정 출력·흐름 파일 설정에 기대는 단계(가짜 A 의 corrections·fields·reasks, 고정 문장)는 다른 백엔드에서 성립하지 않는다. 느슨한 기대로 바꾸지 않고 BLOCKED 로 남긴다. 반환: True 면 건너뛴다."""
-    if BACKEND == "fake": return False
-    rec(step, "BLOCKED", f"추론 서버 백엔드가 {BACKEND} 라서 건너뜀: {what}은 fake 백엔드의 고정 출력·흐름 파일 설정에 의존한다(E2E 가 fake 로 확인한다, E2E_RESULTS.md)")
-    return True
 _BANKS = {}
 def bank_sentences(set_id):
     """문진표 본문(I1 읽기, release-gate 컨테이너 안)에서 문항 순서대로 [(question_id, question_sentence)]. fake 가 아닌 백엔드(데모 mimic)의 응답에 문진표의 다음 문항 문장이 들어 있는지 정확히 대조하는 기대값이다(문장 틀은 model-runtime 의 것이라 단정하지 않는다)."""
@@ -895,7 +890,7 @@ def fake_values_check(new, tok):
     """가짜 A(칸 정의가 든 흐름 파일)가 값을 내고 건너뛰기를 적용하는지 추론 서버를 직접 불러 본다. 모델 정확성이 아니라 시험 구성의 확인이다."""
     cases = [("Q4", "아니요", "Q4.answer", False, "Q5"),          # 건너뛰기: Q4.answer == false -> Q4_1 건너뜀
              ("Q4", "네 있어요", "Q4.answer", True, "Q4_1"),
-             ("Q7", "네 안 마셔요" if BACKEND == "fake" else "네 마십니다", "Q7.does_not_drink", True, "Q8_1"),   # Q7_1, Q7_2 건너뜀. 같은 칸을 fake 는 '안 마셔요'로, mimic 은 '마십니다'로 True 를 낸다(측정 2026-11-08: mimic 은 '네 안 마셔요'·'네 마시지 않아요' -> False, '네 마십니다' -> True: 칸 이름 does_not_drink 의 뜻이 아니라 동사의 긍정/부정을 읽는다). 건너뛰기(값 True -> Q7_1·Q7_2 건너뜀)가 시험 대상이라 문장만 백엔드에 맞춘다. 칸 뜻 해석은 model-runtime 의 몫이라 보고만 한다
+             ("Q7", "네 안 마셔요" if BACKEND == "fake" else "네 마십니다", "Q7.does_not_drink", True, "Q8_1"),   # Q7_1, Q7_2 건너뜀. 같은 칸을 fake 는 '안 마셔요'로, mimic 은 '마십니다'로 True 를 낸다(측정 2026-11-08: mimic 은 '네 안 마셔요'·'네 마시지 않아요' -> False, '네 마십니다' -> True: 칸 이름 does_not_drink 의 뜻이 아니라 동사의 긍정/부정을 읽는다). 건너뛰기(값 True -> Q7_1·Q7_2 건너뜀) 시험을 위한 시험 대역 맞춤이다: mimic 이 칸의 뜻을 맞게 읽는지(의미 정확성)는 이 시험이 보증하지 않는다. 그 해석은 model-runtime 의 몫이라 보고만 한다
              ("Q8_1", "없어요", "Q8_1.days", 0, "Q9_1"),          # Q8_2 건너뜀
              ("Q8_1", "3일이요", "Q8_1.days", 3, "Q8_2"),
              ("Q2.D01", "네 있어요", "Q2.D01.family_history", True, "Q2.D02")]
@@ -2704,10 +2699,10 @@ def step5k():
             if i == 1:
                 vals = _c2_staff("GET", f"/v1/staff/sessions/{sid}")[1]["values"]
                 firsts[sid] = vals[0]["key"] if vals else None
-                if BACKEND != "fake" and not vals:   # 흐름 파일에 칸이 없는 첫 문항(순서 B 의 Q3)은 값을 만들지 않고 다음 문항으로 넘어간다: 응답에 문진표의 둘째 문항 문장이 든다
-                    nx = bank_sentences(QS if sid == sa else QSB)[1]; assert nx[1] in str(r.get("response_text")), ("칸 없는 첫 문항 뒤 응답에 문진표의 다음 문항 문장이 없다", nx, str(r.get("response_text"))[:160]); firsts[sid] = want
-                else:
-                    assert firsts[sid] and firsts[sid].startswith(want), (f"첫 문항이 {want} 가 아니다", "기기 A(배치 문진표)" if sid == sa else "기기 B(순서 B)", [v["key"] for v in vals][:3], "응답:", str(r.get("response_text"))[:120])
+                # 예외는 시험 입력(흐름 파일 slots)과 문진표(I1)에서 독립적으로 정한다(EA.check_first_answer): 결과가 비었다는 이유로 면제하지 않는다
+                bk = bank_sentences(QS if sid == sa else QSB)
+                EA.check_first_answer(bk[0][0], want, vals, BACKEND, json.loads((ROOT / "test/fake-model/question_flow.json").read_text(encoding="utf-8"))["slots"], r.get("response_text"), bk[1][1], "기기 A" if sid == sa else "기기 B")
+                firsts[sid] = want
             cs, stt = state_dk(tok, sid)
             if cs == 200 and stt["state"] == "ENDED": break
         else:

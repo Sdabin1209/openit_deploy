@@ -35,6 +35,18 @@ assert ms_a["image"] == ms_b["image"]   # 같은 model-runtime 이미지. 백엔
 PY
 ok "데모는 E2E 와 같은 시험 위험 규칙 overlay 를 쓰고(5f 전제), 단계 코드에 추론 백엔드를 알린다(--model-backend)" bash -c 'grep -q "test/compose.risk-rules.yaml" "$0" && grep -q -- "--model-backend" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
 ok "demo.sh prepare 는 단계가 이미 돈 스택(work/state.json)을 환경을 만지기 전에 거부한다" bash -c 'awk "/^  prepare\)/{f=1} f&&/work\/state.json/{a=NR} f&&/^    env_demo/{b=NR; exit} END{exit !(a&&b&&a<b)}" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
+# 추론 서버 인자 조립(msx_build)의 행동: 로컬 mimic·로컬 vllm(--llm)·외부 mimic·외부 vllm 모두 --model-backend 가 있고 값이 맞다. demo.sh 에서 함수만 꺼내 실행한다(변이: 조립에서 --model-backend 를 빼면 실패한다)
+msx_case() { # msx_case <demo.sh 경로> <LLM> <EXT> <DEMO_MODEL_BACKEND> <기대 백엔드>
+  local f=$1; shift
+  bash -c 'eval "$(sed -n "/^msx_build() {/,/^}/p" "$1")"; LLM=$2 EXT=$3 DEMO_MODEL_BACKEND=$4 INFERENCE_TOKEN_FILE=/t W=/w P=p; msx=(); msx_build; printf "%s\n" "${msx[@]}"' _ "$f" "$@" > "$T/msx.out" 2>&1 || return 1
+  awk -v want="$4" 'prev=="--model-backend"{got=$0} {prev=$0} END{exit !(got==want)}' "$T/msx.out"
+}
+cp "$DEPLOY_ROOT/scripts/demo.sh" "$T/demo.mut.sh"; sed -i 's/msx=(--model-backend "[^)]*)/msx=()/' "$T/demo.mut.sh"
+ok "추론 인자: 로컬 mimic 은 --model-backend mimic" msx_case "$DEPLOY_ROOT/scripts/demo.sh" 0 "" "" mimic
+ok "추론 인자: --llm 은 --model-backend vllm" msx_case "$DEPLOY_ROOT/scripts/demo.sh" 1 "" "" vllm
+ok "추론 인자: 외부 mimic 은 --ms-url 이 있어도 --model-backend mimic" msx_case "$DEPLOY_ROOT/scripts/demo.sh" 0 https://x "" mimic
+ok "추론 인자: 외부 vllm(DEMO_MODEL_BACKEND=vllm)은 --model-backend vllm" msx_case "$DEPLOY_ROOT/scripts/demo.sh" 0 https://x vllm vllm
+ok "변이: 조립에서 --model-backend 를 빼면 시험이 실패한다" bash -c '! { '"$(declare -f msx_case)"'; T='"$T"'; msx_case "$0" 0 https://x "" mimic; }' "$T/demo.mut.sh"
 ok "demo.sh 는 기기 토큰 값을 출력하지 않는다(안내문은 파일 경로만)" bash -c '! grep -nE "cat .*devices/|echo .*devices/" "$0"' "$DEPLOY_ROOT/scripts/demo.sh"
 echo; [ "$FAILS" = 0 ] && echo "test-demo-parity: 전부 통과" || echo "test-demo-parity: 실패 $FAILS건"
 exit $([ "$FAILS" = 0 ] && echo 0 || echo 1)

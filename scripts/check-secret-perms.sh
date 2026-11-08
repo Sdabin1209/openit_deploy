@@ -23,9 +23,14 @@ done
 # 시험 사용자 암호(idp-users-secrets, idp-test-users.sh)는 비밀 폴더 밖(state/)에 있고 잡 컨테이너가 읽으므로 640 + 그룹 SECRETS_GID 다(IDP_USERS_SECRETS 로 위치를 바꾼다).
 # 왜 여기까지: 이 점검은 tokens/·devices/ 만 봐서 DB 비밀과 기기 CA 키가 644 로 나와도 통과했다(2026-11-08 점검 범위 구멍).
 perm_of() { stat -c %a "$1"; }
+# DB 비밀 폴더(gen-db-secrets-all.sh): 750(그룹 r-x, 쓰기·기타 없음) + 그룹 SECRETS_GID. 700 이면 그룹이 들어가지 못하고, 그룹이 다르면 group_add 한 서비스가 못 읽는다
+check_dir() { local d=$1 n=$2 m; m=$(perm_of "$d")
+  if (( 8#$m & 8#027 )) || (( (8#$m & 8#050) != 8#050 )); then echo "FAIL $n/ 폴더 모드 $m: 750 이어야 한다(그룹 읽기·진입, 쓰기·기타 접근 없음)"; bad=$((bad+1))
+  elif [ "$(stat -c %g "$d")" != "$SECRETS_GID" ]; then echo "FAIL $n/ 폴더 그룹 $(stat -c %g "$d"): SECRETS_GID($SECRETS_GID)와 다르다"; bad=$((bad+1)); fi; }
 for dir in "$D"/db-accounts "$D"/db-urls; do [ -d "$dir" ] || continue
+  check_dir "$dir" "${dir#$D/}"   # 루트 두 폴더도 본다(-mindepth 1 은 그 아래만)
   while IFS= read -r -d '' e; do n=${e#$D/}; m=$(perm_of "$e")
-    if [ -d "$e" ]; then (( 8#$m & 8#027 )) && { echo "FAIL $n/ 폴더 모드 $m: 750 이어야 한다(그룹 쓰기·기타 접근 없음)"; bad=$((bad+1)); }
+    if [ -d "$e" ]; then check_dir "$e" "$n"
     else
       if (( 8#$m & 8#027 )) || ! (( 8#$m & 8#040 )); then echo "FAIL $n 모드 $m: 컨테이너가 읽는 DB 비밀은 640 이어야 한다"; bad=$((bad+1))
       elif [ "$(stat -c %g "$e")" != "$SECRETS_GID" ]; then echo "FAIL $n 그룹 $(stat -c %g "$e"): group_add 의 gid(SECRETS_GID=$SECRETS_GID)와 다르다 -> 서비스가 못 읽는다"; bad=$((bad+1)); fi

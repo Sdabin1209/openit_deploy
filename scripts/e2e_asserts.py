@@ -36,6 +36,19 @@ def server_text_ok(text, backend, expect=None):
     return bool(t.strip()) and FAKE_TEXT not in t and (expect is None or expect in t)
 
 
+def check_first_answer(first_q, want, vals, backend, flow_slots, response_text, next_sentence, label=""):
+    """문진표 첫 문항의 첫 답 검증. 값이 저장돼 있으면 그 키가 문진표의 첫 문항(want)이어야 한다. 예외(값 없음)는 시험 입력에서 독립적으로 정한다:
+    fake 가 아닌 백엔드이고 문진표의 첫 문항이 흐름 파일 slots 에 없을 때만, 값이 없어야 하고 응답에 문진표의 다음 문항 문장이 들어 있어야 한다.
+    칸이 있는 첫 문항(A 의 Q1.D01)의 값이 비면 실패한다(결과가 비었다는 이유로 면제하지 않는다)."""
+    assert first_q.startswith(want), (f"{label} 문진표의 첫 문항이 {want} 가 아니다", first_q)
+    if backend != "fake" and first_q not in flow_slots:
+        assert not vals, (f"{label} 흐름 파일에 칸이 없는 첫 문항 {first_q} 인데 값이 저장됐다", [v["key"] for v in vals])
+        assert next_sentence in str(response_text), (f"{label} 칸 없는 첫 문항 뒤 응답에 문진표의 다음 문항 문장이 없다", next_sentence, str(response_text)[:160])
+        return "slotless"
+    assert vals and vals[0]["key"].startswith(want), (f"{label} 첫 문항이 {want} 가 아니다(저장된 값 없음 또는 다른 키)", [v["key"] for v in vals][:3])
+    return "valued"
+
+
 def check_turns_clean(replies, ready_before, ready_after, backend="fake", expects=None):
     """값이 나오는 턴들이 서비스의 검증·저장을 통과했는지. 각 응답에 실패 신호가 없고, 추론 호출이 턴마다 늘었으며,
     추론 실패·출력 형식 위반·재시도가 늘지 않았고, Trace 가 턴마다 전송 대기열에 들어갔는지(/readyz 숫자만 본다)."""

@@ -108,12 +108,17 @@ ports_json() {
   # 샌드박스(docs/adr/0050): 호스트 포트가 있는 제품 서비스는 gateway 뿐이다. 추론 서버(ms)는 제품 밖일 때만 호스트에서 닿고(--ms-url), 이 구성의 model-serving 은 호스트 포트가 없어 0 이다
   echo "{\"gw\":$(port_of $P-gateway-1 8443),\"ms\":0}"
 }
-run_steps() { # run_steps <--only 목록> [추가 인자]
-  local only=$1; shift
-  # 추론 서버 백엔드: 단계 코드의 기대(--model-backend)가 구성과 같아야 한다. 데모 기본은 mimic(demo/compose.demo-mimic.yaml), --llm 은 vllm(compose.llm.yaml). E2E 의 fake 가 아니므로 fake 의 고정 출력에 기대는 단계(5c·5o·5n 되묻기)는 단계 코드가 BLOCKED 로 남긴다
-  local msx=(--model-backend "$([ $LLM = 1 ] && echo vllm || echo mimic)"); [ -z "$EXT" ] || msx=(--ms-url "$EXT" --ms-token-file "$INFERENCE_TOKEN_FILE")
+# 단계 코드(e2e_steps.py) 인자 중 추론 서버 몫을 조립한다(msx 배열). 기대 백엔드(--model-backend)는 어떤 조합에서도 빠지지 않는다: 서버 /v1/info 의 backend 와 대조하는 기대값이라 빠지면 기본 fake 로 대조해 mimic·vllm 이 실패한다.
+# 기본: 로컬 mimic(demo/compose.demo-mimic.yaml), --llm 은 vllm(compose.llm.yaml), 외부 추론 서버(--external-inference)의 백엔드는 DEMO_MODEL_BACKEND 로 준다(없으면 로컬과 같은 기본). 시험: scripts/test-demo-parity.sh 가 이 함수를 꺼내 조합마다 행동을 본다.
+msx_build() {
+  msx=(--model-backend "${DEMO_MODEL_BACKEND:-$([ $LLM = 1 ] && echo vllm || echo mimic)}")
+  [ -z "$EXT" ] || msx+=(--ms-url "$EXT" --ms-token-file "$INFERENCE_TOKEN_FILE")
   [ $LLM = 0 ] || msx+=(--llm-package "$W/llm-package")
   [ -n "$EXT" ] || msx+=(--inference-project "$P")   # 데모는 model-serving 이 같은 프로젝트 안에 있다(e2e_sandbox 기본 <P>-inf 는 e2e.sh 의 별도 호스트 역할)
+}
+run_steps() { # run_steps <--only 목록> [추가 인자]
+  local only=$1; shift
+  local msx=(); msx_build
   local img; img=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     echo "{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\",\"dataset-store\":\"$DEPLOY_REGISTRY/openit/dataset-store@$DATASET_STORE_DIGEST\"}" )
   # 단계 코드는 제품에 e2e_sandbox 로만 닿고, 그 클라이언트는 deploy 도구 이미지다(e2e.sh 와 같은 준비, docs/adr/0048). 이 데모에서 한 번 빌드해 둔다
