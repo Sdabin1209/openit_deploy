@@ -999,7 +999,7 @@ services:
       QA_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
     secrets: &qa_secrets [qa-author-tokens, qa-gateway-tokens, qa-read-tokens, ops-read-question-authoring, gate-read-question-authoring, db-qa-dsn]
-    tmpfs: ["/tmp", "/data"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다
+    tmpfs: ["/tmp", "/data:uid=10001,gid=10001,mode=0700"]   # 상태는 PostgreSQL에 있다. 영역의 SQLite 기본 경로가 /data 라 읽기 전용 루트에서도 쓸 수 있는 임시 공간만 둔다   # uid·gid·mode 를 명시한다: 이미지에 /data(0755)가 있어 mode 없는 tmpfs 는 그 모드에 root 소유가 되어 비root 이미지 사용자가 못 쓴다(측정 2026-11-08 PermissionError, 주입 대조 I8). 값은 이미지 선언 written_by
     network_mode: "service:question-authoring-net"   # 망·별칭·sysctls 는 question-authoring-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       question-authoring-db: {condition: service_healthy}
@@ -1140,7 +1140,7 @@ services:
       OPS_HOST: 127.0.0.1   # 앱은 사이드카(같은 네임스페이스)에게만 닿는다: 다른 컨테이너가 앱 포트로 직접 오지 못하게 loopback 에 바인드(계약 v3.4.2, ADR 0060)
       SSL_CERT_FILE: /etc/openit/pki/root_ca.crt   # 서비스 사이드카(ADR 0060) 인증서 검증용 루트(OpenSSL 표준, 파이썬 urllib·ssl)
     secrets: [ops-ingest-survey-service, ops-read-tokens, ops-review-tokens, db-ops-log-app-dsn, db-ops-failure-app-dsn]
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=999,mode=0700"]
     network_mode: "service:ops-feedback-net"   # 망·별칭·sysctls 는 ops-feedback-net(pause) 이 갖는다: 앱이 멈춰도 네트워크 공간이 남는다(RUNTIME.md R3.2, ADR 0060)
     depends_on:
       ops-feedback-db: {condition: service_healthy}   # authoring: question-authoring의 개선 신호가 I7 읽기 면을 부른다(토큰으로 보호)
@@ -1326,7 +1326,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=999,mode=0700"]   # uid·gid·mode 를 명시한다: 이미지에 /data(0755)가 있어 mode 없는 tmpfs 는 그 모드에 root 소유가 되어 비root 이미지 사용자가 못 쓴다(측정 2026-11-08 PermissionError, 주입 대조 I8). 값은 이미지 선언 written_by
 
   job-survey-purge:             # 보존 정리(D88/U4): 끝난 지 SURVEY_SESSION_RETENTION_DAYS(survey.env, 90일) 지난 세션을 지운다. 지운 개수만 한 줄로 출력한다
     profiles: ["jobs"]
@@ -1346,7 +1346,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=999,mode=0700"]
 
   job-question-authoring-purge: # 보존 정리 run-once(question-authoring, D88/U4, 멱등): 처리되지 않은 초안과 고아 원본 자료를 보존 일수 뒤 지운다. 버전·검수는 지우지 않는다
     mem_limit: ${JOB_QUESTION_AUTHORING_PURGE_MEM_LIMIT:-256m}
@@ -1364,7 +1364,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=10001,mode=0700"]
     logging: *joblog
     group_add: *secretgid
 
@@ -1424,7 +1424,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=999,mode=0700"]
 
   job-survey-restore:   # survey-service 영역의 복구 잡(RUNTIME R10.1): 사람이 필요할 때 run-job.sh 로 돌린다(주기 없음). 영역 pod 안에서 돌아 영역 게이트웨이 출구로 backup-store 에서 읽는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 복구 잡에서 온다
     profiles: ["jobs"]
@@ -1442,7 +1442,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=999,mode=0700"]
 
   job-question-authoring-backup:   # question-authoring 영역의 백업 잡(RUNTIME R10.1): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
     profiles: ["jobs"]
@@ -1460,7 +1460,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=10001,mode=0700"]
 
   job-question-authoring-restore:   # question-authoring 영역의 복구 잡(RUNTIME R10.1): 사람이 필요할 때 run-job.sh 로 돌린다(주기 없음). 영역 pod 안에서 돌아 영역 게이트웨이 출구로 backup-store 에서 읽는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 복구 잡에서 온다
     profiles: ["jobs"]
@@ -1478,7 +1478,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=10001,mode=0700"]
 
   job-ops-feedback-backup:   # ops-feedback 영역의 백업 잡(RUNTIME R10.1, 앱 계정으로 읽는다: 소유자 접속 문자열은 migrate 만): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
     profiles: ["jobs"]
@@ -1496,7 +1496,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=999,mode=0700"]
 
   job-ops-feedback-restore:   # ops-feedback 영역의 복구 잡(RUNTIME R10.1): 사람이 필요할 때 run-job.sh 로 돌린다(주기 없음). 영역 pod 안에서 돌아 영역 게이트웨이 출구로 backup-store 에서 읽는다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 복구 잡에서 온다
     profiles: ["jobs"]
@@ -1514,7 +1514,7 @@ services:
     read_only: true
     logging: *joblog
     group_add: *secretgid
-    tmpfs: ["/tmp", "/data"]
+    tmpfs: ["/tmp", "/data:uid=10001,gid=999,mode=0700"]
 
   job-release-gate-backup:   # release-gate 영역의 백업 잡(RUNTIME R10.1): 영역 pod 안에서 돌아 자기 영역 게이트웨이의 loopback 출구(OPENIT_EGRESS_PROXY)로 backup-store 에 올린다. 명령·시간 상한은 이미지 라벨 io.openit.jobs 의 백업 잡에서 온다(S10)
     profiles: ["jobs"]

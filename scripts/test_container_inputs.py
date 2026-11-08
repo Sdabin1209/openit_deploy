@@ -29,8 +29,14 @@ BODY = {"image": "r/openit/survey-service@sha256:aa", "read_only": True, "cap_dr
         "tmpfs": ["/tmp"]}
 
 
-def check(body, decl=DECL):
+# 시험 이미지의 디렉터리 소유·모드(진입점이 이미지에서 읽는 값의 대역): /tmp 는 보통 root 1777, /data 는 이미지가 0755 로 둔다(release-gate 실측 2026-11-08: 10001:0 0755, tmpfs 를 올리면 0:0 0755)
+IMAGE_DIRS = {"/tmp": {"mode": "1777", "uid": 0, "gid": 0}, "/data": {"mode": "0755", "uid": 10001, "gid": 0}}
+
+
+def check(body, decl=DECL, image_dirs=IMAGE_DIRS):
     f = W.facts("survey-service", body, "survey-service", decl, "1000")
+    for w in f["writable"]:
+        if w["kind"] == "tmpfs" and "mode" not in w and w["target"] in image_dirs: w["image_dir"] = image_dirs[w["target"]]
     return call(C, "ContainerInputsCheckRequest", "ContainerInputsCheckResult", {"services": [f], "declarations": {"survey-service": decl}})
 
 
@@ -52,21 +58,23 @@ class T(unittest.TestCase):
         b["tmpfs"] = ["/tmp:mode=1777"]
         self.assertEqual(check(b)["violations"], [])
 
-    def test_tmpfs_root_owned_without_write_bits_for_nonroot_writer_is_rejected(self):
-        """비root(10001:999) 쓰는 사용자 + root 소유 tmpfs 에 쓰기 비트가 없으면 기동 전에 I8(2026-11-08 release-gate 잡 /data 검토).
-        mode 가 없으면 Docker 기본(0:0, 1777)으로 판정한다: 측정상 쓸 수 있어 통과가 맞다(같은 판정 경로를 거친다)."""
-        b = copy.deepcopy(BODY)
-        for t in ("/tmp:mode=0755", "/tmp:uid=0,gid=0,mode=0755", "/tmp:uid=0,gid=999,mode=0750"):
-            b["tmpfs"] = [t]
-            self.assertIn("I8", {v["rule"] for v in check(b)["violations"]}, t)
-        b["tmpfs"] = ["/tmp:uid=0,gid=999,mode=0770"]   # 그룹이 쓰는 사용자의 gid 이고 그룹 rwx
-        self.assertEqual(check(b)["violations"], [])
-        b["tmpfs"] = []; b["volumes"] = b["volumes"] + [{"type": "tmpfs", "target": "/tmp", "tmpfs": {"mode": 0o755}}]   # 긴 형식 tmpfs 도 같다
-        self.assertIn("I8", {v["rule"] for v in check(b)["violations"]})
-        b["volumes"][-1]["tmpfs"] = {}   # 긴 형식, mode 없음 = Docker 기본 1777
-        self.assertEqual(check(b)["violations"], [])
-        b["volumes"].pop(); b["tmpfs"] = ["/tmp"]   # 짧은 형식, mode 없음 = Docker 기본 1777
-        self.assertEqual(check(b)["violations"], [])
+    def test_tmpfs_without_mode_is_judged_by_the_image_directory(self):
+        """mode 없는 tmpfs 는 이미지의 그 경로 소유·모드를 받는다(Docker). 2026-11-08 release-gate 잡: 이미지 /data root 0755 위 tmpfs 에 10001 이 못 썼다(PermissionError).
+        이미지 경로가 root 0755 면 비root 쓰는 사용자는 기동 전에 I8, 경로가 없으면(null) Docker 기본 1777 로 통과, 확인 못 하면 검증 불가로 I8."""
+        decl = copy.deepcopy(DECL); r = decl["roles"]["default"]
+        r["writable"] = [{"path": "/data", "persist": False, "written_by": {"uid": 10001, "gid": 999}}, r["writable"][1]]
+        b = copy.deepcopy(BODY); b["volumes"] = [b["volumes"][0]]; b["tmpfs"] = ["/tmp", "/data"]
+        v = check(b, decl)["violations"]
+        self.assertEqual([x["rule"] for x in v], ["I8"], v); self.assertIn("/data", v[0]["detail"])   # 이미지 /data root 0755
+        self.assertEqual(check(b, decl, {**IMAGE_DIRS, "/data": None})["violations"], [])            # 이미지에 경로 없음 = 0:0 1777
+        self.assertIn("I8", {x["rule"] for x in check(b, decl, {**IMAGE_DIRS, "/data": {"mode": "0755", "uid": 10001, "gid": 0}})["violations"]})   # 이미지가 그 사용자 소유여도 tmpfs 뿌리는 root(실측: release-gate /data 10001:0 0755 -> tmpfs 0:0 0755)
+        self.assertEqual(check(b, decl, {**IMAGE_DIRS, "/data": {"mode": "1777", "uid": 0, "gid": 0}})["violations"], [])   # 이미지 디렉터리가 1777 이면 쓸 수 있다
+        v = check(b, decl, {"/tmp": IMAGE_DIRS["/tmp"]})["violations"]                               # /data 를 확인하지 못했다
+        self.assertEqual([x["rule"] for x in v], ["I8"]); self.assertIn("검증 불가", v[0]["detail"])
+        b["tmpfs"] = ["/tmp", "/data:uid=10001,gid=999,mode=0700"]                                     # 명시 mode·uid 가 이긴다
+        self.assertEqual(check(b, decl)["violations"], [])
+        b["tmpfs"] = ["/tmp", "/data:mode=0755"]                                                       # 명시 mode, uid 기본 root
+        self.assertIn("I8", {x["rule"] for x in check(b, decl)["violations"]})
 
     def test_role_default_comes_from_the_declared_env_schema(self):
         from unittest.mock import patch
@@ -91,6 +99,8 @@ class T(unittest.TestCase):
         b = copy.deepcopy(BODY)
         b["command"] = ["/does-not-exist"]
         f = W.facts("job-survey-backup", b, "survey-service", d, "1000", ["/declared-job", "backup"])
+        for w in f["writable"]:
+            if w["kind"] == "tmpfs": w["image_dir"] = IMAGE_DIRS[w["target"]]   # 진입점이 이미지에서 읽는 값의 대역
         result = call(C, "ContainerInputsCheckRequest", "ContainerInputsCheckResult", {"services": [f], "declarations": {"survey-service": d}})
         self.assertIn("I11", {v["rule"] for v in result["violations"]})
         f["argv"] = f["expected_argv"]
@@ -127,10 +137,10 @@ class T(unittest.TestCase):
             config = root / "compose.json"
             config.write_text(json.dumps({"services": {"job-survey-backup": body}}))
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(W.main(["--compose-json", str(config), "--secrets-gid", "1000"], labels_of=lambda _: labels), 0)
+                self.assertEqual(W.main(["--compose-json", str(config), "--secrets-gid", "1000"], labels_of=lambda _: labels, image_dir_of=lambda r, p: IMAGE_DIRS.get(p, W._UNVERIFIED)), 0)
                 body["command"] = ["/undeclared-job"]
                 config.write_text(json.dumps({"services": {"job-survey-backup": body}}))
-                self.assertEqual(W.main(["--compose-json", str(config), "--secrets-gid", "1000"], labels_of=lambda _: labels), 1)
+                self.assertEqual(W.main(["--compose-json", str(config), "--secrets-gid", "1000"], labels_of=lambda _: labels, image_dir_of=lambda r, p: IMAGE_DIRS.get(p, W._UNVERIFIED)), 1)
 
     def test_each_rule_catches_its_mutation(self):
         cases = [
@@ -178,8 +188,11 @@ class T(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(W.main(["--compose-json", str(cfg), "--declarations-dir", str(t / "d"), "--secrets-gid", "1000"]), 2)   # 선언이 없다
             (t / "d" / "survey-service.json").write_text(json.dumps(DECL))
+            with contextlib.redirect_stdout(out):   # mode 없는 tmpfs /tmp 의 이미지 경로를 모르면 검증 불가(I8)로 실패한다: 쓸 수 있다고 가정하지 않는다
+                self.assertEqual(W.main(["--compose-json", str(cfg), "--declarations-dir", str(t / "d"), "--secrets-gid", "1000"]), 1)
+            (t / "dirs.json").write_text(json.dumps({"survey-service": IMAGE_DIRS}))
             with contextlib.redirect_stdout(out):
-                self.assertEqual(W.main(["--compose-json", str(cfg), "--declarations-dir", str(t / "d"), "--secrets-gid", "1000"]), 0)
+                self.assertEqual(W.main(["--compose-json", str(cfg), "--declarations-dir", str(t / "d"), "--image-dirs", str(t / "dirs.json"), "--secrets-gid", "1000"]), 0)
             bad = copy.deepcopy(DECL); bad["roles"]["default"]["process"]["uid"] = "app"
             (t / "d" / "survey-service.json").write_text(json.dumps(bad))
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):

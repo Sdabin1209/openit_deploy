@@ -8,7 +8,7 @@
   I5 서비스의 묶음(역할·잡)이 선언에 있다
   I6 선언한 필수 파일이 주입된다(경로 = path_env 값 또는 path; 폴더는 그 경로 또는 그 아래 파일)
   I7 주입한 파일(secrets·configs·읽기 전용 마운트)은 선언에 있다(선언한 파일이거나 선언한 폴더 아래)
-  I8 선언한 쓰기 경로가 주어진다(persist 면 이름 있는 볼륨). tmpfs 는 uid·gid·mode(없으면 Docker 기본 0:0·1777)로 선언한 쓰는 사용자가 쓸 수 있어야 한다
+  I8 선언한 쓰기 경로가 주어진다(persist 면 이름 있는 볼륨). tmpfs 는 명시 mode(없으면 이미지 경로의 소유·모드, 경로가 없으면 0:0 1777, 확인 못 하면 검증 불가 실패)로 쓰는 사용자가 쓸 수 있어야 한다
   I9 주어진 쓰기 마운트(tmpfs·쓰기 볼륨)는 선언에 있다(선언한 쓰기 경로이거나 그 아래: 이미지가 쓰는 폴더를 배치가 볼륨으로 나눌 수 있다. 유지 경로 아래면 볼륨이어야 한다)
   I10 compose secrets 로 파일을 주입하면 group_add 에 SECRETS_GID 가 있다(호스트 비밀 파일은 0640·그룹 SECRETS_GID, 시작 프로세스가 그룹으로 읽는다: opened_by=start-process)
 """
@@ -87,16 +87,25 @@ def _check_service(s: dict, decl: dict, out: list) -> int:
             bad("I8", f"{w['path']} 는 유지해야 한다(persist): {g['kind']} 가 아니라 이름 있는 볼륨이어야 한다")
         wb = w["written_by"]
         if g["kind"] == "tmpfs":
-            # mode 가 없으면 Docker 기본값으로 판정한다: tmpfs 는 root(0:0) 소유 1777(Docker 문서 "tmpfs-mode ... Defaults to 1777", --tmpfs·compose tmpfs 같음).
-            # 측정: 2026-11-08 Docker 28.5.1·compose 2.40.3 에서 compose tmpfs: ["/data"] 가 "1777 0:0", uid 10001 이 mkdir 성공. 기본값을 따로 두지 않고 같은 판정을 거친다(규칙이 기본값을 건너뛰지 않는다)
-            mode = int(g.get("mode", "1777"), 8)
-            shift = 6 if wb["uid"] == g.get("uid", 0) else 3 if wb["gid"] == g.get("gid", 0) else 0
+            # tmpfs 뿌리의 소유는 uid·gid 옵션(없으면 root 0:0)이고, 모드는 명시 mode, 없으면 이미지의 같은 경로 디렉터리 모드다(소유는 따라오지 않는다).
+            # 측정 2026-11-08(Docker 28.5.1): release-gate 이미지 /data 는 10001:0 0755 인데 --tmpfs /data 는 0:0 0755 -> 10001 의 mkdir PermissionError.
+            # 이미지에 그 경로가 없으면(image_dir=null) 0:0 1777(같은 날 측정). 이미지 경로를 확인하지 못했으면(image_dir 없음) 쓸 수 있다고 가정하지 않고 실패한다
+            if "mode" in g:
+                mode, ou, og = int(g["mode"], 8), g.get("uid", 0), g.get("gid", 0)
+            elif "image_dir" not in g:
+                bad("I8", f"tmpfs {w['path']} 에 mode 가 없고 이미지의 그 경로 소유·모드를 확인하지 못했다(검증 불가): mode·uid·gid 를 명시하거나 볼륨을 쓴다")
+                continue
+            elif g["image_dir"] is None:
+                mode, ou, og = 0o1777, g.get("uid", 0), g.get("gid", 0)
+            else:
+                mode, ou, og = int(g["image_dir"]["mode"], 8), g.get("uid", 0), g.get("gid", 0)
+            shift = 6 if wb["uid"] == ou else 3 if wb["gid"] == og else 0
             # POSIX directory creation requires both write and search permissions.
             allowed = ((mode >> shift) & 3) == 3
             if wb["uid"] == 0 and "DAC_OVERRIDE" in st["capabilities"]:
                 allowed = True
             if not allowed:
-                bad("I8", f"tmpfs {w['path']} 의 uid·gid·mode 로 선언된 사용자 {wb['uid']}:{wb['gid']} 가 쓸 수 없다")
+                bad("I8", f"tmpfs {w['path']} 의 소유 {ou}:{og}·모드 {oct(mode)[2:]} 로 선언된 사용자 {wb['uid']}:{wb['gid']} 가 쓸 수 없다")
     for t, g in wgiven.items():
         n += 1
         parent = [w for w in st["writable"] if _under(t, w["path"])]

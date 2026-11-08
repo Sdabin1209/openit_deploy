@@ -123,12 +123,19 @@ class File(TypedDict):
     directory: NotRequired[Optional[bool]]
 
 
+class ImageDir(TypedDict):
+    mode: str
+    uid: int
+    gid: int
+
+
 class WritableItem(TypedDict):
     target: str
     kind: Literal['tmpfs', 'volume', 'bind']
     uid: NotRequired[int]
     gid: NotRequired[int]
     mode: NotRequired[str]
+    image_dir: NotRequired[Optional[ImageDir]]
 
 
 class Service(TypedDict):

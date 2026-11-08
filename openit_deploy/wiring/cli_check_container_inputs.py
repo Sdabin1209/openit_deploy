@@ -116,12 +116,43 @@ def facts(name: str, body: dict, image: str, decl: dict, secrets_gid: str, expec
             "env": env, "files": files, "writable": writable}
 
 
-def main(argv=None, labels_of=image_labels) -> int:
+_UNVERIFIED = object()
+
+
+def image_dir(image: str, path: str):
+    """이미지의 path 디렉터리 소유·모드를 실행하지 않고 읽는다(docker create + docker cp 의 tar 머리글). 경로가 없으면 None, 읽지 못하면 _UNVERIFIED.
+    왜: tmpfs 를 이미지에 있는 디렉터리 위에 올리면 Docker 가 그 디렉터리의 소유·모드를 준다(1777 이 아니다). 측정 2026-11-08 release-gate /data root 0755."""
+    import subprocess, tarfile
+    c = subprocess.run(["docker", "create", "--network", "none", image, "/x"], capture_output=True, text=True)
+    if c.returncode != 0:
+        return _UNVERIFIED
+    cid = c.stdout.strip()
+    try:
+        p = subprocess.Popen(["docker", "cp", f"{cid}:{path}", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
+                m = next(iter(tf), None)
+        except tarfile.TarError:
+            m = None
+        p.kill(); _, err = p.communicate()
+        if m is None:
+            return None if b"Could not find the file" in err or b"No such container:path" in err else _UNVERIFIED
+        if not m.isdir():
+            return _UNVERIFIED
+        return {"mode": format(m.mode & 0o7777, "o").zfill(4), "uid": m.uid, "gid": m.gid}
+    finally:
+        subprocess.run(["docker", "rm", "-f", cid], capture_output=True)
+
+
+def main(argv=None, labels_of=image_labels, image_dir_of=image_dir) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--compose-json", required=True)
     ap.add_argument("--declarations-dir")
     ap.add_argument("--secrets-gid", default=os.environ.get("SECRETS_GID", str(os.getgid())))
+    ap.add_argument("--image-dirs", help="정적 대조용: {이미지: {경로: {mode,uid,gid} 또는 null}} JSON(이미지 없이). 없으면 --declarations-dir 모드의 mode 없는 tmpfs 는 검증 불가")
     a = ap.parse_args(argv)
+    offline_dirs = json.loads(pathlib.Path(a.image_dirs).read_text(encoding="utf-8")) if a.image_dirs else {}
+    dir_cache = {}
     from boundary_contracts import load_schema, validator
     vci = validator("ContainerInputs")
     cfg = json.loads(sys.stdin.read() if a.compose_json == "-" else pathlib.Path(a.compose_json).read_text(encoding="utf-8"))
@@ -198,6 +229,16 @@ def main(argv=None, labels_of=image_labels) -> int:
                         for error in validator(contract).iter_errors(document):
                             path = "/".join(map(str, error.absolute_path)) or "(최상위)"
                             problems.append(f"{name}: {contract} {path}: {error.validator}")
+            for w in service["writable"]:   # mode 없는 tmpfs 는 이미지의 그 경로 소유·모드로 판정한다(컴포넌트 I8)
+                if w["kind"] != "tmpfs" or "mode" in w:
+                    continue
+                if a.declarations_dir:
+                    known = offline_dirs.get(img, {})
+                    if w["target"] in known: w["image_dir"] = known[w["target"]]
+                else:
+                    key = (ref, w["target"])
+                    if key not in dir_cache: dir_cache[key] = image_dir_of(ref, w["target"])
+                    if dir_cache[key] is not _UNVERIFIED: w["image_dir"] = dir_cache[key]
             services.append(service)
         except FileBindingError as error:
             problems.append(f"{name}: {error}")

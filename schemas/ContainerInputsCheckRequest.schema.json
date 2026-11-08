@@ -144,7 +144,15 @@
         "mode": {
          "type": "string",
          "pattern": "^[0-7]{3,4}$",
-         "description": "Explicit tmpfs mode in octal. If absent, the image destination mode is unknown; do not assume 1777. uid/gid default to root."
+         "description": "Explicit tmpfs mode in octal. If absent, the mode comes from image_dir (Docker gives a tmpfs mounted over an existing image directory that directory's mode, owned by root unless uid/gid are given; measured 2026-11-08); do not assume 1777. uid/gid default to root."
+        },
+        "image_dir": {
+         "description": "tmpfs only: mode (and, for information, owner) of the image's own directory at target, read from the image without running it (docker create + docker cp). null = the image has no such path (Docker creates the tmpfs root 0:0 1777). Absent = not verified: the check fails as unverifiable.",
+         "oneOf": [
+          {"type": "null"},
+          {"type": "object", "additionalProperties": false, "required": ["mode", "uid", "gid"],
+           "properties": {"mode": {"type": "string", "pattern": "^[0-7]{3,4}$"}, "uid": {"type": "integer"}, "gid": {"type": "integer"}}}
+         ]
         }
        }
       }
