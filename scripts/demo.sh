@@ -130,6 +130,13 @@ demo_ca() { # gateway 내부 CA 루트(데모 스택에서 꺼내 작업 폴더�
   [ -s "$t" ] || { "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")" cat /r/root_ca.crt > "$W/step-root.crt" && cat "$f" "$W/step-root.crt" > "$t" && chmod 644 "$t"; } >&2 || die "step-ca 루트를 꺼내지 못했다(${P}_pki-root)"
   echo "$t"
 }
+alert_line() { # 직원 알림 안내는 하드코딩이 아니라 survey-service /readyz 의 실제 staff_alert_source 값(demo_alert_source 단계)에서 만든다. 읽지 못하면 아는 척하지 않는다
+  local l act n why; l=$(run_steps "demo_alert_source" 2>/dev/null | sed -n 's/^  DEMO_ALERT_SOURCE //p' | tail -1)
+  [ -n "$l" ] || { echo "직원 알림: 상태를 읽지 못했다(survey-service /readyz). 위험 감지가 켜져 있는지 알 수 없다."; return; }
+  act=$(sed -n 's/.*active=\([a-z]*\).*/\1/p' <<<"$l"); n=$(sed -n 's/.*rules=\([0-9]*\).*/\1/p' <<<"$l"); why=$(sed -n 's/.*reason=\(.*\)$/\1/p' <<<"$l")
+  if [ "$act" = true ]; then echo "직원 알림: 위험 문구 규칙 ${n}개가 켜져 있다(시험 규칙 파일 test/risk-rules.e2e.json, SURVEY_RISK_RULES_FILE. 임상 검토 전 시험 문구). 규칙에 걸리는 발화가 있을 때만 직원 콘솔(/staff/)에 알림이 뜬다."
+  else echo "직원 알림: 입력원이 꺼져 있다(${why:-사유 없음}). 위험 문구를 말해도 알림이 만들어지지 않는다."; fi
+}
 guide() {
   local gw; gw=$(port_of "$P-gateway-1" 8443)
   local host=127.0.0.1; [ "${DEMO_BIND:-127.0.0.1}" != 127.0.0.1 ] && host="<서버 주소>"
@@ -159,7 +166,7 @@ guide() {
  $( [ -n "$EXT" ] && echo "추론 서버: 외부($EXT). 이 구성의 model-serving 은 꺼져 있다." )
  $( [ $LLM = 1 ] && [ -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 기반 모델(프로파일 $LLM_PROFILE_NAME) + 학습 서버에서 가져온 LoRA-A/B(평가하지 않음, 릴리스 평가 보고서는 시험용 고정값) + 사용자가 준 시스템 프롬프트. 어댑터가 학습 때와 같은 프롬프트로 만든 것인지는 사용자가 보증한다. 첫 응답은 적재가 끝난 뒤부터 된다." )
  $( [ $LLM = 1 ] && [ ! -f "$W/llm-package/ATTACHED" ] && printf '%s' " 실제 LLM: 학습하지 않은 기반 모델(프로파일 $LLM_PROFILE_NAME, gpu-12g 는 Qwen/Qwen3-1.7B) + 학습 데이터의 시스템 프롬프트(prompt-4 조립) + 효과 없는 LoRA(lora_B=0, 시험용 대체). 학습된 모델이 아니라서 A 출력이 형식을 못 지키면 그 턴은 실패 신호로 처리된다(503 OUTPUT_INVALID, 값을 지어내지 않는다, D75). 12GB GPU에서 적재되는지는 서버 미검증이다. 첫 응답은 적재가 끝난 뒤(아래 안내)부터 된다." )
- 직원 알림: 규칙 기반 위험 문구 감지가 모든 턴에서 켜져 있다(D88 U1, 문구 목록은 임상 검토 전 임시 L11). 위험 발화가 있을 때만 직원 콘솔(/staff/)에 알림이 뜬다.
+ $(alert_line)
  승인 화면: 승인 대기 시험 제출이 있다$( [ $STOP = 1 ] && echo " (--stop-before-approval: 문항 세트 v1·v2 모두 대기. 승인한 뒤 scripts/demo.sh activate)" || echo " (보지 못한 문항 세트 제출 1건. v1·v2는 스크립트가 시험용 승인자로 이미 승인·활성화)")
  실패 사례 검토 화면: 시험 사례 1건(PENDING). /admin/ 의 검토 메뉴(검토자 계정)
 

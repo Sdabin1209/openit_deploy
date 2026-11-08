@@ -45,10 +45,19 @@ class T(unittest.TestCase):
         ra = copy.deepcopy(RA); ra["inference"]["calls"] = RB["inference"]["calls"]
         with self.assertRaises(AssertionError): ea.check_turns_clean(mimic, RB, ra, "mimic")   # 서버를 거쳤는지는 호출 수 증가로 본다
 
-    def test_fake_only_steps_are_guarded(self):
+    def test_backend_identity_is_compared(self):
         src = (pathlib.Path(__file__).resolve().parent / "e2e_steps.py").read_text(encoding="utf-8")
-        for st in ("5c", "5o", "5n-reask"): self.assertIn(f'fake_only("{st}"', src, f"{st} 는 fake 백엔드 설정에 의존한다: 다른 백엔드에서 BLOCKED 로 남겨야 한다")
         self.assertNotIn('info["backend"] == "fake"', src, "추론 서버 백엔드 대조는 --model-backend 로 한다")
+
+    def test_no_neighbor_internals(self):
+        """구조 규칙 1: 단계·샌드박스·데모는 이웃 영역의 내부 모듈을 import 하지 않는다(계약 boundary_contracts 와 통신 기반 openit_link 만). 예외를 삼켜 '대조 불가'로 넘어가는 것도 금지."""
+        import re
+        here = pathlib.Path(__file__).resolve().parent
+        pat = re.compile(r"(?:import|from)\s+(model_runtime|survey_service|question_authoring|ops_feedback|release_gate|model_registry|dataset_store|kiosk_frontend)\b")
+        for f in ("e2e_steps.py", "e2e_sandbox.py", "demo.sh", "e2e.sh"):
+            src = (here / f).read_text(encoding="utf-8")
+            self.assertIsNone(pat.search(src), f"{f} 가 이웃 영역 내부 모듈을 import 한다: {pat.search(src) and pat.search(src).group(0)}")
+            self.assertNotIn("대조 불가(", src, f"{f}: 예외를 삼키고 대조 불가로 넘어가는 경로")
 
     def test_unchanged(self):
         b = {"survey-service": ("id1", "t1"), "gateway": ("id2", "t2")}

@@ -593,13 +593,7 @@ def make_packages():
                "decoding": {"constraint_mode": mode, "temperature": 0, "retry_temperature": 0.7, "seed": 1000, "max_tokens": 512}, "max_attempts": 3,
                "constraint": ex["constraint"], "output_contract": ex["output_contract"], "protection_policy_version": ex["protection_policy_versions"][-1]}
         cfgs = {"LORA_A": mkcfg("constrained"), "LORA_B": mkcfg("none")}
-        # 대조: survey 이미지(model-runtime)의 fake_serving_configs 와 일치하는지
-        probe = "import json, model_runtime as m\nprint(json.dumps(m.fake_serving_configs()['LORA_A']))\n"
-        try:
-            ref = json.loads(SB.exec_py("survey-service", probe).strip().splitlines()[-1])
-            STATE["fake_cfg_vs_survey_image"] = sorted(k for k in cfgs["LORA_A"] if ref.get(k) != cfgs["LORA_A"][k])
-        except Exception as e:
-            STATE["fake_cfg_vs_survey_image"] = "대조 불가(survey 이미지에 fake_serving_configs 가 없을 수 있다) " + str(e)[-80:]
+        # 이웃 영역의 내부(survey 이미지의 model_runtime 모듈)는 열지 않는다(구조 규칙 1). 기대값은 추론 서버가 계약으로 알려 주는 /v1/info 의 serving_config_expectation 하나뿐이다
         sp = {r: {"path": "system_prompt.txt", "sha256": canonical.file_hash(fx / r / "system_prompt.txt")} for r in ("LORA_A", "LORA_B")}
         d = {"cfgs": cfgs, "hashes": {r: canonical.sha256_hash(cfgs[r]) for r in cfgs},
              "adapter_hash": {r: canonical.directory_hash(fx / r) for r in ("LORA_A", "LORA_B")}, "runtime": info["runtime_version"], "system_prompt": sp}
@@ -669,7 +663,7 @@ def step3():
 
     src_desc = ("학습 서버에서 가져온 LoRA-A/B(model-runtime 설정 + 가져온 어댑터, 평가하지 않음)" if a.llm_package and pk["LORA_A"][0].get("ext", {}).get("deploy", {}).get("attached") else "학습하지 않은 중립 LoRA(model-runtime make_neutral_package.py + 학습 데이터 system 메시지 프롬프트, vllm 서빙 설정, lora_B=0이라 출력은 기반 모델과 같다)" if a.llm_package
                 else "시험용 어댑터(test/fixtures/e2e-test-adapter, PEFT 형식 r=16, 기반 모델 Qwen/Qwen2.5-1.5B-Instruct; fake 백엔드는 기반 모델을 적재하지 않는다)")
-    rec(3, "TEST-SUB", f"학습 대신 {src_desc}와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(survey 이미지 fake_serving_configs와 다른 키: {STATE.get('fake_cfg_vs_survey_image')}). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2가 게시한 실제 데이터셋(단계 2가 BLOCKED이면 자리표시 참조, TEST-SUB). 시스템 프롬프트는 어댑터 디렉터리의 system_prompt.txt와 ModelPackageManifest.system_prompt(path, sha256)로 패키지에 들어 있다(시험용 자리표시 문장). model-lab 파이프라인·패키징 코드는 실행하지 않음(이웃 코드를 가져오지 않는다)")
+    rec(3, "TEST-SUB", f"학습 대신 {src_desc}와 시험용 EvaluationReport(METRICS.md 이름의 고정 지표, 실제 평가 아님)를 model-registry에 HTTP로 게시. serving_config는 추론 서버 /v1/info의 serving_config_expectation으로 만들었다(다른 영역의 내부는 열지 않는다). 게시(REAL): 멱등, 읽기 토큰 게시 거부, 읽기로 매니페스트·어댑터 해시 검증 통과. 계보의 dataset은 단계 2가 게시한 실제 데이터셋(단계 2가 BLOCKED이면 자리표시 참조, TEST-SUB). 시스템 프롬프트는 어댑터 디렉터리의 system_prompt.txt와 ModelPackageManifest.system_prompt(path, sha256)로 패키지에 들어 있다(시험용 자리표시 문장). model-lab 파이프라인·패키징 코드는 실행하지 않음(이웃 코드를 가져오지 않는다)")
 
 
 def decisions_for(gate_read, subj):   # gate_read 는 옛 인자(직접 클라이언트): 이제 판정은 survey-service 컨테이너 안에서 읽는다. 호출하는 뒤 단계의 시그니처를 유지한다
@@ -1085,7 +1079,6 @@ def _c2_ms_call(path, body, token, method="POST"):
 def step5c():
     title("5c", "정정(CORRECT) 흐름: 값이 있는 턴 뒤 정정 발화 -> 서비스가 CORRECT 를 처리한다 (가짜 A 의 corrections, model-runtime 0.7.2)")
     if "pointers" not in STATE: rec("5c", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
-    if fake_only("5c", "정정(가짜 A 의 corrections: '아까 말'+at Q1.D02)"): return
     new = STATE["releases"]["2"]
     wait(lambda: (lambda cr: cr[0] == 200 and cr[1].get("active_release") == new)(_c2_ready()), 300, f"survey가 릴리스 {new} 적재", every=3)
     # (1) 추론 서버 직접: 정정 발화는 at 문항(Q1.D02)에서만 CORRECT, 다른 문항에서는 일반 값 추출
@@ -1128,7 +1121,6 @@ def step5c():
 def step5o():
     title("5o", "칸 규격(일수 0~7)을 가진 문항에서 범위 밖 값(8일)이 REASK/OUT_OF_RANGE 로 바뀌어 저장되지 않는다 (model-runtime 0.10.0 값 규칙, 계약 2.4.0, D115)")
     if "pointers" not in STATE: rec("5o", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
-    if fake_only("5o", "값 규칙(가짜 A 의 칸 규격 fields·흐름 파일 slots)"): return
     new = STATE["releases"]["2"]
     wait(lambda: (lambda cr: cr[0] == 200 and cr[1].get("active_release") == new)(_c2_ready()), 300, f"survey가 릴리스 {new} 적재", every=3)
     ff = json.loads((pathlib.Path(__file__).resolve().parents[1] / "test" / "fake-model" / "question_flow.json").read_text(encoding="utf-8"))
@@ -1567,7 +1559,6 @@ def step5n():
     rec("5n", "REAL", f"위험 발화 정지(첫 전달 {first_status}) -> /state pause_reason=RISK -> staff-call/retry(필드·같은 turn_id 멱등·간격 안 새 turn_id 429+Retry-After) -> 다른 기기·위조·무토큰·직원 토큰 거부 -> staff-call/report(StaffAlert manual_notice_*, 멱등, 다른 outcome 409, 직원 알림 목록에 보임, 세션은 PAUSED_RISK 유지) -> 개입 뒤 재알림 409 NO_OPEN_ALERT")
     # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT, survey-service ADR-0020·0022): 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json 의
     # '되묻기시험' -> REASK)으로 같은 세션에서 REASK 를 연속으로 유도한다. 한도(N)는 /readyz 의 reask_limit 에서 읽는다(지어내지 않는다)
-    if fake_only("5n-reask", "되묻기 한도 정지(가짜 A 의 reasks 설정 '되묻기시험'->REASK)"): return
     rz = _c2_ready()[1]; rl = rz.get("reask_limit")   # /readyz 의 reask_limit 은 {"active", "max_consecutive", "effective"(정수 또는 null)} 객체다(계약 v3.1.0)
     # 실효 한도는 survey-service 가 낸 계약 출력(SurveyReadyz.reask_limit.effective, 계약 v3.1.0)만 읽는다: 서비스의 계산 규칙(문항 세트 session_settings 와 서비스 한도의 최솟값)을 E2E 가 흉내 내지 않는다(구조 규칙 4)
     N = (rl or {}).get("effective")
@@ -1690,7 +1681,7 @@ def risk_phrase():
       why="STATE['pointers'] 를 읽는다. " + _P4,
       also={'admin-console': 'gateway 경유 정적 화면 제공과 접근 구분'})
 def step5f():
-    title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 직원 알림 입력원 없음 (kiosk-frontend)")
+    title("5f", "프론트 이미지와 게이트웨이: 정적 화면, 공개 API 호출 순서, 직원 경로 권한 분리, 직원 알림 입력원(시험 규칙 파일로 켠 위험 감지)이 위험 발화를 직원 알림으로 만든다 (kiosk-frontend)")
     if "pointers" not in STATE: rec("5f", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
     # (a) 정적 화면
     c, html, _ = _c2_text("/"); assert c == 200 and "문진" in html, (c, html[:100])
@@ -1737,7 +1728,7 @@ def step5f():
     sv0 = staff_sv(s0); assert sv0["status"] == "PAUSED_RISK" and sv0["values"] == vals_before, ("위험 정지 턴의 답이 저장됐거나 상태가 다르다", sv0["status"], sv0["values"], vals_before)
     hits = (_c2_ready()[1].get("staff_alert_source") or {}).get("hits_by_rule") or {}; assert sum(hits.values()) >= 1, ("/readyz hits_by_rule 에 적중이 없다", hits)
     _c2_kiosk(f"/v1/sessions/{s0}/end", {"session_id": s0, "kind": "SESSION_END"})
-    rec("5k", "REAL", f"위험 감지 켜짐(D88 U1·U2): /readyz staff_alert_source active=true, 규칙 {sas['rule_count']}개(E2E 가 SURVEY_RISK_RULES_FILE 로 넣은 시험 규칙, 계약 SurveyRiskRulesFile). 위험 문구가 없는 발화는 정상 진행(ACTIVE, 알림 없음). 시험 규칙의 문구('{phrase}')가 든 발화는 turn_failure_signal.staff_alert={fs.get('staff_alert')}, 세션 PAUSED_RISK, 직원 알림 목록(OPEN)에 나타남, 답은 저장되지 않음, /readyz hits_by_rule 적중 {sum(hits.values())}. 거짓 알림 가능성과 임상 검토 전이라는 한계는 survey-service 문서의 것이다")
+    rec("5f-d", "REAL", f"위험 감지 켜짐(D88 U1·U2): /readyz staff_alert_source active=true, 규칙 {sas['rule_count']}개(E2E 가 SURVEY_RISK_RULES_FILE 로 넣은 시험 규칙, 계약 SurveyRiskRulesFile). 위험 문구가 없는 발화는 정상 진행(ACTIVE, 알림 없음). 시험 규칙의 문구('{phrase}')가 든 발화는 turn_failure_signal.staff_alert={fs.get('staff_alert')}, 세션 PAUSED_RISK, 직원 알림 목록(OPEN)에 나타남, 답은 저장되지 않음, /readyz hits_by_rule 적중 {sum(hits.values())}. 거짓 알림 가능성과 임상 검토 전이라는 한계는 survey-service 문서의 것이다")
     rec("5x", "BLOCKED", "실제 브라우저에서의 화면 동작, STT(Web Speech API), 웹 푸시 수신은 E2E에서 볼 수 없다(보안 출처 HTTPS·VAPID 키 필요, 푸시는 VAPID 없이 비활성: SSE만 확인). 운영 TLS·직원 콘솔 인증 방식은 미정")
 
 def trace_env(release_id, n):
@@ -2260,6 +2251,15 @@ def demo_active():
     print(f"  활성 릴리스 {ap.get('release_id')} pointer_version {ap.get('pointer_version')}")
     rec("demo_active", "REAL", f"활성 릴리스 {ap.get('release_id')} (pointer_version {ap.get('pointer_version')})")
 
+@step('demo_alert_source', repos=('survey-service',) + _GW, deps=(),
+      why='demo.sh 전용')
+def demo_alert_source():
+    """demo.sh 의 접속 안내가 쓴다: survey-service /readyz 의 staff_alert_source 실제 값(읽기 전용). 안내문은 하드코딩이 아니라 이 값에서 만든다."""
+    title("demo_alert_source", "직원 알림 입력원의 실제 상태 (읽기 전용)")
+    c, rz = _c2_ready(); sas = (rz.get("staff_alert_source") or {}) if c == 200 else {}
+    print(f"  DEMO_ALERT_SOURCE active={str(sas.get('active')).lower()} rules={sas.get('rule_count', 0)} reason={sas.get('reason', '')}", flush=True)
+    rec("demo_alert_source", "REAL", f"/readyz({c}) staff_alert_source active={sas.get('active')} rule_count={sas.get('rule_count')} reason={sas.get('reason')}")
+
 @step('demo_swap', repos=('release-gate',) + _GW, deps=('1', '2'),
       why='demo.sh 전용')
 def demo_swap():
@@ -2705,7 +2705,7 @@ def step5k():
 
 # 왜 8(롤백)이 장애 단계(5p·5pn·5pj·5g·5b) 뒤인가: 롤백은 활성 릴리스를 옛 것으로 되돌리는 마지막 상태 변경이다. 앞 단계들은 단계 4 의 활성 릴리스(새 것)를 전제로 쓰였고,
 # 단계 9(복구 대조, link_restore_verify)는 롤백된 포인터를 기대한다. 롤백 뒤에 장애 단계를 두면 그 전제가 단계마다 달라진다(정적 검토 R5)
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5k", step5k), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5k", step5k), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_alert_source", demo_alert_source), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []
