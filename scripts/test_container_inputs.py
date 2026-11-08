@@ -52,6 +52,22 @@ class T(unittest.TestCase):
         b["tmpfs"] = ["/tmp:mode=1777"]
         self.assertEqual(check(b)["violations"], [])
 
+    def test_tmpfs_root_owned_without_write_bits_for_nonroot_writer_is_rejected(self):
+        """비root(10001:999) 쓰는 사용자 + root 소유 tmpfs 에 쓰기 비트가 없으면 기동 전에 I8(2026-11-08 release-gate 잡 /data 검토).
+        mode 가 없으면 Docker 기본(0:0, 1777)으로 판정한다: 측정상 쓸 수 있어 통과가 맞다(같은 판정 경로를 거친다)."""
+        b = copy.deepcopy(BODY)
+        for t in ("/tmp:mode=0755", "/tmp:uid=0,gid=0,mode=0755", "/tmp:uid=0,gid=999,mode=0750"):
+            b["tmpfs"] = [t]
+            self.assertIn("I8", {v["rule"] for v in check(b)["violations"]}, t)
+        b["tmpfs"] = ["/tmp:uid=0,gid=999,mode=0770"]   # 그룹이 쓰는 사용자의 gid 이고 그룹 rwx
+        self.assertEqual(check(b)["violations"], [])
+        b["tmpfs"] = []; b["volumes"] = b["volumes"] + [{"type": "tmpfs", "target": "/tmp", "tmpfs": {"mode": 0o755}}]   # 긴 형식 tmpfs 도 같다
+        self.assertIn("I8", {v["rule"] for v in check(b)["violations"]})
+        b["volumes"][-1]["tmpfs"] = {}   # 긴 형식, mode 없음 = Docker 기본 1777
+        self.assertEqual(check(b)["violations"], [])
+        b["volumes"].pop(); b["tmpfs"] = ["/tmp"]   # 짧은 형식, mode 없음 = Docker 기본 1777
+        self.assertEqual(check(b)["violations"], [])
+
     def test_role_default_comes_from_the_declared_env_schema(self):
         from unittest.mock import patch
         declaration = copy.deepcopy(DECL)
