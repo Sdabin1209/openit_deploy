@@ -1,3 +1,12 @@
+# STATUS (2026-11-08, wo-450-lg: 2026-11-08 08:48 E2E 실패 원인 수정)
+
+- 한 일(커밋 21845a1): exec_py 가 서비스의 SSL_CERT_FILE 을 옮겨 신뢰 루트를 덮어쓰던 결함(단계 1·5pj·5g·5b), /v1/materials Content-Type 계약 정렬(5a), 단계 9 점검의 pod 망 구성원 이름(ADR 0060), 공개 입구 경로 판정(CONVENTIONS 3.4.9), 추론 서버 도달을 R1.5 경로로(ADR 0070), serving 망 internal(R6.2), 감시 루트 볼륨 소유자(monitoring-root-perms), 단계 실패 시 영역 로그 보존.
+- 확인한 것: 관련 단위·정적 시험 rc=0, no_dataset_route 변이 시험.
+- 확인하지 못한 것: e2e.sh --only 1,5a,5pj,5g,5b 실행 결과(보고 시각까지 끝나지 않았다), 영역 백업 잡 2건(question-authoring 종료 1, release-gate PermissionError)의 원인(실행 중 스택에서 stderr 를 못 봤다), 단계 5u.
+- 남은 일: 위 실행 결과 확인, 백업 잡 2건 원인 조사. 기존 설치는 serving 망을 다시 만들어야 한다.
+
+---
+
 # STATUS (2026-10-30, wo-400 영역 구조 개편)
 
 - 한 일: 계약 v3.1.2·link v0.4.3 기준 반영, E2E 5n-reask 가 `SurveyReadyz.reask_limit.effective` 만 읽음, Python 판단을 컴포넌트 19개로 옮김(`docs/components.md`), 스키마·예시·생성 타입, 구조 시험(`tests/test_structure.py`)을 자체 점검에 추가. 결정: ADR 0045(구조), 0046(link 라벨, 제안).
