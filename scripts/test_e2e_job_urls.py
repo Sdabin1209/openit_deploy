@@ -4,6 +4,7 @@
 (2) 저장소가 http 인 잡은 compose 네트워크(datasets)에 붙인다(run_import 가 network 를 고른다).
 (3) 컨테이너에서 도는 잡의 설정에 들어가는 모든 base_url 이 서비스 이름 주소이고, 잡 네트워크가 compose.yaml 에서 그 서비스들이 실제로 붙은 네트워크이며, 주소의 포트가 compose 헬스체크의 컨테이너 포트와 같다.
 (4) deploy 전체에 `--network host`·network="host"·기본 네트워크(호출자가 고르지 않는 값)가 없다: Docker Desktop 에서 host 네트워크는 호스트의 127.0.0.1 게시 포트에 닿지 못한다. 사용: <deploy .venv>/bin/python scripts/test_e2e_job_urls.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import sys as _sys, pathlib as _pl
 _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 from compose_nets import nets as nets_of  # noqa: E402
@@ -79,7 +80,7 @@ class T(unittest.TestCase):
         self.assertIn("environment=environment", ast.unparse(rj))   # 받은 환경을 실행기까지 넘긴다
 
     def test_no_host_network_or_default_network_anywhere(self):
-        files = subprocess.run(["git", "ls-files", "scripts"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+        files = subprocess.run(["git", "ls-files", "scripts"], cwd=ROOT, capture_output=True, text=True, env=child_env()).stdout.split()
         bad = []
         for f in files:
             if not f.endswith((".py", ".sh")) or pathlib.Path(f).name.startswith("test") or f.endswith("test_e2e_job_urls.py"): continue

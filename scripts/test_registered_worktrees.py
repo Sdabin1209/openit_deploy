@@ -1,4 +1,5 @@
 """독립 저장소는 누락으로 보고하고, Git 등록 작업 트리는 소유 영역을 기록한다."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import pathlib
 import subprocess
 import tempfile
@@ -15,10 +16,10 @@ class Worktrees(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             known = root / "known"
-            subprocess.run(["git", "init", "-q", str(known)], check=True)
-            subprocess.run(["git", "-C", str(known), "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial", "--allow-empty"], check=True)
-            subprocess.run(["git", "-C", str(known), "worktree", "add", "-q", "--detach", str(root / "arbitrary-name")], check=True)
-            subprocess.run(["git", "init", "-q", str(root / "wt-unregistered")], check=True)
+            subprocess.run(["git", "init", "-q", str(known)], check=True, env=child_env())
+            subprocess.run(["git", "-C", str(known), "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial", "--allow-empty"], check=True, env=child_env())
+            subprocess.run(["git", "-C", str(known), "worktree", "add", "-q", "--detach", str(root / "arbitrary-name")], check=True, env=child_env())
+            subprocess.run(["git", "init", "-q", str(root / "wt-unregistered")], check=True, env=child_env())
             self.assertEqual(workspace_of(known), root)
             self.assertEqual(workspace_of(root / "arbitrary-name"), root)
             with patch.object(check, "WS", root), patch.object(check, "AREA_KIND", {"known": "python"}):

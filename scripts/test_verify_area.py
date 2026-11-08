@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """verify_area.py 자체 시험: Docker·형제 영역 없이 대응표 파싱, 단계 닫힘, 명령 조립, 낡은 이미지 판정을 확인한다."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import copy, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
@@ -161,7 +162,7 @@ class T(unittest.TestCase):
     def test_image_src_comes_from_lib_sh(self):
         """서비스 -> 리포 대응의 정본은 lib.sh 한 곳이다: verify_area 가 같은 값을 읽고, 알려진 대응이 맞고, 코드에 따로 적은 표가 없다."""
         out = subprocess.run(["bash", "-c", f'DEPLOY_NO_DOCKER=1; source "{HERE}/lib.sh"; echo "$SERVICES"; service_repo model-registry; service_repo dataset-store; service_repo model-serving; service_repo survey-service'],
-                             capture_output=True, text=True, check=True).stdout.split("\n")
+                             capture_output=True, text=True, check=True, env=child_env()).stdout.split("\n")
         self.assertEqual(set(v.IMAGE_SRC), set(out[0].split()))
         self.assertEqual((v.IMAGE_SRC["model-registry"], v.IMAGE_SRC["dataset-store"], v.IMAGE_SRC["model-serving"], v.IMAGE_SRC["survey-service"]), tuple(out[1:5]))
         self.assertEqual(v.IMAGE_SRC["model-registry"], "model-lab")
@@ -179,11 +180,11 @@ class T(unittest.TestCase):
 
     def test_cli_dry_run_and_list_without_docker(self):
         import subprocess
-        r = subprocess.run([sys.executable, str(HERE / "verify_area.py"), "deploy", "--tests-only", "--dry-run"], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(HERE / "verify_area.py"), "deploy", "--tests-only", "--dry-run"], capture_output=True, text=True, env=child_env())
         self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("check-all", r.stdout)
-        r = subprocess.run([sys.executable, str(HERE / "verify_area.py"), "--list"], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(HERE / "verify_area.py"), "--list"], capture_output=True, text=True, env=child_env())
         self.assertEqual(r.returncode, 0); self.assertIn("model-lab: --only", r.stdout)
-        r = subprocess.run([sys.executable, str(HERE / "verify_area.py"), "deploy", "--no-e2e", " "], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(HERE / "verify_area.py"), "deploy", "--no-e2e", " "], capture_output=True, text=True, env=child_env())
         self.assertNotEqual(r.returncode, 0)   # 이유 없는 --no-e2e 는 거부
 
 

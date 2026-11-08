@@ -3,6 +3,7 @@
 왜: 공통 규칙 '스키마는 패키지에 들어 있으므로 복사본을 만들지 않는다'. 예전에는 contract-ready/ 사본을 두고 패키지와 같은지 비교했으나(승격 전 임시 정본), 사본은 패키지와 어긋나
 (BuildImageRequest 등 4개) 정본이 둘이 됐다. 사본을 지웠고, 이 시험은 사본이 다시 생기지 않음을 확인한다.
 사용: <deploy .venv>/bin/python scripts/test_contract_schema_copy.py   (계약 패키지가 설치된 파이썬. 패키지에 스키마가 없으면 실패: 통과로 세지 않는다)"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, pathlib, subprocess, sys, unittest
 from image_label_test_data import inputs_label
 
@@ -31,7 +32,7 @@ class T(unittest.TestCase):
 
     def test_checker_uses_package(self):
         labels = {"io.openit.inputs": inputs_label("s"), "io.openit.service": "s", "io.openit.revision": "abc1234", "io.openit.contracts.boundary": "v2.6.0", "io.openit.contracts.survey-schema": "3"}
-        p = subprocess.run([sys.executable, "-W", "ignore", str(HERE / "check_image_labels.py")], input=json.dumps(labels), capture_output=True, text=True)
+        p = subprocess.run([sys.executable, "-W", "ignore", str(HERE / "check_image_labels.py")], input=json.dumps(labels), capture_output=True, text=True, env=child_env())
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("스키마 출처: 계약 패키지", p.stdout)
 

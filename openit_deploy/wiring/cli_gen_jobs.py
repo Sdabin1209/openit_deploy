@@ -1,6 +1,7 @@
 """wiring/진입: gen-jobs.py --out 파일 [--compose-json 파일|-]  — compose 의 잡 서비스(job-*)마다 이미지 라벨 io.openit.jobs(계약 JobsDeclaration)에서 command 와 시간 한도를 만든 compose 덧씌우기 파일을 쓴다(S10).
 compose.yaml 에는 잡의 command 가 없다: `python -m <모듈>` 같은 영역 내부 구조를 deploy 가 적지 않는다(구조 규칙 1). 덧씌우기 파일은 JSON 이다(JSON 은 YAML 의 부분집합이라 compose 가 읽는다).
 계약 검증(JobsDeclaration)은 여기서 하고 컴포넌트(job_overlay)에는 결과만 넘긴다. 선언이 없거나 이름이 없으면 종료 코드 1 로 이유를 말한다(짐작하지 않는다)."""
+from openit_deploy.wiring.child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만
 import argparse
 import json
 import pathlib
@@ -65,12 +66,12 @@ def derived_units(svc: str, timeout: int, period: int) -> dict:
 
 def image_labels(image: str) -> dict:
     """docker 로 이미지 라벨을 읽는다. 로컬에 없으면 받는다(compose run 이 받는 것과 같은 이미지)."""
-    r = subprocess.run(["docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True)
+    r = subprocess.run(["docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True, env=child_env())
     if r.returncode != 0:
-        p = subprocess.run(["docker", "pull", "-q", image], capture_output=True, text=True)
+        p = subprocess.run(["docker", "pull", "-q", image], capture_output=True, text=True, env=child_env())
         if p.returncode != 0:
             raise SystemExit(f"이미지를 받을 수 없다: {image}")
-        r = subprocess.run(["docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True)
+        r = subprocess.run(["docker", "image", "inspect", image, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True, env=child_env())
     return json.loads(r.stdout) or {}
 
 

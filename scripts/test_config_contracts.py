@@ -3,6 +3,7 @@
 대상 표(CONTRACT)는 파일 -> 스키마 이름. config/ 바로 아래 *.yaml·*.json 이 이 표에도 OWN(deploy 자신의 형식, 이유 필수)에도 없으면 실패한다: 새 설정 파일을 만들 때 계약이 있는지 먼저 따지게 한다.
 사용: <deploy .venv>/bin/python scripts/test_config_contracts.py   (계약 패키지가 설치된 파이썬)"""
 import json, os, pathlib, re, subprocess, unittest
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 
 import yaml
 from boundary_contracts import validator
@@ -40,7 +41,7 @@ def compose_sets():
 
 def render(files):
     """docker compose config 로 병합한 서비스 환경. 필수 변수(${X:?})는 자리표시 값으로 채운다(값은 환경 검증에 쓰이지 않는 이미지 이름 등)."""
-    env = dict(os.environ)
+    env = child_env()   # R9.1
     for f in files:
         for v in re.findall(r"\$\{([A-Za-z0-9_]+):\?", (ROOT / f).read_text(encoding="utf-8")): env.setdefault(v, "x")
     cmd = ["docker", "compose", "--project-directory", str(ROOT)] + [a for f in files for a in ("-f", str(ROOT / f))] + ["--profile", "jobs", "config", "--format", "json"]

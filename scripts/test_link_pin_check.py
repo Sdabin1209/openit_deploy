@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """link 핀 대조 자체 시험(U59, ADR 0046): 영역 잠금 파일의 openit-link 태그를 읽는 모양들, 판정(MATCH/DIFF/NO_PIN), 가짜 워크스페이스(git 리포 + main 브랜치)로 CLI 종료 코드. 이웃 영역의 실제 파일을 읽지 않는다. 사용: <deploy .venv>/bin/python scripts/test_link_pin_check.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, pathlib, subprocess, sys, tempfile, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -34,9 +35,9 @@ class Cli(unittest.TestCase):
         (d / "head/shared/areas.json").write_text(json.dumps({"areas": [{"name": n, "kind": "python", "version_train": False} for n in tags]}))
         g = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
         for n, t in tags.items():
-            r = d / n; r.mkdir(); subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
+            r = d / n; r.mkdir(); subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True, env=child_env())
             if t: (r / "requirements.lock").write_text(f"openit-link @ {SSH}@{t}\n")
-            (r / "README.md").write_text("x"); subprocess.run(g + ["-C", str(r), "add", "-A"], check=True); subprocess.run(g + ["-C", str(r), "commit", "-qm", "x"], check=True)
+            (r / "README.md").write_text("x"); subprocess.run(g + ["-C", str(r), "add", "-A"], check=True, env=child_env()); subprocess.run(g + ["-C", str(r), "commit", "-qm", "x"], check=True, env=child_env())
             if t: (r / "requirements.lock").write_text(f"openit-link @ {SSH}@v9.9.9\n")   # 미커밋 변경은 보지 않는다(정본은 main)
         return d
 

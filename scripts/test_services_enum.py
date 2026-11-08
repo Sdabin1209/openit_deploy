@@ -3,6 +3,7 @@
 왜 시험인가: 같은 사실(게시할 수 있는 서비스 이름)이 계약 enum 과 lib.sh 두 곳에 있다. 정본은 계약 enum 이고 lib.sh 는 그 사본이다. lib.sh 가 셸 변수라 계약에서 매번 만들면
 모든 스크립트가 python 과 계약 패키지에 기대게 되므로, 다르면 실패하는 시험으로 같음을 보장한다. 계약 enum 이 바뀌어야 하면 docs/change-requests/ 로 헤드에게 보낸다.
 사용: python3 -I scripts/test_services_enum.py   (deploy .venv: boundary_contracts 설치 필요)"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import os, pathlib, subprocess, sys, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -10,7 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 def lib_lists(lib=None):
     lib = lib or ROOT / "scripts" / "lib.sh"
-    out = subprocess.run(["bash", "-c", f'DEPLOY_NO_DOCKER=1; source "{lib}"; echo "$SERVICES|$SERVICES_OPTIONAL"'], capture_output=True, text=True, check=True).stdout.strip()
+    out = subprocess.run(["bash", "-c", f'DEPLOY_NO_DOCKER=1; source "{lib}"; echo "$SERVICES|$SERVICES_OPTIONAL"'], capture_output=True, text=True, check=True, env=child_env()).stdout.strip()
     a, b = out.split("|"); return a.split(), b.split()
 
 

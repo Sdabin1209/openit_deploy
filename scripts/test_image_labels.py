@@ -3,6 +3,7 @@
 기대값의 출처: 헤드 결정(wo8) - 필수 라벨은 ImageLabels가 정한 service, revision, contracts.boundary, contracts.survey-schema, inputs,
 model-runtime·langgraph 는 해당 서비스에만(선택; turn-engine 라벨은 계약 3.0 에서 없어졌다), 값 없음 표기는 `n/a` 하나, revision `unknown` 거부. 값 예시는 이 PC 의 실제 이미지 라벨(deploy-build/*)에서 왔다.
 사용: python3 scripts/test_image_labels.py   (jsonschema 가 있는 파이썬: deploy .venv)"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, os, pathlib, subprocess, sys, tempfile, unittest
 from image_label_test_data import inputs_label
 
@@ -12,7 +13,7 @@ B = {"io.openit.inputs": inputs_label("svc"), "io.openit.service": "svc", "io.op
 
 
 def run(labels, *extra):
-    p = subprocess.run([sys.executable, str(CHECK), *extra], input=json.dumps(labels), capture_output=True, text=True)
+    p = subprocess.run([sys.executable, str(CHECK), *extra], input=json.dumps(labels), capture_output=True, text=True, env=child_env())
     return p.returncode, p.stdout + p.stderr
 
 
@@ -117,7 +118,7 @@ class Interface(unittest.TestCase):
         self.assertIn("ContainerInputs 검증기가 없다", result["errors"][0])
 
     def test_null_labels_is_missing_required(self):   # docker inspect 가 라벨 없는 이미지에서 null 을 낸다
-        p = subprocess.run([sys.executable, str(CHECK)], input="null", capture_output=True, text=True); self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        p = subprocess.run([sys.executable, str(CHECK)], input="null", capture_output=True, text=True, env=child_env()); self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
 
     def test_schema_missing_is_environment_error_not_pass(self):
         rc, out = run(B, "--schema-dir", "/nonexistent-dir"); self.assertEqual(rc, 2, out)

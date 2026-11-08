@@ -1,4 +1,5 @@
 """A job runner may execute only argv supplied by the image declaration."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,7 +15,7 @@ class DeclaredCommand(unittest.TestCase):
             scripts.mkdir()
             (scripts / "run-job.sh").write_bytes((ROOT / "scripts/run-job.sh").read_bytes())
             (scripts / "lib.sh").write_text('dc() { echo "UNEXPECTED_CONTAINER"; return 99; }\n')
-            result = subprocess.run(["bash", str(scripts / "run-job.sh"), "job-any", "/bin/sh"], capture_output=True, text=True)
+            result = subprocess.run(["bash", str(scripts / "run-job.sh"), "job-any", "/bin/sh"], capture_output=True, text=True, env=child_env())
             self.assertEqual(result.returncode, 2)
             self.assertIn("JobsDeclaration.argv", result.stderr)
             self.assertNotIn("UNEXPECTED_CONTAINER", result.stdout)

@@ -2,6 +2,7 @@
 """E2E 실패 진단(e2e.sh collect_diag, e2e_steps.py 의 diag_write)에 비밀이 섞이지 않는지 정적으로 본다(사용자 지시: 진단은 남기되 비밀은 금지, D84).
 금지: 환경 변수 목록을 읽는 명령(env, printenv, docker exec, Config.Env, inspect 전체 JSON, compose config). 허용: docker logs, docker ps, docker inspect --format '{{json .State}}'.
 또 진단이 정리(teardown) 전에 돌고, 수집 실패가 정리를 막지 않으며(서브셸 + || true), 끝 요약에 진단 폴더 경로가 나온다. 사용: python3 scripts/test_e2e_diag_safety.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import pathlib, re, subprocess, tempfile, unittest
 
 H = pathlib.Path(__file__).resolve().parent
@@ -60,7 +61,7 @@ class T(unittest.TestCase):
             fake.write_text("#!/usr/bin/env bash\necho \"$@\" >> " + str(t / "calls.txt") + "\ncase \"$1\" in ps) if [[ \"$*\" == *Names* ]]; then echo svc-a; echo svc-b; else echo table; fi;; logs) echo \"log of $4\";; inspect) echo '{\"Status\":\"exited\"}';; esac\n")
             fake.chmod(0o755)
             script = func_body(SH, "collect_diag") + '\nDOCKER=' + str(fake) + ' DEPLOY_ROOT=' + str(t / "root") + ' PROJECT=p W=' + str(t / "w") + '\ncollect_diag; echo "$DIAG_DIR"\n'
-            out = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+            out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=child_env())
             d = pathlib.Path(out.stdout.strip().splitlines()[-1])
             self.assertTrue((d / "logs/svc-a.log").read_text().startswith("log of"), out.stderr)
             self.assertIn("exited", (d / "state/svc-b.json").read_text())

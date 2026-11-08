@@ -4,6 +4,7 @@
 
 상태: REAL(실제 서비스·잡) / TEST-SUB(시험 대역으로 대신함) / BLOCKED(지금 구현으로는 이어지지 않음) / FAIL(검증 실패)
 """
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import argparse, traceback, collections.abc, hashlib, json, os, pathlib, subprocess, sys, tempfile, time, urllib.request, urllib.error, urllib.parse
 
 import boundary_contracts as bc
@@ -98,7 +99,7 @@ def INF_TOK():   # 추론 서버가 호출자(survey-service)에게 기대하는
     return TOK("inference-survey-service")
 MS_CONTAINER = a.ms_container or f"{a.project}-model-serving-1"
 def _ms_port():   # 추론 서버는 멈췄다 다시 뜨면 호스트 포트가 바뀔 수 있어 매번 Docker에게 묻는다
-    out = subprocess.run([a.docker, "port", MS_CONTAINER, "443/tcp"], capture_output=True, text=True).stdout
+    out = subprocess.run([a.docker, "port", MS_CONTAINER, "443/tcp"], capture_output=True, text=True, env=child_env()).stdout
     return out.splitlines()[0].strip().rsplit(":", 1)[1] if out.strip() else PORTS["ms"]
 def URL(k):   # 샌드박스(D123): 호스트에서 닿을 수 있는 주소는 게이트웨이(gw)와 다른 호스트 역할의 추론 서버(ms)뿐이다. 내부 서비스 키는 시험용 문이었으므로 실패시킨다
     if k == "ms":
@@ -148,7 +149,7 @@ _CODE_OF_STATUS = {400: "INVALID_RECORD", 401: "PERMISSION_DENIED", 403: "PERMIS
 RVH = {"X-Openit-User": "reviewer-direct-e2e"}   # 검토 게시는 X-Openit-User(gateway 가 붙이는 인증 사용자)가 없으면 401(계약 6절·HTTP.md I7; 이전에는 403). gateway 를 거치지 않는 직접 호출에 시험용 값을 붙인다
 OPERATOR_ID = "operator-e2e-script"   # 시험용 운영자 ID: 게이트웨이가 계정 ID를 X-Openit-User 로 붙이는 것을 스크립트가 직접 흉내 낸다
 def sh(cmd, env=None, inp=None, check=True):
-    r = subprocess.run(cmd, capture_output=True, text=True, input=inp, env={**os.environ, **(env or {})})
+    r = subprocess.run(cmd, capture_output=True, text=True, input=inp, env=child_env(**(env or {})))
     if check: assert r.returncode == 0, f"{cmd[:3]} 실패({r.returncode}): {(r.stderr or r.stdout)[-600:]}"
     return r
 def wait(fn, timeout, what, every=2):
@@ -1433,7 +1434,7 @@ def step5a():
     # curl 로 보낸다: 서버가 413 을 먼저 보내고 연결을 닫으면 파이썬 urllib 은 보내던 중 쓰기 오류로 응답을 못 읽는다(curl 은 응답이 오면 읽는다). 쿠키는 OIDC 로그인 세션을 쓴다
     cookie = SB.session_cookie(_C2_AUTHOR)
     r9 = subprocess.run(["curl", "-s", "-m", "60", "--cacert", str(a.gw_ca), "-o", "-", "-w", "\n%{http_code} %{content_type}", "-X", "POST", "-H", f"Cookie: {cookie}", "-H", "Content-Type: application/octet-stream",
-                         "--data-binary", "@-", SB.gw_url(human=True) + up], input=b"x" * (9 * 1024 * 1024), capture_output=True)
+                         "--data-binary", "@-", SB.gw_url(human=True) + up], input=b"x" * (9 * 1024 * 1024), capture_output=True, env=child_env())
     out9 = r9.stdout.decode(errors="replace").rsplit("\n", 1)
     code9, ctype9 = (out9[-1].split(" ", 1) + [""])[:2]
     try: b9 = json.loads(out9[0])
@@ -1483,7 +1484,7 @@ def step5d():
     assert rogue[0] == "연결 오류", ("다른 CA 의 인증서가 TLS 에서 거절되지 않았다(HTTP 응답을 받았다)", rogue)
     # (3) 폐기·복구: 기기 c 의 일련번호를 목록에서 빼면 다음 요청부터 403, 다시 넣으면 회복한다(재시작 없음, 계약 F절: 요청마다 대조)
     C = dev_tok("e2e-c"); c, st_c = gk(C, "POST", "/v1/sessions", {"kind": "SESSION_START", "question_set_id": QS}); assert c == 200, ("등록된 기기 C 는 정상이어야 한다", c); _sid(c, st_c)
-    ser = subprocess.run(["bash", "-c", 'source "$1/scripts/lib.sh" && source "$1/scripts/gateway-lib.sh" && gw_allowlist serials e2e-c', "x", str(ROOT)], capture_output=True, text=True, env={**os.environ, **env}, check=True).stdout.split()
+    ser = subprocess.run(["bash", "-c", 'source "$1/scripts/lib.sh" && source "$1/scripts/gateway-lib.sh" && gw_allowlist serials e2e-c', "x", str(ROOT)], capture_output=True, text=True, env=child_env(**env), check=True).stdout.split()
     assert len(ser) == 1, "기기 c 의 일련번호가 하나가 아니다"
     kad("revoke-serial", "e2e-c", ser[0])
     cc, bc = gk(C, "POST", "/v1/sessions", {"kind": "SESSION_START", "question_set_id": QS}); _assert_denied("목록에서 일련번호를 뺀 기기 C", cc, bc)
@@ -2549,7 +2550,7 @@ def step5g():
     # 기대 출처: FAULT_MATRIX G2 '레지스트리 중단: 새 이미지 적용·롤백이 막히고 이미 떠 있는 컨테이너는 영향 없음'. FAULT_POLICY 원칙 4(무한 대기 금지)·12(복구 뒤 사람 개입 없이 재시도 성공)
     reg = _registry_container(); lock = pathlib.Path(os.environ["DEPLOY_LOCK"])
     def lock_hash(): return hashlib.sha256(lock.read_bytes()).hexdigest()
-    pub = lambda t: subprocess.run(["timeout", str(t), "bash", str(ROOT / "scripts/publish-images.sh"), "kiosk-frontend"], capture_output=True, text=True)
+    pub = lambda t: subprocess.run(["timeout", str(t), "bash", str(ROOT / "scripts/publish-images.sh"), "kiosk-frontend"], capture_output=True, text=True, env=child_env())
     r0 = pub(_PUB_OK_S * 2); assert r0.returncode == 0, f"사전 조건: 레지스트리 정상일 때 게시가 실패한다(종료 코드 {r0.returncode}): 표준 출력 끝 {r0.stdout[-300:]!r} / 표준 오류 끝 {r0.stderr[-300:]!r}"
     h0 = lock_hash(); notes = []
     def live_ok(): return all(_c3_healthz(k) == 200 for k in ("qa", "gate", "ops"))
@@ -2639,7 +2640,7 @@ def step5L():
     assert json.loads(rbody or "null").get("status") == "ready", f"추론 서버 /readyz 본문이 ready 가 아니다(상태 코드만 보지 않는다): {rbody[:120]!r}"
     # 2) 같은 길(추론 서버 pod 의 출구 -> release-gate 영역 게이트웨이)로 서비스 토큰: active-pointer 200·bundle 200. 토큰 없음·틀림은 받는 서비스가 401(R3.23)
     env = json.loads(subprocess.run([a.docker, "inspect", a.ms_container or f"{a.project}-inf-model-serving-1", "--format", "{{json .Config.Env}}"],
-                                    capture_output=True, text=True, check=True).stdout or "[]") or []
+                                    capture_output=True, text=True, check=True, env=child_env()).stdout or "[]") or []
     egress = next((kv.split("=", 1)[1] for kv in env if kv.startswith("OPENIT_EGRESS_PROXY=")), "")   # 주소(비밀 아님)만 꺼낸다. 다른 값은 읽지 않는다
     assert egress.startswith("http://127.0.0.1:"), f"추론 서버의 OPENIT_EGRESS_PROXY 가 loopback 출구가 아니다(R1.8): {egress!r}"
     cases = [("ap", "/v1/active-pointer", "good"), ("bundle", f"/v1/releases/{rid}/bundle", "good"), ("none", "/v1/active-pointer", ""), ("wrong", "/v1/active-pointer", "wrong")]
@@ -2657,7 +2658,7 @@ def step5L():
     assert st_pb in (401, 404), f"공개 입구가 서비스 토큰으로 번들에 {st_pb} 를 냈다(기계 경로가 없어야 한다, R3.23)"
     # 4) release-gate 는 호스트에 게시되지 않는다(시험용 문 없음): 게시 포트는 pod(release-gate-net)만 가질 수 있고, 앱·영역 게이트웨이는 그 공간에 붙는다
     for svc in ("release-gate-net", "release-gate", "release-gate-gw"):
-        r = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1"], capture_output=True, text=True)
+        r = subprocess.run([a.docker, "port", f"{a.project}-{svc}-1"], capture_output=True, text=True, env=child_env())
         assert r.returncode == 0, f"{svc} 컨테이너를 찾지 못했다: {r.stderr.strip()[:200]}"
         assert r.stdout.strip() == "", f"{svc} 가 호스트에 게시돼 있다: {r.stdout.strip()}"
     rec("5L", "REAL", f"OUT-FILE(R1.5) SHA-256 대조·hosts 표 release-gate 줄; 다른 호스트 역할 추론 서버 ready(release 도달); 추론 서버 pod 의 출구(R1.8) -> release-gate 영역 게이트웨이: "

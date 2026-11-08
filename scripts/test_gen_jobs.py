@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """단독 시험: 잡의 command·시간 한도는 이미지 라벨 io.openit.jobs(계약 JobsDeclaration)에서 온다(S10, RUNTIME R9.2·R9.3). compose.yaml 에 `python -m` 이 없다.
 변이 확인: 잡 이름이 어긋나거나 라벨이 없으면 거부하고, compose 에 python -m 을 손으로 적으면 정적 시험이 실패한다."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, re, sys, unittest
 from pathlib import Path
 
@@ -123,7 +124,7 @@ class T(unittest.TestCase):
 
     def test_overlay_is_per_project(self):   # 다른 프로젝트(분리 배치 시험의 작은 compose)가 남의 잡 덧씌우기에 걸려 거부당하지 않게 프로젝트마다 따로 둔다(묶음에서만 나던 실패의 원인)
         import subprocess
-        out = subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source scripts/lib.sh; jobs_overlay_path a; jobs_overlay_path b'], cwd=ROOT, capture_output=True, text=True).stdout.split()
+        out = subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source scripts/lib.sh; jobs_overlay_path a; jobs_overlay_path b'], cwd=ROOT, capture_output=True, text=True, env=child_env()).stdout.split()
         self.assertEqual(len(out), 2); self.assertNotEqual(out[0], out[1])
         self.assertNotIn("compose.jobs.yaml", (ROOT / "scripts/lib.sh").read_text(encoding="utf-8").replace("compose.jobs.${1", ""))
 

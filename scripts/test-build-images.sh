@@ -7,7 +7,7 @@ export LABEL_FIXTURE_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/image
 HERE="$(cd "$(dirname "$0")" && pwd)"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; N=0; F=0
 ok() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  PASS $name"; else echo "  FAIL $name :: $(echo "$out" | tail -2 | tr '\n' ' ' | cut -c1-200)"; F=$((F+1)); fi; }
 no() { N=$((N+1)); local name=$1; shift; if out=$("$@" 2>&1); then echo "  FAIL $name :: 성공하면 안 된다"; F=$((F+1)); else echo "  PASS $name"; fi; }
-D="$T/deploy"; mkdir -p "$D/build"; cp -r "$HERE" "$D/scripts"; cp -r "$HERE/../locks" "$D/locks" 2>/dev/null; VS="$HERE/../.venv"; [ -x "$VS/bin/python" ] || VS="$(git -C "$HERE" rev-parse --git-common-dir 2>/dev/null)/../.venv"   # worktree 에는 .venv 가 없다: 주 작업 트리의 것을 쓴다
+D="$T/deploy"; mkdir -p "$D/build"; cp -r "$HERE" "$D/scripts"; cp -r "$HERE/../locks" "$D/locks" 2>/dev/null; VS="$HERE/../.venv"; [ -x "$VS/bin/python" ] || VS="$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/../.venv"   # worktree 에는 .venv 가 없다: 주 작업 트리의 것을 쓴다
 # 왜 공용 .venv 를 심볼릭 링크로 쓰지 않나: build-images.sh 는 서비스를 빌드하기 전에 deploy venv 에 계약을 pip --force-reinstall 한다. 공용 venv 를 링크하면 이 시험이 동시에 여러 개 돌 때(E2E 사전 점검과 run-self-checks)
 # 서로의 site-packages 를 지워 "No module named boundary_contracts" 로 간헐 실패했다(4차 E2E, 3개 동시 3회 재현). 그래서 읽기만 하는 python·lib 는 링크하고 pip 만 이 시험 몫의 가짜로 둔다(설치는 하지 않는다, wheel 은 빈 파일).
 VR="$(cd "$VS" 2>/dev/null && pwd)"; mkdir -p "$D/.venv/bin"; ln -s "$VR/bin/python" "$D/.venv/bin/python"; ln -s "$VR/lib" "$D/.venv/lib"; cp "$VR/pyvenv.cfg" "$D/.venv/pyvenv.cfg"
@@ -53,7 +53,7 @@ EN
 AREAS_JSON="${AREAS_FILE:-$HERE/../../head/shared/areas.json}"   # 영역 목록의 정본(areas.py 로 읽는다)
 for r in $("$DEPLOY_PY" "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node,library); do mkrepo "$r"; done
 for r in $("$DEPLOY_PY" "$HERE/areas.py" --file "$AREAS_JSON" --kind python,node); do ( cd "$T/$r" && cp "$T/entry.sh" scripts/build-image.sh && git add -A && $G commit -q -m entry ); done
-REAL_BC="$(cd "$(git -C "$HERE" rev-parse --git-common-dir)/../.." && pwd)/boundary-contracts"
+REAL_BC="$(cd "$(git -C "$HERE" rev-parse --path-format=absolute --git-common-dir)/../.." && pwd)/boundary-contracts"
 [ -d "$REAL_BC" ] && git -C "$REAL_BC" rev-parse "$BC" >/dev/null 2>&1 || { echo "SKIP: 계약 리포($REAL_BC)에 태그 $BC 가 없다(종료 77 = 검증하지 않음)"; exit 77; }
 git -C "$REAL_BC" archive "$BC" | tar -x -C "$T/boundary-contracts"   # 실제 계약 소스(요청·결과 검증기가 여기서 온다)
 ( cd "$T/boundary-contracts" && echo bc-src > SRC_BC && git add -A && $G commit -q -m s && git tag "$BC" ); ( cd "$T/model-runtime" && echo mr-src > SRC_MR && git add -A && $G commit -q -m s && git tag "$MR" )
@@ -65,7 +65,8 @@ case "$1" in info) exit 0;; image) [ "$2" = inspect ] && { case "$*" in *"{{.Id}
 FD
 chmod +x "$T/docker"; mkdir -p "$D/state"
 export DOCKER="$T/docker" FAKE_OUT="$T/req"
-run() { ( cd "$D" && env DEPLOY_ROOT="" bash scripts/build-images.sh "$@" ) ; }
+MINENV=(PATH="$PATH" HOME="$HOME" ${LANG:+LANG="$LANG"} ${TMPDIR:+TMPDIR="$TMPDIR"} ${DOCKER_CONFIG:+DOCKER_CONFIG="$DOCKER_CONFIG"} ${DOCKER_HOST:+DOCKER_HOST="$DOCKER_HOST"})   # R9.1: 하위 프로세스에는 최소 환경만(env -i + 필요한 이름)
+run() { ( cd "$D" && env -i "${MINENV[@]}" ${DOCKER:+DOCKER="$DOCKER"} ${FAKE_OUT:+FAKE_OUT="$FAKE_OUT"} DEPLOY_ROOT="" bash scripts/build-images.sh "$@" ) ; }
 echo "== 전체 빌드"
 # 실패하면 출력 끝을 보인다(예전엔 /dev/null 로 버려, 동시에 돌 때만 나는 간헐 실패의 사유가 남지 않았다. 재시도로 덮지 않는다)
 export SETUP_ENV_WORK="$T/no-copies"; export EXPECT_REQ; EXPECT_REQ="$(for s in $SERVICES; do r=$(service_repo $s); v=$(service_variant $s); echo "${r}${v:+-$v}"; done | sort -u | tr '\n' ' ')"   # 요청 파일 이름 = 리포[-variant]: 서비스 목록과 대응 함수(lib.sh)에서 정한다

@@ -1,5 +1,6 @@
 """images_record.py 시험: 서비스 한 줄씩 합치기, 목록 밖 줄 정리, 겹친 쓰기에서 줄이 사라지지 않음, 임시 파일이 남지 않음.
 왜 이 시험: 2026-11-08 두 빌드가 겹쳐 build/images.env 가 21줄 중 4줄만 남았다(전체 빌드의 rm + sed -i/>> 경쟁)."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import multiprocessing, os, pathlib, subprocess, sys, tempfile, unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -38,7 +39,7 @@ class T(unittest.TestCase):
         self.assertEqual(left, [], "임시 파일이 남았다")
 
     def test_usage_error(self):
-        r = subprocess.run([sys.executable, str(HERE / "images_record.py"), self.p, "bogus"], capture_output=True)
+        r = subprocess.run([sys.executable, str(HERE / "images_record.py"), self.p, "bogus"], capture_output=True, env=child_env())
         self.assertEqual(r.returncode, 2)
 
 

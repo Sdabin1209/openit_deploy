@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """규칙 D39 C36 C37. sd_jobs.py 시험: (1) 라벨의 JobsDeclaration 을 계약 validator 로 검증해 잡을 고른다 (2) 명령 조립 (3) 실제 dataset-store 이미지(라벨 io.openit.jobs 가 있는 것)가 있으면
 `import` 잡을 시험용 입력으로 실제로 돌려 게시 결과를 본다(없으면 그 시험만 건너뛴다: 통과로 세지 않고 출력에 SKIP 을 쓴다). 사용: <deploy .venv>/bin/python scripts/test_sd_jobs.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, os, pathlib, shutil, subprocess, sys, tempfile, unittest
 import importlib.metadata
 
@@ -28,13 +29,13 @@ RUNTIME = {"mounts":[],"tmpfs":[],"capabilities":[],"read_only_root":True}
 def find_image():
     selected = os.environ.get("SD_JOB_TEST_IMAGE")
     if selected:
-        return subprocess.check_output(["docker", "image", "inspect", selected, "--format", "{{.Id}}"], text=True).strip()
+        return subprocess.check_output(["docker", "image", "inspect", selected, "--format", "{{.Id}}"], text=True, env=child_env()).strip()
     # 이미지 ID 로 부른다: 다이제스트로만 받은 이미지는 태그가 <none> 이라 "저장소:<none>" 이름으로는 inspect 가 invalid reference format 으로 실패한다
-    r = subprocess.run(["docker", "images", "--no-trunc", "--format", "{{.ID}} {{.Repository}}"], capture_output=True, text=True)
+    r = subprocess.run(["docker", "images", "--no-trunc", "--format", "{{.ID}} {{.Repository}}"], capture_output=True, text=True, env=child_env())
     for line in r.stdout.splitlines() if r.returncode == 0 else []:
         img, _, repo = line.partition(" ")
         if "dataset-store" not in repo: continue
-        lab = subprocess.run(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True).stdout
+        lab = subprocess.run(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], capture_output=True, text=True, env=child_env()).stdout
         # 이미지가 설치된 계약과 같은 MAJOR 로 빌드된 것만 쓴다(옛 계약의 설정 모양을 3.0 설정으로 돌리면 의미 없는 실패가 난다)
         version = (json.loads(lab) or {}).get("io.openit.contracts.boundary", "v?")
         if "io.openit.jobs" in lab and "io.openit.exposure" in lab and version == "v" + importlib.metadata.version("boundary-contracts"): return img
@@ -139,13 +140,13 @@ class T(unittest.TestCase):
     def test_real_import_job_config_error_is_exit_2(self):
         img = find_image()
         if not img: self.skipTest("SKIP: 설치된 계약과 같은 MAJOR 로 빌드된 io.openit.jobs 라벨의 dataset-store 이미지가 없다(확인 못 함)")
-        labels = json.loads(subprocess.check_output(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], text=True))
+        labels = json.loads(subprocess.check_output(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], text=True, env=child_env()))
         job = sd_jobs.find_job(labels, "synthetic-import", validator)
         with tempfile.TemporaryDirectory(prefix="sdjobs,:review-") as w:
             os.chmod(w, 0o755); sec = pathlib.Path(w) / "sec"; (sec / "tokens").mkdir(parents=True)
             (sec / "tokens/dataset-store-write-synthetic-data").write_text("x" * 32)
             cp = pathlib.Path(w) / "bad.json"; cp.write_text(json.dumps({"dataset_id": "ds-bad"}))   # 필수 키가 없는 설정(계약 위반)
-            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), network="none"), capture_output=True, text=True, timeout=DOCKER_RUN_TIMEOUT_SECONDS)
+            r = subprocess.run(sd_jobs.docker_cmd("docker", img, job, str(cp), w, str(sec), os.getuid(), os.getgid(), network="none"), capture_output=True, text=True, timeout=DOCKER_RUN_TIMEOUT_SECONDS, env=child_env())
             self.assertEqual(r.returncode, 2, r.stderr[-300:])
             msg = sd_jobs.describe_failure(r.returncode, r.stderr, validator)
             self.assertIn("설정 오류 CONFIG", msg, msg)
@@ -153,7 +154,7 @@ class T(unittest.TestCase):
     def test_real_import_job(self):
         img = find_image()
         if not img: self.skipTest("SKIP: 설치된 계약과 같은 MAJOR 로 빌드된 io.openit.jobs 라벨의 dataset-store 이미지가 없다(확인 못 함)")
-        labels = json.loads(subprocess.check_output(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], text=True))
+        labels = json.loads(subprocess.check_output(["docker", "image", "inspect", img, "--format", "{{json .Config.Labels}}"], text=True, env=child_env()))
         job = sd_jobs.find_job(labels, "synthetic-import", validator)
         inp = HERE.parent / "test/import-v2"
         with tempfile.TemporaryDirectory(prefix="sdjobs,:review-") as w:

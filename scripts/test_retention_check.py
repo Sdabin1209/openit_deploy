@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """백업 보관 기간 <= 운영 데이터 보존 기간 중 가장 짧은 값(U30, ADR 0044)을 고정한다. 사용: python3 scripts/test_retention_check.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import pathlib, subprocess, sys, tempfile, unittest
 
 H = pathlib.Path(__file__).resolve().parent
@@ -11,7 +12,7 @@ from openit_deploy.wiring.cli_retention_check import read_sources
 
 
 def run(*args):
-    return subprocess.run([sys.executable, str(H / "retention_check.py"), *args], capture_output=True, text=True)
+    return subprocess.run([sys.executable, str(H / "retention_check.py"), *args], capture_output=True, text=True, env=child_env())
 
 
 class T(unittest.TestCase):

@@ -9,6 +9,7 @@
           False 인 단계는 --changed-only 가 항상 고른다.
   why   : deps 와 repos 를 이렇게 선언한 근거(코드 위치). 근거가 없으면 deps=UNKNOWN 으로 쓴다.
 """
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import ast, hashlib, json, os, pathlib, re, subprocess, sys
 from dataclasses import dataclass
 
@@ -161,7 +162,7 @@ def skip_root(step, status, decls=STEP_DECLS):
 
 # ---------------------------------------------------------------- 입력 해시
 def _git(repo_dir, *args):
-    return subprocess.run(["git", "-C", str(repo_dir), *args], capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", "-C", str(repo_dir), *args], capture_output=True, text=True, env=child_env()).stdout.strip()
 
 
 def repo_state(spec, workspace=WORKSPACE):

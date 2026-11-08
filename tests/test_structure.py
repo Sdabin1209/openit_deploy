@@ -4,6 +4,7 @@
 3 HTTP 클라이언트·서버(boundary_contracts.clients, openit_link, urllib.request, http.client, requests, http.server)는 통신 컴포넌트(link_*) 밖에 없다.
 4 모든 스키마에 통과·거부 예시가 있고 결과가 맞다. 5 types/ 가 schemas/ 에서 다시 생성한 결과와 같다. 6 시험을 뺀 모든 코드 파일이 components/·wiring/·types/ 또는 진입점·설정에 속한다.
 덧붙임: 진입점(scripts/*.py)은 얇다(업무 규칙 없음), 컴포넌트마다 입력·출력 스키마가 있고 docs/components.md 표와 같다, 컴포넌트는 wiring/ 을 import 하지 않는다."""
+from openit_deploy.wiring.child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만
 import ast
 import json
 import pathlib
@@ -79,7 +80,7 @@ class Structure(unittest.TestCase):
     def test_5_types_match_regenerated(self):
         gen = ROOT / "build/venv-types/bin/datamodel-codegen"
         if not gen.exists():   # 작업 트리(worktree)면 본 리포의 생성기 환경
-            gen = pathlib.Path(subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-common-dir"], capture_output=True, text=True).stdout.strip()).resolve().parent / "build/venv-types/bin/datamodel-codegen"
+            gen = pathlib.Path(subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-common-dir"], capture_output=True, text=True, env=child_env()).stdout.strip()).resolve().parent / "build/venv-types/bin/datamodel-codegen"
         self.assertTrue(gen.exists(), "생성기가 없다(건너뛰지 않고 실패로 센다): python3 -m venv build/venv-types && build/venv-types/bin/pip install -r requirements-types.txt")
         with tempfile.TemporaryDirectory() as d:
             out = pathlib.Path(d) / "deploy_types.py"
@@ -100,7 +101,7 @@ class Structure(unittest.TestCase):
             self.assertEqual(output.read_text(), 'previous valid output\n')
 
     def test_6_every_code_file_has_a_place(self):
-        files = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--cached", "--others", "--exclude-standard", "*.py"], capture_output=True, text=True).stdout.split()
+        files = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--cached", "--others", "--exclude-standard", "*.py"], capture_output=True, text=True, env=child_env()).stdout.split()
         bad = []
         for f in files:
             if re.search(r"(^|/)(tests?)/|(^|/)test_[^/]*\.py$|^scripts/test_", f): continue   # 시험

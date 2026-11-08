@@ -3,6 +3,7 @@
 확인: (1) SESSION_START 본문마다 question_set_id 가 있고 FrontendMessage 를 통과한다(문진표가 둘이라 고르지 않은 시작은 400 이므로 시나리오 시작 본문은 모두 싣는다. 의도한 예외는 5k 의 '고르지 않은 시작' 한 곳),
 (2) 제출 대상 subject 가 question_sets 목록(1개 이상, ArtifactRef)이라 GateSubmissionRequest 를 통과하고 옛 question_set 이 없다, (3) 문진표 ID 상수가 ID 패턴을 따른다, (4) 기기 설정 배치 칸이 DeviceConfig 를 통과한다.
 사용: <deploy .venv>/bin/python -W ignore scripts/test_e2e_scenario_shapes.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import ast, base64, json, os, pathlib, re, subprocess, sys, unittest
 
 try:
@@ -78,7 +79,7 @@ def extract(path_or_text):
     if src is None:
         import tempfile
         t = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8"); t.write(path_or_text); t.close(); src = pathlib.Path(t.name)
-    r = subprocess.run([str(py), "-W", "ignore", "-c", EXTRACT, str(src)], capture_output=True, text=True, cwd=str(qa))
+    r = subprocess.run([str(py), "-W", "ignore", "-c", EXTRACT, str(src)], capture_output=True, text=True, cwd=str(qa), env=child_env())
     assert r.returncode == 0, r.stderr[-400:]
     return json.loads(r.stdout.strip().splitlines()[-1])
 

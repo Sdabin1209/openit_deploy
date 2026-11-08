@@ -3,6 +3,7 @@
 검사 1(출처 추적): `c, X = state_dev(...)`/`state_of(...)` 로 받은 X 의 ["state"]·["pause_reason"] 비교는 계약 SessionState 의 열거여야 하고, `X = staff_sv(...)`(또는 staff_sv(...)["status"] 직접)의 ["status"] 비교는 문진 스키마(DEPLOY_SS_TAG)의 StaffSessionView.status 열거여야 한다.
 검사 2(일반): 아무 응답이나 `x["키"] == "상수"`, `x.get("키") in ("상수", ...)` 로 비교하면, 계약·문진 스키마 어디에든 이름이 같은 열거 속성이 있는데 상수가 그 열거 어디에도 없으면 어긋남이다. 이름이 같은 열거 속성이 하나도 없으면(스키마에 없는 모양: 잡 출력, 추론 서버 상태 등) 이 검사는 판단하지 않고 그 개수를 알린다(통과로 세지 않는다: 아래 UNCHECKED).
 이웃 소스를 읽지 않는다: 계약은 설치된 boundary_contracts 패키지, 문진 스키마는 survey-service 태그 DEPLOY_SS_TAG 의 읽기 전용 복사(git archive)다. 사용: <deploy .venv>/bin/python scripts/test_e2e_enum_constants.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import ast, json, pathlib, subprocess, sys, tempfile, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -17,7 +18,7 @@ ALLOW = [("reason", "details", "BoundaryError.details 는 사유 코드를 담�
 
 
 def ss_tag():
-    return subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source "$1/scripts/lib.sh"; echo "$DEPLOY_SS_TAG"', "_", str(ROOT)], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source "$1/scripts/lib.sh"; echo "$DEPLOY_SS_TAG"', "_", str(ROOT)], capture_output=True, text=True, check=True, env=child_env()).stdout.strip()
 
 
 def enums_of(doc: dict) -> dict:
@@ -58,7 +59,7 @@ def load_all():
     for f in d.glob("*.schema.json"):
         contract[f.name[:-len(".schema.json")]] = enums_of(json.loads(f.read_text(encoding="utf-8")))
     tmp = tempfile.TemporaryDirectory()
-    r = subprocess.run(f'git -C "{WS / "survey-service"}" archive "{ss_tag()}" schema | tar -x -C "{tmp.name}"', shell=True, capture_output=True, text=True)
+    r = subprocess.run(f'git -C "{WS / "survey-service"}" archive "{ss_tag()}" schema | tar -x -C "{tmp.name}"', shell=True, capture_output=True, text=True, env=child_env())
     assert r.returncode == 0, f"survey-service 에 태그 {ss_tag()} 가 없다: {r.stderr[-200:]}"
     survey = {}
     for f in (pathlib.Path(tmp.name) / "schema" / "schemas").glob("*.json"):

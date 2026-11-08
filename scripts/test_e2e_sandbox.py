@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """e2e_sandbox 의 명령 조립 단위 시험. 가짜 실행기로 인자만 본다(Docker·네트워크·실제 시간을 쓰지 않는다)."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import os, pathlib, subprocess, sys, tempfile, unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -112,7 +113,7 @@ class T(unittest.TestCase):
         import http.server, ssl, threading, urllib.request
         d = pathlib.Path(self.tmp.name)
         r = subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "1", "-subj", "/CN=host.docker.internal",
-                            "-addext", "subjectAltName=DNS:host.docker.internal", "-keyout", str(d / "k.pem"), "-out", str(d / "c.pem")], capture_output=True)
+                            "-addext", "subjectAltName=DNS:host.docker.internal", "-keyout", str(d / "k.pem"), "-out", str(d / "c.pem")], capture_output=True, env=child_env())
         if r.returncode != 0: self.skipTest("openssl 로 시험 인증서를 만들지 못했다")
         class H(http.server.BaseHTTPRequestHandler):
             def do_GET(self):

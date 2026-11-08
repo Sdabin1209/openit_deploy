@@ -4,6 +4,7 @@
 - 입력: build/images.env 의 model-serving 이미지 라벨(없으면 SKIP 으로 끝낸다: 통과로 세지 않는다, 종료 코드 77)
 - 규칙: (1) MODEL_RUNTIME_RELEASE_URL 의 호스트 이름이 egress 항목이어야 하고 포트는 443 이어야 한다. (2) egress 의 각 이름은 다른 서버면 compose.inference.remote.yaml 의 extra_hosts 로, 같은 호스트면 주 서버 compose.yaml 의 inference-in 망 별칭(compose.inference.samehost.yaml 의 external 망)으로 풀려야 한다.
 변이 확인: egress 에 없는 이름이나 8443 포트를 주면 실패한다."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, re, subprocess, sys, unittest
 from pathlib import Path
 from urllib.parse import urlparse
@@ -21,7 +22,7 @@ def label_egress():
     if not envf.exists(): return None
     img = next((l.split()[1] for l in envf.read_text().splitlines() if l.startswith("model-serving ")), None)
     if not img: return None
-    r = subprocess.run(["docker", "image", "inspect", img, "--format", '{{index .Config.Labels "io.openit.exposure"}}'], capture_output=True, text=True)
+    r = subprocess.run(["docker", "image", "inspect", img, "--format", '{{index .Config.Labels "io.openit.exposure"}}'], capture_output=True, text=True, env=child_env())
     if r.returncode != 0 or not r.stdout.strip(): return None
     return json.loads(r.stdout).get("egress", [])
 

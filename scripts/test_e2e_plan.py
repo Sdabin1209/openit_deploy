@@ -1,4 +1,5 @@
 """e2e_plan.py 와 e2e.sh/record-e2e.sh 의 SKIP·fail-fast 자체 시험(Docker 불필요). 실행: python3 scripts/test_e2e_plan.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import os, pathlib, re, subprocess, sys, tempfile, unittest
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -101,7 +102,7 @@ def run_bash_harness(script):
     end = next(i for i, l in enumerate(lines) if l.startswith("chk() {"))
     defs = "\n".join(lines[start:end + 1])
     pre = 'FAILS=0; RESULT=(); FAILFAST=${FAILFAST:-0}; sect() { :; }; finish() { echo FINISH-CALLED; }\n'
-    return subprocess.run(["bash", "-c", pre + defs + "\n" + script], capture_output=True, text=True)
+    return subprocess.run(["bash", "-c", pre + defs + "\n" + script], capture_output=True, text=True, env=child_env())
 
 
 class BashT(unittest.TestCase):
@@ -128,11 +129,11 @@ class BashT(unittest.TestCase):
             t = pathlib.Path(t); f = t / "R.md"
             f.write_text("| h |\n<!-- E2E-ROWS-END -->\n")
             r = subprocess.run(["bash", str(HERE / "record-e2e.sh"), "--file", str(f), "--manual", "--source", "시험", "--commit", "abc", "--mode", "전체",
-                                "--pass", "10", "--fail", "1", "--exit", "1", "--ca-fail", "0", "--ca-skip", "0", "--ca-pass", "5", "--skip", "3", "--env", "t"], capture_output=True, text=True)
+                                "--pass", "10", "--fail", "1", "--exit", "1", "--ca-fail", "0", "--ca-skip", "0", "--ca-pass", "5", "--skip", "3", "--env", "t"], capture_output=True, text=True, env=child_env())
             self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("SKIP 3개", f.read_text())
             f.write_text("| h |\n<!-- E2E-ROWS-END -->\n")
             r = subprocess.run(["bash", str(HERE / "record-e2e.sh"), "--file", str(f), "--manual", "--source", "시험", "--commit", "abc", "--mode", "전체",
-                                "--pass", "10", "--fail", "0", "--exit", "0", "--ca-fail", "0", "--ca-skip", "0", "--ca-pass", "5", "--env", "t"], capture_output=True, text=True)
+                                "--pass", "10", "--fail", "0", "--exit", "0", "--ca-fail", "0", "--ca-skip", "0", "--ca-pass", "5", "--env", "t"], capture_output=True, text=True, env=child_env())
             self.assertNotIn("SKIP", f.read_text())
 
 

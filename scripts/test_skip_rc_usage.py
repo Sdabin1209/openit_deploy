@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """종료 코드 77 = SKIP 규칙의 점검(automake 관례, run-self-checks.sh): (1) 시험 파일의 TestCase 메서드 안에 sys.exit(77) 이 없다(unittest 는 SystemExit 를 오류로 세어 SKIP 이 FAIL 이 된다: 추론 서버 egress 시험의 실제 결함). skipTest 를 쓴다.
 (2) unittest_skip_rc.main 은 통과 0, 실패 1, skipTest 가 있으면 77 로 끝난다(변이: 실패와 skip 이 섞이면 실패가 이긴다). 사용: python3 scripts/test_skip_rc_usage.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import ast, pathlib, subprocess, sys, tempfile, textwrap, unittest
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -19,7 +20,7 @@ def run_case(body: str) -> int:
     code = "import sys, unittest\nsys.path.insert(0, %r)\n%s\nif __name__ == '__main__':\n    from unittest_skip_rc import main; main(verbosity=0)\n" % (str(HERE), textwrap.dedent(body))
     with tempfile.TemporaryDirectory(dir=HERE.parent / "build" / "logs") as d:
         f = pathlib.Path(d) / "t.py"; f.write_text(code)
-        return subprocess.run([sys.executable, "-W", "ignore", str(f)], capture_output=True).returncode
+        return subprocess.run([sys.executable, "-W", "ignore", str(f)], capture_output=True, env=child_env()).returncode
 
 
 class T(unittest.TestCase):

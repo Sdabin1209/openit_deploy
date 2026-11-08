@@ -1,6 +1,7 @@
 """The startup gate checks the generated configuration that is actually used."""
 import json
 import os
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 from pathlib import Path
 import subprocess
 import tempfile
@@ -44,7 +45,7 @@ with (Path(__file__).parent/'checked').open('a') as out:out.write(str(value)+'\\
         checker.chmod(0o755)
         result = subprocess.run(
             ['bash', str(scripts / 'up.sh'), 'isolated-test'],
-            env={**os.environ, 'DEPLOY_SKIP_DOCTOR': '1'},
+            env=child_env(DEPLOY_SKIP_DOCTOR='1'),
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 0, result.stderr

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """e2e_sandbox.exec_py 실제 Docker 시험: 서비스(가짜) 컨테이너와 같은 망에서 클라이언트가 돌고, 비밀 폴더의 토큰을 /run/secrets 로 읽고, *_FILE 환경만 옮기고, 클라이언트는 끝나면 지워진다.
 도구 이미지 자리에 UTIL(python) 이미지를 쓴다(link 설치 여부는 build-tool-image.sh 의 몫). Docker 가 없으면 SKIP(77). 사용: python3 scripts/test_exec_py_docker.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, os, pathlib, subprocess, sys, tempfile, time, unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -10,7 +11,7 @@ PLAIN = "http" + "://"   # 시험 서버는 임시 망 안의 평문 http.server
 D = "docker"
 UTIL = next((l.split("=", 1)[1].strip() for l in (ROOT / "locks/images.lock").read_text().splitlines() if l.startswith("UTIL_IMAGE=")), "")
 def dk(*a, **kw): return subprocess.run([D, *a], capture_output=True, text=True, **kw)
-if subprocess.run([D, "version"], capture_output=True).returncode != 0 or not UTIL: print("SKIP: Docker 또는 UTIL 이미지가 없다"); sys.exit(77)
+if subprocess.run([D, "version"], capture_output=True, env=child_env()).returncode != 0 or not UTIL: print("SKIP: Docker 또는 UTIL 이미지가 없다"); sys.exit(77)
 
 
 class T(unittest.TestCase):

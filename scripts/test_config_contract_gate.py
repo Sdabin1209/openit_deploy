@@ -2,6 +2,7 @@
 """기동 전 설정·환경 계약 검증 관문(check_config_contracts.py, up.sh)의 자체 점검(R7). (1) 실제 합쳐진 compose 환경(운영 구성)이 관문을 통과한다 (2) 계약을 어기는 환경(알 수 없는 SURVEY_ 키)은 종료 1이고 출력에 값이 없다 (3) 없는 계약 스키마는 건너뛰지 않고 실패 (4) up.sh 가 compose up 보다 앞에서 관문을 부른다 (5) 가짜 백엔드 흐름 파일이 RuntimeFlowFile 을 따른다.
 사용: <deploy .venv>/bin/python -W ignore scripts/test_config_contract_gate.py   (docker compose 가 필요하다: 합쳐진 환경을 읽는다)"""
 import io, json, os, pathlib, re, subprocess, sys, unittest
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -9,7 +10,7 @@ from openit_deploy.wiring import cli_check_config_contracts as G
 
 
 def rendered():
-    env = dict(os.environ)
+    env = child_env()   # R9.1
     env.setdefault("GATEWAY_HOST_NAMES", '"localhost", "127.0.0.1"')
     env.setdefault("GATEWAY_PUBLIC_URL", "https://localhost:8443")   # lib.sh 가 GATEWAY_HOSTS 에서 만드는 공개 주소(IdentityEnv·IdentityProxyEnv 의 HttpsUrl 패턴). 자리표시 x 는 패턴 위반이다   # lib.sh 가 GATEWAY_HOSTS 에서 만드는 값(L20). 자리표시 값 x 는 GatewayEnv 패턴 위반이다
     for v in re.findall(r"\$\{([A-Za-z0-9_]+):\?", (ROOT / "compose.yaml").read_text(encoding="utf-8")): env.setdefault(v, "x")

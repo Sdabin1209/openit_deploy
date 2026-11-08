@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """단독 시험(실행별 상태 격리): setup-env 보고는 이 작업 트리(DEPLOY_ROOT)의 state/ 에만 있고, 보고에는 그것을 만든 영역 커밋이 적힌다. check-all 이 지금 대조하는 영역 커밋과 다르면 낡은 보고로 거부한다.
 변이 확인: 다른 커밋의 보고를 넣으면 거부(STALE_REPORT), 같은 커밋이면 통과, 커밋 기록이 없는 보고도 거부한다."""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
@@ -12,14 +13,14 @@ REP = {"status": "ok", "exit_code": 0, "environment": {"kind": "python-venv", "p
 
 
 def git(repo, *a):
-    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@x", *a], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@x", *a], capture_output=True, text=True, check=True, env=child_env()).stdout.strip()
 
 
 class T(unittest.TestCase):
     def setUp(self):
         self.ws = Path(tempfile.mkdtemp()); self.store = Path(tempfile.mkdtemp())
         a = self.ws / "areax"; (a / ".venv/bin").mkdir(parents=True); (a / ".venv/bin/python").write_text("")
-        subprocess.run(["git", "init", "-q", str(a)], check=True); (a / "f").write_text("1"); git(a, "add", "-A"); git(a, "commit", "-qm", "c1")
+        subprocess.run(["git", "init", "-q", str(a)], check=True, env=child_env()); (a / "f").write_text("1"); git(a, "add", "-A"); git(a, "commit", "-qm", "c1")
         self.a = a; os.environ["SETUP_ENV_DIR"] = str(self.store); os.environ["SETUP_ENV_WORK"] = str(self.ws)   # 환경은 사본 폴더(work_root)에 있다: 시험에서는 임시 워크스페이스가 그 자리
         self.store.mkdir(exist_ok=True); (self.store / "areax.json").write_text(json.dumps(REP))
 

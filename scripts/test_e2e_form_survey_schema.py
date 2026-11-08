@@ -2,6 +2,7 @@
 """E2E 문항 양식(test/fixtures/question-form-v2.txt)이 만드는 QuestionBank 가 기준 문진 스키마(lib.sh 의 DEPLOY_SS_TAG, 3.0.0 부터 칸 data_type 필수·option 의 choices/choice_catalog·필수 고정 문장 4개·ID 패턴)를 통과하는지 정적으로 본다(U410).
 양식 -> 은행 변환은 question-authoring 의 텍스트 양식 추출기(그 영역의 setup-env 보고가 알려 주는 파이썬으로 돌린다)가 하고, 검증은 survey-service 의 태그 DEPLOY_SS_TAG 의 문진 스키마(git archive 로 꺼낸 읽기 전용 복사)로 한다. 문진 스키마를 고치지 않는다. 추출기가 못 읽거나 이웃/태그가 없으면 건너뛰지 않고 실패한다(검증하지 못한 것을 통과로 세지 않는다).
 version 은 저작 서비스가 정하는 값이라 이 시험이 정수 1 로 채운다. 사용: <deploy .venv>/bin/python scripts/test_e2e_form_survey_schema.py"""
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 import json, pathlib, subprocess, sys, tempfile, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -18,7 +19,7 @@ print(json.dumps(r, ensure_ascii=False))
 
 
 def ss_tag():
-    out = subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source "$1/scripts/lib.sh"; echo "$DEPLOY_SS_TAG"', "_", str(ROOT)], capture_output=True, text=True, check=True).stdout.strip()
+    out = subprocess.run(["bash", "-c", 'DEPLOY_NO_DOCKER=1; source "$1/scripts/lib.sh"; echo "$DEPLOY_SS_TAG"', "_", str(ROOT)], capture_output=True, text=True, check=True, env=child_env()).stdout.strip()
     return out
 
 
@@ -30,13 +31,13 @@ class FormPassesSurveySchema(unittest.TestCase):
         py = setup_env.env_python("question-authoring", WS) or sys.executable   # 보고가 없으면 이 시험의 파이썬(추출기는 영역 폴더(cwd)에서 import 한다)
         import tempfile as _tf
         hdr = _tf.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8"); hdr.write("문진표 ID: qs-fixture\n문진표 제목: 시험 문진표\n" + (ROOT / "test/fixtures/question-form-v2.txt").read_text(encoding="utf-8")); hdr.close()   # 4.0.0: 은행에 문진표 ID·제목이 필수라 e2e_steps.form_for 와 같이 머리를 붙인다
-        r = subprocess.run([str(py), "-c", EXTRACT, hdr.name], capture_output=True, text=True, cwd=str(WS / "question-authoring"))
+        r = subprocess.run([str(py), "-c", EXTRACT, hdr.name], capture_output=True, text=True, cwd=str(WS / "question-authoring"), env=child_env())
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
         ext = json.loads(r.stdout.strip().splitlines()[-1])
         self.assertEqual(ext["status"], "PARSED", ext.get("reason"))
         bank = {**ext["bank"], "version": 1}
         with tempfile.TemporaryDirectory() as d:
-            t = subprocess.run(f'git -C "{WS / "survey-service"}" archive "{tag}" schema | tar -x -C "{d}"', shell=True, capture_output=True, text=True)
+            t = subprocess.run(f'git -C "{WS / "survey-service"}" archive "{tag}" schema | tar -x -C "{d}"', shell=True, capture_output=True, text=True, env=child_env())
             self.assertEqual(t.returncode, 0, f"survey-service 에 태그 {tag} 가 없다: {t.stderr[-200:]}")
             # 꺼낸 스키마 패키지를 이 시험 프로세스의 import 경로 맨 앞에 둔다(deploy .venv 에 설치된 다른 버전보다 먼저)
             sys.path.insert(0, f"{d}/schema")

@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Optional
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 
 _C: dict[str, Any] = {}   # init() 이 채운다: project, secrets, gw_ca, docker, inference_project, root, run(시험에서 subprocess.run 대체), _gw_port(캐시)
 
@@ -53,7 +54,7 @@ def _need(key: str):
 
 
 def _run(cmd: list[str], *, input: Optional[str] = None, timeout: float = 60, check: bool = True) -> subprocess.CompletedProcess:
-    env = {**os.environ, "DOCKER": _C.get("docker", "docker")}
+    env = child_env(DOCKER=_C.get("docker", "docker"))   # R9.1: 호출자 환경을 통째로 물려주지 않는다
     r = _C.get("run", subprocess.run)(cmd, capture_output=True, text=True, input=input, timeout=timeout, env=env)
     if check and r.returncode != 0:
         # 왜 stderr 끝만: 오류 원인은 보이되 명령 입력(코드·SQL)과 환경은 싣지 않는다

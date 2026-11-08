@@ -5,6 +5,7 @@
 복구한 데이터가 맞는지는 이 도구가 아니라 공개 API 로 다시 읽는 e2e_verify_restore.py 가 본다.
 종료 코드 0: 모든 잡 status ok, 1: 하나라도 아니다(어느 잡이 어떻게였는지 말한다), 2: 사용 오류. 잡의 출력 전체는 남기지 않고 마지막 줄의 요약(status·snapshot_id·bytes)만 낸다(비밀 값이 없는 필드)."""
 import argparse, json, os, pathlib, subprocess, sys
+from child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만(scripts/child_env.py)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # 영역 -> compose 잡 서비스 이름 뒤쪽(job-<이름>-backup / -restore). 잡 이름은 영역이 선언하고 compose 서비스 이름은 deploy 가 정한다(gen-jobs.py JOB_NAMES)
@@ -42,7 +43,7 @@ def main(argv, runner=None) -> int:
     from boundary_contracts import validator
     v = validator("BackupJobResult")
     check = lambda r: [e.message for e in v.iter_errors(r)][:1]
-    run = runner or (lambda svc: subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), svc], capture_output=True, text=True, env={**os.environ, "DEPLOY_PROJECT": a.project}))
+    run = runner or (lambda svc: subprocess.run(["bash", str(ROOT / "scripts/run-job.sh"), svc], capture_output=True, text=True, env=child_env(DEPLOY_PROJECT=a.project)))
     bad = []
     for area in a.areas.split(","):
         if area not in AREAS: print(f"모르는 영역: {area}", file=sys.stderr); return 2
