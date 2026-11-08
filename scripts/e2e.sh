@@ -43,7 +43,7 @@ while [ $_i -lt ${#_args[@]} ]; do a_=${_args[$_i]}; case "$a_" in
 esac; _i=$((_i+1)); done
 [ $_only = 0 ] || [ $_sec = 0 ] || e2e_bad "--only 와 --sections 는 함께 쓸 수 없다: 단계 9 뒷구간은 단계 1~8 이 만든 상태를 전제한다(--only 로 일부 단계만 돌리면 그 상태가 없어 뒷구간이 실패한다). 뒷구간만 보려면 --sections 만 준다(단계 1~8 을 모두 돌린다)"
 unset _only _sec _args _i a_ _v _x
-# 정적 일관성 점검(수 초): 영역 사이 어긋남을 6분짜리 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
+# 정적 일관성 점검(영역 시험 실행 포함 수 분): 영역 사이 어긋남을 전체 24~30분(실측: 2026-11-08 실패 실행 1445s·1790s, docs/adr/0050 부기) 걸리는 E2E 앞에서 잡는다. FAIL 이면 E2E를 시작하지 않는다(건너뛰기 DEPLOY_SKIP_CHECK_ALL=1, 개발 중에만)
 CA_TXT=""
 if [ "${DEPLOY_SKIP_CHECK_ALL:-0}" != 1 ]; then
   bash -n "$0" || { echo "e2e.sh 문법 오류: E2E를 시작하지 않는다"; exit 1; }   # 긴 셸은 줄 휴리스틱이 아니라 문법 검사와 준비 단계의 실제 실행에 맡긴다(ADR 0033)

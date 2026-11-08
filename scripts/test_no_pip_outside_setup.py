@@ -8,9 +8,10 @@ ALLOWED = {"prepare-host.sh", "prepare-areas.sh"}
 PIP = re.compile(r"(\$PIP\"?|pip\"?|-m pip)\s+install\b")
 
 
+# Dockerfile 본문의 RUN·&& 줄은 이미지 안의 pip 다(deploy venv 가 아니다): build-tool-image.sh 의 heredoc. 줄 끝에 표시를 달 수 없는 연속 줄이라 시작 토큰으로 면제한다
 def offenders(text, name):
     return [f"{name}:{i}" for i, l in enumerate(text.splitlines(), 1)
-            if PIP.search(l) and not l.lstrip().startswith("#") and "own-venv" not in l and not re.search(r"(echo|die|fail|오류|\"실패|usage|사용)", l)]
+            if PIP.search(l) and not l.lstrip().startswith("#") and "own-venv" not in l and not l.lstrip().startswith(("RUN ", "&& ")) and not re.search(r"(echo|die|fail|오류|\"실패|usage|사용)", l)]
 
 
 class T(unittest.TestCase):

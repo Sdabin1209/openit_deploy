@@ -1747,19 +1747,26 @@ def step5f():
     rec("5f-d", "REAL", f"위험 감지 켜짐(D88 U1·U2): /readyz staff_alert_source active=true, 규칙 {sas['rule_count']}개(E2E 가 SURVEY_RISK_RULES_FILE 로 넣은 시험 규칙, 계약 SurveyRiskRulesFile). 위험 문구가 없는 발화는 정상 진행(ACTIVE, 알림 없음). 시험 규칙의 문구('{phrase}')가 든 발화는 turn_failure_signal.staff_alert={fs.get('staff_alert')}, 세션 PAUSED_RISK, 직원 알림 목록(OPEN)에 나타남, 답은 저장되지 않음, /readyz hits_by_rule 적중 {sum(hits.values())}. 거짓 알림 가능성과 임상 검토 전이라는 한계는 survey-service 문서의 것이다")
     rec("5x", "BLOCKED", "실제 브라우저에서의 화면 동작, STT(Web Speech API), 웹 푸시 수신은 E2E에서 볼 수 없다(보안 출처 HTTPS·VAPID 키 필요, 푸시는 VAPID 없이 비활성: SSE만 확인). 운영 TLS·직원 콘솔 인증 방식은 미정")
 
+def trace_ids(n):
+    """시험이 만드는 Trace 의 (원본 ID, 봉투 ID). 봉투 ID 는 계약 정본 함수 boundary_contracts.envelope_id(5.0.0)가 정한다: 원본이 Id 형식이면 그대로, 아니면 'x-'+SHA-256 앞 32자.
+    deploy 는 변환 규칙의 사본을 두지 않는다. RID 가 길어져 원본이 Id 를 넘으면 변환값이 봉투에 들어가고, 아래 비식별 단언은 원본과 변환값 둘 다 본다."""
+    raw_s, raw_t = f"s-{RID}", f"t-{RID}-{n}"
+    return (raw_s, raw_t), (bc.envelope_id(raw_s), bc.envelope_id(raw_t))
+
 def trace_env(release_id, n):
     keys = list(survey_schema.load_schema("TurnTrace")["$defs"]["TurnTrace"].get("required") or [])
     t = {k: None for k in keys}
-    t.update(session_id=f"s-{RID}", turn_id=f"t-{RID}-{n}", contract_version=1)
+    (_rs, _rt), (es, et) = trace_ids(n)
+    t.update(session_id=es, turn_id=et, contract_version=1)
     # v2 TurnTrace(D74): 모델 입력은 ActionExtractionInput 그대로(extract_input). 추출이 형식을 못 지킨 턴(OUTPUT_INVALID)을 시험 자료로 만든다
     t["extract_input"] = {"question_id": "Q1.D01", "current_question": "시험 문항 Q1.D01입니다. 알려 주세요.", "user_utterance": "뇌졸중은 없고 약도 안 먹어요", "state": {}}
     validate("ActionExtractionInput", t["extract_input"])
     t["extract_output"] = None; t["extract_status"] = "OUTPUT_INVALID"; t["extract_attempts"] = 2
     STATE["extract_input"] = t["extract_input"]
     t["orchestrator_output"] = {"turn_kind": None, "session_info_created": None, "log_entry": None, "dispatch_called": False,
-        "turn_failure_signal": {"session_id": f"s-{RID}", "write_committed": "NOT_COMMITTED", "staff_alert": "NONE"}, "intervention_result": None}
+        "turn_failure_signal": {"session_id": es, "write_committed": "NOT_COMMITTED", "staff_alert": "NONE"}, "intervention_result": None}
     e = {"pipeline_schema_version": bc.PIPELINE_SCHEMA_VERSION, "release_id": release_id, "runtime_contract_version": 1,
-         "session_id": f"s-{RID}", "turn_id": f"t-{RID}-{n}", "sent_at": "2026-10-15T00:00:00Z", "trace": t,
+         "session_id": es, "turn_id": et, "sent_at": "2026-10-15T00:00:00Z", "trace": t,
          "question_set_id": QS}   # 3.3.0: 릴리스가 문진표 여럿이면 어느 문진표의 턴인지 봉투가 말해야 사례에 question_set 이 붙는다(없으면 NO_QUESTION_SET 로 신호에서 빠진다, 4차 E2E 단계 7)
     validate("TraceEnvelope", e); validate_survey("TurnTrace", t); return e
 
@@ -1927,7 +1934,8 @@ R = {"r1": r1[:2], "r2": r2[:2], "noauth": [n[0], n[2]], "bad": bad[:2]}''', env
         validate("FailureCase", dict(c))
         ref = c.get("deidentified_trace_ref") or c.get("trace_ref")
     tr = fs.get_trace(cases[0]["deidentified_trace_ref"]); blob = json.dumps(tr, ensure_ascii=False)
-    assert f"s-{RID}" not in blob and f"t-{RID}-1" not in blob, "비식별 trace에 원본 세션/턴 ID가 남았다"
+    # 원본 ID 와 봉투 ID(envelope_id 변환값)가 모두 없어야 한다: 비식별은 둘 중 어느 형태로도 세션·턴을 가리키지 않는다(변환이 항등이면 둘은 같은 문자열이다)
+    for _id in (*trace_ids(1)[0], *trace_ids(1)[1]): assert _id not in blob, f"비식별 trace에 세션/턴 ID({_id[:4]}…)가 남았다"
     rc2, out2, err2 = _c3_job("job-ops-feedback")
     s2 = json.loads(out2.strip().splitlines()[-1]); assert s2.get("cases_published", 0) == 0, f"잡이 멱등이 아니다: {s2}"
     STATE["cases"] = [dict(c) for c in cases]; save()

@@ -51,13 +51,21 @@ SVC="${1:-}"; SRC="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift $#; fi
 REG="${DEPLOY_REGISTRY:-}"
 while [ $# -gt 0 ]; do case "$1" in --registry) REG="${2:-}"; shift 2;; -h|--help) PUB_JSON=0; usage; exit 0;; *) echo "알 수 없는 인자: $1" >&2; usage >&2; exit 2;; esac; done
 [ -n "$SVC" ] && [ -n "$SRC" ] || { usage >&2; exit 2; }
-case " $SERVICES $SERVICES_OPTIONAL " in *" $SVC "*) ;; *) echo "거부: 서비스 이름 '$SVC' 이(가) 목록에 없다 ($SERVICES)" >&2; exit 2;; esac
 if [ -z "$REG" ]; then
   RF="${DEPLOY_REGISTRY_ENV:-$DEPLOY_ROOT/state/registry.env}"
   [ -f "$RF" ] && REG=$(sed -n 's/^DEPLOY_REGISTRY=//p' "$RF")
 fi
 REG=${REG#http://}; REG=${REG#https://}; REG=${REG%/}
-[ -n "$REG" ] || { echo "거부: 레지스트리 주소가 없다(--registry 또는 DEPLOY_REGISTRY)" >&2; exit 2; }
+[ -n "$REG" ] || { echo "거부: 레지스트리 주소를 얻지 못했다(--registry, DEPLOY_REGISTRY, state/registry.env 중 어느 것에도 없다)" >&2; exit 2; }
+# 사람 CLI 의 최초 경계: 받은 호출(서비스·이미지·레지스트리)을 계약 PublishRequest 로 한 번 검증한다(D117: 허용 조건은 스키마 한 곳. 서비스 목록·주소 형식을 여기서 손으로 보지 않는다).
+# R7: 이 뒤의 단계는 값을 다시 검증하지 않는다. 어기면 값 없이 위치와 규칙만 내고 종료 코드 2(사용법 오류, PublishResult 의 exit_code enum 안)로 거부한다.
+if ! err=$("$DEPLOY_PY" -W ignore -I -c 'import json,sys
+from boundary_contracts import validator
+req = {"service": sys.argv[1], "image": sys.argv[2], "registry": sys.argv[3]}
+e = ["%s: %s 위반" % (".".join(map(str, x.absolute_path)) or "(요청)", x.validator) for x in validator("PublishRequest").iter_errors(req)]
+sys.exit("; ".join(e) if e else 0)' "$SVC" "$SRC" "$REG" 2>&1); then
+  echo "거부: 호출이 계약 PublishRequest 를 어긴다: $err" >&2; exit 2
+fi
 detect_docker   # 인자가 맞은 뒤에만 데몬을 확인한다(종료 코드 1: 데몬 불가)
 LOCK="${DEPLOY_LOCK:-$DEPLOY_ROOT/locks/images.lock}"; HIST="$(dirname "$LOCK")/history"; mkdir -p "$HIST"; [ -f "$LOCK" ] || : > "$LOCK"
 

@@ -77,6 +77,17 @@ class T(unittest.TestCase):
         # fake 는 예외가 없다(원래 단언 그대로)
         with self.assertRaises(AssertionError): ea.check_first_answer("Q3", "Q3", [], "fake", slots, "다음 문항", "다음 문항")
 
+    def test_literal_ids_fit_contract(self):
+        """E2E 가 직접 만드는 ID 리터럴(RID 를 넣은 것)이 계약 5.0.0 ID 규칙을 따른다. 규칙의 사본은 두지 않고 계약 패키지로 판정한다(D117). --run-id 값은 e2e.sh(e2e-test)·demo.sh(demo-test)."""
+        import boundary_contracts as bc
+        for rid in ("e2e-test", "demo-test"):
+            for raw in (f"s-{rid}", f"t-{rid}-9", f"sig-{rid}-1"):
+                self.assertTrue(bc.is_id(raw), raw); self.assertEqual(bc.envelope_id(raw), raw)   # Id 형식이면 봉투 ID 는 원본 그대로
+            body = {"kind": "SESSION_START", "question_set_id": "health-screening", "subject_ref": f"e2e-subject-{rid}"}
+            v = bc.validator("PublicApiRequests#/$defs/SessionStartBody")   # subject_ref 패턴·상한은 계약이 판정한다
+            self.assertEqual([e.message for e in v.iter_errors(body)], [])
+        self.assertTrue(bc.envelope_id("공백 있는 ID").startswith("x-"))   # 변환 규칙은 계약 함수의 몫: deploy 는 호출만 한다
+
     def test_unchanged(self):
         b = {"survey-service": ("id1", "t1"), "gateway": ("id2", "t2")}
         self.assertTrue(ea.check_unchanged(b, dict(b), list(b)))

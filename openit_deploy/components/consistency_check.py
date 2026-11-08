@@ -482,7 +482,7 @@ def _load(path: Path, kind: str):
             return json.loads(text)
         if kind == "yaml":
             import yaml
-            return list(yaml.safe_load_all(text))
+            return list(yaml.load_all(text, compose_loader()))
         import tomllib
         return tomllib.loads(text)
     except Exception:
@@ -670,6 +670,16 @@ def yaml_ok() -> bool:
 def compose_doc(text: str):
     import yaml
     return yaml.compose(text, Loader=yaml.SafeLoader)
+
+
+def compose_loader():
+    """compose 확장 태그(!reset, !override)를 읽는 로더. 이 태그는 병합 지시이고 값 점검에는 값 없음(None)으로 충분하다(PyYAML SafeLoader 는 모르는 태그를 거부한다)."""
+    import yaml
+    class L(yaml.SafeLoader):
+        pass
+    for t in ("!reset", "!override"):
+        L.add_constructor(t, lambda loader, node: None)
+    return L
 
 
 def walk(node, path=""):
@@ -927,7 +937,10 @@ def compose_base(repo: str, f: str) -> Path:
     """상대 경로 마운트 원본을 푸는 기준 폴더. Docker Compose 는 여러 -f 파일의 상대 경로를 **프로젝트 디렉터리**(--project-directory, 없으면 첫 파일의 폴더) 기준으로 푼다.
     deploy 의 compose 파일은 전부 lib.sh 의 dc() 로만 실행되고 dc() 는 --project-directory 를 deploy 루트로 준다(test/ 아래 덧붙임 파일 포함). 그래서 deploy 리포는 루트 기준이다.
     덧붙임 파일을 판별하는 곳은 여기 한 곳이다: 다른 영역의 compose 파일은 단독으로 실행하는 것으로 보고 자기 폴더 기준으로 푼다."""
-    return WS / repo if repo == "deploy" else (WS / repo / f).parent
+    if repo == "deploy" and not f.startswith("test/split/"):
+        return WS / repo
+    # test/split/ 의 compose 는 dc() 로 실행되지 않고 분리 배치 시험(placement.py validate, test-split-*.sh)이 자기 폴더의 설정(CONFIG_DIR=test/split/config)으로 읽는다: 자기 폴더 기준
+    return (WS / repo / f).parent
 
 
 def rule_mount_sources() -> R:
@@ -945,7 +958,7 @@ def rule_mount_sources() -> R:
             rel = f"{repo}/{f}"
             base = compose_base(repo, f)
             try:
-                doc = yaml.safe_load((WS / repo / f).read_text(encoding="utf-8")) or {}
+                doc = yaml.load((WS / repo / f).read_text(encoding="utf-8"), compose_loader()) or {}
             except Exception:
                 r.fail(rel, f"{rel}:1: 읽지 못했다(문법 오류)")
                 continue
@@ -966,6 +979,9 @@ def rule_mount_sources() -> R:
                         r.ok.append(tgt)
                     elif p.is_dir():
                         r.fail(tgt, f"{rel}: 서비스 {sname} 의 마운트 원본 {src} 가 파일이 아니라 디렉터리다(파일이 없을 때 Docker 가 만든 빈 디렉터리일 수 있다: 지우고 실제 파일을 둔다)")
+                    elif subprocess.run(["git", "-C", str(WS / repo), "check-ignore", "-q", str(p)], capture_output=True).returncode == 0:
+                        # git 제외 폴더(state/ 등)의 파일은 시작 스크립트(up.sh, gen-gateways)가 만드는 생성물이다. 사전 점검 시점에 없는 것이 정상이고, 있는 것(이전 실행의 잔재)에 기대 통과하면 안 된다
+                        r.na.append((tgt, "git 제외 폴더의 생성물(기동 때 만들어진다)"))
                     else:
                         r.fail(tgt, f"{rel}: 서비스 {sname} 의 마운트 원본 {src} 가 없다(없는 채로 기동하면 Docker 가 디렉터리를 만든다)")
     return r
