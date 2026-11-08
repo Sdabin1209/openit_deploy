@@ -205,7 +205,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 게이트웨이 /readyz 가 200 이 된다"
   return 0
 }
-case "$CMD" in up|prepare|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
+case "$CMD" in up|prepare|verify-survey|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
 case "$CMD" in
   up)
     [ -d "$W" ] && [ -f "$W/registry.env" ] && die "이미 데모 상태가 있다 ($W). scripts/demo.sh down 또는 reset"
@@ -322,6 +322,9 @@ case "$CMD" in
     env_demo; rm -f "$W/tool-image.txt"   # 도구 이미지는 지금 HEAD 로 다시 고른다
     run_steps "1,2,3,demo4,6" || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"
     guide ;;
+  verify-survey) # 떠 있는 데모에서 문진 흐름을 E2E 와 같은 단계 코드로 확인한다: 문진표 선택·시작·응답·정정·범위 밖 값·직원 호출·위험 신호·기기 인증·키오스크 화면
+    [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    env_demo; run_steps "${DEMO_SURVEY_STEPS:-5,5k,5c,5o,5n,5r,5d,5f}" || die "문진 흐름 확인 실패 (원인 진단: scripts/demo.sh diag)" ;;
   activate)
     [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
     env_demo; run_steps "demo_activate,6" || die "활성화 실패(/admin/ 에서 먼저 승인했는지 확인)"

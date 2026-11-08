@@ -2165,8 +2165,9 @@ def demo4():
     for k, sj in subj.items():
         d = wait(lambda sj=sj: next((x for x in _c3_decisions_for(sj) if x["result"] == "PASS"), None), 30, f"PASS 판정 v{k}")
         rels[k] = d.get("release_id")
-    for k in sorted(rels): _c3_activate(rels[k])
-    STATE["releases"] = rels; save()
+    aps = [dict(_c3_activate(rels[k])) for k in sorted(rels)]
+    for ap in aps: validate("ActivePointer", ap)
+    STATE["releases"] = rels; STATE["pointers"] = aps; save()   # 문진 단계(5·5k·5c 등)가 활성 포인터를 본다: 데모에서도 같은 단계로 문진 흐름을 확인할 수 있게 남긴다
     rec("demo4", "TEST-SUB", f"승인자를 스크립트가 시험용 승인자 계정으로 대신했다(TEST-SUB). PASS 릴리스 {rels}, 활성화 완료. 승인 화면용으로 제출 {sub_u['submission_id']}(보지 못한 문항 세트)는 승인 대기로 남겼다")
 
 @step('demo_activate', repos=('release-gate',) + _GW, deps=('1', '3'),
