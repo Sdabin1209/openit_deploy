@@ -13,6 +13,7 @@ check-versions 자기 점검 :: bash "$DEPLOY_ROOT/scripts/test-check-versions.s
 시험 자격 분리 자체 점검 (운영 기본에는 시험 기기·*-e2e 계정이 없다, 운영 기동 점검) :: bash "$DEPLOY_ROOT/scripts/test-secret-fixtures.sh"
 images.env GPU 기록 자체 점검 (옛·없는 기록이 있어도 기본 publish 가 성공하고 정리가 GPU 이미지를 지우지 않는다) :: bash "$DEPLOY_ROOT/scripts/test-images-env.sh"
 build-images 자체 점검 (가짜 영역 진입점: BuildImageRequest 값, 서비스->리포 대응, 결과 검증 실패는 빌드 실패) :: bash "$DEPLOY_ROOT/scripts/test-build-images.sh"
+빌드 기록(build/images.env)은 서비스 한 줄씩 잠금 + 임시 파일 rename 으로 합친다 (겹친·부분 빌드가 줄을 지우지 않는다, 2026-11-08) :: "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_images_record.py"
 build-images 정적 점검 (영역 Dockerfile 인자·산출 파일 이름이 코드에 없다) :: bash "$DEPLOY_ROOT/scripts/test-build-images-static.sh"
 게시 서비스 목록(lib.sh) == 계약 PublishRequest.service enum :: "$VENV/bin/python" -I "$DEPLOY_ROOT/scripts/test_services_enum.py"
 e2e 옵션 처리 자기 점검 (--help 는 실행 없이 0, 모르는 옵션·--only 와 --sections 조합은 2) :: bash "$DEPLOY_ROOT/scripts/test-e2e-options.sh"

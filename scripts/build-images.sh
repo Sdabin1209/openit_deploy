@@ -42,9 +42,10 @@ fi
 if [ "$ONLY" = "  " ]; then
   # 기본(전부) 빌드는 8개 기록을 새로 쓴다. 따로 빌드한 GPU 이미지 기록(model-serving-gpu)은 지우지 않는다(13GB를 다시 빌드하지 않게)
   # 단, 이미지가 실제로 있고 현재 기준 model-runtime 태그와 같은 커밋일 때만 유지한다(아니면 이유를 알리고 기록을 버린다: gpu_record_valid, lib.sh)
+  # 기록 파일은 지우지 않는다: 지우면 겹쳐 도는 다른 빌드의 줄이 사라진다(2026-11-08, 21줄 중 4줄). 서비스 목록 밖의 줄과 버릴 GPU 기록만 잠금 안에서 원자적으로 뺀다(images_record.py)
   GPU_KEEP=$(gpu_record_valid "$DEPLOY_ROOT/build/images.env" || true)
-  rm -rf "$CTX" "$DEPLOY_ROOT/build/images.env"
-  if [ -n "$GPU_KEEP" ]; then mkdir -p "$DEPLOY_ROOT/build"; printf '%s\n' "$GPU_KEEP" > "$DEPLOY_ROOT/build/images.env"; fi
+  rm -rf "$CTX"
+  "$VENV/bin/python" "$DEPLOY_ROOT/scripts/images_record.py" "$DEPLOY_ROOT/build/images.env" keep $SERVICES ${GPU_KEEP:+model-serving-gpu}
 fi
 mkdir -p "$CTX"
 PY="$VENV/bin/python"; PIP="$VENV/bin/pip"
@@ -55,13 +56,13 @@ DEP="$CTX/dep"; rm -rf "$DEP"; mkdir -p "$DEP/boundary" "$DEP/model_runtime" "$D
 git -C "$WORKSPACE/boundary-contracts" archive "$BC" | tar -x -C "$DEP/boundary"
 git -C "$WORKSPACE/model-runtime" archive "$MR" | tar -x -C "$DEP/model_runtime"
 git -C "$WORKSPACE/survey-service" archive "$DEPLOY_SS_TAG" schema | tar -x -C "$DEP/survey_schema"
-touch "$DEPLOY_ROOT/build/images.env"
 # 요청·결과 검증은 기준표 태그의 계약 소스(dependency_sources.boundary)로 한다: 호스트 venv 에 설치된 계약 버전이 낡아도 표의 계약으로 본다
 PYB() { "$PY" "$@"; }   # 서비스 빌드 전에 venv 의 계약을 기준표 태그로 맞춘다(아래)
 # 네 번째 열(의존 태그 도장)은 e2e.sh --reuse-build 가 이미지를 다시 써도 되는지 판정하는 데 쓴다(verify_area.py).
 # 라벨 검사는 BuildImageResult 검증(계약, labels 는 ImageLabels) 하나다. 게시 때(publish-image.sh)는 이미지 라벨을 한 번 더 계약으로 본다(다른 시점의 다른 입력이다)
 record() { set -- "$1" "$(apply_test_label "$2")" "$3"   # 시험 ID 가 있으면 새 이미지 이름(<이름>-<ID>)을 쓴다. 원래 이미지는 그대로 둔다
-  sed -i "/^$1 /d" "$DEPLOY_ROOT/build/images.env"; echo "$1 $2 $3 bc=$BC,mr=$MR" >> "$DEPLOY_ROOT/build/images.env"; echo "빌드: $2"; }
+  # 서비스 한 줄만 잠금 안에서 바꾸고 임시 파일 + rename 으로 원자적으로 쓴다(겹친 빌드·부분 빌드가 다른 줄을 지우지 않는다, images_record.py)
+  "$PY" "$DEPLOY_ROOT/scripts/images_record.py" "$DEPLOY_ROOT/build/images.env" set "$1" "$2" "$3" "bc=$BC,mr=$MR" || die "$1: 빌드 기록(build/images.env)을 쓰지 못했다"; echo "빌드: $2"; }
 
 # 한 서비스를 빌드한다: build_one <서비스>. 영역 리포 루트에서 진입점만 부른다. 진입점이 요청을 계약 validator 로 검증하므로 PYTHON(deploy venv, 기준표 태그의 계약으로 맞춰 둠)을 준다.
 build_one() {

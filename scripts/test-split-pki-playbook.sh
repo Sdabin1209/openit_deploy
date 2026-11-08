@@ -161,9 +161,11 @@ docker run --rm --add-host release-gate:$XADDR "$UTIL" python -c "$XC" >/dev/nul
 O=$(docker run --rm --network none -v ${D}_release-gate-db-pgtls:/p:ro "$UTIL" stat -c %a:%g /p/tls.key); [ "$O" = 640:10100 ] || bad "release-gate-db-pgtls 의 tls.key 모드:그룹 $O (기대 640:10100, 계약 StepCaEnv.STEP_CERT_GID)"; ok "(3) release-gate-db-cert 의 키는 0640, 그룹 10100(읽는 쪽 DB 는 보조 그룹으로 읽는다)"   # 3.4.17: 인증서 소유자는 이미지가 정하고 deploy 는 uid 를 모른다
 DSN="$T/r/app/secrets/db-urls/release-gate-db/gate/GATE_DATABASE_URL_FILE"; grep -q "@release-gate-db:$PGP/" "$DSN" && grep -q 'sslmode=verify-full' "$DSN" || bad "app 서버 DSN 의 호스트·sslmode"
 ok "(3) app 서버 DSN = release-gate-db:$PGP, sslmode=verify-full"
-R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 release-gate-db 에 verify-full 접속 실패"; }
+# 접속은 app 서버 release-gate pod 의 네트워크 공간(release-gate-net)에서 한다: 배치가 실제로 준 망(placement-publish)과 이름 해석(extra_hosts release-gate-db)을 그대로 쓴다.
+# 왜: 예전에는 ${A}_serving 에 붙고 --add-host 로 이름을 돌렸다. serving 이 internal 이 되자(R6.2, 2026-11-08) 그 망으로는 다른 서버에 못 나가 시험이 제품이 아닌 시험 자신의 길을 보고 있었음이 드러났다
+R=$(docker run --rm --network container:$A_NET -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(cat /dsn)" -qAt -c "select 1"' 2>&1) || { echo "$R" | tail -3 | cut -c1-200 >&2; bad "app 서버 DSN 으로 다른 망의 release-gate-db 에 verify-full 접속 실패"; }
 [ "$R" = 1 ] && ok "(3) 다른 망의 release-gate-db 에 sslmode=verify-full 로 접속했다(서버 인증서 이름 release-gate-db, step-ca 루트 검증)"
-R=$(docker run --rm --network ${A}_serving --add-host release-gate-db:$HOSTADDR -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(sed "s/verify-full/disable/" /dsn)" -qAt -c "select 1"' 2>&1) && bad "TLS 없는 접속이 통과했다" || ok "(3) TLS 없는 접속은 거부된다(hostssl 만)"
+R=$(docker run --rm --network container:$A_NET -v ${A}_pki-root:/etc/openit/pki:ro -v "$DSN:/dsn:ro" "$PGIMG" sh -c 'psql "$(sed "s/verify-full/disable/" /dsn)" -qAt -c "select 1"' 2>&1) && bad "TLS 없는 접속이 통과했다" || ok "(3) TLS 없는 접속은 거부된다(hostssl 만)"
 timeout "$PLAYBOOK_TIMEOUT" "$AP" -i "$T/inv.yml" ansible/site.yml --connection=local >"$T/run2.log" 2>&1 || { tail -25 "$T/run2.log" >&2; bad "플레이북 2회차 실패"; }
 if grep -aE '^[a-z0-9-]+ +: ok=' "$T/run2.log" | grep -v 'changed=0 '; then bad "2회차에 바뀐 것이 있다(멱등 아님)"; fi
 ok "(4) 플레이북 2회차 changed=0"
