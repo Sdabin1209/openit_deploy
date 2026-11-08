@@ -1024,7 +1024,7 @@ services:
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    tmpfs: ["/tmp", "/opt/keycloak/data/tmp", "/opt/keycloak/data/import"]   # 이미지가 쓰는 곳(platform docs/boundary.md 마운트 규칙)
+    tmpfs: ["/tmp", "/opt/keycloak/data/tmp:uid=1000,gid=0,mode=0700", "/opt/keycloak/data/import:uid=1000,gid=0,mode=0700"]   # 이미지가 쓰는 곳(platform docs/boundary.md 마운트 규칙)   # uid·gid·mode 를 명시한다: 두 경로는 이미지에 없어 첫 기동만 0:0 1777 이고, 같은 컨테이너를 다시 시작하면 Docker 가 만들어 둔 마운트 지점(0:0 0755)을 받아 비root(1000)가 realm 파일을 못 쓴다(측정 2026-11-08, E2E 단계 9 복구 뒤 재시작에서 identity unhealthy, 주입 대조 I8). 값은 이미지 선언 written_by
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
     group_add: *secretgid
     mem_limit: ${KEYCLOAK_MEM_LIMIT:-1g}      # 한도 값: 측정 안 함(시작값). docs/adr/0023-compose-resource-limits.md

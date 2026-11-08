@@ -60,13 +60,15 @@ class T(unittest.TestCase):
 
     def test_tmpfs_without_mode_is_judged_by_the_image_directory(self):
         """mode 없는 tmpfs 는 이미지의 그 경로 소유·모드를 받는다(Docker). 2026-11-08 release-gate 잡: 이미지 /data root 0755 위 tmpfs 에 10001 이 못 썼다(PermissionError).
-        이미지 경로가 root 0755 면 비root 쓰는 사용자는 기동 전에 I8, 경로가 없으면(null) Docker 기본 1777 로 통과, 확인 못 하면 검증 불가로 I8."""
+        이미지 경로가 root 0755 면 비root 쓰는 사용자는 기동 전에 I8, 경로가 없으면(null) 재시작 때 0:0 0755 라 비root 는 I8, 확인 못 하면 검증 불가로 I8."""
         decl = copy.deepcopy(DECL); r = decl["roles"]["default"]
         r["writable"] = [{"path": "/data", "persist": False, "written_by": {"uid": 10001, "gid": 999}}, r["writable"][1]]
         b = copy.deepcopy(BODY); b["volumes"] = [b["volumes"][0]]; b["tmpfs"] = ["/tmp", "/data"]
         v = check(b, decl)["violations"]
         self.assertEqual([x["rule"] for x in v], ["I8"], v); self.assertIn("/data", v[0]["detail"])   # 이미지 /data root 0755
-        self.assertEqual(check(b, decl, {**IMAGE_DIRS, "/data": None})["violations"], [])            # 이미지에 경로 없음 = 0:0 1777
+        v = check(b, decl, {**IMAGE_DIRS, "/data": None})["violations"]                              # 이미지에 경로 없음: 첫 기동만 1777, 재시작하면 Docker 가 만든 마운트 지점(0:0 0755)
+        self.assertEqual([x["rule"] for x in v], ["I8"], v); self.assertIn("755", v[0]["detail"])   # 2026-11-08 E2E 단계 9: 복구 뒤 재시작한 identity 가 /opt/keycloak/data/import 에 못 썼다
+        self.assertEqual(check(b, {**decl, "roles": {"default": {**r, "writable": [{**r["writable"][0], "written_by": {"uid": 0, "gid": 0}}, r["writable"][1]]}}}, {**IMAGE_DIRS, "/data": None})["violations"], [])   # root 가 쓰면 0755 로 쓸 수 있다
         self.assertIn("I8", {x["rule"] for x in check(b, decl, {**IMAGE_DIRS, "/data": {"mode": "0755", "uid": 10001, "gid": 0}})["violations"]})   # 이미지가 그 사용자 소유여도 tmpfs 뿌리는 root(실측: release-gate /data 10001:0 0755 -> tmpfs 0:0 0755)
         self.assertEqual(check(b, decl, {**IMAGE_DIRS, "/data": {"mode": "1777", "uid": 0, "gid": 0}})["violations"], [])   # 이미지 디렉터리가 1777 이면 쓸 수 있다
         v = check(b, decl, {"/tmp": IMAGE_DIRS["/tmp"]})["violations"]                               # /data 를 확인하지 못했다
