@@ -114,6 +114,9 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
   [ $LLM = 0 ] || msx+=(--llm-package "$W/llm-package")
   local img; img=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     echo "{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\",\"dataset-store\":\"$DEPLOY_REGISTRY/openit/dataset-store@$DATASET_STORE_DIGEST\"}" )
+  # 단계 코드는 제품에 e2e_sandbox 로만 닿고, 그 클라이언트는 deploy 도구 이미지다(e2e.sh 와 같은 준비, docs/adr/0048). 이 데모에서 한 번 빌드해 둔다
+  [ -s "$W/tool-image.txt" ] || bash "$DEPLOY_ROOT/scripts/build-tool-image.sh" > "$W/tool-image.txt" || die "deploy 도구 이미지 빌드 실패"
+  DEPLOY_TOOL_IMAGE=$(tail -1 "$W/tool-image.txt") \
   "$VENV/bin/python" "$DEPLOY_ROOT/scripts/e2e_steps.py" --forms-dir "${E2E_FORMS_DIR:-$WORKSPACE/question-authoring/forms}" --project "$P" --secrets "$SECRETS_DIR" --ports "$(ports_json)" --images "$img" --gw-ca "$(demo_ca)" \
     --docker "$DOCKER" --root "$DEPLOY_ROOT" --work "$W/work" --run-id demo-test --only "$only" \
     "${msx[@]}" "$@"
