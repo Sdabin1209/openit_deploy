@@ -2274,6 +2274,14 @@ def demo_alert_source():
     print(f"  DEMO_ALERT_SOURCE active={str(sas.get('active')).lower()} rules={sas.get('rule_count', 0)} reason={sas.get('reason', '')}", flush=True)
     rec("demo_alert_source", "REAL", f"/readyz({c}) staff_alert_source active={sas.get('active')} rule_count={sas.get('rule_count')} reason={sas.get('reason')}")
 
+@step('demo_outbox', repos=('survey-service',) + _GW, deps=(),
+      why='demo.sh 전용')
+def demo_outbox():
+    """읽기 전용 진단: survey-service /readyz 의 trace_outbox(대기·전송·DEAD 수)와 추론 호출 통계. 간헐 결함을 회차마다 비교하려고 쓴다(값만, 발화·비밀 없음)."""
+    title("demo_outbox", "trace outbox 와 추론 통계 (읽기 전용)")
+    c, rz = _c2_ready(); print(f"  DEMO_OUTBOX {json.dumps({'trace_outbox': rz.get('trace_outbox'), 'inference': rz.get('inference')}, ensure_ascii=False, sort_keys=True)}", flush=True)
+    rec("demo_outbox", "REAL", f"/readyz({c}) trace_outbox 를 읽었다")
+
 @step('demo_swap', repos=('release-gate',) + _GW, deps=('1', '2'),
       why='demo.sh 전용')
 def demo_swap():
@@ -2725,7 +2733,7 @@ def step5k():
 
 # 왜 8(롤백)이 장애 단계(5p·5pn·5pj·5g·5b) 뒤인가: 롤백은 활성 릴리스를 옛 것으로 되돌리는 마지막 상태 변경이다. 앞 단계들은 단계 4 의 활성 릴리스(새 것)를 전제로 쓰였고,
 # 단계 9(복구 대조, link_restore_verify)는 롤백된 포인터를 기대한다. 롤백 뒤에 장애 단계를 두면 그 전제가 단계마다 달라진다(정적 검토 R5)
-STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5k", step5k), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_alert_source", demo_alert_source), ("demo_swap", demo_swap), ("diag", diag)]
+STEPS = [("1", step1), ("2", step2), ("3", step3), ("4", step4), ("5", step5), ("5L", step5L), ("5s", step5s), ("5f", step5f), ("5c", step5c), ("5a", step5a), ("5d", step5d), ("5q", step5q), ("5w", step5w), ("5u", step5u), ("5m", step5m), ("5r", step5r), ("5k", step5k), ("5o", step5o), ("5n", step5n), ("6", step6), ("7", step7), ("7d", step7d), ("5p", step5p), ("5pn", step5pn), ("5pj", step5pj), ("5g", step5g), ("5b", step5b), ("8", step8), ("demo4", demo4), ("demo_activate", demo_activate), ("demo_active", demo_active), ("demo_outbox", demo_outbox), ("demo_alert_source", demo_alert_source), ("demo_swap", demo_swap), ("diag", diag)]
 import e2e_plan as PLAN
 only = set(filter(None, a.only.split(",")))
 TIMES = []
