@@ -116,6 +116,13 @@ def fake_only(step, what):
     if BACKEND == "fake": return False
     rec(step, "BLOCKED", f"추론 서버 백엔드가 {BACKEND} 라서 건너뜀: {what}은 fake 백엔드의 고정 출력·흐름 파일 설정에 의존한다(E2E 가 fake 로 확인한다, E2E_RESULTS.md)")
     return True
+_BANKS = {}
+def bank_sentences(set_id):
+    """문진표 본문(I1 읽기, release-gate 컨테이너 안)에서 문항 순서대로 [(question_id, question_sentence)]. fake 가 아닌 백엔드(데모 mimic)의 응답에 문진표의 다음 문항 문장이 들어 있는지 정확히 대조하는 기대값이다(문장 틀은 model-runtime 의 것이라 단정하지 않는다)."""
+    if not _BANKS:
+        d = _c1_i1_read(QS, QSU, QSB)
+        for b in d["banks"].values(): _BANKS[b["question_set_id"]] = [(q["question_id"], q["question_sentence"]) for q in sorted(b["questions"], key=lambda q: q["order"])]   # 같은 ID 의 여러 버전은 나중 것(최신)이 이긴다
+    return _BANKS[set_id]
 def title(n, t): print(f"\n== 단계 {n}: {t}", flush=True)
 def validate(name, obj):
     errs = list(bc.validator(name).iter_errors(obj)); assert not errs, f"{name} 스키마 위반: {errs[0].message}"
@@ -864,7 +871,7 @@ def model_server_v2_check(new, tok):
     rin = {"action": "START", "topic": "고혈압 진단과 복약", "next": {"type": "NEXT", "question_id": "Q1.D01", "text": "혹시 고혈압으로 진단받으셨나요?"}}
     validate("ResponseRequest", rin)
     c, body, h = ms_call(f"/v1/releases/{new}/respond", rin, tok); assert c == 200, (c, body[:200])
-    assert body == FAKE_RESPONSE_TEXT and h.get("content-type", "").startswith("text/plain") and h.get("x-openit-outcome") == "ok", (body[:80], h)
+    assert EA.server_text_ok(body, BACKEND, rin["next"]["text"]) and (BACKEND != "fake" or body == FAKE_RESPONSE_TEXT) and h.get("content-type", "").startswith("text/plain") and h.get("x-openit-outcome") == "ok", (body[:120], h)
     # I9 ExtractRequest{input, flow, fields}(계약 3.0, D108·D115): flow·fields 가 항상 있으니 서버가 규칙과 값 규칙을 보증한다. 불완전한 본문(fields 없음, skips 없는 flow)은 400이다.
     c, bad1, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": ereq["flow"]}, tok); assert c == 400, ("fields 없는 요청이 400이 아니다", c, bad1[:100])
     c, bad2, _ = ms_call(f"/v1/releases/{new}/extract", {"input": ein, "flow": {"order": ereq["flow"]["order"]}, "fields": ereq["fields"]}, tok); assert c == 400, ("skips 없는 flow 가 400이 아니다", c, bad2[:100])
@@ -888,7 +895,7 @@ def fake_values_check(new, tok):
     """가짜 A(칸 정의가 든 흐름 파일)가 값을 내고 건너뛰기를 적용하는지 추론 서버를 직접 불러 본다. 모델 정확성이 아니라 시험 구성의 확인이다."""
     cases = [("Q4", "아니요", "Q4.answer", False, "Q5"),          # 건너뛰기: Q4.answer == false -> Q4_1 건너뜀
              ("Q4", "네 있어요", "Q4.answer", True, "Q4_1"),
-             ("Q7", "네 안 마셔요", "Q7.does_not_drink", True, "Q8_1"),   # Q7_1, Q7_2 건너뜀
+             ("Q7", "네 안 마셔요" if BACKEND == "fake" else "네 마십니다", "Q7.does_not_drink", True, "Q8_1"),   # Q7_1, Q7_2 건너뜀. 같은 칸을 fake 는 '안 마셔요'로, mimic 은 '마십니다'로 True 를 낸다(측정 2026-11-08: mimic 은 '네 안 마셔요'·'네 마시지 않아요' -> False, '네 마십니다' -> True: 칸 이름 does_not_drink 의 뜻이 아니라 동사의 긍정/부정을 읽는다). 건너뛰기(값 True -> Q7_1·Q7_2 건너뜀)가 시험 대상이라 문장만 백엔드에 맞춘다. 칸 뜻 해석은 model-runtime 의 몫이라 보고만 한다
              ("Q8_1", "없어요", "Q8_1.days", 0, "Q9_1"),          # Q8_2 건너뜀
              ("Q8_1", "3일이요", "Q8_1.days", 3, "Q8_2"),
              ("Q2.D01", "네 있어요", "Q2.D01.family_history", True, "Q2.D02")]
@@ -917,8 +924,10 @@ def step5():
     c, t1b = public_turn(sid, "turn-1", "뇌졸중은 없고 약도 안 먹어요"); assert c == 200 and t1b == t1, "같은 turn_id 재시도가 같은 응답이 아니다"
     c, t2 = public_turn(sid, "turn-2", "약도 안 먹어요"); assert c == 200, (c, t2)
     # 한 턴이 추론 서버(model-serving)를 거쳤다: fake 백엔드는 출력이 고정이라 생성기 문장이 "(가짜 응답)" 이다. 다른 백엔드(데모 mimic)는 문장을 모르므로 EA.server_text_ok 가 정한 만큼만 보고, 서버를 거쳤다는 증명은 아래 /v1/info backend 와 추론 호출 수 증가가 맡는다
-    texts = " ".join(str(x.get("response_text")) for x in (t1, t2))
-    assert EA.server_text_ok(texts, BACKEND), f"model-serving({BACKEND})의 출력이 아니다(서비스 내부 가짜?): {texts[:200]}"
+    sent = bank_sentences(QS) if BACKEND != "fake" else []
+    if BACKEND != "fake": assert sent[0][1] in str(st["response_text"]), ("첫 응답에 문진표의 첫 문항 문장이 없다", sent[0], st["response_text"])
+    for k, (x, ex) in enumerate(((t1, sent[1][1] if sent else None), (t2, None)), 1):   # 턴 1(첫 문항 답) 뒤의 응답은 문진표의 둘째 문항 문장을 담는다
+        assert EA.server_text_ok(x.get("response_text"), BACKEND, ex), f"턴 {k}: model-serving({BACKEND})의 출력이 아니다(서비스 내부 가짜?): {str(x.get('response_text'))[:200]}"
     ms_tok = INF_TOK()
     c, info_body, _ = ms_call("/v1/info", None, ms_tok, method="GET"); info = json.loads(info_body) if c == 200 else {}
     assert c == 200 and new in info.get("loaded", []), (c, info)
@@ -926,16 +935,14 @@ def step5():
     c401, _b401, h401 = ms_call("/v1/info", None, None, method="GET")
     assert c401 == 401 and (h401.get("www-authenticate") or "").split(" ")[0].rstrip(",") == "Bearer", ("토큰 없는 추론 서버 /v1/info: 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절)", c401, h401.get("www-authenticate"))
     c2, stxt, _ = ms_call(f"/v1/releases/{new}", None, ms_tok, method="GET"); st_ = json.loads(stxt) if c2 == 200 else {}; assert c2 == 200 and st_["state"] == "LOADED", (c2, stxt[:100])
-    if BACKEND == "fake": v2chk = model_server_v2_check(new, ms_tok); fvc = fake_values_check(new, ms_tok)
-    else:   # 고정 출력(FAKE_EXTRACTION·"(가짜 응답)")·흐름 파일 칸 정의에 기대는 직접 호출은 fake 만의 시험이다
-        v2chk = fvc = f"건너뜀(백엔드 {BACKEND}: 고정 출력에 의존하는 직접 호출은 fake 만)"; rec("5g", "BLOCKED", f"추론 서버 직접 호출(고정 출력 대조, 흐름 파일 칸 정의)은 백엔드가 {BACKEND} 라서 건너뜀: fake 백엔드의 고정 출력에 의존한다")
+    v2chk = model_server_v2_check(new, ms_tok); fvc = fake_values_check(new, ms_tok)   # 값 추출(A)은 두 백엔드 모두 같은 흐름 파일(test/fake-model/question_flow.json)이 정한다. 응답 문장(B)만 백엔드마다 다르고 model_server_v2_check 가 가른다
     # 서비스를 거친 값 있는 턴: 가짜 A 가 매 턴 값(ANSWERED)을 내고, 서비스의 검증·저장을 통과해야 한다(실패 신호 없음, 추론 실패·형식 위반 증가 없음, Trace 전송)
     sv = _sid(*kiosk("/v1/sessions", {"kind": "SESSION_START", "question_set_id": QS}))
     rb = survey_ready()[1]; replies = []
     for i, text in enumerate(("네 있어요", "아니요 없어요", "네 있어요"), 1):
         c, rp = public_turn(sv, f"val-{i}", text); assert c == 200, (c, rp); validate_survey("FrontendInput", rp); replies.append(rp)
     wait(lambda: survey_ready()[1]["trace_outbox"]["sent"] - rb["trace_outbox"]["sent"] >= len(replies) or None, 30, "값 있는 턴의 Trace 전송")
-    EA.check_turns_clean(replies, rb, survey_ready()[1], BACKEND)
+    EA.check_turns_clean(replies, rb, survey_ready()[1], BACKEND, {k: sent[k + 1][1] for k in range(3)} if sent else None)   # 값 있는 3턴: k 번째 답 뒤에는 문진표의 k+1 번째(0부터) 문항 문장
     kiosk(f"/v1/sessions/{sv}/end", {"session_id": sv, "kind": "SESSION_END"})
     rec("5g", "REAL", f"가짜 A 의 값 추출(흐름 파일 slots/skips): 직접 호출 {fvc}. 서비스 경유 값 있는 3턴(Q1.D01~: '네 있어요','아니요 없어요','네 있어요'): 실패 신호 없음(검증 통과·쓰기 확정), /readyz inference 의 failures·output_invalid·retries·timeouts·outcome_fallback 증가 0, 턴마다 Trace 전송. 모델은 가짜(정확성 아님, 시험 구성 확인). 한계: 저장된 값을 돌려주는 공개 읽기 경로가 없고(PUBLIC_API 에 없음) ops-feedback 은 실패 사례만 노출하므로 저장 값 자체는 단언하지 않았다. 가짜 A 는 CORRECT 를 내지 않아 정정은 시험하지 않았다")
     rd = survey_ready()[1]; inf = rd.get("inference") or {}
@@ -1100,7 +1107,7 @@ def step5c():
     assert v1["Q1.D01.diagnosed"]["value"] is True and v1["Q1.D01.diagnosed"]["status"] == "ANSWERED", v1
     c, r2 = _c2_turn(sid, "cor-2", utt); assert c == 200, (c, r2); validate_survey("FrontendInput", r2)
     wait(lambda: _c2_ready()[1]["trace_outbox"]["sent"] - rb["trace_outbox"]["sent"] >= 2 or None, 30, "정정 턴의 Trace 전송")
-    EA.check_turns_clean([r1, r2], rb, _c2_ready()[1])
+    EA.check_turns_clean([r1, r2], rb, _c2_ready()[1], BACKEND, {0: bank_sentences(QS)[1][1]} if BACKEND != "fake" else None)   # 턴 1: 첫 문항 답 뒤 -> 둘째 문항 문장
     c, sv = _c2_staff("GET", f"/v1/staff/sessions/{sid}"); assert c == 200, (c, sv); validate_survey("StaffSessionView", sv)
     said = [t for t in sv["turns"] if t["utterance"]]
     assert [t["action"] for t in said] == ["NEXT", "CORRECT"], ("턴 기록의 action", [(t["turn_id"], t["action"]) for t in said])
@@ -1203,10 +1210,12 @@ def gw_ready_seconds(timeout=60):
     """앱이 healthy 가 된 시점부터 게이트웨이 /readyz 가 200 + status ok 가 되기까지 걸린 초(0.25초 간격으로 확인). R4.1 의 "Retry-After 이내"를 재는 데 쓴다."""
     t0 = time.time(); wait_gw_ready(timeout, every=0.25); return time.time() - t0
 
+# 준비됨을 뜻하는 status 값: 계약 HealthStatus(RUNTIME R5.1)는 ok 와 ready 를 모두 준비된 값으로 허용한다(영역마다 한 쪽을 쓴다: 게이트웨이는 ready, 그 밖은 ok). 'ok' 하나만 보면 ready 를 내는 게이트웨이를 영원히 기다린다(2026-11-08 데모 5d 시간 초과)
+READY_STATUSES = ("ok", "ready")
 def wait_gw_ready(timeout, every=2):
     def ready():   # R4.3·R5.1: 상태 코드 200 이고 본문 status 가 ok (빈 200·다른 본문은 준비가 아니다)
         c, b, _h, _t = gwk("GET", "/readyz", auth=False)
-        return c == 200 and isinstance(b, dict) and b.get("status") == "ok"
+        return c == 200 and isinstance(b, dict) and b.get("status") in READY_STATUSES
     wait(ready, timeout, "gateway /readyz 200 + {\"status\":\"ok\"}(survey-service 가 활성 릴리스까지 적재)", every=every)
 
 def upstream_503_json(c, b, h, what):
@@ -1566,9 +1575,10 @@ def step5n():
         rec("5n-reask", "BLOCKED", f"되묻기 실효 한도(reask_limit.effective)가 없거나 null 이다(/readyz reask_limit={rl!r}): 활성 릴리스가 없거나 한도가 꺼져 있다. SURVEY_MAX_CONSECUTIVE_REASK 를 1 이상으로 둔다"); return
     sid2 = f"sess-{RID}-n-reask"; utt = "되묻기시험 글쎄요"; FAKE = "(가짜 응답)"
     c, st = tcall(A, "POST", "/v1/sessions", {"kind": "SESSION_START", "question_set_id": QS})[:2]; sid2 = _sid(c, st)
+    reask_texts = []
     for i in range(1, N + 1):   # 한도까지는 정상 진행: 되묻는다(세션은 진행 중, 직원 알림 없음, 문장은 모델 응답)
         c, rr = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{i}"})[:2]
-        assert c == 200 and not rr.get("turn_failure_signal") and FAKE in str(rr.get("response_text")), (f"{i}번째 되묻기 턴이 정상 진행이 아니다", c, str(rr)[:200])
+        assert c == 200 and not rr.get("turn_failure_signal") and EA.server_text_ok(rr.get("response_text"), BACKEND), (f"{i}번째 되묻기 턴이 정상 진행이 아니다", c, str(rr)[:200]); reask_texts.append(str(rr["response_text"]))
     c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "ACTIVE" and not s_.get("pause_reason"), (f"한도({N}) 전에 정지했다", c, s_)
     sv = staff_sv(sid2)
     said = [t for t in sv["turns"] if t["utterance"]]; assert [t["action"] for t in said] == ["REASK"] * N, ("턴 기록의 action", [(t["turn_id"], t["action"]) for t in said])
@@ -1576,6 +1586,7 @@ def step5n():
     # N+1 번째: 되묻는 대신 직원 호출 경로(PAUSED_RISK + CALL_STAFF 알림 + 고정 문장 CALL_STAFF, 모델 문장이 아니다)
     c, rl = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{N + 1}"})[:2]
     assert c == 200 and rl.get("response_text") and FAKE not in str(rl.get("response_text")), (f"{N + 1}번째 턴 응답이 문항 세트 고정 문장이 아니다", c, str(rl)[:200])
+    assert str(rl["response_text"]) not in reask_texts, ("한도 뒤 응답이 모델의 되묻기 문장과 같다(고정 문장이어야 한다)", rl["response_text"])
     fixed_text = rl["response_text"]
     c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "PAUSED_RISK", (c, s_)
     assert s_.get("pause_reason") == "REASK_LIMIT", ("/state 의 pause_reason 이 REASK_LIMIT 가 아니다(계약 v2.1.0 H절)", s_); _validate_if_known("SessionState", s_)
@@ -1587,7 +1598,7 @@ def step5n():
     c, iv, _h = _c2_raw("POST", f"/v1/sessions/{sid2}/intervention", {"session_id": sid2, "decision": "RESUME", "turn_id": "nr-iv-1"}, basic=_C2_STAFF); assert c == 200, (c, iv)
     c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "ACTIVE" and not s_.get("pause_reason"), ("재개 뒤 상태", c, s_)
     c, rn = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "nr-after"})[:2]
-    assert c == 200 and not rn.get("turn_failure_signal") and FAKE in str(rn.get("response_text")), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
+    assert c == 200 and not rn.get("turn_failure_signal") and EA.server_text_ok(rn.get("response_text"), BACKEND), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
     rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, 실효 한도 {N} = min(/readyz max_consecutive, 문항 세트 ask/confirm/unrecognized 한도)): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
 
@@ -2676,6 +2687,9 @@ def step5k():
     c, st_a = dk(tA, "POST", "/v1/sessions", {"kind": "SESSION_START", "question_set_id": cfg_a["question_set_id"]}); sa = _sid(c, st_a); validate_survey("FrontendInput", st_a)
     c, st_b = dk(tB, "POST", "/v1/sessions", {"kind": "SESSION_START", "question_set_id": QSB}); sb = _sid(c, st_b); validate_survey("FrontendInput", st_b)
     assert st_a["response_text"] != st_b["response_text"], "두 문진표의 첫 질문이 같다(순서 B 의 첫 문항은 Q3 라 달라야 한다)"
+    if BACKEND != "fake":   # 문진표가 질문 순서를 정한다: 시작 응답에 그 문진표 자신의 첫 문항 문장이 든다(mimic 은 문장 틀만 만든다)
+        for lab, setid, stx, want_ in (("A", QS, st_a, QS_FIRST), ("B", QSB, st_b, QSB_FIRST)):
+            q0 = bank_sentences(setid)[0]; assert q0[0].startswith(want_) and q0[1] in str(stx["response_text"]), (f"기기 {lab} 시작 응답에 문진표 {setid} 의 첫 문항 문장이 없다", q0, str(stx["response_text"])[:160])
     # 끝까지: 기존 턴 스크립트('네 있어요'/'아니요 없어요' 번갈아). 첫 답이 저장된 칸의 문항이 문진표의 첫 문항이다(순서는 문진표 자신에게서 나온다)
     firsts = {}
     for sid, tok, want in ((sa, tA, QS_FIRST), (sb, tB, QSB_FIRST)):
@@ -2685,7 +2699,10 @@ def step5k():
             if i == 1:
                 vals = _c2_staff("GET", f"/v1/staff/sessions/{sid}")[1]["values"]
                 firsts[sid] = vals[0]["key"] if vals else None
-                assert firsts[sid] and firsts[sid].startswith(want), (f"첫 문항이 {want} 가 아니다", sid, [v["key"] for v in vals][:3])
+                if BACKEND != "fake" and not vals:   # 흐름 파일에 칸이 없는 첫 문항(순서 B 의 Q3)은 값을 만들지 않고 다음 문항으로 넘어간다: 응답에 문진표의 둘째 문항 문장이 든다
+                    nx = bank_sentences(QS if sid == sa else QSB)[1]; assert nx[1] in str(r.get("response_text")), ("칸 없는 첫 문항 뒤 응답에 문진표의 다음 문항 문장이 없다", nx, str(r.get("response_text"))[:160]); firsts[sid] = want
+                else:
+                    assert firsts[sid] and firsts[sid].startswith(want), (f"첫 문항이 {want} 가 아니다", "기기 A(배치 문진표)" if sid == sa else "기기 B(순서 B)", [v["key"] for v in vals][:3], "응답:", str(r.get("response_text"))[:120])
             cs, stt = state_dk(tok, sid)
             if cs == 200 and stt["state"] == "ENDED": break
         else:

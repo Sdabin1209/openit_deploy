@@ -38,9 +38,13 @@ class T(unittest.TestCase):
         self.assertTrue(ea.server_text_ok("(가짜 응답)", "fake")); self.assertFalse(ea.server_text_ok("네, 알겠습니다.", "fake"))
         self.assertTrue(ea.server_text_ok("네, 알겠습니다.", "mimic"))
         self.assertFalse(ea.server_text_ok("(가짜 응답)", "mimic"), "fake 문장이면 mimic 구성이 아니다")
+        self.assertTrue(ea.server_text_ok("네. 다음 문항입니다.", "mimic", "다음 문항"))
+        self.assertFalse(ea.server_text_ok("네. 다음 문항입니다.", "mimic", "다른 문항"), "문진표가 정한 다음 문항 문장이 없으면 실패")
         self.assertFalse(ea.server_text_ok("  ", "mimic")); self.assertFalse(ea.server_text_ok(None, "mimic"))
         mimic = [{"response_text": "네, 알겠습니다.", "turn_failure_signal": None}] * 2
         self.assertTrue(ea.check_turns_clean(mimic, RB, RA, "mimic"))
+        self.assertTrue(ea.check_turns_clean(mimic, RB, RA, "mimic", {0: "알겠습니다"}))
+        with self.assertRaises(AssertionError): ea.check_turns_clean(mimic, RB, RA, "mimic", {1: "없는 문장"})
         with self.assertRaises(AssertionError): ea.check_turns_clean(mimic, RB, RA)   # 기본(fake)은 그대로 엄격하다
         ra = copy.deepcopy(RA); ra["inference"]["calls"] = RB["inference"]["calls"]
         with self.assertRaises(AssertionError): ea.check_turns_clean(mimic, RB, ra, "mimic")   # 서버를 거쳤는지는 호출 수 증가로 본다

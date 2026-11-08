@@ -26,22 +26,23 @@ def check_out_of_range_reask(out, item, key, label=""):
 FAKE_TEXT = "(가짜 응답)"   # 추론 서버 fake 백엔드의 고정 응답 문장(계약 밖 시험 값: fake 백엔드를 정하는 model-runtime 의 시험 구성)
 
 
-def server_text_ok(text, backend):
-    """응답 문장이 추론 서버(model-serving)가 낸 것임을 백엔드별로 본다. fake 는 출력이 고정이라 FAKE_TEXT 가 든다.
-    그 밖의 백엔드(데모의 mimic 등)는 문장을 우리가 알지 못하므로 문장 일치를 단정하지 않는다: 비어 있지 않고 fake 의 고정 문장이 아님만 본다.
-    서버를 거쳤다는 증명은 문장이 아니라 호출 쪽의 /readyz inference.calls 증가(check_turns_clean)와 서버의 /v1/info backend 가 맡는다."""
+def server_text_ok(text, backend, expect=None):
+    """응답 문장이 추론 서버(model-serving)가 낸 것임을 백엔드별로 본다. fake 는 출력이 고정이라 FAKE_TEXT 가 든다(expect 는 쓰지 않는다).
+    그 밖의 백엔드(데모의 mimic)는 사람이 읽는 문장을 만들고 문장 틀은 model-runtime 이 정하므로, 틀은 단정하지 않고 서비스가 문진표에서 서버에 준 값을 대조한다:
+    expect(문진표가 정한 다음 문항 문장)가 응답에 들어 있어야 한다. expect 가 없는 턴(되묻기·정정·직원 호출)은 비어 있지 않고 fake 의 고정 문장이 아님만 본다.
+    서버를 거쳤다는 증명은 문장이 아니라 호출 쪽 /readyz inference.calls 증가(check_turns_clean)와 서버 /v1/info backend 가 맡는다."""
     t = str(text or "")
     if backend == "fake": return FAKE_TEXT in t
-    return bool(t.strip()) and FAKE_TEXT not in t
+    return bool(t.strip()) and FAKE_TEXT not in t and (expect is None or expect in t)
 
 
-def check_turns_clean(replies, ready_before, ready_after, backend="fake"):
+def check_turns_clean(replies, ready_before, ready_after, backend="fake", expects=None):
     """값이 나오는 턴들이 서비스의 검증·저장을 통과했는지. 각 응답에 실패 신호가 없고, 추론 호출이 턴마다 늘었으며,
     추론 실패·출력 형식 위반·재시도가 늘지 않았고, Trace 가 턴마다 전송 대기열에 들어갔는지(/readyz 숫자만 본다)."""
     n = len(replies)
     for i, r in enumerate(replies, 1):
         assert r.get("turn_failure_signal") is None, f"턴 {i} 에 실패 신호가 있다(검증·저장 실패): {r.get('turn_failure_signal')}"
-        assert server_text_ok(r.get("response_text"), backend), f"턴 {i} 응답이 model-serving({backend}) 문장이 아니다: {str(r.get('response_text'))[:80]}"
+        assert server_text_ok(r.get("response_text"), backend, (expects or {}).get(i - 1)), f"턴 {i} 응답이 model-serving({backend}) 문장이 아니다(기대 {((expects or {}).get(i - 1) or '')[:40]!r}): {str(r.get('response_text'))[:120]}"
     bi, ai = ready_before.get("inference") or {}, ready_after.get("inference") or {}
     assert ai.get("calls", 0) - bi.get("calls", 0) >= n, f"추론 호출이 턴 수만큼 늘지 않았다: {bi.get('calls')} -> {ai.get('calls')}"
     for k in ("failures", "output_invalid", "retries", "timeouts", "outcome_fallback"):
