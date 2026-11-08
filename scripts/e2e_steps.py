@@ -67,6 +67,7 @@ ap.add_argument("--work", required=True, help="이번 실행의 임시 작업 �
 ap.add_argument("--run-id", default="e2e-test")
 ap.add_argument("--demo-stop", action="store_true", help="demo4: 승인 대기까지만 만든다(사람이 /admin/ 에서 승인)")
 ap.add_argument("--gw-ca", default="", help="gateway(HTTPS)의 내부 CA 루트 인증서 파일(시험용 CA). 있으면 gw 주소는 https 이고 이 CA만 신뢰한다")
+ap.add_argument("--model-backend", default="fake", help="추론 서버의 백엔드 이름(서버 /v1/info 의 backend 와 같아야 한다: 다르면 5단계가 FAIL). E2E 는 fake. 데모(scripts/demo.sh)는 mimic(사람이 읽는 문장), --llm 데모는 vllm. fake 의 고정 출력·흐름 파일 설정(정정·값 규칙·되묻기)에 기대는 단계는 fake 가 아니면 BLOCKED 로 남는다(FAKE_ONLY)")
 ap.add_argument("--only", default="", help="쉼표로 구분한 단계(예: 1,2). 비우면 전부")
 ap.add_argument("--ms-url", default="", help="추론 서버를 다른 곳에 둔 경우 그 주소(예: https://gpu-host). 비우면 이 프로젝트의 model-serving 컨테이너")
 ap.add_argument("--inference-project", default="", help="추론 서버의 compose 프로젝트 이름(e2e_sandbox). 기본 <프로젝트>-inf(e2e.sh 의 별도 호스트 역할). 데모는 같은 프로젝트에 model-serving 이 있어 <프로젝트>를 준다")
@@ -78,6 +79,7 @@ ap.add_argument("--fail-fast", action="store_true", help="첫 FAIL 에서 중단
 ap.add_argument("--changed-only", action="store_true", help="입력 해시가 마지막 PASS 와 다른 단계와 그에 의존하는 단계(+상태 재구성에 필요한 상류)만 돌린다. 단독 실행이 증명되지 않은 단계는 항상 포함(e2e_plan.py)")
 ap.add_argument("--skip-ms-restart", action="store_true", help="5단계의 추론 서버 중단·복구를 건너뛴다(서버 호스트 포트가 Docker 배정이라 재시작 뒤 주소가 바뀌는 별도 프로젝트 시험용)")
 a = ap.parse_args()
+BACKEND = a.model_backend
 import e2e_sandbox as SB   # 샌드박스 접근 계층(D123): 단계는 게이트웨이·docker exec/run·다른 호스트 역할 컨테이너로만 닿는다
 SB.init(project=a.project, secrets=a.secrets, gw_ca=a.gw_ca, docker=a.docker, root=a.root, inference_project=a.inference_project, secrets_gid=os.environ.get("SECRETS_GID", ""))   # exec_py 의 --group-add: 비밀 파일(640)의 그룹. lib.sh 가 내보낸다(e2e.sh 가 source)
 import ssl
@@ -109,6 +111,11 @@ STATE = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 def save(): STATE_FILE.write_text(json.dumps(STATE, ensure_ascii=False, indent=1))
 def rec(step, status, detail):
     RESULTS.append((step, status, detail)); print(f"  [{status}] {detail}", flush=True)
+def fake_only(step, what):
+    """fake 백엔드의 고정 출력·흐름 파일 설정에 기대는 단계(가짜 A 의 corrections·fields·reasks, 고정 문장)는 다른 백엔드에서 성립하지 않는다. 느슨한 기대로 바꾸지 않고 BLOCKED 로 남긴다. 반환: True 면 건너뛴다."""
+    if BACKEND == "fake": return False
+    rec(step, "BLOCKED", f"추론 서버 백엔드가 {BACKEND} 라서 건너뜀: {what}은 fake 백엔드의 고정 출력·흐름 파일 설정에 의존한다(E2E 가 fake 로 확인한다, E2E_RESULTS.md)")
+    return True
 def title(n, t): print(f"\n== 단계 {n}: {t}", flush=True)
 def validate(name, obj):
     errs = list(bc.validator(name).iter_errors(obj)); assert not errs, f"{name} 스키마 위반: {errs[0].message}"
@@ -915,25 +922,26 @@ def step5():
     c, t1 = public_turn(sid, "turn-1", "뇌졸중은 없고 약도 안 먹어요"); assert c == 200, (c, t1); validate_survey("FrontendInput", t1)
     c, t1b = public_turn(sid, "turn-1", "뇌졸중은 없고 약도 안 먹어요"); assert c == 200 and t1b == t1, "같은 turn_id 재시도가 같은 응답이 아니다"
     c, t2 = public_turn(sid, "turn-2", "약도 안 먹어요"); assert c == 200, (c, t2)
-    # 한 턴이 추론 서버(model-serving)를 거쳤다: 서버의 가짜 백엔드는 출력이 고정이라 생성기 문장이 "(가짜 응답)" 이다
+    # 한 턴이 추론 서버(model-serving)를 거쳤다: fake 백엔드는 출력이 고정이라 생성기 문장이 "(가짜 응답)" 이다. 다른 백엔드(데모 mimic)는 문장을 모르므로 EA.server_text_ok 가 정한 만큼만 보고, 서버를 거쳤다는 증명은 아래 /v1/info backend 와 추론 호출 수 증가가 맡는다
     texts = " ".join(str(x.get("response_text")) for x in (t1, t2))
-    assert "(가짜 응답)" in texts, f"model-serving의 고정 출력이 아니다(서비스 내부 가짜?): {texts[:200]}"
+    assert EA.server_text_ok(texts, BACKEND), f"model-serving({BACKEND})의 출력이 아니다(서비스 내부 가짜?): {texts[:200]}"
     ms_tok = INF_TOK()
     c, info_body, _ = ms_call("/v1/info", None, ms_tok, method="GET"); info = json.loads(info_body) if c == 200 else {}
     assert c == 200 and new in info.get("loaded", []), (c, info)
-    assert info["backend"] == "fake", info
+    assert info["backend"] == BACKEND, ("추론 서버 백엔드가 --model-backend 와 다르다(구성이 의도한 백엔드가 아니다)", info.get("backend"), BACKEND)
     c401, _b401, h401 = ms_call("/v1/info", None, None, method="GET")
     assert c401 == 401 and (h401.get("www-authenticate") or "").split(" ")[0].rstrip(",") == "Bearer", ("토큰 없는 추론 서버 /v1/info: 401 + WWW-Authenticate: Bearer (계약 CONVENTIONS.md 6절)", c401, h401.get("www-authenticate"))
     c2, stxt, _ = ms_call(f"/v1/releases/{new}", None, ms_tok, method="GET"); st_ = json.loads(stxt) if c2 == 200 else {}; assert c2 == 200 and st_["state"] == "LOADED", (c2, stxt[:100])
-    v2chk = model_server_v2_check(new, ms_tok)
-    fvc = fake_values_check(new, ms_tok)
+    if BACKEND == "fake": v2chk = model_server_v2_check(new, ms_tok); fvc = fake_values_check(new, ms_tok)
+    else:   # 고정 출력(FAKE_EXTRACTION·"(가짜 응답)")·흐름 파일 칸 정의에 기대는 직접 호출은 fake 만의 시험이다
+        v2chk = fvc = f"건너뜀(백엔드 {BACKEND}: 고정 출력에 의존하는 직접 호출은 fake 만)"; rec("5g", "BLOCKED", f"추론 서버 직접 호출(고정 출력 대조, 흐름 파일 칸 정의)은 백엔드가 {BACKEND} 라서 건너뜀: fake 백엔드의 고정 출력에 의존한다")
     # 서비스를 거친 값 있는 턴: 가짜 A 가 매 턴 값(ANSWERED)을 내고, 서비스의 검증·저장을 통과해야 한다(실패 신호 없음, 추론 실패·형식 위반 증가 없음, Trace 전송)
     sv = _sid(*kiosk("/v1/sessions", {"kind": "SESSION_START", "question_set_id": QS}))
     rb = survey_ready()[1]; replies = []
     for i, text in enumerate(("네 있어요", "아니요 없어요", "네 있어요"), 1):
         c, rp = public_turn(sv, f"val-{i}", text); assert c == 200, (c, rp); validate_survey("FrontendInput", rp); replies.append(rp)
     wait(lambda: survey_ready()[1]["trace_outbox"]["sent"] - rb["trace_outbox"]["sent"] >= len(replies) or None, 30, "값 있는 턴의 Trace 전송")
-    EA.check_turns_clean(replies, rb, survey_ready()[1])
+    EA.check_turns_clean(replies, rb, survey_ready()[1], BACKEND)
     kiosk(f"/v1/sessions/{sv}/end", {"session_id": sv, "kind": "SESSION_END"})
     rec("5g", "REAL", f"가짜 A 의 값 추출(흐름 파일 slots/skips): 직접 호출 {fvc}. 서비스 경유 값 있는 3턴(Q1.D01~: '네 있어요','아니요 없어요','네 있어요'): 실패 신호 없음(검증 통과·쓰기 확정), /readyz inference 의 failures·output_invalid·retries·timeouts·outcome_fallback 증가 0, 턴마다 Trace 전송. 모델은 가짜(정확성 아님, 시험 구성 확인). 한계: 저장된 값을 돌려주는 공개 읽기 경로가 없고(PUBLIC_API 에 없음) ops-feedback 은 실패 사례만 노출하므로 저장 값 자체는 단언하지 않았다. 가짜 A 는 CORRECT 를 내지 않아 정정은 시험하지 않았다")
     rd = survey_ready()[1]; inf = rd.get("inference") or {}
@@ -961,7 +969,7 @@ def step5():
             kiosk(f"/v1/sessions/{sid_u}/end", {"session_id": sid_u, "kind": "SESSION_END"})
             return (cu_, ru_) if cu_ == 200 and not (isinstance(ru_, dict) and ru_.get("turn_failure_signal")) else None
         cu, ru = wait(recovered, 60, "추론 서버가 되살아난 뒤 서비스가 복구해 턴이 성공한다", every=3)
-        assert "(가짜 응답)" in str(ru.get("response_text")), (cu, ru)
+        assert EA.server_text_ok(ru.get("response_text"), BACKEND), (cu, ru)
         print(f"  추론 서버 무응답 뒤 복구: {len(tries_up)}번째 시도에서 성공(앞선 {len(tries_up) - 1}번은 실패)", flush=True)
         kiosk(f"/v1/sessions/{sidc}/end", {"session_id": sidc, "kind": "SESSION_END"})
     assert kiosk(f"/v1/sessions/{sid}/intervention", {"session_id": sid, "decision": "RESUME", "turn_id": "x"})[0] == 401, "직원 개입이 인증 없이 열려 있다"
@@ -1077,6 +1085,7 @@ def _c2_ms_call(path, body, token, method="POST"):
 def step5c():
     title("5c", "정정(CORRECT) 흐름: 값이 있는 턴 뒤 정정 발화 -> 서비스가 CORRECT 를 처리한다 (가짜 A 의 corrections, model-runtime 0.7.2)")
     if "pointers" not in STATE: rec("5c", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    if fake_only("5c", "정정(가짜 A 의 corrections: '아까 말'+at Q1.D02)"): return
     new = STATE["releases"]["2"]
     wait(lambda: (lambda cr: cr[0] == 200 and cr[1].get("active_release") == new)(_c2_ready()), 300, f"survey가 릴리스 {new} 적재", every=3)
     # (1) 추론 서버 직접: 정정 발화는 at 문항(Q1.D02)에서만 CORRECT, 다른 문항에서는 일반 값 추출
@@ -1119,6 +1128,7 @@ def step5c():
 def step5o():
     title("5o", "칸 규격(일수 0~7)을 가진 문항에서 범위 밖 값(8일)이 REASK/OUT_OF_RANGE 로 바뀌어 저장되지 않는다 (model-runtime 0.10.0 값 규칙, 계약 2.4.0, D115)")
     if "pointers" not in STATE: rec("5o", "BLOCKED", "활성 릴리스가 없다(단계 4)"); return
+    if fake_only("5o", "값 규칙(가짜 A 의 칸 규격 fields·흐름 파일 slots)"): return
     new = STATE["releases"]["2"]
     wait(lambda: (lambda cr: cr[0] == 200 and cr[1].get("active_release") == new)(_c2_ready()), 300, f"survey가 릴리스 {new} 적재", every=3)
     ff = json.loads((pathlib.Path(__file__).resolve().parents[1] / "test" / "fake-model" / "question_flow.json").read_text(encoding="utf-8"))
@@ -1557,6 +1567,7 @@ def step5n():
     rec("5n", "REAL", f"위험 발화 정지(첫 전달 {first_status}) -> /state pause_reason=RISK -> staff-call/retry(필드·같은 turn_id 멱등·간격 안 새 turn_id 429+Retry-After) -> 다른 기기·위조·무토큰·직원 토큰 거부 -> staff-call/report(StaffAlert manual_notice_*, 멱등, 다른 outcome 409, 직원 알림 목록에 보임, 세션은 PAUSED_RISK 유지) -> 개입 뒤 재알림 409 NO_OPEN_ALERT")
     # (g) 되묻기 한도 정지(pause_reason=REASK_LIMIT, survey-service ADR-0020·0022): 가짜 A 의 reasks 설정(model-runtime 0.7.3 이후, test/fake-model/question_flow.json 의
     # '되묻기시험' -> REASK)으로 같은 세션에서 REASK 를 연속으로 유도한다. 한도(N)는 /readyz 의 reask_limit 에서 읽는다(지어내지 않는다)
+    if fake_only("5n-reask", "되묻기 한도 정지(가짜 A 의 reasks 설정 '되묻기시험'->REASK)"): return
     rz = _c2_ready()[1]; rl = rz.get("reask_limit")   # /readyz 의 reask_limit 은 {"active", "max_consecutive", "effective"(정수 또는 null)} 객체다(계약 v3.1.0)
     # 실효 한도는 survey-service 가 낸 계약 출력(SurveyReadyz.reask_limit.effective, 계약 v3.1.0)만 읽는다: 서비스의 계산 규칙(문항 세트 session_settings 와 서비스 한도의 최솟값)을 E2E 가 흉내 내지 않는다(구조 규칙 4)
     N = (rl or {}).get("effective")

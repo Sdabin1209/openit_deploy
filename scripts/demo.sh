@@ -9,7 +9,7 @@
 #   scripts/demo.sh swap-adapters [--adapter-a DIR --adapter-b DIR --prompt-a FILE --prompt-b FILE]   떠 있는 데모에서 새 모델 패키지를 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화해 model-serving 만 새 번들을 적재시킨다(다른 서비스는 재시작하지 않는다, D72/U08). 인자 없음 = 가짜 백엔드 데모의 시험용 어댑터, 인자 = --llm 데모의 진짜 어댑터(같은 사전 검사)
 #   scripts/demo.sh activate                                   (--stop-before-approval 로 띄운 뒤) /admin/ 에서 승인한 제출의 릴리스를 활성화한다
 #   scripts/demo.sh status | reset [--stop-before-approval] | down [--purge-cache]   (모델 캐시 볼륨은 down 해도 남는다. --purge-cache 로 명시적으로 지운다)
-# 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 설정값 overlay(test/compose.sandbox.yaml)만 더한다. 시험용 문(내부 서비스 호스트 포트)은 없다: 데모의 단계 코드도 게이트웨이(HTTPS)로만 들어간다(docs/adr/0050).
+# 이 데이터는 시험용 대체다: 가짜 모델(fake 백엔드), 시험용 어댑터·평가 보고서, 시험용 승인자(스크립트). E2E와 같은 설정값 overlay(test/compose.sandbox.yaml, 위험 감지 시험 규칙 test/compose.risk-rules.yaml)만 더한다(5f 의 위험 감지 단계가 그 규칙 파일을 전제로 한다. 운영 compose 에는 없다: scripts/test_risk_rules_file.py). 모델만 E2E 의 fake 대신 mimic 이다. 시험용 문(내부 서비스 호스트 포트)은 없다: 데모의 단계 코드도 게이트웨이(HTTPS)로만 들어간다(docs/adr/0050).
 # 표준 `docker`만 쓴다. 컨테이너의 호스트 포트는 Docker가 배정한다(고정 포트 없음). 임시 레지스트리도 빈 포트를 고른다.
 # 환경 변수: DEMO_PROJECT(기본 deploy-demo, 반드시 deploy-demo 로 시작), DEMO_BIND(gateway 호스트 바인드, 기본 127.0.0.1; 다른 PC에서 보려면 0.0.0.0 -- HTTP·기본 인증이라 시험 때만),
 #           DEMO_REGISTRY_BIND(레지스트리 바인드, 기본 127.0.0.1; 데몬이 닿지 못하면 사용자가 0.0.0.0 으로 바꾼다 -- 끝나면 down).
@@ -67,7 +67,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
   export DEMO_MIMIC_FLOW_FILE="$MIMIC_FLOW"
   # 키오스크 기기 설정(데모 전용): 기기 산출물과 /config.json 을 내는 gateway 설정 사본의 경로. 파일은 up 이 만든다(demo_kiosk_prepare)
   export DEMO_KIOSK_DEVICE=e2e   # 데모 기기 ID. 기기 토큰은 제품 경로 그대로(kiosk-add-device.sh, 게이트웨이 기기 토큰 목록). 데모만의 게이트웨이 설정은 없다(U75)
-  export SECRETS_DIR="$W/secrets" DEVICE_ALLOWLIST_DIR="$W/device-allowlist" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
+  export SECRETS_DIR="$W/secrets" DEVICE_ALLOWLIST_DIR="$W/device-allowlist" COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/demo/compose.demo-mimic.yaml" GATEWAY_BIND="${DEMO_BIND:-127.0.0.1}" GATEWAY_PORT=
   # 사람 인증(U82, ADR 0057): Keycloak 발급자·oauth2-proxy 콜백이 밖에서 보이는 주소(첫 GATEWAY_HOSTS 이름 localhost + 밖에 보이는 포트)로 정해지므로 HTTPS 호스트 포트를 미리 정하고 기록해 둔다(이후 명령이 같은 값을 쓴다)
   if [ -s "$W/gw-tls-port" ]; then GATEWAY_TLS_PORT=$(cat "$W/gw-tls-port")
   else UTIL_REF=$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock"); GATEWAY_TLS_PORT=""   # 왜 상시 잠금인가: DEPLOY_LOCK($W/images.lock)은 이 시점에 아직 없어 이미지 이름이 비고, 포트 고르기가 조용히 실패해 사람 화면 주소가 8443 으로 굳었다(4차 데모: 단계 1 연결 거부)
@@ -86,7 +86,7 @@ env_demo() { # 데모 프로젝트의 환경 변수(모든 하위 스크립트�
     export DEMO_LLM_PROFILE="/app/profiles/$LLM_PROFILE_NAME.json"
     set_llm_image
     # 이미지는 파일로 고른다(compose.llm.local.yaml = 로컬 태그). 중첩 기본값 한 파일로는 안쪽 필수 변수가 먼저 평가되어 실패한다
-    COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
+    COMPOSE_EXTRA="$DEPLOY_ROOT/test/compose.sandbox.yaml $DEPLOY_ROOT/test/compose.risk-rules.yaml $DEPLOY_ROOT/compose.llm.yaml $DEPLOY_ROOT/compose.llm.local.yaml"; export COMPOSE_EXTRA   # 키오스크 /config.json 은 LLM 모드에서도 같다. 모방 백엔드는 붙이지 않는다(vllm 이 진짜 모델)
   fi
   # 외부 추론 서버(D72): up 때 기록한 주소를 이후 명령(activate/status/down)도 쓴다. 토큰 값은 기록하지 않고 파일 경로만 둔다
   if [ -n "$EXT" ]; then external_inference_setup "$EXT"; printf '%s\n%s\n' "$EXT" "$INFERENCE_TOKEN_FILE" > "$W/external-inference"
@@ -110,7 +110,8 @@ ports_json() {
 }
 run_steps() { # run_steps <--only 목록> [추가 인자]
   local only=$1; shift
-  local msx=(); [ -z "$EXT" ] || msx=(--ms-url "$EXT" --ms-token-file "$INFERENCE_TOKEN_FILE")
+  # 추론 서버 백엔드: 단계 코드의 기대(--model-backend)가 구성과 같아야 한다. 데모 기본은 mimic(demo/compose.demo-mimic.yaml), --llm 은 vllm(compose.llm.yaml). E2E 의 fake 가 아니므로 fake 의 고정 출력에 기대는 단계(5c·5o·5n 되묻기)는 단계 코드가 BLOCKED 로 남긴다
+  local msx=(--model-backend "$([ $LLM = 1 ] && echo vllm || echo mimic)"); [ -z "$EXT" ] || msx=(--ms-url "$EXT" --ms-token-file "$INFERENCE_TOKEN_FILE")
   [ $LLM = 0 ] || msx+=(--llm-package "$W/llm-package")
   [ -n "$EXT" ] || msx+=(--inference-project "$P")   # 데모는 model-serving 이 같은 프로젝트 안에 있다(e2e_sandbox 기본 <P>-inf 는 e2e.sh 의 별도 호스트 역할)
   local img; img=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
