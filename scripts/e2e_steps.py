@@ -1583,24 +1583,29 @@ def step5n():
     sv = staff_sv(sid2)
     said = [t for t in sv["turns"] if t["utterance"]]; assert [t["action"] for t in said] == ["REASK"] * N, ("턴 기록의 action", [(t["turn_id"], t["action"]) for t in said])
     c, pg0 = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200 and not [x for x in pg0["items"] if x["session_id"] == sid2], "한도 전에 직원 알림이 생겼다"
-    # N+1 번째: 되묻는 대신 직원 호출 경로(PAUSED_RISK + CALL_STAFF 알림 + 고정 문장 CALL_STAFF, 모델 문장이 아니다)
+    # N+1 번째(한도 도달): 계약 PUBLIC_API B절 3.2.0 + survey-service ADR-0054(사용자 결정 2026-11-03, ADR-0020 의 한도 뒤 동작을 대체): 같은 문항을 한도만큼 되물어도 답을 못 얻으면
+    # 직원을 부르지 않고 합성 SKIP 으로 그 칸을 빈칸으로 두고 다음 문항으로 간다(세션은 정지하지 않고 알림도 없다). 옛 동작(PAUSED_RISK + CALL_STAFF + pause_reason REASK_LIMIT)은 3.2.0 부터 새로 내지 않는다(H절).
+    # 빈칸 사유는 REASK_LIMIT(되묻기 한도 뒤 빈칸)이다: UNKNOWN 은 환자가 '모름'이라 답한 경우(문진표 unknown_accept_after)이고, 이 단계의 발화는 답이 없어 되묻는 경우(reason MISSING)라서 REASK_LIMIT 이 계약 열거 값 중 맞는 사유다
     c, rl = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{N + 1}"})[:2]
-    assert c == 200 and rl.get("response_text") and FAKE not in str(rl.get("response_text")), (f"{N + 1}번째 턴 응답이 문항 세트 고정 문장이 아니다", c, str(rl)[:200])
-    assert str(rl["response_text"]) not in reask_texts, ("한도 뒤 응답이 모델의 되묻기 문장과 같다(고정 문장이어야 한다)", rl["response_text"])
-    fixed_text = rl["response_text"]
-    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "PAUSED_RISK", (c, s_)
-    assert s_.get("pause_reason") == "REASK_LIMIT", ("/state 의 pause_reason 이 REASK_LIMIT 가 아니다(계약 v2.1.0 H절)", s_); _validate_if_known("SessionState", s_)
+    assert c == 200 and rl.get("response_text") and not rl.get("turn_failure_signal") and FAKE not in str(rl.get("response_text")), (f"{N + 1}번째 턴이 정상 응답이 아니다", c, str(rl)[:200])
+    assert str(rl["response_text"]) not in reask_texts, ("한도 뒤 응답이 되묻기 문장과 같다(다음 문항으로 넘어가야 한다)", rl["response_text"])
+    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "ACTIVE" and not s_.get("pause_reason"), ("한도 뒤에 세션이 멈췄다(계약 3.2.0: 멈추지 않는다)", c, s_); _validate_if_known("SessionState", s_)
     c, pg = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
-    al = [x for x in pg["items"] if x["session_id"] == sid2]
-    assert len(al) == 1 and al[0]["kind"] == "CALL_STAFF" and al[0].get("pause_reason") == "REASK_LIMIT", ("CALL_STAFF 직원 알림(pause_reason REASK_LIMIT)이 하나 생기지 않았다", al)
-    assert staff_sv(sid2)["status"] == "PAUSED_RISK"
-    # 직원 재개 -> 정상: 정지가 풀리고 pause_reason 이 사라지며, 되묻기 문구가 없는 발화는 다시 모델 응답으로 진행한다(연속 횟수는 다시 센다)
-    c, iv, _h = _c2_raw("POST", f"/v1/sessions/{sid2}/intervention", {"session_id": sid2, "decision": "RESUME", "turn_id": "nr-iv-1"}, basic=_C2_STAFF); assert c == 200, (c, iv)
-    c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "ACTIVE" and not s_.get("pause_reason"), ("재개 뒤 상태", c, s_)
+    assert not [x for x in pg["items"] if x["session_id"] == sid2], "한도 뒤에 직원 알림이 생겼다(계약 3.2.0: 직원을 부르지 않는다)"
+    sv2 = staff_sv(sid2); assert sv2["status"] == "IN_PROGRESS", sv2["status"]
+    said = [t for t in sv2["turns"] if t["utterance"]]
+    assert [t["action"] for t in said] == ["REASK"] * N + ["SKIP"], ("턴 기록의 action(한도 도달 턴이 SKIP)", [(t["turn_id"], t["action"]) for t in said])
+    # 정상 진행: 다음 문항에서 보통 발화는 다시 모델 응답으로 처리된다(연속 횟수는 다시 센다)
     c, rn = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": "네 있어요", "turn_id": "nr-after"})[:2]
-    assert c == 200 and not rn.get("turn_failure_signal") and EA.server_text_ok(rn.get("response_text"), BACKEND), ("재개 뒤 정상 진행이 아니다", c, str(rn)[:200])
+    assert c == 200 and not rn.get("turn_failure_signal") and EA.server_text_ok(rn.get("response_text"), BACKEND), ("건너뛴 뒤 정상 진행이 아니다", c, str(rn)[:200])
     tcall(A, "POST", f"/v1/sessions/{sid2}/end", {"session_id": sid2, "kind": "SESSION_END"})
-    rec("5n-reask", "REAL", f"되묻기 한도 정지(가짜 A reasks '되묻기시험'->REASK, 실효 한도 {N} = min(/readyz max_consecutive, 문항 세트 ask/confirm/unrecognized 한도)): 같은 세션에서 REASK {N}번 연속은 정상 진행(IN_PROGRESS, 알림 없음, 모델 문장, 턴 기록 action 전부 REASK) -> {N + 1}번째 턴에 PAUSED_RISK + /state pause_reason=REASK_LIMIT + CALL_STAFF 직원 알림 1건(pause_reason REASK_LIMIT) + 문항 세트 고정 문장(모델 문장이 아님; 문장 내용 자체는 문항 세트 저작이라 비교하지 않았다) -> 직원 RESUME 뒤 IN_PROGRESS·pause_reason 없음·다음 발화는 정상 진행")
+    # 결과 조회: 건너뛴 문항과 사유가 계약 열거 값으로 남는다(SessionResult.skipped_details, 첫 문항 = 되물은 문항)
+    first_qid = bank_sentences(QS)[0][0]
+    c, res, _ = _c2_in_json("survey-service", "GET", f"/v1/results/{sid2}", TOK("survey-result-reader")); assert c == 200, (c, res)
+    validate_survey("SessionResult", res)
+    sk = [d for d in res["skipped_details"] if d["item"] == first_qid]
+    assert len(sk) == 1 and sk[0]["reason"] == "REASK_LIMIT", ("결과의 skipped_details 에 되물은 문항이 REASK_LIMIT 로 남지 않았다", first_qid, res["skipped_details"])
+    rec("5n-reask", "REAL", f"되묻기 한도 도달은 정지가 아니라 빈칸·다음 문항(계약 PUBLIC_API B절 3.2.0, survey-service ADR-0054). 실효 한도 {N}(/readyz reask_limit.effective): 같은 세션에서 REASK {N}번 연속은 정상 진행(모델 문장) -> {N + 1}번째 턴은 action=SKIP, 세션 ACTIVE(pause_reason 없음), 직원 알림 없음, 응답은 다음 문항 문장 -> 이어 보통 발화는 정상 진행 -> 결과 조회 skipped_details 에 {first_qid} 가 REASK_LIMIT 로 남음(SessionResult 스키마 통과).")
 
 @step('5r', repos=('survey-service', 'kiosk-frontend', 'admin-console') + _GW, deps=('4',),
       why="STATE['pointers'] 를 읽는다. " + _P4)
