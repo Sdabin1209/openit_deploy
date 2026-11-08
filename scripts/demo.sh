@@ -204,7 +204,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 게이트웨이 /readyz 가 200 이 된다"
   return 0
 }
-case "$CMD" in up|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
+case "$CMD" in up|prepare|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
 case "$CMD" in
   up)
     [ -d "$W" ] && [ -f "$W/registry.env" ] && die "이미 데모 상태가 있다 ($W). scripts/demo.sh down 또는 reset"
