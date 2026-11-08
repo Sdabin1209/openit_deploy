@@ -42,7 +42,8 @@ class T(unittest.TestCase):
         insp = next(c for c in self.f.calls if c[0][1] == "inspect")[0]; self.assertEqual(insp[2], "P1-release-gate-1")   # 바깥에서 본다
         create = next(c for c in self.f.calls if c[0][1] == "create")[0]
         self.assertIn("--read-only", create); self.assertIn("P1_a", create)
-        i = create.index("--tmpfs"); self.assertEqual(create[i + 1], "/tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001,mode=0700")   # 읽기 전용 루트에서 tempfile.mkdtemp 가 쓸 곳(uid 10001 소유); self.assertNotIn("exec", [c[0][1] for c in self.f.calls])
+        i = create.index("--tmpfs"); self.assertEqual(create[i + 1], "/tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001,mode=0700")   # 읽기 전용 루트에서 tempfile.mkdtemp 가 쓸 곳(uid 10001 소유)
+        self.assertNotIn("exec", [c[0][1] for c in self.f.calls])   # 영역 컨테이너에 docker exec 로 들어가지 않는다(주석 안에 있어 실행되지 않던 단언, Codex 검토)
         self.assertIn("GATE_WRITE_TOKENS_FILE=/run/secrets/gate-write-tokens", create)   # *_FILE(파일 경로) 만 옮긴다
         self.assertFalse(any("should-not-pass" in x for x in create), "*_FILE 이 아닌 환경은 옮기지 않는다")
         self.assertIn("SSL_CERT_FILE=/ca.crt", create); self.assertIn("/ca/trust.crt:/ca.crt:ro", create)   # 인증서 검증을 끄지 않는다
