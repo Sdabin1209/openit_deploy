@@ -21,7 +21,11 @@ source "$(dirname "$0")/lib.sh"
 D=${1:-$DEPLOY_ROOT/secrets}; mkdir -p "$D/tokens"; chmod 700 "$D" "$D/tokens"
 rnd() { python3 -c 'import secrets;print(secrets.token_hex(24))'; }
 tok() { [ -s "$D/tokens/$1" ] || ( umask 077; rnd > "$D/tokens/$1" ); secret_fix "$D/tokens/$1" "$1"; cat "$D/tokens/$1"; }
-putlist() { local f="$D/tokens/$1"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || ( umask 077; printf '%s\n' "$2" > "$f" ); secret_fix "$f" "$1"; }
+# 비밀 목록 파일은 쓰기 전에 계약 secret_format_problems(kind, 값)로 만드는 쪽이 검사한다(계약 5.0.1, D84·D117). 어기면 값 없이 파일 이름·형식 이름만 내고 멈춘다
+secret_check() { local kind=$1 name=$2 val=$3 p; p=$("$DEPLOY_PY" -W ignore -I -c 'import sys
+from boundary_contracts import secret_format_problems
+print(",".join(secret_format_problems(sys.argv[1], sys.argv[2])))' "$kind" "$val") || die "$name: 형식 검사를 하지 못했다(계약 패키지: bash scripts/prepare-host.sh venv)"; [ -z "$p" ] || die "$name: 비밀 형식 $kind 을(를) 어긴다($p). 값은 출력하지 않는다"; }
+putlist() { local f="$D/tokens/$1"; secret_check "$3" "$1" "$2"; [ "$(cat "$f" 2>/dev/null)" = "$2" ] || ( umask 077; printf '%s\n' "$2" > "$f" ); secret_fix "$f" "$1"; }
 roles() { local srv=$1 kind=$2; shift 2; local out=""; for r in "$@"; do out+="${out:+,}$r=$(tok "$srv-$kind-$r")"; done; echo "$out"; }
 
 # PostgreSQL 계정: 이름 = 데이터베이스 = 계정. 환경 변수 이름은 docs/RUN.md 4-1-1 표(SURVEY_DATABASE_URL 등)
@@ -48,6 +52,7 @@ gen_backup() {
   local a
   for a in survey qa ops gate models datasets gateway pki identity; do
     [ -s "$D/tokens/backup-$a-credentials" ] || ( umask 077; printf '%s:%s\n' "$a" "$(python3 -c 'import secrets;print(secrets.token_hex(24),end="")')" > "$D/tokens/backup-$a-credentials" ); secret_fix "$D/tokens/backup-$a-credentials" "backup-$a-credentials"
+    secret_check credentials_line "backup-$a-credentials" "$(cat "$D/tokens/backup-$a-credentials")"   # 한 줄 '사용자:암호'(RFC 7617), 계약 secret_format_problems
     tok "backup-$a-repo-password" >/dev/null
   done
 }
@@ -74,19 +79,19 @@ for t in gate-read-survey-service ops-ingest-survey-service survey-api-kiosk sur
   tok "$t" >/dev/null
 done
 # 목록 값 파일: 서비스가 받는 형식 그대로 한 줄. 토큰이 이미 있으면 내용이 같아서 다시 써도 같다(다르면 갱신한다).
-putlist gate-read-tokens "$GATE_R"
-putlist gate-write-tokens "$GATE_W"
-putlist qa-read-tokens "$QA_R"
-putlist ops-read-tokens "$OPS_R"
-putlist model-registry-read-tokens "$MR_R"
-putlist model-registry-write-tokens "$MR_W"
-putlist dataset-store-read-tokens "$DS_R"
-putlist dataset-store-write-tokens "$DS_W"
-putlist ops-review-tokens "reviewer=$(tok ops-review-reviewer)"
+putlist gate-read-tokens "$GATE_R" role_token_list
+putlist gate-write-tokens "$GATE_W" role_token_list
+putlist qa-read-tokens "$QA_R" role_token_list
+putlist ops-read-tokens "$OPS_R" role_token_list
+putlist model-registry-read-tokens "$MR_R" role_token_list
+putlist model-registry-write-tokens "$MR_W" role_token_list
+putlist dataset-store-read-tokens "$DS_R" role_token_list
+putlist dataset-store-write-tokens "$DS_W" role_token_list
+putlist ops-review-tokens "reviewer=$(tok ops-review-reviewer)" role_token_list
 tok qa-gateway-token >/dev/null   # gateway 가 저작 서비스에 쓰는 서비스 토큰(저자 경로, D88/U9). 이 토큰의 요청에서만 서비스가 X-Openit-User 를 사용자로 쓴다
-putlist qa-gateway-tokens "$(tok qa-gateway-token)"
-putlist qa-author-tokens "$QA_AUTHOR:author-e2e:question-author,$QA_REVIEWER:clinical-e2e:clinical-reviewer"
-putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)"
+putlist qa-gateway-tokens "$(tok qa-gateway-token)" token_list
+putlist qa-author-tokens "$QA_AUTHOR:author-e2e:question-author,$QA_REVIEWER:clinical-e2e:clinical-reviewer" token_actor_role_list
+putlist model-runtime-tokens "survey-service=$(tok inference-survey-service)" role_token_list
 
 # 게이트웨이(Caddy): 개별 계정 인증(D85 E절)과 키오스크 기기 토큰(F절). 서비스 토큰은 위의 개별 토큰 파일을 {file./run/secrets/<이름>} 으로 읽는다(환경 변수 없음).
 #   사람 계정(U82, ADR 0057): 비밀 파일이 아니라 Keycloak(realm openit)에 있다. 여기서 만드는 것은 Keycloak·oauth2-proxy 의 비밀(위 gen_idp)뿐이다.
