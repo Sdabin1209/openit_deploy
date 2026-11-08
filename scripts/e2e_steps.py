@@ -1583,7 +1583,10 @@ def step5n():
     # 빈칸 사유는 REASK_LIMIT(되묻기 한도 뒤 빈칸)이다: UNKNOWN 은 환자가 '모름'이라 답한 경우(문진표 unknown_accept_after)이고, 이 단계의 발화는 답이 없어 되묻는 경우(reason MISSING)라서 REASK_LIMIT 이 계약 열거 값 중 맞는 사유다
     c, rl = tcall(A, "POST", f"/v1/sessions/{sid2}/turns", {"session_id": sid2, "kind": "UTTERANCE", "utterance": utt, "turn_id": f"nr-{N + 1}"})[:2]
     assert c == 200 and rl.get("response_text") and not rl.get("turn_failure_signal") and FAKE not in str(rl.get("response_text")), (f"{N + 1}번째 턴이 정상 응답이 아니다", c, str(rl)[:200])
-    assert str(rl["response_text"]) not in reask_texts, ("한도 뒤 응답이 되묻기 문장과 같다(다음 문항으로 넘어가야 한다)", rl["response_text"])
+    # 시험 범위: 고정 MISSING 시나리오(흐름 파일 reasks '되묻기시험' -> REASK MISSING)에서 한도 뒤 결과만 본다. UNKNOWN·REJECTED·UNCLEAR 사유로 건너뛰는 경로와 다른 문항의 한도는 이 시험이 보지 않는다.
+    # "다음 문항으로 간다"는 문장이 달라졌다는 것이 아니라 문진표(I1)의 둘째 문항 문장이 응답에 직접 들어 있는지로 대조한다(합성 SKIP 응답은 서비스가 문진표로 만든다: 백엔드와 무관)
+    nxt_sentence = bank_sentences(QS)[1][1]
+    assert nxt_sentence in str(rl["response_text"]) and str(rl["response_text"]) not in reask_texts, ("한도 뒤 응답에 문진표의 둘째 문항 문장이 없다(다음 문항으로 넘어가야 한다)", nxt_sentence, rl["response_text"])
     c, s_ = state_dev(A, sid2); assert c == 200 and s_["state"] == "ACTIVE" and not s_.get("pause_reason"), ("한도 뒤에 세션이 멈췄다(계약 3.2.0: 멈추지 않는다)", c, s_); _validate_if_known("SessionState", s_)
     c, pg = _c2_staff("GET", "/v1/staff/alerts?status=OPEN"); assert c == 200, (c, pg); validate("StaffAlertPage", pg)
     assert not [x for x in pg["items"] if x["session_id"] == sid2], "한도 뒤에 직원 알림이 생겼다(계약 3.2.0: 직원을 부르지 않는다)"

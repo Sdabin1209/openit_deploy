@@ -5,13 +5,14 @@ set -uo pipefail
 source "$(dirname "$0")/lib.sh"; source "$(dirname "$0")/testlib.sh"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 export DEPLOY_LOCK=$T/images.lock DEPLOY_REGISTRY_ENV=$T/registry.env SECRETS_DIR=$T/secrets
-test_lock_copy "$DEPLOY_LOCK"; echo "DEPLOY_REGISTRY=127.0.0.1:5000" > "$DEPLOY_REGISTRY_ENV"
+COMPOSE_EXTRA="${GID_WIRING_EXTRA:-}" test_lock_copy "$DEPLOY_LOCK"; echo "DEPLOY_REGISTRY=127.0.0.1:5000" > "$DEPLOY_REGISTRY_ENV"
 bash "$DEPLOY_ROOT/scripts/gen-secrets.sh" --test-fixtures "$SECRETS_DIR" >/dev/null 2>&1
 export SECRETS_GID=4242 STEP_CERT_GID=4343
-COMPOSE_EXTRA="" dc gid-wiring config > "$T/prod.yaml" 2>"$T/err" || { cat "$T/err" | tail -3; echo "FAIL compose 병합"; exit 1; }
-"$DEPLOY_PY" -I - "$T/prod.yaml" <<'PY'
+COMPOSE_EXTRA="${GID_WIRING_EXTRA:-}" dc gid-wiring config > "$T/prod.yaml" 2>"$T/err" || { cat "$T/err" | tail -3; echo "FAIL compose 병합"; exit 1; }
+"$DEPLOY_PY" -I - "$T/prod.yaml" "$SECRETS_DIR" <<'PY'
 import sys, yaml
-svc = yaml.safe_load(open(sys.argv[1]))["services"]
+doc = yaml.safe_load(open(sys.argv[1])); svc = doc["services"]; SD = sys.argv[2]
+cfg_file = {n: str((c or {}).get("file", "")) for n, c in (doc.get("configs") or {}).items()}
 bad = []
 gids = lambda s: {str(g) for g in (s.get("group_add") or [])}
 env = lambda s: s.get("environment") or {}
@@ -22,6 +23,10 @@ for n, s in svc.items():
         for v in s.get("volumes") or []:
             if isinstance(v, dict) and v.get("type") == "volume" and not v.get("read_only"): certvols[v["source"]] = n
 for n, s in svc.items():
+    # 비밀 폴더(640 + SECRETS_GID)의 파일을 configs·바인드 마운트로 받는 서비스도 group_add 가 있어야 읽는다
+    srcs = [cfg_file.get(c if isinstance(c, str) else c.get("source"), "") for c in (s.get("configs") or [])]
+    srcs += [str(v.get("source", "")) for v in (s.get("volumes") or []) if isinstance(v, dict) and v.get("type") == "bind"]
+    if any(x.startswith(SD) for x in srcs) and "4242" not in gids(s): bad.append(f"{n}: 비밀 폴더({SD})의 파일을 configs/바인드로 받는데 group_add 에 SECRETS_GID(4242)가 없다: {sorted(gids(s))}")
     if s.get("secrets") and "4242" not in gids(s): bad.append(f"{n}: 비밀 파일을 받는데 group_add 에 SECRETS_GID(4242)가 없다: {sorted(gids(s))}")
     for v in s.get("volumes") or []:
         if isinstance(v, dict) and v.get("type") == "volume" and v.get("source") in certvols and certvols[v["source"]] != n and env(s).get("STEP_ROLE") != "cert":

@@ -41,7 +41,9 @@ msx_case() { # msx_case <demo.sh 경로> <LLM> <EXT> <DEMO_MODEL_BACKEND> <기�
   bash -c 'eval "$(sed -n "/^msx_build() {/,/^}/p" "$1")"; LLM=$2 EXT=$3 DEMO_MODEL_BACKEND=$4 INFERENCE_TOKEN_FILE=/t W=/w P=p; msx=(); msx_build; printf "%s\n" "${msx[@]}"' _ "$f" "$@" > "$T/msx.out" 2>&1 || return 1
   awk -v want="$4" 'prev=="--model-backend"{got=$0} {prev=$0} END{exit !(got==want)}' "$T/msx.out"
 }
-cp "$DEPLOY_ROOT/scripts/demo.sh" "$T/demo.mut.sh"; sed -i 's/msx=(--model-backend "[^)]*)/msx=()/' "$T/demo.mut.sh"
+# 변이는 msx 를 만드는 줄 전체를 빈 배열로 바꾼다(중첩 $() 가 있어 sed 로 일부만 지우면 문법 오류가 되어 행동 실패와 구별되지 않는다). 문법이 맞는 변이임을 먼저 확인한다
+awk '/^  msx=\(--model-backend /{print "  msx=()"; next} {print}' "$DEPLOY_ROOT/scripts/demo.sh" > "$T/demo.mut.sh"
+ok "변이 전제: 변이한 demo.sh 는 문법이 맞고 msx 줄이 바뀌었다" bash -c 'bash -n "$0" && grep -q "^  msx=()$" "$0" && ! grep -q "^  msx=(--model-backend " "$0"' "$T/demo.mut.sh"
 ok "추론 인자: 로컬 mimic 은 --model-backend mimic" msx_case "$DEPLOY_ROOT/scripts/demo.sh" 0 "" "" mimic
 ok "추론 인자: --llm 은 --model-backend vllm" msx_case "$DEPLOY_ROOT/scripts/demo.sh" 1 "" "" vllm
 ok "추론 인자: 외부 mimic 은 --ms-url 이 있어도 --model-backend mimic" msx_case "$DEPLOY_ROOT/scripts/demo.sh" 0 https://x "" mimic
