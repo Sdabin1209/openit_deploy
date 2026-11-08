@@ -42,8 +42,4 @@ services:
         reservations:
           devices:
             - {driver: nvidia, count: 1, capabilities: [gpu]}
-    healthcheck:
-      start_period: 900s   # 잠정: 첫 기동의 모델 내려받기(약 4GB(Qwen3-1.7B 추정))와 적재 시간은 측정 전이라 넉넉히 잡았다. 측정 후 줄인다
-      interval: 15s
-      timeout: 3s
-      retries: 10
+    # 건강 확인은 GPU 이미지의 HEALTHCHECK(model-runtime 0.12.6, start_period 포함)가 정한다. deploy 는 영역 이미지의 healthcheck 를 덮어쓰지 않는다(계약 CONVENTIONS 13절)

@@ -8,7 +8,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FORBIDDEN = ("healthcheck", "command", "entrypoint", "user", "volumes_from")
 # 알려진 위반(대장 #7): compose.llm.yaml 의 model-serving healthcheck(타이밍 덮어쓰기). 해소 조건: model-runtime 이 GPU 이미지의 HEALTHCHECK(start_period 포함)를 이미지에 둔 버전이 기준표(lib.sh DEPLOY_MR_TAG)에 오른 뒤 이 줄을 지운다.
-PENDING = {("compose.llm.yaml", "model-serving", "healthcheck")}
+PENDING = set()   # 위반 없음(compose.llm.yaml 의 healthcheck 덮어쓰기는 model-runtime 0.12.6 의 이미지 HEALTHCHECK 로 대체돼 지웠다)
 
 
 class L(yaml.SafeLoader): pass
@@ -44,6 +44,13 @@ class T(unittest.TestCase):
         stale = PENDING - v
         self.assertEqual(sorted(stale), [], "PENDING 위반이 해소됐다: 이 시험의 PENDING 에서 지운다")
         for x in sorted(v & PENDING): print("  PENDING(알려진 위반, 해소 조건은 PENDING 주석):", x)
+
+    def test_area_db_services_are_nonroot_shaped(self):
+        """영역 DB 4개(non-root USER postgres 999:999, 선언 capabilities 빈 목록): cap_add 없음, /run tmpfs 는 uid=999,gid=999(옵션 없는 tmpfs 는 0:0 이라 999 가 못 쓴다)."""
+        svc = _services(ROOT / "compose.yaml")
+        for n in ("survey-db", "question-authoring-db", "ops-feedback-db", "release-gate-db"):
+            self.assertNotIn("cap_add", svc[n], f"{n}: 선언 capabilities 가 빈 목록인데 cap_add 가 있다")
+            self.assertIn("/run:uid=999,gid=999,mode=0755", svc[n]["tmpfs"], f"{n}: /run tmpfs 소유자")
 
     def test_detects_mutations(self):
         with tempfile.TemporaryDirectory() as d:
