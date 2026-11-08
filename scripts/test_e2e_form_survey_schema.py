@@ -45,7 +45,8 @@ class FormPassesSurveySchema(unittest.TestCase):
                 import jsonschema, survey_schema
                 self.assertTrue(survey_schema.__file__.startswith(d), "꺼낸 문진 스키마가 아니라 설치된 것이 import 됐다")
                 sch = survey_schema.load_schema("QuestionBank")
-                errs = sorted(jsonschema.validators.validator_for(sch)(sch).iter_errors(bank), key=lambda e: list(map(str, e.path)))
+                import boundary_contracts as bc   # 문진 스키마 5.0.0 의 계약 안정 URI $ref 는 계약 schema_validator 로만 풀린다
+                errs = sorted(bc.schema_validator(sch).iter_errors(bank), key=lambda e: list(map(str, e.path)))
             finally:
                 sys.path.pop(0); sys.modules.pop("survey_schema", None)
         self.assertEqual([f"/{'/'.join(map(str, e.path))}: {e.message[:120]}" for e in errs], [], f"문항 양식으로 만든 QuestionBank 가 {tag} 를 통과하지 못한다(question-authoring 추출기 또는 test/fixtures 를 고친다)")

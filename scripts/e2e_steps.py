@@ -122,11 +122,8 @@ def title(n, t): print(f"\n== 단계 {n}: {t}", flush=True)
 def validate(name, obj):
     errs = list(bc.validator(name).iter_errors(obj)); assert not errs, f"{name} 스키마 위반: {errs[0].message}"
 def validate_survey(name, obj):
-    from referencing import Registry, Resource
-    d = pathlib.Path(survey_schema.schema_dir()); reg = Registry()
-    for f in d.glob("*.json"): reg = reg.with_resource(f.name, Resource.from_contents(json.loads(f.read_text())))
-    schema = survey_schema.load_schema(name)
-    errs = list(jsonschema.validators.validator_for(schema)(schema, registry=reg).iter_errors(obj))
+    # 문진 스키마 5.0.0 은 계약 안정 URI $ref 를 가진다: 표준 검증기로는 풀리지 않으므로 계약 schema_validator(계약 registry, 형식 검사 강제, NaN 거부)로 만든다
+    errs = list(bc.schema_validator(survey_schema.load_schema(name)).iter_errors(obj))
     assert not errs, f"문진 스키마 {name} 위반: {errs[0].message}"
 def http(method, k, path, token=None, body=None, raw=None, ctype="application/json", basic=None, headers=None):
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)

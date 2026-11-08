@@ -18,7 +18,7 @@ build-images 정적 점검 (영역 Dockerfile 인자·산출 파일 이름이 �
 게시 서비스 목록(lib.sh) == 계약 PublishRequest.service enum :: "$VENV/bin/python" -I "$DEPLOY_ROOT/scripts/test_services_enum.py"
 e2e 옵션 처리 자기 점검 (--help 는 실행 없이 0, 모르는 옵션·--only 와 --sections 조합은 2) :: bash "$DEPLOY_ROOT/scripts/test-e2e-options.sh"
 job-metrics 자체 시험 (textfile 지표) :: bash "$DEPLOY_ROOT/scripts/test-job-metrics.sh"
-e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
+e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다) :: "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
 e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 데모=제품 정적 점검 (데모 덮어쓰기는 모델 대역·포트·시험 계정 외 제품 설정을 바꾸지 못한다, U75) :: bash "$DEPLOY_ROOT/scripts/test-demo-parity.sh"
 기본값이 아닌 SECRETS_GID·STEP_CERT_GID 에서 쓰는 쪽 그룹과 읽는 쪽 group_add 가 같다 (정적, 인증서 쓰는 role=cert 의 STEP_CERT_GID, 분리 배치 전달) :: bash "$DEPLOY_ROOT/scripts/test-gid-wiring.sh"

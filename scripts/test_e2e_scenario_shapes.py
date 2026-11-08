@@ -31,10 +31,8 @@ def consts():
 
 
 def survey_validator(name):
-    d = pathlib.Path(survey_schema.schema_dir()); reg = Registry()
-    for f in d.glob("*.json"): reg = reg.with_resource(f.name, Resource.from_contents(json.loads(f.read_text())))
-    s = survey_schema.load_schema(name)
-    return jsonschema.validators.validator_for(s)(s, registry=reg)
+    import boundary_contracts as bc
+    return bc.schema_validator(survey_schema.load_schema(name))   # 문진 스키마 5.0.0: 계약 안정 URI $ref 는 계약 registry 로만 풀린다
 
 
 def start_dicts():
