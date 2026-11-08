@@ -11,6 +11,10 @@ case "${1:-}" in
     git_mirror_env || die "로컬 미러 git 설정을 만들지 못했다 (scripts/write-local-mirrors.sh)"
     [ -d "$DEPLOY_ROOT/.venv" ] || python3 -m venv "$DEPLOY_ROOT/.venv"
     "$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt" setuptools wheel 2>&1 | tail -1
+    # 계약 패키지(boundary-contracts)는 기준표 태그(DEPLOY_BC_TAG)로 여기서 설치한다: prepare-areas.sh 의 영역 목록 읽기(scripts/areas.py -> schema_check)가 이것을 import 하므로 새 머신에서 가장 먼저 필요하다.
+    # 왜 wheels 가 아니라 여기인가: wheels 는 build-images.sh 가 만든 호스트 wheel 이 있어야 하는데, 새 머신은 영역 준비(prepare-areas) 뒤에야 이미지를 빌드한다(순서가 물려 있었다). wheels 단계는 같은 태그의 wheel 로 다시 설치해 둘이 어긋나지 않는다. link 와 같은 방식(git+ssh 태그, 로컬 미러)
+    "$VENV/bin/pip" install -q --no-deps "${BC_SOURCE:-git+ssh://git@github.com/Sdabin1209/openit_boundary-contracts.git}@$DEPLOY_BC_TAG" 2>&1 | tail -1
+    "$VENV/bin/python" -c "import boundary_contracts" || die "boundary-contracts $DEPLOY_BC_TAG 를 설치하지 못했다(GitHub 읽기 접근: docs/SETUP.md C절 1번)"
     # 통신 기반 라이브러리 link 는 Git 태그로 설치한다(D118, 공통 규칙 "라이브러리는 Git 태그로 설치"). 기본은 GitHub 리포(openit_link). LINK_SOURCE 로 다른 위치(예: 로컬 리포 git+file:///.../link)를 가리킬 수 있다. 계약(boundary-contracts)은 wheels 단계가 설치하므로 --no-deps
     "$VENV/bin/pip" install -q --no-deps "${LINK_SOURCE:-git+ssh://git@github.com/Sdabin1209/openit_link.git}@$DEPLOY_LINK_TAG" 2>&1 | tail -1
     # model-runtime 은 check-all 이 공개 이름(model_runtime.prompts.SUPPORTED_TEMPLATE_VERSIONS)을 읽으려고 기준 태그로 설치한다(구조 규칙 1: 이웃 소스 파일을 열지 않는다). 의존 패키지는 설치하지 않는다(--no-deps: 읽는 모듈은 prompts 뿐). 다른 위치는 MODEL_RUNTIME_SOURCE (예: git+file:///.../model-runtime)

@@ -21,6 +21,11 @@ while [ $# -gt 0 ]; do case "$1" in
   -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
   -*) echo "알 수 없는 인자: $1 (사용: prepare-areas.sh [--list] [--ws DIR] [--no-self] [영역...])" >&2; exit 2;;
   *) ONLY+=("$1"); shift;; esac; done
+# 새 머신: deploy 자신의 .venv(계약 패키지 포함)가 영역 목록 읽기(areas.py)보다 먼저 있어야 한다. 없으면 여기서 만든다(prepare-host.sh venv, 멱등). --no-self 는 시험용이라 만들지 않는다
+if [ $SELF = 1 ] && [ ! -x "$DEPLOY_ROOT/.venv/bin/python" ]; then
+  echo "== deploy (.venv 가 없어 먼저 만든다)"; bash "$DEPLOY_ROOT/scripts/prepare-host.sh" venv || { echo "prepare-areas: deploy .venv 를 만들지 못했다" >&2; exit 1; }
+  DEPLOY_PY="$DEPLOY_ROOT/.venv/bin/python"
+fi
 AF="${AREAS_FILE:-$WORKSPACE/head/shared/areas.json}"
 if ! ALL=$("$DEPLOY_PY" "$DEPLOY_ROOT/scripts/areas.py" --file "$AF" --kind python,node,library); then
   echo "prepare-areas: 영역 목록을 읽지 못했다($AF). 먼저 head 를 clone 하고 head/setup.sh 를 실행한다(docs/SETUP.md 1단계)" >&2; exit 1; fi
