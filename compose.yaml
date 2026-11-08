@@ -393,7 +393,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: survey-service, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: survey-service, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-survey-service:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   question-authoring-cert:   # question-authoring 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -401,7 +401,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: question-authoring, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: question-authoring, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-question-authoring:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   ops-feedback-cert:   # ops-feedback 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -409,7 +409,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: ops-feedback, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: ops-feedback, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-ops-feedback:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   release-gate-cert:   # release-gate 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -417,7 +417,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: release-gate, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: release-gate, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-release-gate:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   model-serving-cert:   # model-serving 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -425,7 +425,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: model-serving, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: model-serving, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-model-serving:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   model-registry-cert:   # model-registry 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -433,7 +433,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: model-registry, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: model-registry, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-model-registry:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   dataset-store-cert:   # dataset-store 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -441,7 +441,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: dataset-store, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: dataset-store, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-dataset-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   admin-console-cert:   # admin-console 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -449,7 +449,7 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: admin-console, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: admin-console, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-admin-console:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   kiosk-frontend-cert:   # kiosk-frontend 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
@@ -457,17 +457,17 @@ services:
       step-ca: {condition: service_healthy}
       pki-root: {condition: service_completed_successfully}
       pki-tokens: {condition: service_completed_successfully}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: kiosk-frontend, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: kiosk-frontend, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-kiosk-frontend:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
   identity-cert:   # keycloak 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: identity, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-identity:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
       pki-tokens: {condition: service_completed_successfully}
   identity-proxy-cert:   # oauth2-proxy 의 인증서: 일회용 토큰(OTT)으로 step-ca 에서 한 번 받고(step ca certificate --token), 갱신 데몬이 기존 인증서로 갱신한다(step ca renew --daemon, 도전 없음)
     <<: *certinit
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity-proxy, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: identity-proxy, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-identity-proxy:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
       pki-tokens: {condition: service_completed_successfully}
@@ -570,7 +570,7 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: survey-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: survey-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["survey-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
@@ -610,7 +610,7 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: question-authoring-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: question-authoring-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["question-authoring-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
@@ -650,7 +650,7 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: ops-feedback-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: ops-feedback-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["ops-feedback-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
@@ -690,7 +690,7 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: release-gate-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: release-gate-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["release-gate-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
@@ -730,7 +730,7 @@ services:
     cpus: 0.25
     pids_limit: 64
     logging: {driver: json-file, options: {max-size: "10m", max-file: "5"}}
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: identity-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: identity-db, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["identity-db-pgtls:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     networks: [pki]
     depends_on:
@@ -760,7 +760,7 @@ services:
     group_add: *secretcertgid   # 비밀 파일 그룹 + 인증서 읽기(StepCaEnv.STEP_CERT_GID)
   backup-store-cert:   # 백업 저장소의 인증서: 서비스 이름 backup-store(영역 게이트웨이의 나가는 쪽 허용 상대 external:backup 은 backup-store:443)
     <<: *certinit
-    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: backup-store, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
+    environment: {STEP_CA_URL: "https://step-ca:${STEP_CA_PORT:-9000}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: backup-store, STEP_CERTS_DIR: /certs}   # 역할·이름·폴더는 계약 StepCaEnv(3.4.17)로 준다: 이미지 부명령·사용자를 deploy 가 모른다
     volumes: ["certs-backup-store:/certs", "pki-root:/etc/openit/pki:ro", "pki-tokens:/tokens:ro"]
     depends_on:
       step-ca: {condition: service_healthy}

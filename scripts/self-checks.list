@@ -21,6 +21,8 @@ job-metrics 자체 시험 (textfile 지표) :: bash "$DEPLOY_ROOT/scripts/test-j
 e2e 단언 자기 점검 (틀린 값이면 단언이 실패한다) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_asserts.py"
 e2e 계획 자기 점검 (입력 선언 누락·SKIP 전파·fail-fast·해시 변경 감지) :: python3 "$DEPLOY_ROOT/scripts/test_e2e_plan.py"
 데모=제품 정적 점검 (데모 덮어쓰기는 모델 대역·포트·시험 계정 외 제품 설정을 바꾸지 못한다, U75) :: bash "$DEPLOY_ROOT/scripts/test-demo-parity.sh"
+기본값이 아닌 SECRETS_GID·STEP_CERT_GID 에서 쓰는 쪽 그룹과 읽는 쪽 group_add 가 같다 (정적, 인증서 쓰는 role=cert 의 STEP_CERT_GID, 분리 배치 전달) :: bash "$DEPLOY_ROOT/scripts/test-gid-wiring.sh"
+비밀 권한 점검의 범위(db-accounts·db-urls·기기 CA 키·idp 시험 암호)와 변이 :: bash "$DEPLOY_ROOT/scripts/test-check-secret-perms.sh"
 계약 패키지에 deploy 경계 스키마가 있다, 스키마 사본이 리포에 없다, 라벨 검사기는 계약 패키지를 쓴다 :: "$VENV/bin/python" "$DEPLOY_ROOT/scripts/test_contract_schema_copy.py"
 synthetic-data 잡 선언(io.openit.jobs) 명령 조립과 실제 이미지의 import 잡 :: "$VENV/bin/python" -W ignore "$DEPLOY_ROOT/scripts/test_sd_jobs.py"
 이웃 환경·패키지 짐작 문자열이 deploy 스크립트에 없다 :: bash "$DEPLOY_ROOT/scripts/test-no-guessed-paths.sh"

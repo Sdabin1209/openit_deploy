@@ -19,7 +19,7 @@
   ansible.builtin.shell: |
     set -e
     cd "{{ ca_dir }}"
-    export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ ca_dir }}/secrets" SECRETS_GID="{{ hostvars[plan.step_ca_host].gid }}" COMPOSE_EXTRA="{{ ca_dir }}/compose.placement.yaml" CONFIG_DIR="{{ ca_dir }}/config"
+    export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ ca_dir }}/secrets" SECRETS_GID="{{ hostvars[plan.step_ca_host].gid }}" STEP_CERT_GID="{{ placement_step_cert_gid | default('') }}" COMPOSE_EXTRA="{{ ca_dir }}/compose.placement.yaml" CONFIG_DIR="{{ ca_dir }}/config"
     {{ ("export STEP_CA_PORT=" ~ plan.step_ca_port) if plan.step_ca_port else ":" }}
     source scripts/lib.sh
     dc "{{ ca_project }}" run --rm pki-tokens >/dev/null
@@ -62,7 +62,7 @@
   ansible.builtin.shell: |
     set -e
     cd "{{ p_dir }}"
-    export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ p_dir }}/secrets" SECRETS_GID="{{ gid }}" COMPOSE_EXTRA="{{ p_dir }}/compose.placement.yaml" CONFIG_DIR="{{ p_dir }}/config"
+    export DEPLOY_NO_DOCKER=0 SECRETS_DIR="{{ p_dir }}/secrets" SECRETS_GID="{{ gid }}" STEP_CERT_GID="{{ placement_step_cert_gid | default('') }}" COMPOSE_EXTRA="{{ p_dir }}/compose.placement.yaml" CONFIG_DIR="{{ p_dir }}/config"
     {{ ("export STEP_CA_PORT=" ~ plan.step_ca_port) if plan.step_ca_port else ":" }}   # step-ca 의 안팎 포트(인벤토리 placement_ports). 없으면 compose 기본
     source scripts/lib.sh
     dc "{{ p_project }}" up -d --wait {{ plan.stages[stage_i] | difference(plan.oneshots) | join(' ') }}

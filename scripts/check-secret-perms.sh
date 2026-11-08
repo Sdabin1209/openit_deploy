@@ -19,4 +19,26 @@ for f in "$D"/tokens/* "$D"/devices/*; do [ -f "$f" ] || continue
   elif [ "$want" = 640 ] && [ "$(stat -c %g "$f")" != "$SECRETS_GID" ]; then echo "FAIL $n 그룹 $(stat -c %g "$f"): 컨테이너 group_add 의 gid(SECRETS_GID=$SECRETS_GID)와 다르다 -> 서비스가 못 읽는다 (gen-secrets.sh 를 다시 실행)"; bad=$((bad+1))
   elif false; then echo "FAIL $n 모드 $m: 다른 호스트의 컨테이너가 읽는 파일인데 기타 읽기가 없다 (gen-secrets.sh 를 다시 실행)"; bad=$((bad+1)); fi
 done
+# 영역 DB 계정·접속 URI(db-accounts, db-urls; gen-db-secrets-all.sh): 컨테이너가 읽으므로 파일 640 + 그룹 SECRETS_GID, 폴더 750(기타 접근 없음). 호스트 전용 기기 CA 키·기기 키는 600, 공개 인증서(.pem/.crt)는 그룹·기타 쓰기 없음.
+# 시험 사용자 암호(idp-users-secrets, idp-test-users.sh)는 비밀 폴더 밖(state/)에 있고 잡 컨테이너가 읽으므로 640 + 그룹 SECRETS_GID 다(IDP_USERS_SECRETS 로 위치를 바꾼다).
+# 왜 여기까지: 이 점검은 tokens/·devices/ 만 봐서 DB 비밀과 기기 CA 키가 644 로 나와도 통과했다(2026-11-08 점검 범위 구멍).
+perm_of() { stat -c %a "$1"; }
+for dir in "$D"/db-accounts "$D"/db-urls; do [ -d "$dir" ] || continue
+  while IFS= read -r -d '' e; do n=${e#$D/}; m=$(perm_of "$e")
+    if [ -d "$e" ]; then (( 8#$m & 8#027 )) && { echo "FAIL $n/ 폴더 모드 $m: 750 이어야 한다(그룹 쓰기·기타 접근 없음)"; bad=$((bad+1)); }
+    else
+      if (( 8#$m & 8#027 )) || ! (( 8#$m & 8#040 )); then echo "FAIL $n 모드 $m: 컨테이너가 읽는 DB 비밀은 640 이어야 한다"; bad=$((bad+1))
+      elif [ "$(stat -c %g "$e")" != "$SECRETS_GID" ]; then echo "FAIL $n 그룹 $(stat -c %g "$e"): group_add 의 gid(SECRETS_GID=$SECRETS_GID)와 다르다 -> 서비스가 못 읽는다"; bad=$((bad+1)); fi
+    fi
+  done < <(find "$dir" -mindepth 1 -print0)
+done
+for f in "$D"/device-ca.key "$D"/device-certs/*.key; do [ -f "$f" ] || continue
+  m=$(perm_of "$f"); (( 8#$m & 8#077 )) && { echo "FAIL ${f#$D/} 모드 $m: 호스트 전용 개인 키는 600 이어야 한다"; bad=$((bad+1)); }; done
+for f in "$D"/device-ca.pem "$D"/device-certs/*.crt; do [ -f "$f" ] || continue
+  m=$(perm_of "$f"); (( 8#$m & 8#022 )) && { echo "FAIL ${f#$D/} 모드 $m: 그룹·기타 쓰기 비트가 있다"; bad=$((bad+1)); }; done
+IDPD=${IDP_USERS_SECRETS:-$DEPLOY_ROOT/state/idp-users-secrets}
+if [ -d "$IDPD" ]; then for f in "$IDPD"/*; do [ -f "$f" ] || continue
+  m=$(perm_of "$f"); if (( 8#$m & 8#027 )) || ! (( 8#$m & 8#040 )); then echo "FAIL idp-users-secrets/$(basename "$f") 모드 $m: 640 이어야 한다"; bad=$((bad+1))
+  elif [ "$(stat -c %g "$f")" != "$SECRETS_GID" ]; then echo "FAIL idp-users-secrets/$(basename "$f") 그룹 $(stat -c %g "$f"): SECRETS_GID($SECRETS_GID)와 다르다"; bad=$((bad+1)); fi
+done; fi
 [ $bad = 0 ] && { echo "OK 비밀 파일 권한 ($(ls "$D/tokens" 2>/dev/null | wc -l)개 + 기기 $(ls "$D/devices" 2>/dev/null | wc -l)개)"; exit 0; } || { echo "비밀 권한 어긋남 ${bad}건"; exit 1; }

@@ -113,7 +113,7 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp"]
-    environment: {STEP_CA_URL: "${INFERENCE_STEP_CA_URL:?INFERENCE_STEP_CA_URL이 필요하다}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_NAME: "${INFERENCE_TLS_NAME}"}   # 역할·이름은 계약 StepCaEnv(3.4.17): 이미지 부명령을 deploy 가 모른다. 인증서 이름은 일회용 토큰이 정한다
+    environment: {STEP_CA_URL: "${INFERENCE_STEP_CA_URL:?INFERENCE_STEP_CA_URL이 필요하다}", STEP_RENEW_EXPIRES_IN: 12h, STEP_ROLE: cert, STEP_CERT_GID: "${STEP_CERT_GID:-10100}", STEP_CERT_NAME: "${INFERENCE_TLS_NAME}"}   # 역할·이름은 계약 StepCaEnv(3.4.17): 이미지 부명령을 deploy 가 모른다. 인증서 이름은 일회용 토큰이 정한다
     secrets:
       - {source: tls-token, target: "/tokens/${INFERENCE_TLS_NAME}.ott"}   # platform cert 가 /tokens/<이름>.ott 를 읽는다
     extra_hosts: ["host.docker.internal:host-gateway"]   # step-ca 를 이 이름으로 부르는 배치(같은 호스트의 다른 컴포즈 프로젝트·시험). 다른 서버면 배치 값이 step-ca 주소를 준다
