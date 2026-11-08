@@ -327,7 +327,7 @@ def _c1_in(service, method, path, *, auth=None, headers=None, body=None, raw=Non
     """그 서비스 컨테이너 안에서 자기 포트를 부른다(서비스 자신의 인증·역할 검사를 본다). auth=(비밀 파일 이름, 역할 또는 None). (상태, 본문, 소문자 머리글)."""
     arg = {"m": method, "u": base + path, "auth": list(auth) if auth else None, "h": headers or {}, "b": body, "raw": raw}
     st, pb, hd = _c1_run(service, f"A = {_c1_lit(arg)}\nt = tok(*A['auth']) if A['auth'] else None\n"
-        "out(call(A['m'], A['u'], t, A['b'], A['h'], A['raw'].encode() if A['raw'] is not None else None, 'text/plain' if A['raw'] is not None else 'application/json'))\n")
+        "out(call(A['m'], A['u'], t, A['b'], A['h'], A['raw'].encode() if A['raw'] is not None else None, 'application/octet-stream' if A['raw'] is not None else 'application/json'))\n")
     return st, pb, _C1Hdr(hd)
 
 def _c1_job(job, args=()):
@@ -1402,12 +1402,13 @@ def _c2_qa_read(method, *args, **kw):
 @step('5a', repos=('question-authoring', 'admin-console') + _GW, deps=(),
       why='step5a 는 STATE 를 읽지 않는다. 그러나 앞 단계가 만든 저자 계정·문항 상태에 의존하는지는 코드를 읽어 확정하지 못했다')
 def step5a():
+    # 자료 등록 본문의 Content-Type 은 계약 openapi question-authoring /v1/materials requestBody(application/octet-stream, x-default-content-type)를 따른다
     title("5a", "저자 경로(question-authoring)를 gateway OIDC 로그인 뒤에서: 자료 등록·확인(author), 임상 근거 승인(clinical-reviewer), 자기 승인 403, 본문 상한 (D88/U9)")
     qset = f"qs-{RID}-gwauthor"; form = form_for(qset, (ROOT / "test/fixtures/question-form-v2.txt").read_text()).encode()
     up = f"/v1/materials?question_set_id={qset}&filename=gw.txt"
-    assert gw_bytes("POST", up, form, "text/plain")[0] == 401, "인증 없이 저자 경로가 열려 있다"
-    assert gw_bytes("POST", up, form, "text/plain", basic=_C2_STAFF)[0] == 403, "author 역할이 아닌 계정(staff)이 저자 경로를 쓸 수 있다"
-    c, d, _ = gw_bytes("POST", up, form, "text/plain", basic=_C2_AUTHOR, headers={"X-Openit-User": "spoofed-user", "Authorization-X": "x"}); assert c in (200, 201), ("자료 등록", c, d)
+    assert gw_bytes("POST", up, form, "application/octet-stream")[0] == 401, "인증 없이 저자 경로가 열려 있다"
+    assert gw_bytes("POST", up, form, "application/octet-stream", basic=_C2_STAFF)[0] == 403, "author 역할이 아닌 계정(staff)이 저자 경로를 쓸 수 있다"
+    c, d, _ = gw_bytes("POST", up, form, "application/octet-stream", basic=_C2_AUTHOR, headers={"X-Openit-User": "spoofed-user", "Authorization-X": "x"}); assert c in (200, 201), ("자료 등록", c, d)
     c, pv, _ = _c2_raw("GET", f"/v1/drafts/{d['draft_id']}/preview", basic=_C2_AUTHOR); assert c == 200 and pv["ready_to_confirm"], (c, pv)
     c, ref, _ = _c2_raw("POST", f"/v1/drafts/{d['draft_id']}/confirm", {"preview_hash": pv["preview_hash"]}, basic=_C2_AUTHOR); assert c == 200, ("확인", c, ref)
     # 1인 운영(QA_REQUIRE_TWO_PERSON=false, L13): 저자의 확정이 임상 근거 승인을 함께 남기고, 임상 검수 역할은 /v1/reviews 403(설계). 위조 X-Openit-User 는 무시되어 인증 계정이 기록된다
@@ -1422,7 +1423,7 @@ def step5a():
     # R3.5: 본문 상한(8MiB) 초과는 게이트웨이가 상류로 보내기 전에 413 + {"code":"PAYLOAD_TOO_LARGE"} 로 거절한다(예전엔 "413 또는 연결 끊김"을 모두 거부로 봤다: 연결 끊김은 R3.5 가 아니다).
     # curl 로 보낸다: 서버가 413 을 먼저 보내고 연결을 닫으면 파이썬 urllib 은 보내던 중 쓰기 오류로 응답을 못 읽는다(curl 은 응답이 오면 읽는다). 쿠키는 OIDC 로그인 세션을 쓴다
     cookie = SB.session_cookie(_C2_AUTHOR)
-    r9 = subprocess.run(["curl", "-s", "-m", "60", "--cacert", str(a.gw_ca), "-o", "-", "-w", "\n%{http_code} %{content_type}", "-X", "POST", "-H", f"Cookie: {cookie}", "-H", "Content-Type: text/plain",
+    r9 = subprocess.run(["curl", "-s", "-m", "60", "--cacert", str(a.gw_ca), "-o", "-", "-w", "\n%{http_code} %{content_type}", "-X", "POST", "-H", f"Cookie: {cookie}", "-H", "Content-Type: application/octet-stream",
                          "--data-binary", "@-", SB.gw_url(human=True) + up], input=b"x" * (9 * 1024 * 1024), capture_output=True)
     out9 = r9.stdout.decode(errors="replace").rsplit("\n", 1)
     code9, ctype9 = (out9[-1].split(" ", 1) + [""])[:2]

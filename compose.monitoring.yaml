@@ -33,6 +33,17 @@ services:
     ports: ["127.0.0.1::9093"]
     volumes: ["alertmanager-data:/alertmanager"]
     networks: [monitoring]
+  monitoring-root-perms:   # 일회용: 새 이름 있는 볼륨(monitoring-root)은 root 소유라 비root(65534)로 도는 monitoring-root 가 /out/root_ca.crt 를 못 만든다(측정함: 2026-11-08 E2E "cannot create /out/root_ca.crt: Permission denied", 종료 2). 소유자만 바꾼다(멱등). compose.backup-target.yaml backup-target-perms 와 같은 방식
+    restart: "no"
+    image: ${UTIL_IMAGE:?locks/images.lock}
+    user: "0:0"
+    entrypoint: ["chown", "65534:65534", "/out"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    network_mode: none
+    volumes: ["monitoring-root:/out"]
   monitoring-root:   # 감시가 믿을 루트 모음(MonitoringEnv.MONITORING_ROOT_CA 는 여러 PEM 을 이어 붙인 파일을 받는다): 서비스 인증서 루트(pki-root) + 공개 입구 루트(gateway-root)
     restart: "no"
     image: ${UTIL_IMAGE:?locks/images.lock}
@@ -44,6 +55,7 @@ services:
     entrypoint: ["sh", "-c", "cat /pki/root_ca.crt /gw/root_ca.crt > /out/root_ca.crt"]
     volumes: ["pki-root:/pki:ro", "gateway-root:/gw:ro", "monitoring-root:/out"]
     depends_on:
+      monitoring-root-perms: {condition: service_completed_successfully}
       gateway: {condition: service_healthy}   # 공개 입구가 루트를 출력 마운트(gateway-root)에 쓴 뒤(INGRESS_ROOT_EXPORT_DIR)
   blackbox-exporter:
     <<: *monhard

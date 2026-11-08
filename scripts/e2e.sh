@@ -299,7 +299,6 @@ PGW=$(port_of "${PROJECT}-gateway-1" 8080); PGWS=$(port_of "${PROJECT}-gateway-1
 bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$PROJECT" "$W/gateway-ca.crt" >/dev/null || { echo "gateway 내부 CA 루트를 가져오지 못했다"; exit 1; }
 chmod 644 "$W/gateway-ca.crt"   # 공개 인증서다. 추론 서버 컨테이너(uid 10001)가 읽는다
 GWCURL="curl --cacert $W/gateway-ca.crt"
-GWTLS="https://host.docker.internal:$PGWS"   # 추론 서버가 제품 입구를 부르는 주소(다른 호스트의 호출자와 같은 모양)
 issue_tls_token() { # step-ca 루트(공개)를 꺼내고 이 서버 이름의 일회용 토큰을 지휘 쪽 자격(step-ca 비밀번호)으로 발급한다
   "$DOCKER" run --rm -v "${PROJECT}_pki-root:/r:ro" "$UTIL_REF" cat /r/root_ca.crt > "$W/pki/root_ca.crt" || return 1
   # 역할 기반 입력(계약 StepCaEnv, 3.4.17): 인증서 이름은 host.docker.internal 하나다(SAN localhost 는 없다: 호스트에서는 --resolve 로 이 이름을 부른다)
@@ -413,7 +412,7 @@ net_is() { # net_is <네트워크> <컨테이너...>: 네트워크의 구성원�
   local n=$1; shift; local got want
   got=$("$DOCKER" network inspect "${PROJECT}_$n" --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}' | sed '/^$/d' | sort | tr '\n' ' ')
   want=$(printf '%s\n' "$@" | sort | tr '\n' ' ')
-  [ "$got" = "$want" ] || { echo "구성원 불일치: $n"; return 1; }
+  [ "$got" = "$want" ] || { echo "구성원 불일치: $n (실제: $got/ 기대: $want)"; return 1; }   # 컨테이너 이름은 비밀이 아니다: 불일치의 원인을 진단 파일에서 바로 본다
 }
 chk "도달: survey-service -> ops-feedback (serving, I6)" reach survey-service ops-feedback
 chk "도달: survey-service -> release-gate (serving, I4)" reach survey-service release-gate
@@ -424,13 +423,32 @@ chk "차단: survey-service -> model-registry" blocked survey-service model-regi
 chk "차단: survey-service -> dataset-store (I2 는 datasets 네트워크뿐, ADR 0032)" blocked survey-service dataset-store
 chk "차단: release-gate -> dataset-store" blocked release-gate dataset-store
 chk "차단: model-registry -> dataset-store" blocked model-registry dataset-store
-chk "네트워크 datasets 에는 dataset-store 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-1"
-no_dataset_route() { local d="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/exposures" rc=0; [ -n "$(ls "$d" 2>/dev/null)" ] || { echo "Exposure 선언 폴더가 비었거나 없다: $d"; return 1; }; grep -rq 'dataset-store\|datasets' "$d" || rc=$?; [ $rc = 1 ]; }   # 폴더가 비었으면 "경로 없음"으로 통과하지 않는다
+# 망의 구성원은 영역 pod 의 네트워크 공간 컨테이너(<서비스>-net, pause)다: 앱·사이드카는 network_mode: service:<서비스>-net 으로 그 공간에 붙어 망 구성원 목록에 따로 나오지 않는다(ADR 0060, RUNTIME R3.2/DC-NET.1)
+chk "네트워크 datasets 에는 dataset-store 영역 pod 만 있다(시험용 test-ds 는 별도)" net_is datasets "${PROJECT}-dataset-store-net-1"
+no_dataset_route() { # 공개 입구가 내보내는 경로 = 영역 Exposure 의 routes 중 auth.kind 가 denied 가 아니고 /healthz·/readyz·/metrics 가 아닌 것(계약 CONVENTIONS "공개 입구의 경로 표" 3.4.9).
+  # 그 경로에 dataset-store 의 것(서비스 dataset-store 의 경로, 또는 /v1/datasets 경로)이 하나도 없어야 한다(ADR 0032). egress(나가는 쪽 허용 목록)와 denied 경로는 공개 입구 경로가 아니다(R1.8, R3.23)
+  local d="${GATEWAYS_DIR:-$DEPLOY_ROOT/state/gateways}/exposures"; [ -n "$(ls "$d" 2>/dev/null)" ] || { echo "Exposure 선언 폴더가 비었거나 없다: $d"; return 1; }   # 폴더가 비었으면 "경로 없음"으로 통과하지 않는다
+  python3 - "$d" <<'PY'
+import json, pathlib, sys
+fs = sorted(pathlib.Path(sys.argv[1]).glob("*.json"))
+if not fs: print("Exposure 선언 파일이 없다"); sys.exit(1)
+HEALTH = {"/healthz", "/readyz", "/metrics"}; bad = []
+for f in fs:
+    e = json.loads(f.read_text())
+    for r in e.get("routes", []):
+        if r.get("auth", {}).get("kind") == "denied": continue
+        for p in r.get("paths", []):
+            if p in HEALTH: continue
+            if e.get("service") == "dataset-store" or "datasets" in p: bad.append(f"{f.name}: {p} (auth={r.get('auth', {}).get('kind')})")
+if bad: print("공개 입구가 내보낼 dataset-store 경로:", "; ".join(bad)); sys.exit(1)
+print(f"Exposure {len(fs)}개: 공개 입구에 나가는 dataset-store 경로 없음(dataset-store 경로는 모두 denied)")
+PY
+}
 chk "공개 입구에 낸 영역 Exposure 선언에 dataset-store 경로가 없다" no_dataset_route
 chk "차단: question-authoring -> survey-service" blocked question-authoring survey-service
 for pair in "db-survey:survey-service:survey-db" "db-qa:question-authoring:question-authoring-db" "db-ops:ops-feedback:ops-feedback-db" "db-gate:release-gate:release-gate-db"; do   # 영역마다 자기 DB 컨테이너(구조 규칙 1)
   _n=${pair%%:*}; _r=${pair#*:}; _svc=${_r%%:*}; _db=${_r##*:}
-  chk "db 네트워크 $_n 에는 $_db 와 $_svc 만 있다(다른 영역의 DB 에 닿지 않는다)" net_is "$_n" "${PROJECT}-$_db-1" "${PROJECT}-$_svc-1"
+  chk "db 네트워크 $_n 에는 $_db 와 $_svc 영역 pod 만 있다(다른 영역의 DB 에 닿지 않는다)" net_is "$_n" "${PROJECT}-$_db-1" "${PROJECT}-$_svc-net-1"   # 영역 쪽 구성원은 pod 공간 컨테이너(<서비스>-net, ADR 0060)
 done
 tcp() { [ "$(probe_tcp "$1" "$2" "$3" "$TCP_T")" = ok ]; }
 for pair in survey-service:survey-db question-authoring:question-authoring-db ops-feedback:ops-feedback-db release-gate:release-gate-db; do chk "도달: ${pair%%:*} -> ${pair##*:}:5432 (db 네트워크)" tcp "${pair%%:*}" "${pair##*:}" 5432; done
@@ -440,7 +458,9 @@ for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do c
 chk "차단: survey-service -> 다른 영역의 DB(release-gate-db)" tcp_blocked survey-service release-gate-db 5432
 for _db in survey-db question-authoring-db ops-feedback-db release-gate-db; do chk "차단: 호스트에 $_db 포트 게시 없음" no_published_port "${PROJECT}-$_db-1"; done
 chk "도달: survey-service -> 추론 서버 (다른 호스트 역할, I9)" reachu survey-service "https://host.docker.internal:$IPORT/healthz"   # body-judged: reachu 가 본문 status/ok 를 판정한다
-chk "도달: 추론 서버 -> 제품 입구(게이트웨이 TLS, 게이트웨이 CA 검증, I4 번들 읽기의 운영 경로 D72)" reachu model-serving "$GWTLS/healthz"
+# 추론 서버가 release-gate 를 읽는 운영 경로는 공개 입구가 아니라 release-gate 영역 게이트웨이다(ADR 0070, 계약 R1.5·R3.23: 공개 입구에는 기계 호출자 경로가 없다). 검증 루트는 OUT-FILE 의 루트(R1.5, 대조 통과본)
+reach_outfile() { [ "$(bash "$DEPLOY_ROOT/scripts/client-probe.sh" "$(cn "$1")" "$W/out-file/root_ca.crt" http "https://$2/healthz" "$REACH_T" 2>/dev/null | tail -1)" = ok ]; }
+chk "도달: 추론 서버 -> release-gate 영역 게이트웨이(R1.5: OUT-FILE 루트로 TLS 검증, inference-in 망 별칭 release-gate, I4 번들 읽기의 운영 경로 ADR 0070·D72)" reach_outfile model-serving release-gate
 chk "차단: 추론 서버 -> question-authoring (제품 내부 이름으로는 닿지 않는다)" blocked model-serving question-authoring
 chk "도달: question-authoring -> ops-feedback (authoring, 개선 신호가 I7을 읽음)" reach question-authoring ops-feedback
 chk "차단: ops-feedback -> model-registry" blocked ops-feedback model-registry
@@ -481,7 +501,12 @@ if [ -f "$W/work/steps.json" ]; then
   STEP_SKIPS=$(python3 "$DEPLOY_ROOT/scripts/e2e_plan.py" skips "$W/work/steps.json")
 fi
 if [ "$STEPS_RC" = 0 ]; then res "단계 1~8 (REAL/TEST-SUB 항목의 스키마·해시 검증)" PASS "BLOCKED 항목은 아래 요약과 docs/change-requests 참고$([ "${STEP_SKIPS:-0}" != 0 ] && echo "; 단계 안 SKIP ${STEP_SKIPS}")"
-else res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"; fi
+else res "단계 1~8" FAIL "e2e_steps.py 종료 코드 $STEPS_RC"
+  # 단계가 실패하면 그 자리에서 영역 컨테이너 로그 끝 300줄을 진단 폴더($W/diag, collect_diag 가 복사한다)에 남긴다. 왜: 뒤의 백업·복구·롤백 구간이 제품 스택을 내렸다 올려
+  # 정리 때 수집하면 실패 순간의 영역 로그가 없다(2026-11-08 진단 폴더에 감시·추론 서버 로그만 남았다). 로그만 쓰고 환경 변수·inspect 전체는 담지 않는다(비밀 금지)
+  mkdir -p "$W/diag/logs-after-steps"
+  for c in $("$DOCKER" ps -a --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Names}}' 2>/dev/null | tr -d '\r'); do timeout 60 "$DOCKER" logs --tail 300 "$c" > "$W/diag/logs-after-steps/$c.log" 2>&1; done
+fi
 chk "비밀 노출 점검: 환경 변수·inspect·exec env 에 secrets 값 없음 (check-secrets-hidden)" bash "$DEPLOY_ROOT/scripts/check-secrets-hidden.sh" "$PROJECT"
 
 if [ "$FAST" = 0 ]; then   # --fast 에서는 아래 세 구간(스케줄러, 백업·복구, 롤백)을 건너뛴다

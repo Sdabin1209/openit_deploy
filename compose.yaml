@@ -68,6 +68,7 @@ networks:
     internal: true
   edge:       # 외부 입구. gateway만 호스트 포트를 연다(D11)
   serving:    # 문진 서비스 런타임 경로: survey-service·model-serving 이 release-gate 를 읽고 survey-service 가 model-serving 을 부른다(I4·I9). gateway·ops-feedback 는 붙지 않는다(R6.2)
+    internal: true   # 계약 R6.2: 정하지 않은 연결(외부 인터넷 포함)은 OUT-NET 이다. internal 이 아니면 Docker 브리지가 NAT 로 밖에 내보내 이 망만 가진 release-gate pod 가 인터넷에 닿았다(2026-11-08 E2E "release-gate -> 외부 인터넷" 실패). 구성원(survey-service·release-gate·model-serving pod, 감시)은 이 망으로 밖에 나갈 일이 없다: 원격 추론 서버로 가는 survey-service 는 edge 망으로 나간다. 기존 설치는 망을 다시 만들어야 한다(compose 가 "needs to be recreated" 로 알린다)
   monitoring: # 지표 수집(U71, ADR 0053): survey-service·model-serving 의 /metrics 를 Prometheus 가 읽는 길 하나. 두 서비스와 감시 스택(compose.monitoring.yaml)만 붙는다. gateway 는 붙지 않는다(공개 노출 없음)
   ui-kiosk:   # gateway <-> kiosk-frontend 만. internal: 정적 화면 컨테이너는 외부로 나가지 못한다. 화면별로 망을 나눈다(R6.2: 두 화면은 서로 부를 일이 없다)
     internal: true

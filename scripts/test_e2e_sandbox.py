@@ -30,7 +30,7 @@ class T(unittest.TestCase):
         with self.assertRaises(TypeError): S.init(project="p")
 
     def _client(self, **kw):
-        self.f.by_verb = {"inspect": "bridge|[\"PATH=/x\",\"GATE_WRITE_TOKENS_FILE=/run/secrets/gate-write-tokens\",\"SOME_TOKEN=should-not-pass\"]|P1_a P1_b ", "create": "cid123\n", "start": "{\"ok\": 1}"}
+        self.f.by_verb = {"inspect": "bridge|[\"PATH=/x\",\"GATE_WRITE_TOKENS_FILE=/run/secrets/gate-write-tokens\",\"SOME_TOKEN=should-not-pass\",\"SSL_CERT_FILE=/etc/openit/pki/root_ca.crt\"]|P1_a P1_b ", "create": "cid123\n", "start": "{\"ok\": 1}"}
         S.init(project="P1", secrets=self.tmp.name, gw_ca="/ca/trust.crt", docker="docker", inference_project="P1-inf", root="/r", run=self.f, tool_image="deploy-tool:t", secrets_gid="1234", **kw)
 
     def test_exec_py_runs_in_a_client_on_the_same_networks(self):
@@ -45,6 +45,7 @@ class T(unittest.TestCase):
         self.assertIn("GATE_WRITE_TOKENS_FILE=/run/secrets/gate-write-tokens", create)   # *_FILE(파일 경로) 만 옮긴다
         self.assertFalse(any("should-not-pass" in x for x in create), "*_FILE 이 아닌 환경은 옮기지 않는다")
         self.assertIn("SSL_CERT_FILE=/ca.crt", create); self.assertIn("/ca/trust.crt:/ca.crt:ro", create)   # 인증서 검증을 끄지 않는다
+        self.assertEqual([x for x in create if x.startswith("SSL_CERT_FILE=")], ["SSL_CERT_FILE=/ca.crt"], "서비스의 SSL_CERT_FILE(그 컨테이너의 경로)이 신뢰 루트를 덮어쓰면 안 된다(2026-11-08 단계 1)")
         self.assertIn("1234", create)
         conn = next(c for c in self.f.calls if c[0][1] == "network")[0]; self.assertEqual(conn[-2:], ["P1_b", "cid123"])
         start = next(c for c in self.f.calls if c[0][1] == "start"); self.assertEqual(start[1]["input"], "print(https://release-gate)")   # SELF 가 영역 게이트웨이 주소가 된다

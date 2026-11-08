@@ -261,7 +261,9 @@ def exec_py(service: str, code: str, *, timeout: float = 60) -> str:
     nets = nets.split()
     first = mode if mode.startswith("container:") else (nets[0] if nets else "")
     if not first: raise RuntimeError(f"{service}: 컨테이너의 망을 읽지 못했다")
-    envs = [x for kv in (json.loads(envj) or []) if kv.split("=", 1)[0].endswith("_FILE") for x in ("-e", kv)]
+    # SSL_CERT_FILE 은 옮기지 않는다: 서비스의 값(/etc/openit/pki/root_ca.crt)은 그 컨테이너의 마운트 경로라 이 클라이언트 컨테이너에는 없고, 뒤에 오는 -e 가 앞의 SSL_CERT_FILE=/ca.crt 를 덮어
+    # 신뢰 루트가 사라졌다(2026-11-08 E2E 단계 1 CERTIFICATE_VERIFY_FAILED). 신뢰 루트는 시험 드라이버가 주는 /ca.crt 하나다(R1.3)
+    envs = [x for kv in (json.loads(envj) or []) if kv.split("=", 1)[0].endswith("_FILE") and kv.split("=", 1)[0] != "SSL_CERT_FILE" for x in ("-e", kv)]
     create = [d, "create", "-i", "--network", first, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", "10001:10001",
               "--group-add", str(_C.get("secrets_gid") or os.environ.get("SECRETS_GID") or os.getgid()), "-e", "SSL_CERT_FILE=/ca.crt",
               "-v", f"{ca}:/ca.crt:ro", "-v", f"{_need('secrets')}/tokens:/run/secrets:ro", *envs, image, "python", "-"]
