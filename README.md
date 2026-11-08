@@ -56,7 +56,7 @@ bash scripts/demo.sh up                # 3) 화면을 눌러 보는 데모(프�
 
 비밀은 환경 변수가 아니라 파일이다(D84): `gen-secrets.sh`가 `secrets/tokens/<이름>`을 만들고(값은 출력하지 않는다), compose가 서비스마다 필요한 것만 `/run/secrets`에 마운트하며 서비스는 `NAME_FILE` 경로로 읽는다(docs/RUN.md 4-1절). 점검: `bash scripts/check-secrets-hidden.sh`.
 
-이 세션에서 직접 돌려 본 것(가벼운 것만): `bash -n scripts/*.sh`(문법, 이상 없음), `doctor.sh --help`, `demo.sh --help`, `docker --version`, `docker compose version`. **돌리지 않은 것**: `doctor.sh` 본 실행, 이미지 빌드, `up.sh`, `e2e.sh`, `demo.sh up`, `backup/restore`, `check-*.sh`, 시험 스크립트(`test-*.sh`). 이 영역에는 pytest 시험이 없고 시험은 셸 스크립트와 E2E다(`ls`로 확인).
+자체 점검 묶음(정본 목록 `scripts/self-checks.list`, 느린 것은 `self-checks-slow.list`)은 `bash scripts/run-self-checks.sh [--slow]` 한 명령이고 종료 코드로 판정한다(0 전부 통과, 1 실패, 77 SKIP 있음). 시험은 셸 스크립트(`scripts/test-*.sh`)와 Python(`scripts/test_*.py`, `tests/test_structure.py`)이며 전체 E2E(`e2e.sh`)는 이 묶음과 별개다. 이 묶음은 deploy `.venv` 의 계약 패키지가 `scripts/lib.sh` 의 기준표 태그와 같아야 의미가 있다(`bash scripts/prepare-host.sh venv`).
 
 ## 4. 현재 상태
 

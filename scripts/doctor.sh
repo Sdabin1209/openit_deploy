@@ -75,7 +75,7 @@ if [ -n "$D" ]; then
 fi
 # 자격증명 도우미: deploy 가 쓰는 Docker 설정(lib.sh 가 DOCKER_CONFIG 로 정한 폴더: 기본은 deploy 가 만든 빈 설정이라 도우미가 없다, DEPLOY_DOCKER_CONFIG 를 주면 그 폴더)의 credsStore/credHelpers 가
 # 가리키는 docker-credential-<이름> 이 실행 가능해야 pull/build 가 된다. 사용자 전역 ~/.docker 는 읽지도 고치지도 않는다(deploy 는 쓰지 않는다). 이 파일은 읽기만 한다(내용은 출력하지 않고, 수정하지 않는다).
-CFG="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+CFG="$DOCKER_CONFIG/config.json"   # lib.sh 가 항상 정한다(사용자 ~/.docker 로 되돌아가지 않는다: 워크스페이스 규칙)
 if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
   HELPERS=$(python3 - "$CFG" <<'PY' 2>/dev/null
 import json, sys
