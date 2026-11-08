@@ -123,7 +123,10 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
 }
 
 demo_ca() { # gateway 내부 CA 루트(데모 스택에서 꺼내 작업 폴더에 둔다). e2e_steps 가 이것만 신뢰한다
-  local f="$W/gateway-ca.crt"; bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$f" >/dev/null 2>&1 || true; echo "$f"
+  local f="$W/gateway-ca.crt" t="$W/trust.crt"; bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$f" >/dev/null 2>&1 || true
+  # 단계 코드는 exec_py 로 영역 게이트웨이(https://<영역>, step-ca 발급)도 부르므로 게이트웨이 CA 와 step-ca 루트를 함께 믿는다(e2e.sh 의 trust.crt 와 같다. 검증을 끄지 않는다)
+  [ -s "$t" ] || { "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")" cat /r/root_ca.crt > "$W/step-root.crt" && cat "$f" "$W/step-root.crt" > "$t" && chmod 644 "$t"; } >&2 || die "step-ca 루트를 꺼내지 못했다(${P}_pki-root)"
+  echo "$t"
 }
 guide() {
   local gw; gw=$(port_of "$P-gateway-1" 8443)
