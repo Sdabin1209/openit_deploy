@@ -16,6 +16,10 @@ CTX="$DEPLOY_ROOT/build/tool-image"; rm -rf "$CTX"; mkdir -p "$CTX/wheels"
 bcw=$(ls "$DEPLOY_ROOT/build/hostwheels/$DEPLOY_BC_TAG"/boundary_contracts-*.whl 2>/dev/null | head -1) || true
 [ -n "${bcw:-}" ] || die "계약 $DEPLOY_BC_TAG 의 호스트 wheel 이 없다: bash scripts/build-images.sh 가 만든다(또는 prepare-host.sh wheels 의 전제)"
 cp "$bcw" "$CTX/wheels/"
+# 문진 스키마 패키지: 계약의 일부(SessionResult·QuestionBank 등)는 survey_schema 패키지의 문서를 참조한다(boundary_contracts.schema_sources). 없으면 그 응답 검증이 참조 해석 실패로 멈춘다(release-gate 와 같은 결함, 2026-11-08)
+ssw=$(ls "$DEPLOY_ROOT/build/hostwheels/survey-schema"/openit_survey_schema-"${DEPLOY_SS_TAG#survey-schema-v}"-*.whl 2>/dev/null | head -1) || true
+[ -n "${ssw:-}" ] || die "문진 스키마 ${DEPLOY_SS_TAG} 의 호스트 wheel 이 없다: bash scripts/build-hostwheels.sh"
+cp "$ssw" "$CTX/wheels/"
 "$VENV/bin/pip" wheel -q --no-deps -w "$CTX/wheels" "${LINK_SOURCE:-git+ssh://git@github.com/Sdabin1209/openit_link.git}@$DEPLOY_LINK_TAG" >/dev/null 2>&1 || die "link $DEPLOY_LINK_TAG 의 wheel 을 만들지 못했다"
 cat > "$CTX/Dockerfile" <<DOCKER
 FROM ${UTIL}
@@ -23,9 +27,9 @@ COPY wheels /wheels
 # own-venv: 이미지 안의 pip, deploy venv 가 아니다. link 의 계약 의존은 git URL 이라 --no-deps 로 같은 wheel(위)을 쓴다.
 # 나머지 의존은 손으로 적지 않고 설치한 wheel 의 메타데이터(Requires-Dist)에서 읽어 받는다: 손으로 적은 'jsonschema' 는 계약의 [format-nongpl] 추가 의존을 빠뜨려 date-time·uri 검사기 없음으로 단계 1 이 멈췄다(데모 7회차)
 RUN pip install --no-cache-dir --no-deps /wheels/*.whl \\
- && python -c "import importlib.metadata as m; print('\\n'.join(r for d in ('boundary-contracts','openit-link') for r in (m.requires(d) or []) if ' @ ' not in r and 'extra ==' not in r))" > /tmp/req.txt \\
+ && python -c "import importlib.metadata as m; print('\\n'.join(r for d in ('boundary-contracts','openit-link','openit-survey-schema') for r in (m.requires(d) or []) if ' @ ' not in r and 'extra ==' not in r))" > /tmp/req.txt \\
  && pip install --no-cache-dir -r /tmp/req.txt && rm -rf /wheels /tmp/req.txt \\
- && python -c "from boundary_contracts.schemas_api import format_checker; format_checker()"   # 이미지 안에서 계약의 형식 검사기가 모두 있는지 빌드 때 확인한다
+ && python -c "import survey_schema; from boundary_contracts.schemas_api import format_checker; format_checker()"   # 이미지 안에서 계약의 형식 검사기가 모두 있는지 빌드 때 확인한다
 USER 10001:10001
 LABEL io.openit.service=deploy-tool io.openit.owner=deploy io.openit.revision=${rev} io.openit.contracts.boundary=${DEPLOY_BC_TAG} io.openit.link=${DEPLOY_LINK_TAG}
 DOCKER
