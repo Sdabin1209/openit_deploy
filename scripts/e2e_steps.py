@@ -890,7 +890,7 @@ def fake_values_check(new, tok):
     """가짜 A(칸 정의가 든 흐름 파일)가 값을 내고 건너뛰기를 적용하는지 추론 서버를 직접 불러 본다. 모델 정확성이 아니라 시험 구성의 확인이다."""
     cases = [("Q4", "아니요", "Q4.answer", False, "Q5"),          # 건너뛰기: Q4.answer == false -> Q4_1 건너뜀
              ("Q4", "네 있어요", "Q4.answer", True, "Q4_1"),
-             ("Q7", "네 안 마셔요" if BACKEND == "fake" else "네 마십니다", "Q7.does_not_drink", True, "Q8_1"),   # Q7_1, Q7_2 건너뜀. 같은 칸을 fake 는 '안 마셔요'로, mimic 은 '마십니다'로 True 를 낸다(측정 2026-11-08: mimic 은 '네 안 마셔요'·'네 마시지 않아요' -> False, '네 마십니다' -> True: 칸 이름 does_not_drink 의 뜻이 아니라 동사의 긍정/부정을 읽는다). 건너뛰기(값 True -> Q7_1·Q7_2 건너뜀) 시험을 위한 시험 대역 맞춤이다: mimic 이 칸의 뜻을 맞게 읽는지(의미 정확성)는 이 시험이 보증하지 않는다. 그 해석은 model-runtime 의 몫이라 보고만 한다
+             ("Q7", "네 안 마셔요", "Q7.does_not_drink", True, "Q8_1"),   # Q7_1, Q7_2 건너뜀. 칸 뜻(does_not_drink)대로: "안 마셔요" = True. mimic 도 model-runtime 0.12.5 부터 부정형 칸을 칸 뜻대로 채운다(ADR 0036) — 이전의 백엔드별 발화 분기는 mimic 결함에 맞춘 것이라 없앴다
              ("Q8_1", "없어요", "Q8_1.days", 0, "Q9_1"),          # Q8_2 건너뜀
              ("Q8_1", "3일이요", "Q8_1.days", 3, "Q8_2"),
              ("Q2.D01", "네 있어요", "Q2.D01.family_history", True, "Q2.D02")]
