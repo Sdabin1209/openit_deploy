@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """e2e_sandbox 의 명령 조립 단위 시험. 가짜 실행기로 인자만 본다(Docker·네트워크·실제 시간을 쓰지 않는다)."""
-import pathlib, subprocess, sys, tempfile, unittest
+import os, pathlib, subprocess, sys, tempfile, unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import e2e_sandbox as S
@@ -47,6 +47,9 @@ class T(unittest.TestCase):
         self.assertIn("SSL_CERT_FILE=/ca.crt", create); self.assertIn("/ca/trust.crt:/ca.crt:ro", create)   # 인증서 검증을 끄지 않는다
         self.assertEqual([x for x in create if x.startswith("SSL_CERT_FILE=")], ["SSL_CERT_FILE=/ca.crt"], "서비스의 SSL_CERT_FILE(그 컨테이너의 경로)이 신뢰 루트를 덮어쓰면 안 된다(2026-11-08 단계 1)")
         self.assertIn("1234", create)
+        tok = os.path.join(self.tmp.name, "tokens", "idp-test-op-e2e-password")
+        self.assertIn(f"{tok}:/run/secrets/idp-test-op-e2e-password:ro", create)   # 파일마다 붙인다: 폴더(700)째 붙이면 uid 10001 이 들어가지 못한다(2026-11-08 단계 1·5a)
+        self.assertFalse(any(x.endswith("/tokens:/run/secrets:ro") for x in create))
         conn = next(c for c in self.f.calls if c[0][1] == "network")[0]; self.assertEqual(conn[-2:], ["P1_b", "cid123"])
         start = next(c for c in self.f.calls if c[0][1] == "start"); self.assertEqual(start[1]["input"], "print(https://release-gate)")   # SELF 가 영역 게이트웨이 주소가 된다
 

@@ -18,7 +18,8 @@ class T(unittest.TestCase):
     def setUpClass(cls):
         cls.id = str(os.getpid()); cls.net = f"xpy-n-{cls.id}"; cls.other = f"xpy-o-{cls.id}"; cls.proj = f"xpy{cls.id}"
         cls.tmp = tempfile.TemporaryDirectory(dir=ROOT / "build" / "logs"); t = pathlib.Path(cls.tmp.name)
-        (t / "tokens").mkdir(); (t / "tokens" / "gate-read").write_text("tok-abc\n"); os.chmod(t / "tokens", 0o755); os.chmod(t / "tokens" / "gate-read", 0o644)
+        (t / "tokens").mkdir(); (t / "tokens" / "gate-read").write_text("tok-abc\n"); os.chmod(t / "tokens", 0o700); os.chmod(t / "tokens" / "gate-read", 0o640)   # 제품과 같은 배치: 폴더 700, 컨테이너가 읽는 파일 640 + SECRETS_GID(ADR 0054). 예전 755/644 는 2026-11-08 E2E 단계 1 의 권한 결함을 가렸다
+        (t / "tokens" / "host-only").write_text("h\n"); os.chmod(t / "tokens" / "host-only", 0o600)   # 호스트 전용(600)은 컨테이너가 읽지 못한다
         (t / "ca.crt").write_text("")
         www = t / "www"; www.mkdir(); (www / "healthz").write_text("ok"); os.chmod(www, 0o755); os.chmod(www / "healthz", 0o644)
         dk("network", "create", cls.net); dk("network", "create", cls.other)
@@ -36,6 +37,10 @@ class T(unittest.TestCase):
         out = S.exec_py("svc", ("U=%r\n" % (PLAIN + "svc/healthz")) + "import os,urllib.request\nprint(urllib.request.urlopen(U,timeout=5).read().decode())\n"
                         "print(open(os.environ['GATE_READ_FILE']).read().strip())\nprint('NOT_FILE_VALUE' in os.environ)\nprint('@SELF@'.replace('@SELF@', %r))\n" % "x")
         self.assertEqual(out.split(), ["ok", "tok-abc", "False", "x"])
+
+    def test_host_only_secret_is_not_readable(self):
+        out = S.exec_py("svc", "try: open('/run/secrets/host-only').read(); print('read')\nexcept PermissionError: print('denied')\n")
+        self.assertEqual(out.strip(), "denied")
 
     def test_self_is_the_service_gateway_name(self):
         self.assertEqual(S.exec_py("svc", "print('" + S.SELF + "')").strip(), "https://svc")

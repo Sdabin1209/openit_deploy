@@ -264,9 +264,13 @@ def exec_py(service: str, code: str, *, timeout: float = 60) -> str:
     # SSL_CERT_FILE 은 옮기지 않는다: 서비스의 값(/etc/openit/pki/root_ca.crt)은 그 컨테이너의 마운트 경로라 이 클라이언트 컨테이너에는 없고, 뒤에 오는 -e 가 앞의 SSL_CERT_FILE=/ca.crt 를 덮어
     # 신뢰 루트가 사라졌다(2026-11-08 E2E 단계 1 CERTIFICATE_VERIFY_FAILED). 신뢰 루트는 시험 드라이버가 주는 /ca.crt 하나다(R1.3)
     envs = [x for kv in (json.loads(envj) or []) if kv.split("=", 1)[0].endswith("_FILE") and kv.split("=", 1)[0] != "SSL_CERT_FILE" for x in ("-e", kv)]
+    # 비밀은 파일마다 /run/secrets/<이름> 으로 붙인다(compose 의 파일 secrets 와 같은 방식). 폴더째 붙이면 폴더 모드 700(ADR 0022·0054, check-secret-perms)이
+    # 마운트 지점의 모드가 되어 uid 10001 은 group_add 가 있어도 들어가지 못한다(2026-11-08 E2E 단계 1·5a PermissionError). 파일 읽기 권한은 640 + SECRETS_GID 가 정한다
+    tdir = pathlib.Path(_need("secrets")) / "tokens"
+    vols = [x for f in sorted(tdir.iterdir()) if f.is_file() for x in ("-v", f"{f}:/run/secrets/{f.name}:ro")]
     create = [d, "create", "-i", "--network", first, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", "10001:10001",
               "--group-add", str(_C.get("secrets_gid") or os.environ.get("SECRETS_GID") or os.getgid()), "-e", "SSL_CERT_FILE=/ca.crt",
-              "-v", f"{ca}:/ca.crt:ro", "-v", f"{_need('secrets')}/tokens:/run/secrets:ro", *envs, image, "python", "-"]
+              "-v", f"{ca}:/ca.crt:ro", *vols, *envs, image, "python", "-"]
     cid = _run(create, timeout=60).stdout.strip()
     try:
         if not mode.startswith("container:"):
