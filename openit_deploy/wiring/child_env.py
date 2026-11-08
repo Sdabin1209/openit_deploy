@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import os
 
-ALLOWED = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "DOCKER_CONFIG", "DOCKER_HOST", "GIT_CONFIG_GLOBAL", "VIRTUAL_ENV", "PYTHONPATH")
+# 왜 Docker 연결 이름과 SSH_AUTH_SOCK: docker 를 부르는 호출이 원격·컨텍스트 데몬에 닿으려면 필요하다(kiosk-frontend 선례, codex C2 검토 2026-11-09)
+ALLOWED = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "DOCKER_CONFIG", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "SSH_AUTH_SOCK", "GIT_CONFIG_GLOBAL", "VIRTUAL_ENV", "PYTHONPATH")
 # deploy 자신의 설정 이름 접두사(scripts/lib.sh 와 e2e.sh·demo.sh 가 환경 변수로 주고받는 것). 호출자의 다른 값은 넘기지 않는다
 PREFIXES = ("DEPLOY_", "DEMO_", "E2E_", "GATEWAY_", "REGISTRY_", "COMPOSE_", "SECRETS_", "STEP_", "INFERENCE_", "UP_", "BUILD_", "PUBLISH_", "CHECK_", "SETUP_ENV_", "LINK_", "BOUNDARY_", "MODEL_RUNTIME_")
 

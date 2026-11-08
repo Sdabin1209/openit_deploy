@@ -416,7 +416,9 @@ def rule_key_order() -> R:
 # ---------- 규칙 3: 완화 정책 ----------
 # pattern-end-guard(model-runtime 0.12.0, 계약 4.0.0): 끝 고정 $(?![\s\S]) 는 검증기(파이썬 re 의 $ 가 끝 개행 앞에서도 맞는 것)를 막는 장치다.
 # 디코딩은 문자열 전체를 만들므로 $ 와 같은 뜻이라 집합을 넓히지 않는다(model-runtime constraint_relax.py 주석, xgrammar 는 앞보기를 지원하지 않음)
-RELAX_ALLOWED = {"allOf->anyOf", "oneOf->enum", "oneOf->anyOf", "pattern-end-guard"}
+# maxLength(계약 5.0.0 ActionExtraction 의 Id 참조 128자): 기본 지원 집합에 없어 디코딩 스키마에서 걷지만, 디코딩 뒤 계약 스키마로 엄격 검증해 128자 초과는 거부된다
+# (model-runtime ADR 0038 5항 — 규칙이 사라지는 것이 아니라 검증 단계로 옮겨 간다). 출처: codex C2 검토, 2026-11-09
+RELAX_ALLOWED = {"allOf->anyOf", "oneOf->enum", "oneOf->anyOf", "pattern-end-guard", "maxLength"}
 RELAX_SNIPPET = (
     "import json\nimport model_runtime as mr\nfrom boundary_contracts import load_schema\nfrom model_runtime.schema_guard import relax\n"
     "_, removed = relax(load_schema('ActionExtraction'), mr.DEFAULT_SUPPORTED_FEATURES)\nprint(json.dumps(sorted(removed)))\n")

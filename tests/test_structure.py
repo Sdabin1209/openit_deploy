@@ -4,7 +4,6 @@
 3 HTTP 클라이언트·서버(boundary_contracts.clients, openit_link, urllib.request, http.client, requests, http.server)는 통신 컴포넌트(link_*) 밖에 없다.
 4 모든 스키마에 통과·거부 예시가 있고 결과가 맞다. 5 types/ 가 schemas/ 에서 다시 생성한 결과와 같다. 6 시험을 뺀 모든 코드 파일이 components/·wiring/·types/ 또는 진입점·설정에 속한다.
 덧붙임: 진입점(scripts/*.py)은 얇다(업무 규칙 없음), 컴포넌트마다 입력·출력 스키마가 있고 docs/components.md 표와 같다, 컴포넌트는 wiring/ 을 import 하지 않는다."""
-from openit_deploy.wiring.child_env import child_env  # R9.1: 하위 프로세스는 최소 환경만
 import ast
 import json
 import pathlib
@@ -17,6 +16,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PKG = ROOT / "openit_deploy"
 sys.path.insert(0, str(ROOT))
+from openit_deploy.wiring.child_env import child_env  # noqa: E402  R9.1: 하위 프로세스는 최소 환경만. 왜 여기: 실행 디렉터리 기준 import 경로(ROOT)를 먼저 잡아야 한다(codex C2 검토, 2026-11-09)
 
 HTTP_PY = re.compile(r"^\s*(from|import)\s+(boundary_contracts\.clients|openit_link|urllib\.request|http\.client|http\.server|requests|waitress|wsgiref)\b", re.M)
 # 수용 시험(E2E 시나리오와 그 보조): 시스템 전체를 이웃의 HTTP 로 확인하는 시험이지 deploy 의 업무 컴포넌트가 아니다(ADR 0045). 시험에 든다.
