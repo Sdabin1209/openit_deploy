@@ -112,6 +112,7 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
   local only=$1; shift
   local msx=(); [ -z "$EXT" ] || msx=(--ms-url "$EXT" --ms-token-file "$INFERENCE_TOKEN_FILE")
   [ $LLM = 0 ] || msx+=(--llm-package "$W/llm-package")
+  [ -n "$EXT" ] || msx+=(--inference-project "$P")   # 데모는 model-serving 이 같은 프로젝트 안에 있다(e2e_sandbox 기본 <P>-inf 는 e2e.sh 의 별도 호스트 역할)
   local img; img=$( set -a; . "$DEPLOY_LOCK"; . "$DEPLOY_REGISTRY_ENV"; set +a
     echo "{\"survey-service\":\"$DEPLOY_REGISTRY/openit/survey-service@$SURVEY_SERVICE_DIGEST\",\"question-authoring\":\"$DEPLOY_REGISTRY/openit/question-authoring@$QUESTION_AUTHORING_DIGEST\",\"ops-feedback\":\"$DEPLOY_REGISTRY/openit/ops-feedback@$OPS_FEEDBACK_DIGEST\",\"dataset-store\":\"$DEPLOY_REGISTRY/openit/dataset-store@$DATASET_STORE_DIGEST\"}" )
   # 단계 코드는 제품에 e2e_sandbox 로만 닿고, 그 클라이언트는 deploy 도구 이미지다(e2e.sh 와 같은 준비, docs/adr/0048). 이 데모에서 한 번 빌드해 둔다
@@ -123,7 +124,10 @@ run_steps() { # run_steps <--only 목록> [추가 인자]
 }
 
 demo_ca() { # gateway 내부 CA 루트(데모 스택에서 꺼내 작업 폴더에 둔다). e2e_steps 가 이것만 신뢰한다
-  local f="$W/gateway-ca.crt"; bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$f" >/dev/null 2>&1 || true; echo "$f"
+  local f="$W/gateway-ca.crt" t="$W/trust.crt"; bash "$DEPLOY_ROOT/scripts/export-gateway-ca.sh" --project "$P" "$f" >/dev/null 2>&1 || true
+  # 단계 코드는 exec_py 로 영역 게이트웨이(https://<영역>, step-ca 발급)도 부르므로 게이트웨이 CA 와 step-ca 루트를 함께 믿는다(e2e.sh 의 trust.crt 와 같다. 검증을 끄지 않는다)
+  [ -s "$t" ] || { "$DOCKER" run --rm -v "${P}_pki-root:/r:ro" "$(sed -n 's/^UTIL_IMAGE=//p' "$DEPLOY_ROOT/locks/images.lock")" cat /r/root_ca.crt > "$W/step-root.crt" && cat "$f" "$W/step-root.crt" > "$t" && chmod 644 "$t"; } >&2 || die "step-ca 루트를 꺼내지 못했다(${P}_pki-root)"
+  echo "$t"
 }
 guide() {
   local gw; gw=$(port_of "$P-gateway-1" 8443)
@@ -201,7 +205,7 @@ wait_llm() { # 첫 기동은 모델 내려받기와 적재로 오래 걸린다. 
   echo "아직 적재 중이다 (${mins}분 경과). 실패가 아니다. 진행은 scripts/demo.sh status (model-serving 사유) 와 docker compose -p $P logs model-serving 로 본다. 끝나면 게이트웨이 /readyz 가 200 이 된다"
   return 0
 }
-case "$CMD" in up|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
+case "$CMD" in up|prepare|verify-survey|activate|status|down|reset|config|diag|check-secrets|swap-adapters) detect_docker;; esac
 case "$CMD" in
   up)
     [ -d "$W" ] && [ -f "$W/registry.env" ] && die "이미 데모 상태가 있다 ($W). scripts/demo.sh down 또는 reset"
@@ -313,6 +317,14 @@ case "$CMD" in
     echo "== 모델 패키지 게시 -> 자동 검사 -> 시험용 승인자 승인 -> 활성화 -> model-serving 적재 (E2E 단계 코드 재사용)"
     run_steps "demo_swap" "${SWAPX[@]}" || die "어댑터 교체 실패 (원인 진단: scripts/demo.sh diag). 활성화 전 단계에서 멈췄다면 활성 릴리스는 그대로다"
     echo "== 교체 후 활성 릴리스"; run_steps "demo_active" || true ;;
+  prepare) # 떠 있는 데모 스택에 시험용 릴리스 준비만 다시 한다(up 의 같은 단계. 이미지 빌드·기동을 되풀이하지 않는다)
+    [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    env_demo; rm -f "$W/tool-image.txt"   # 도구 이미지는 지금 HEAD 로 다시 고른다
+    run_steps "1,2,3,demo4,6" || die "데모 릴리스 준비 실패 (원인 진단: scripts/demo.sh diag)"
+    guide ;;
+  verify-survey) # 떠 있는 데모에서 문진 흐름을 E2E 와 같은 단계 코드로 확인한다: 문진표 선택·시작·응답·정정·범위 밖 값·직원 호출·위험 신호·기기 인증·키오스크 화면
+    [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
+    env_demo; run_steps "${DEMO_SURVEY_STEPS:-5,5k,5c,5o,5n,5r,5d,5f}" || die "문진 흐름 확인 실패 (원인 진단: scripts/demo.sh diag)" ;;
   activate)
     [ -f "$W/registry.env" ] || die "데모가 떠 있지 않다 (scripts/demo.sh up)"
     env_demo; run_steps "demo_activate,6" || die "활성화 실패(/admin/ 에서 먼저 승인했는지 확인)"
